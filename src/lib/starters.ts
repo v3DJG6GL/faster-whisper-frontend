@@ -54,12 +54,13 @@ export const STARTERS_LOW_LEVEL_NOTE =
 
 /** Show STARTERS_LOW_LEVEL_NOTE? `lowLevelActive` null = evdevStatus hasn't answered yet (no flash).
  *  `hotkeys` = the chords the surface will commit: the onboarding step passes its editable drafts, so
- *  once each is rebound to a chord the plugin can register (or left unbound) the note goes away.
- *  Default = the fixed suggestion, which the Profiles card's "Keep these" commits. */
+ *  once each is rebound to a chord the plugin can register (or left unbound) the note goes away; the
+ *  Profiles card passes its startersClearOf output, which unbinds a starter the quick-add chord
+ *  collides with. No default: the fixed suggestion is not what either surface commits. */
 export function startersNeedLowLevelNote(
   isLinux: boolean,
   lowLevelActive: boolean | null,
-  hotkeys: string[][] = starterProfiles(null).map((p) => p.hotkey),
+  hotkeys: string[][],
 ): boolean {
   return isLinux && lowLevelActive === false && hotkeys.some(needsLowLevel);
 }

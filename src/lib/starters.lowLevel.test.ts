@@ -3,7 +3,7 @@
 // fire. Both starter surfaces now say so.
 import { describe, expect, it } from "vitest";
 import { needsLowLevel } from "./keys";
-import { STARTERS_LOW_LEVEL_NOTE, starterProfiles, startersNeedLowLevelNote } from "./starters";
+import { STARTERS_LOW_LEVEL_NOTE, starterProfiles, startersClearOf, startersNeedLowLevelNote } from "./starters";
 // Raw source (vite `?raw`).
 import profilesSrc from "../screens/Profiles.tsx?raw";
 import onboardingSrc from "../screens/Onboarding.tsx?raw";
@@ -28,10 +28,11 @@ describe("starters low-level note", () => {
   });
 
   it("shows on Linux once evdevStatus says no low-level backend is live", () => {
-    expect(startersNeedLowLevelNote(true, false)).toBe(true);
-    expect(startersNeedLowLevelNote(true, true)).toBe(false);
-    expect(startersNeedLowLevelNote(true, null)).toBe(false); // not answered yet
-    expect(startersNeedLowLevelNote(false, false)).toBe(false);
+    const suggested = starterProfiles(null).map((p) => p.hotkey);
+    expect(startersNeedLowLevelNote(true, false, suggested)).toBe(true);
+    expect(startersNeedLowLevelNote(true, true, suggested)).toBe(false);
+    expect(startersNeedLowLevelNote(true, null, suggested)).toBe(false); // not answered yet
+    expect(startersNeedLowLevelNote(false, false, suggested)).toBe(false);
     expect(STARTERS_LOW_LEVEL_NOTE).toMatch(/evdev/);
   });
 
@@ -45,10 +46,28 @@ describe("starters low-level note", () => {
     expect(startersNeedLowLevelNote(true, false, [["ControlLeft", "F9"], ["ControlLeft", "MetaLeft"]])).toBe(true);
   });
 
+  // A quick-add chord that collides with both starters (Ctrl alone, or a modifier superset such as
+  // Ctrl+Shift+Super, left by sync or an earlier evdev session) makes "Keep these" commit both
+  // UNBOUND: the card warned about modifier-only shortcuts it never created.
+  it("judges the starters the Profiles card's Keep commits, cleared of the quick-add chord", () => {
+    for (const qa of [["ControlLeft"], ["ControlLeft", "ShiftLeft", "MetaLeft"]]) {
+      const kept = startersClearOf("b1", qa, true).map((p) => p.hotkey);
+      expect(kept).toEqual([[], []]);
+      expect(startersNeedLowLevelNote(true, false, kept)).toBe(false);
+    }
+    // One cleared, the other still modifier-only: the note stays.
+    expect(startersNeedLowLevelNote(true, false, startersClearOf("b1", ["ControlLeft", "ShiftLeft"], true).map((p) => p.hotkey))).toBe(true);
+  });
+
   it("the Profiles starters card and the onboarding starters step both render it", () => {
-    expect(profilesSrc).toMatch(
-      /startersNeedLowLevelNote\(IS_LINUX, evdev === null \? null : lowLevelActive\)[\s\S]{0,120}STARTERS_LOW_LEVEL_NOTE/,
+    // The card computes the starters once and both the note and "Keep these" use them.
+    expect(profilesSrc).toContain(
+      "const keptStarters = startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive);",
     );
+    expect(profilesSrc).toMatch(
+      /startersNeedLowLevelNote\(\s*IS_LINUX,\s*evdev === null \? null : lowLevelActive,\s*keptStarters\.map\(\(p\) => p\.hotkey\),?\s*\)[\s\S]{0,120}STARTERS_LOW_LEVEL_NOTE/,
+    );
+    expect(profilesSrc).toMatch(/for \(const p of keptStarters\) upsertProfile\(p\);/);
     expect(onboardingSrc).toMatch(
       /startersNeedLowLevelNote\(IS_LINUX, lowLevelKnown \? lowLevel : null, drafts\.map\(\(d\) => d\.hotkey\)\)[\s\S]{0,160}STARTERS_LOW_LEVEL_NOTE/,
     );

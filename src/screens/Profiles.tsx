@@ -917,6 +917,11 @@ export default function Profiles() {
       ? `Same shortcut as “${nameOf(c.otherId)}” — resolve to save & register.`
       : `Overlaps “${nameOf(c.otherId)}” — one would set off the other; resolve to save & register.`;
   };
+  // What the checklist card's "Keep these" commits: the suggestion's chords are fixed, the
+  // quick-add chord is not, so a colliding starter goes in UNBOUND (startersClearOf) rather than
+  // writing a conflict that freezes every save on the persistence gate. The evdev note judges
+  // these chords, not the fixed suggestion: with both starters cleared it has nothing to warn of.
+  const keptStarters = startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive);
 
   const startAdd = () => {
     const p = blankProfile(backends[0]?.id ?? null);
@@ -996,19 +1001,18 @@ export default function Profiles() {
                   (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> to start and stop). Keep them,
                   then edit anything.
                 </div>
-                {startersNeedLowLevelNote(IS_LINUX, evdev === null ? null : lowLevelActive) && (
+                {startersNeedLowLevelNote(
+                  IS_LINUX,
+                  evdev === null ? null : lowLevelActive,
+                  keptStarters.map((p) => p.hotkey),
+                ) && (
                   <Notice className="mt-2.5">{STARTERS_LOW_LEVEL_NOTE}</Notice>
                 )}
                 <div className="mt-4 flex items-center gap-2.5">
                   <Button
                     variant="accent"
                     onClick={() => {
-                      // The suggestion's chords are fixed; the quick-add chord is not.
-                      // A colliding starter is committed UNBOUND (startersClearOf) rather
-                      // than writing a conflict that freezes every save on the persistence gate.
-                      for (const p of startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive)) {
-                        upsertProfile(p);
-                      }
+                      for (const p of keptStarters) upsertProfile(p);
                     }}
                   >
                     Keep these
