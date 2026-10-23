@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget, writeTargets,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget, writeTargets, resetSiteTargets,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -645,6 +645,20 @@ describe("tracks and switches", () => {
     [i, st] = apply(i, writeTargets(st, ["en"]));
     [i, st] = apply(i, pickPolicy(i, st, "prefer"));
     expect(i.targets).toEqual(["en"]);
+  });
+  it("a new preview starts over without the languages Custom only promoted: a later preset no longer keeps them", () => {
+    // Reloaded with the saved targets as they were, es counted as your own pick and stayed.
+    const inp = input({ tracks: [tr("de", "de"), tr("en", "en"), tr("es", "es")], spoken: "de", targets: ["en"], maxTargets: 3 });
+    let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    expect(i.targets).toEqual(["en", "es"]);
+    expect(st.promoted).toEqual(["es"]);
+    i = { ...i, targets: resetSiteTargets(st, i.targets) };
+    expect(i.targets).toEqual(["en"]);
+    [i, st] = apply(i, pickPolicy(i, initialSiteState(i.targets), "prefer"));
+    expect(i.targets).toEqual(["en"]);
+    // No panel before (first preview), or nothing promoted: the targets stay as saved.
+    expect(resetSiteTargets(null, ["en", "es"])).toEqual(["en", "es"]);
+    expect(resetSiteTargets(initialSiteState(["en", "es"]), ["en", "es"])).toEqual(["en", "es"]);
   });
   it("switching off a site track drops its language when the translation limit leaves no slot", () => {
     // Prefer: es comes from the site, its MT badge idle — it never counted against the limit.

@@ -707,6 +707,13 @@ export function writeTargets(st: SiteSubsState, targets: readonly string[]): Sit
   return { state: st.promoted.length ? { ...st, promoted: [] } : st, targets: [...targets] };
 }
 
+/** The targets a new preview's panel starts from: without the ones the old panel's Custom only
+ *  promoted — the panel starts over, and kept they counted as your own picks, so a later preset
+ *  no longer took them out (a refetch of the same link starts over too). */
+export function resetSiteTargets(st: SiteSubsState | null, targets: readonly string[]): string[] {
+  return st?.promoted.length ? targets.filter((c) => !st.promoted.includes(c)) : [...targets];
+}
+
 /** "Translate into" for one language: picking it means machine-translating into it. */
 export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: string, on?: boolean): SiteChange {
   // Switching on reads only the target map: the model (a whole render) is built only to tell

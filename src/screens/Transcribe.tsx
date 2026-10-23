@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
-import { derive, flipChipPart, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, writeTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { derive, flipChipPart, freeAdds, frozenSiteRun, initialSiteState, mtUsed, resetSiteTargets, setTargets, writeTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -595,7 +595,14 @@ export default function Transcribe() {
   // over), its input, and what derive() makes of both — the table, the chips and the run.
   const [siteState, setSiteState] = useState<SiteSubsState | null>(null);
   useEffect(() => {
-    setSiteState(urlPreviewData?.subtitle_tracks?.length ? initialSiteState(translationAvailable ? translateTo : []) : null);
+    // `siteState` here is the old panel's (this render's): the targets drop what its Custom only
+    // promoted, written where they are saved, so the new panel starts from them (resetSiteTargets).
+    const kept = translationAvailable ? resetSiteTargets(siteState, translateTo) : [];
+    if (translationAvailable && kept.length !== translateTo.length) {
+      setTranslateTo(kept);
+      persistOptions({ translateTo: kept });
+    }
+    setSiteState(urlPreviewData?.subtitle_tracks?.length ? initialSiteState(kept) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per preview
   }, [urlPreviewData]);
   const linkLang = useLinkLanguage({
