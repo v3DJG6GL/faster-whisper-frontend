@@ -555,19 +555,53 @@ describe("site subtitle cleanup", () => {
   it("a freeze cue of exactly 100 ms counts wherever it sits in the file", () => {
     const vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nIch bin mit Gott\n\n"
       + "00:00:01.000 --> 00:00:01.100\nIch bin mit Gott\n\n"
-      + "00:00:01.100 --> 00:00:03.000\nIch bin mit Gott\naufgewachsen\n\n"
-      + "00:00:03.000 --> 00:00:03.100\naufgewachsen\n\n"
-      + "00:00:03.100 --> 00:00:05.000\naufgewachsen\nund\n";
-    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text)).toEqual(["Ich bin mit Gott", "aufgewachsen", "und"]);
+      + "00:00:01.100 --> 00:00:03.000\nIch bin mit Gott\naufgewachsen\n";
+    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text)).toEqual(["Ich bin mit Gott", "aufgewachsen"]);
+  });
+  it("a short auto-caption file that rolls only once still reads every line once", () => {
+    const vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello there\n\n"
+      + "00:00:02.000 --> 00:00:02.010\nhello there\n\n"
+      + "00:00:02.010 --> 00:00:04.000\nhello there\nhow are you\n";
+    expect(parseImportedText("vtt", vtt).segments).toMatchObject([
+      { start: 0, end: 2, text: "hello there" },
+      { start: 2.01, end: 4, text: "how are you" },
+    ]);
+  });
+  it("an auto-caption file that rolls several times reads every line once", () => {
+    const vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello there\n\n"
+      + "00:00:02.000 --> 00:00:02.010\nhello there\n\n"
+      + "00:00:02.010 --> 00:00:04.000\nhello there\nhow are you\n\n"
+      + "00:00:04.000 --> 00:00:04.010\nhow are you\n\n"
+      + "00:00:04.010 --> 00:00:06.000\nhow are you\nfine thanks\n";
+    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text)).toEqual(["hello there", "how are you", "fine thanks"]);
   });
   it("one short cue repeating its neighbour does not make a whole file rolling", () => {
     // A Whisper SRT's doubled "Thank you." lasts 50 ms; the later "Wait." the file really says
-    // twice must stay — a rolling file freezes between nearly every pair of cues, not once.
+    // twice must stay — the repeat bridges no roll: the cue after it does not open with it.
     const srt =
       "1\n00:00:01,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:02,050\nThank you.\n\n"
       + "3\n00:00:03,000 --> 00:00:05,000\nWait.\n\n4\n00:00:05,000 --> 00:00:07,000\nWait.\nDid you hear?\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
       "Thank you.", "Thank you.", "Wait.", "Wait. Did you hear?",
+    ]);
+  });
+  it("a line repeated twice in short cues does not make a whole file rolling", () => {
+    // The first 50 ms repeat opens the next cue but adds no line; the second opens nothing.
+    const srt =
+      "1\n00:00:01,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:02,050\nThank you.\n\n"
+      + "3\n00:00:02,050 --> 00:00:02,100\nThank you.\n\n"
+      + "4\n00:00:03,000 --> 00:00:05,000\nWait.\n\n5\n00:00:05,000 --> 00:00:07,000\nWait.\nDid you hear?\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "Thank you.", "Thank you.", "Thank you.", "Wait.", "Wait. Did you hear?",
+    ]);
+  });
+  it("two separate short repeats do not make a whole file rolling", () => {
+    const srt =
+      "1\n00:00:01,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:02,050\nThank you.\n\n"
+      + "3\n00:00:03,000 --> 00:00:05,000\nWait.\n\n4\n00:00:05,000 --> 00:00:07,000\nWait.\nDid you hear?\n\n"
+      + "5\n00:00:08,000 --> 00:00:09,000\nBye.\n\n6\n00:00:09,000 --> 00:00:09,040\nBye.\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "Thank you.", "Thank you.", "Wait.", "Wait. Did you hear?", "Bye.", "Bye.",
     ]);
   });
   it("broadcaster hyphenation rejoins, letter-spaced emphasis collapses, conjunctions keep their hyphen", () => {
@@ -893,12 +927,12 @@ describe("site subtitle cleanup", () => {
   it("an empty cue inside a rolling file does not stretch the line before it", () => {
     const vtt =
       "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n\n00:00:02.000 --> 00:00:02.010\nhello\n\n"
-      + "00:00:02.010 --> 00:00:06.000\n\n00:00:06.500 --> 00:00:08.000\nnext\n\n"
-      + "00:00:08.000 --> 00:00:08.010\nnext\n\n00:00:08.010 --> 00:00:09.000\nnext\nlast\n";
+      + "00:00:02.010 --> 00:00:04.000\nhello\nthere\n\n00:00:04.000 --> 00:00:06.000\n\n"
+      + "00:00:06.500 --> 00:00:08.000\nnext\n";
     expect(parseImportedText("vtt", vtt).segments).toMatchObject([
       { start: 0, end: 2, text: "hello" },
+      { start: 2.01, end: 4, text: "there" },
       { start: 6.5, end: 8, text: "next" },
-      { start: 8.01, end: 9, text: "last" },
     ]);
   });
   it("a two-cue file is too short to call a roll-up: its repeated line stays", () => {

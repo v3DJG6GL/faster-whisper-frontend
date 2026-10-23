@@ -224,8 +224,8 @@ export interface RawCue {
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
  *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
- *  a contiguous cue repeats from the cue before, and — only in a file that has two or more
- *  such freeze cues — extend that cue when nothing new is left: an ordinary file may say
+ *  a contiguous cue repeats from the cue before, and — only in a file where such a freeze
+ *  cue bridges a roll — extend that cue when nothing new is left: an ordinary file may say
  *  "Thank you." twice back to back, and both lines stay. Broadcast roll-up captions have no
  *  freeze cue but open most multi-line cues with the line(s) before; such a file gets the
  *  leading-line strip too. Ordinary files pass through unchanged — a word said at the end of one cue
@@ -243,16 +243,6 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   // of 0.1 (1.1 − 1 > 0.1, 3723.5 − 3723.4 < 0.1), so it would count only by its position.
   const isFreeze = (c: RawCue, i: number): boolean =>
     c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 + 1e-6 && repeatsNeighbour(i);
-  // The rolling signature: without a freeze cue, a cue that only repeats the one before
-  // is a line said twice, not a roll.
-  // Only a freeze cue with text and a length counts: an empty cue (our export writes one for
-  // an empty segment) "repeats" its neighbours vacuously, and a zero-length repeat is our
-  // own export's segment, not a 10 ms freeze — either would make any file look rolling.
-  // At least two: a rolling file freezes between nearly every pair of cues, while one short
-  // cue repeating its neighbour (a Whisper SRT's doubled "Thank you.") would otherwise strip
-  // every line the whole file repeats across a cue boundary.
-  const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
-  const rolling = cues.filter((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c)).length >= 2;
   /** How many leading lines of `lines` repeat the last lines of `before` (markup-free and
    *  whitespace-collapsed): 1 for a two-line roll-up, 2 for a three-line one. */
   const leadOverlap = (before: string[], lines: string[]): number => {
@@ -262,6 +252,24 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     while (k > 0 && theirs.slice(-k).join("\n") !== mine.slice(0, k).join("\n")) k--;
     return k;
   };
+  const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
+  const textLines = (c: RawCue): string[] => c.lines.filter((l) => stripMarkup(l));
+  // The rolling signature: without a freeze cue, a cue that only repeats the one before
+  // is a line said twice, not a roll.
+  // Only a freeze cue with text and a length counts: an empty cue (our export writes one for
+  // an empty segment) "repeats" its neighbours vacuously, and a zero-length repeat is our
+  // own export's segment, not a 10 ms freeze — either would make any file look rolling.
+  // And only one that bridges a roll: a real freeze repeats the cue before AND opens the next
+  // cue with text, which adds a line. A Whisper repeat (a doubled or tripled 50 ms "Thank
+  // you.") does neither, and counting it would strip every line the file repeats across a cue
+  // boundary. One bridge is enough: a short auto-caption file may roll only once.
+  const bridgesRoll = (i: number): boolean => {
+    const next = cues.slice(i + 1).find(hasText);
+    if (!next) return false;
+    const [mine, theirs] = [textLines(cues[i]), textLines(next)];
+    return theirs.length > mine.length && leadOverlap(mine, theirs) === mine.length;
+  };
+  const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c) && bridgesRoll(i));
   const contiguousAfter = (prev: RawCue, cue: RawCue): boolean =>
     prev.start !== undefined && prev.end !== undefined && cue.start !== undefined
     && cue.start >= prev.start && cue.start <= prev.end + 0.25;
