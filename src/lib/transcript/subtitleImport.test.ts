@@ -622,6 +622,28 @@ describe("site subtitle cleanup", () => {
     expect(fixBroadcasterText(["well-", "known"])).toEqual(["wellknown"]);
     expect(fixBroadcasterText(["<c.yellow>Ein journa-</c>", "<c.white>listisch</c>"])).toEqual(["<c.yellow>Ein journa</c><c.white>listisch</c>"]);
   });
+  it("a suspended hyphen before bzw. / sowie / wie / et / ou / vs keeps its hyphen", () => {
+    const kept: string[][] = [
+      ["Die Vor-", "bzw. Nachteile"],
+      ["Groß-", "sowie Kleinbuchstaben"],
+      ["Groß-", "wie Kleinschreibung"],
+      ["pré-", "et post-opératoire"],
+      ["pré-", "ou post-opératoire"],
+      ["pre-", "vs. post-war"],
+      ["pre-", "vs post-war"],
+      // The conjunctions already listed, unchanged.
+      ["Ein-", "und Ausgang"],
+      ["Vor-", "oder Nachteil"],
+    ];
+    for (const lines of kept) expect(fixBroadcasterText(lines)).toEqual(lines);
+    expect(parseImportedText("srt", "1\n00:00:01,000 --> 00:00:02,000\nDie Vor-\nbzw. Nachteile\n").segments[0].text).toBe("Die Vor- bzw. Nachteile");
+    // Whole words only: a syllable that merely starts like one still rejoins, and "to" / "nor"
+    // are left out because they end words too.
+    expect(fixBroadcasterText(["Sie hat ihn ver-", "wiesen"])).toEqual(["Sie hat ihn verwiesen"]);
+    expect(fixBroadcasterText(["ver-", "etwas"])).toEqual(["veretwas"]);
+    expect(fixBroadcasterText(["toma-", "to sauce"])).toEqual(["tomato sauce"]);
+    expect(fixBroadcasterText(["a mi-", "nor key"])).toEqual(["a minor key"]);
+  });
   it("character references decode after the tags go: &nbsp; is a space, &lt;i&gt; stays text", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");
