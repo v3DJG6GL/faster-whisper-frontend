@@ -16,7 +16,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { langText, langTexts, languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
-import { chipSource, pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
+import { chipSource, pruneTargets, runTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
 import {
   inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
   withDefaultModel,
@@ -697,8 +697,9 @@ export default function Transcribe() {
     // The same gating `run()` applies, so we never ask the server to warm a
     // stage this run would not actually request: a link translates what runLink
     // sends (linkTranslateTo — none when its site tracks cover every target, its
-    // frozen targets even after the chips are cleared), every other file the chips.
-    const runT = translationAvailable ? translateTo : [];
+    // frozen targets even after the chips are cleared), every other file the chips less the
+    // known source (runTargets, as run() sends them).
+    const runT = translationAvailable ? runTargets(translateTo, knownSource) : [];
     const targetsOf = (p: string) => (isSourceUrl(p) ? (linkTranslateTo({ translateTo: runT }, urlMeta[p]) ?? []) : runT);
     const warmTargets = translationAvailable ? files.map(targetsOf).find((t) => t.length > 0) : undefined;
     // A text source only runs the translation stage, and the pump fails it without targets.
@@ -741,6 +742,7 @@ export default function Transcribe() {
     settings,
     translationAvailable,
     translateTo,
+    knownSource,
     translationModel,
     effDiarize,
     diarizationModel,
@@ -1074,8 +1076,10 @@ export default function Transcribe() {
     // Sent whole even over a lower server's limit: the audio route drops the extras with a
     // result warning naming them, and translateParsed (subtitle/text files, a link's site
     // transcript) cuts to the server's limit from the backend's caps with the same warning —
-    // sent whole there, the text route rejects the whole translation.
-    const effTargets = translationAvailable ? wireCodes(translateTo) : [];
+    // sent whole there, the text route rejects the whole translation. Less the known source
+    // (runTargets): while the site-subtitle panel holds the chips, translateTo may still name
+    // the screen's spoken language, and each queued file would get a same-language copy track.
+    const effTargets = translationAvailable ? runTargets(translateTo, knownSource) : [];
     const t2t = effTargets.length > 0;
     // "Authoritative" now has to be SAID, not just implied by omission: the server reads
     // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an
@@ -1404,9 +1408,11 @@ export default function Transcribe() {
                   // language (edited, detected or the site's): their source is that language
                   // (chipSource), and translateTo is the panel's mirror — pruning by the
                   // screen's would silently drop a valid chip for good. The re-prune effect
-                  // catches up when the panel lets go. A link that only follows the screen
-                  // speaks the new screen language, so the prune is right there: skipping it
-                  // left that language as a hidden target (a de→de copy track on the run).
+                  // catches up when the panel lets go, and a run in the meantime sends the
+                  // queued files the chips less their source (runTargets). A link that only
+                  // follows the screen speaks the new screen language, so the prune is right
+                  // there: skipping it left that language as a hidden target (a de→de copy
+                  // track on the run).
                   const linkOwnsSpoken =
                     linkLang.sp.source === "edited" || linkLang.sp.source === "detected" || linkLang.sp.source === "site";
                   if (siteChips && linkOwnsSpoken) {

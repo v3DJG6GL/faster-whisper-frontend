@@ -53,6 +53,17 @@ export function chipSource(panelHolds: boolean, linkSpoken: string | null | unde
   return panelHolds ? (linkSpoken ?? knownSource) : knownSource;
 }
 
+/** The targets a run sends for the queued files (and warms for them): the chips' list, less the
+ *  screen's known source. The re-prune effect keeps translateTo free of it — except while the
+ *  site-subtitle panel holds the chips for a draft link (their source is then the link's), and a
+ *  Run in that window sent each queued file its own spoken language as a target (a de→de copy
+ *  track). Unknown or "auto" source: nothing to prune. A link with a site plan sends its frozen
+ *  `mtTargets` instead (`linkTranslateTo`), untouched by this. */
+export function runTargets(translateTo: unknown, knownSource: string | undefined): string[] {
+  const codes = wireCodes(translateTo);
+  return knownSource ? pruneTargets(codes, knownSource) : codes;
+}
+
 /** Store-shape for a `TranslationOverrides` draft: drop the keys that are "inherit"
  *  so an all-inherit object stores as `undefined` (the `decodeOverrides` idiom), and
  *  KEEP the ones that are an explicit empty override.

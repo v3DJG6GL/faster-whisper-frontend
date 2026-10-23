@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the screen in.
 import src from "./Transcribe.tsx?raw";
 import siteSubtitlesSrc from "../lib/transcript/siteSubtitles.ts?raw";
+import { runTargets } from "../lib/translationTargets";
 
 /** The body of the screen Language picker's onChange. */
 const languageOnChange = () => {
@@ -59,5 +60,27 @@ describe("screen Language picker vs the site-subtitle panel's chips", () => {
     const prune = body.indexOf("const next = pruneTargets(translateTo, sourceOf(lang));", gate);
     expect(prune).toBeGreaterThan(gate);
     expect(body.slice(prune)).toContain("persistScoped({ language: lang, translateTo: next });");
+  });
+});
+
+// The skipped prune leaves the screen's spoken language in translateTo while the panel holds the
+// chips, and the re-prune effect waits for the panel to let go — but Run is not gated on that, and
+// translateTo is also what every queued file is sent: a German file got translate_to ["de"].
+describe("a run while the panel holds the chips", () => {
+  it("sends the queued files the chips less the screen's known source", () => {
+    // Screen German, chips ["de"] (kept for an English link): nothing to translate a German file into.
+    expect(runTargets(["de"], "de")).toEqual([]);
+    expect(runTargets(["de", "fr"], "de")).toEqual(["fr"]);
+    // Screen English: German is a real target.
+    expect(runTargets(["de"], "en")).toEqual(["de"]);
+    // Unknown or auto-detected source: nothing is pruned.
+    expect(runTargets(["de"], undefined)).toEqual(["de"]);
+    expect(runTargets(["de"], "auto")).toEqual(["de"]);
+  });
+
+  it("is what run() sends and the warm-up warms for the queued files", () => {
+    expect(src).toContain("const effTargets = translationAvailable ? runTargets(translateTo, knownSource) : [];");
+    expect(src).toContain("const runT = translationAvailable ? runTargets(translateTo, knownSource) : [];");
+    expect(src).not.toContain("wireCodes(translateTo)");
   });
 });
