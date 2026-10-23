@@ -362,6 +362,13 @@ let clipClosed: ClosedClipWindow | null = null;
 /** A clipboard copy landed in the current window — recorded on the window a pause closes (see
  *  ClosedClipWindow.landed) and reset with it, in the same queued links as `clipBooked`. */
 let clipLanded = false;
+/** The last clipboard copy that landed, keyed by where its window starts (`clipFrom`, in the
+ *  final handler's `target` coordinates): a later final of that window whose copy would be the
+ *  same text only re-adds the server's output_suffix, and is not copied again (see the clipboard
+ *  branch's suffix drop). Reset at a hard break and every start and abandon. A pause needs no
+ *  reset: the next window starts further on, and a release that reopens the closed window is
+ *  still that window, with its copy. */
+let clipLastCopy: { from: number; text: string } | null = null;
 /** An ordinal `final` arrived this session, so a final without one really is a release. */
 let clipOrdinalSeen = false;
 // Insertion config captured at dictation start.
@@ -1415,6 +1422,7 @@ function clearPhraseEnd(): void {
   clipBaseline = "";
   clipBooked = null;
   clipLanded = false;
+  clipLastCopy = null;
   clipClosed = null;
   clipOrdinalSeen = false;
   flushClipByLang();
@@ -2420,10 +2428,17 @@ async function ensureListeners(): Promise<void> {
           // "copied" pulse, and a translated one re-ran the GPU translate, whose failure put the
           // original back over the translation. It is dropped like the typed branch's suffix:
           // only the baseline moves past it, so a later typed phrase opens without its Return.
-          // Real text past the baseline (a phrase skipped in our own window) still copies the
-          // window, which delivers it.
-          if (grew && !target.slice(commonPrefixLen(injectedText, target)).trim()) {
-            injectedText = target;
+          // The baseline can lag behind the window, though: a phrase from before it that was
+          // skipped in our own window keeps it there for the rest of the document (see the
+          // landed copy below). Only whitespace past this window's last landed copy (the same
+          // text to copy again) drops the suffix then too, and the baseline stays put: that
+          // earlier phrase is still owed, and no copy of this window carries it. Real text past
+          // both (a phrase of this window skipped in our own window) still copies the window,
+          // which delivers it.
+          const suffixOnly = !target.slice(commonPrefixLen(injectedText, target)).trim();
+          const copiedAlready = clipLastCopy?.from === clipFrom && clipLastCopy.text === phraseClip;
+          if (grew && (suffixOnly || copiedAlready)) {
+            if (suffixOnly) injectedText = target;
           } else if (phraseClip.length > 0 && grew) {
             // Our own window: the guard copies nothing there, so the window is owed before its
             // translate rather than translated for a copy that never happens (the typed branch
@@ -2502,6 +2517,7 @@ async function ensureListeners(): Promise<void> {
             if (!t.isSelf && landed) {
               // A release's own window is already closed (above, or by the baseline it moved).
               if (!reopen) clipLanded = true;
+              clipLastCopy = { from: clipFrom, text: phraseClip };
               sessionClipboard = true;
               signalInsert("clipboard");
               // The copy re-sends its whole window, so an earlier phrase of it skipped in our own
@@ -3015,6 +3031,7 @@ async function ensureListeners(): Promise<void> {
         // pre-empts).
         clipBooked = null;
         clipLanded = false;
+        clipLastCopy = null;
         flushClipByLang();
         if (cfg?.live) {
           noteDivergence("boundary", injectedText, docAtBreak, null);

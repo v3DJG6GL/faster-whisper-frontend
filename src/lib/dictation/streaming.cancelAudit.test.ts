@@ -695,7 +695,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const run = new Function(
       "reopen", "reopenClip", "plainClip", "reopenStartRaw", "plainStartRaw", "lead", "grew", "target", "base", "commonPrefixLen", "t", "calls",
       `const cfg = {};\nconst insertCfg = cfg;\nconst uttRec = null, uttFrom = 0, queuedAtEnqueue = 0, utterance = null;\n` +
-        `let injectedText = base, clipLanded = false, sessionClipboard = false, clipDirty = false, lastPhraseDiverted = false;\n` +
+        `let injectedText = base, clipLanded = false, clipLastCopy = null, sessionClipboard = false, clipDirty = false, lastPhraseDiverted = false;\n` +
         `const translatePhrase = async (text) => { calls.push("translate " + text); return { text, translated: false }; };\n` +
         `const copyForTarget = async (text) => { calls.push("copy " + text); return { landed: true }; };\n` +
         `const signalInsert = (k) => calls.push("pulse " + k);\n` +
@@ -723,6 +723,55 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const calls: string[] = [];
     expect(await run(null, "", "Hello world.", 0, 0, 1, true, "Hello world.\n", "", commonPrefixLen, t, calls)).toBe("Hello world.\n");
     expect(calls).toEqual(["translate Hello world.", "copy Hello world.", "pulse clipboard"]);
+  });
+
+  it("a clipboard suffix-only final is not re-copied when an earlier phrase left the typed baseline behind its window", async () => {
+    // "A." skipped in our own window keeps the typed baseline short of every later window for the
+    // rest of the document (the landed copy cannot move it over "A."), so the suffix test against
+    // that baseline never held: each suffix-only final re-copied its window — and re-translated it
+    // in a translated session — over whatever the user copied since. That copy carries nothing
+    // new either: "A." lies before the window.
+    // Runs the clipboard branch as plain JS, the window's last landed copy carried from run to run.
+    const branch = bodyAfter(finalBody, "if (useClipboard) ");
+    const run = new Function(
+      "reopen", "reopenClip", "plainClip", "reopenStartRaw", "plainStartRaw", "lead", "grew", "target", "base", "lastCopy", "commonPrefixLen", "t", "calls",
+      `const cfg = {};\nconst insertCfg = cfg;\nconst uttRec = null, uttFrom = 0, queuedAtEnqueue = 0, utterance = null;\n` +
+        `let injectedText = base, clipLanded = false, clipLastCopy = lastCopy, sessionClipboard = false, clipDirty = false, lastPhraseDiverted = false;\n` +
+        `const translatePhrase = async (text) => { calls.push("translate " + text); return { text, translated: false }; };\n` +
+        `const copyForTarget = async (text) => { calls.push("copy " + text); return { landed: true }; };\n` +
+        `const signalInsert = (k) => calls.push("pulse " + k);\n` +
+        `const oweUtterance = () => {}, bookOwedUtterances = () => {}, bookUtteranceInsert = () => {}, noteDivergence = () => {}, logLine = () => {}, flashError = () => {}, teardownAfterFatalInject = () => {};\n` +
+        `return (async () => ${branch})().then(() => ({ injectedText, clipLastCopy }));`,
+    ) as (reopen: { landed: boolean } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, lastCopy: { from: number; text: string } | null, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<{ injectedText: string; clipLastCopy: { from: number; text: string } | null }>;
+    const t = { isSelf: false };
+    // committedDoc " A. B.": the pause closed "A." (owed), and "B." is copied into an app. Its
+    // window starts at 3 (2 in `target`), past the typed baseline "", which stays put.
+    const calls: string[] = [];
+    const copied = await run(null, "", "B.", 0, 3, 1, true, "A. B.", "", null, commonPrefixLen, t, calls);
+    expect(calls).toEqual(["translate B.", "copy B.", "pulse clipboard"]);
+    expect(copied.injectedText).toBe("");
+    // The server's "\n" then arrives in its own final, in the open window and as a release that
+    // reopens the window the pause closed.
+    for (const reopen of [null, { landed: true }]) {
+      calls.length = 0;
+      const after = await run(reopen, "B.", "B.", 3, 3, 1, true, "A. B.\n", copied.injectedText, copied.clipLastCopy, commonPrefixLen, t, calls);
+      expect(calls, `the suffix final ${reopen ? "reopening the closed window" : "in the open window"}`).toEqual([]);
+      // "A." is still owed: the next typed insert re-sends it.
+      expect(after.injectedText).toBe("");
+    }
+    // Real text past the window's last copy (a phrase of it skipped in our own window) still
+    // copies the window, which delivers it.
+    calls.length = 0;
+    await run(null, "", "B. C.", 0, 3, 1, true, "A. B. C.\n", "", copied.clipLastCopy, commonPrefixLen, t, calls);
+    expect(calls).toEqual(["translate B. C.", "copy B. C.", "pulse clipboard"]);
+    // The same words in the next window, after a pause, are new speech: they are copied.
+    calls.length = 0;
+    await run(null, "", "B.", 0, 6, 1, true, "A. B. B.", "", copied.clipLastCopy, commonPrefixLen, t, calls);
+    expect(calls).toEqual(["translate B.", "copy B.", "pulse clipboard"]);
+    // A hard break and every start and abandon forget the copy with its window.
+    const boundaryLink = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>"));
+    expect(boundaryLink).toContain("clipLastCopy = null;");
+    expect(mask(fns.clearPhraseEnd)).toContain("clipLastCopy = null;");
   });
 
   it("a release final (no utterance ordinal) doesn't end the open utterance", () => {
