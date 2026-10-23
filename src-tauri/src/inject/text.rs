@@ -3,6 +3,7 @@
 
 use crate::commands::{own_window_focused, read_selection_bounded};
 use crate::inject::wayland::WaylandTyper;
+use crate::inject::{sink_gate, SinkGate};
 use tauri::{AppHandle, Manager, State};
 
 /// How long a manufactured-stop latch stays valid — see `hotkeys::held_keys::take_lost_if_fresh`.
@@ -645,15 +646,13 @@ pub(crate) async fn inject_text(
             // session lost its transcript instead of leaving it recoverable. A withheld insert has
             // nothing for that recovery to keep (it skips it), so any cancel stops it before the
             // write, as the X11/Windows paste does.
-            if crate::inject::injection_cancelled(epoch)
-                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
-            {
-                tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-                return Ok(InjectOutcome {
-                    landed: true,
-                    diverted: false,
-                });
-            }
+            //
+            // Read AFTER the own-window probe below (`clipboard_write_gate`), as the X11/Windows
+            // paste does: the probe is a main-thread round trip, and a cancel from the hotkey or
+            // the tray landing during it (focus stays in the target app, so it answers false)
+            // otherwise still wrote the discarded transcript. The settle check's restore cannot
+            // undo that write when there is no `prev` to restore.
+            //
             // Own-window re-check, at the sink rather than at the top of the function. The guard
             // that decides "our own window took focus" runs up to ~0.4s+ earlier: the latch
             // consume, the focus read and up to 400ms of bounded prev-clipboard read sit between
@@ -666,7 +665,20 @@ pub(crate) async fn inject_text(
             // READ), so the caller re-sends and no text is duplicated. This does not strand the
             // held-chord latch — if it had been armed, `method` would already be "clipboard" and
             // this branch is unreachable.
-            if own_window_focused(&app) {
+            let gate = clipboard_write_gate(
+                || own_window_focused(&app),
+                || crate::inject::injection_cancelled(epoch),
+                || crate::inject::cancel_wants_recovery(epoch),
+                withhold_on_divert,
+            );
+            if gate == SinkGate::Cancelled {
+                tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
+                return Ok(InjectOutcome {
+                    landed: true,
+                    diverted: false,
+                });
+            }
+            if gate == SinkGate::OwnWindow {
                 tracing::info!(
                     "[inject] skipped at the clipboard write: our own window took focus"
                 );
@@ -987,6 +999,21 @@ pub(crate) fn settle_outcome(
     outcome
 }
 
+/// The Wayland paste arm's gate at the clipboard write: [`sink_gate`] (probe first, cancel after)
+/// with that arm's cancel term. A user cancel, or any cancel of a withheld insert, skips the write;
+/// an error abort that wants recovery does not, so the write or the own-window arm's recovery keeps
+/// the transcript.
+fn clipboard_write_gate(
+    own_window: impl FnOnce() -> bool,
+    cancelled: impl FnOnce() -> bool,
+    wants_recovery: impl FnOnce() -> bool,
+    withhold_on_divert: bool,
+) -> SinkGate {
+    sink_gate(own_window, || {
+        cancelled() && (!wants_recovery() || withhold_on_divert)
+    })
+}
+
 /// The clipboard form of a sanitized transcript `text` (see `inject_text`'s `clipboard_text`):
 /// the caller's string, sanitized exactly as `text` is, or `text` itself when there is none. Also
 /// `text` when either side is empty — an empty form would make a divert write nothing while
@@ -1012,7 +1039,49 @@ fn divert_outcome(text: &str) -> InjectOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{clipboard_form, divert_outcome};
+    use super::{clipboard_form, clipboard_write_gate, divert_outcome};
+    use crate::inject::SinkGate;
+
+    /// The Wayland paste arm read the cancel BEFORE its clipboard-write own-window probe (a
+    /// main-thread round trip) and never again before the write: a cancel from the hotkey or the
+    /// tray landing during the probe (focus stays in the target app, so it answers false) still
+    /// wrote the discarded transcript over what the user had copied.
+    #[test]
+    fn a_cancel_during_the_clipboard_write_probe_skips_the_write() {
+        use std::cell::Cell;
+        for own in [true, false] {
+            let cancelled = Cell::new(false);
+            let gate = clipboard_write_gate(
+                || {
+                    cancelled.set(true); // the cancel lands while the probe runs
+                    own
+                },
+                || cancelled.get(),
+                || false, // a user cancel: no recovery wanted
+                false,
+            );
+            assert_eq!(gate, SinkGate::Cancelled, "own={own}");
+        }
+        // A withheld insert has nothing to recover: any cancel skips its write.
+        assert_eq!(
+            clipboard_write_gate(|| false, || true, || true, true),
+            SinkGate::Cancelled
+        );
+        // An error abort that wants recovery is not skipped here: the write keeps the transcript,
+        // or the own-window arm recovers it.
+        assert_eq!(
+            clipboard_write_gate(|| false, || true, || true, false),
+            SinkGate::Proceed
+        );
+        assert_eq!(
+            clipboard_write_gate(|| true, || true, || true, false),
+            SinkGate::OwnWindow
+        );
+        assert_eq!(
+            clipboard_write_gate(|| true, || false, || false, false),
+            SinkGate::OwnWindow
+        );
+    }
 
     /// A bare auto-Enter that reaches the divert arm (focus moved, modifiers stuck) pressed no
     /// Return: not landed, not diverted. A transcript there is on the clipboard: landed, diverted.
