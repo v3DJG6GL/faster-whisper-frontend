@@ -1266,7 +1266,8 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
  *  quotation: a typographic opener (”“ ’‘ »«, also after a closing ASCII quote) anywhere in
  *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见, also
- *  after a letter or digit: iPhone"新機能", unless it may close an uncounted one: skippedOpener)
+ *  after a letter or digit: iPhone"新機能", unless it may close an uncounted one: skippedOpener;
+ *  a typographic “ there too when a ” closes it later: iPhone“灵动岛”)
  *  and only when it opens (an even count of its kind so far and a later partner). Either
  *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
  *  before it and a line or part ended on it. */
@@ -1286,6 +1287,9 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         if (closer && /\p{Pi}/u.test(t[j])) for (e = j; e < end && /\p{Pi}/u.test(t[e]); ) e++;
         else if (j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1
           && (closer || (/[\p{L}\p{N}]/u.test(p) && !skippedOpener(t, flags, j, q)))) e = end;
+        // A typographic “ glued to a word or number ("2024“春晚”", iPhone“灵动岛”) opens when a ”
+        // closes it: German and Czech close with “ („Hallo“東京) and never write ”.
+        else if (j === end - 1 && t[j] === "\u201c" && /[\p{L}\p{N}]/u.test(p) && /^[^\u201c\u201e]*\u201d/u.test(t.slice(end))) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;

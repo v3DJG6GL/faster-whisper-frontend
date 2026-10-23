@@ -715,6 +715,39 @@ describe("wrapLines", () => {
       "ー".repeat(7) + "い",
     ]);
   });
+  it("shape matrix: a typographic “ glued to a Latin word or number in CJK text rides with what it opens", () => {
+    // Only the ASCII spelling (iPhone"新機能") was split off the word: a line or part ended on “.
+    const chun = "他们在2024“春晚”上表演了节目";
+    expect(cutByShare(chun, [1, 2], "zh")).toEqual(["他们在2024", "“春晚”上表演了节目"]);
+    // At an even share the cut lands inside the quotation, as it does after an opening bracket.
+    expect(cutByShare(chun, [1, 1], "zh")).toEqual(["他们在2024“春", "晚”上表演了节目"]);
+    for (const cpl of [10, 12, 13, 14, 16]) expect(wrapLines(chun, cpl, 2, 0, undefined, "zh")).toEqual(["他们在2024", "“春晚”上表演了节目"]);
+    const iphone = "苹果今天发布了iPhone“灵动岛”新功能，大家都很喜欢";
+    for (const cpl of [8, 10]) {
+      expect(wrapLines(iphone, cpl, 2, 0, undefined, "zh")).toEqual(["苹果今天发布了", "iPhone", "“灵动岛”新功", "能，大家都很喜欢"]);
+    }
+    expect(wrapLines(iphone, 14, 2, 0, undefined, "zh")).toEqual(["苹果今天发布了iPhone", "“灵动岛”新功", "能，大家都很喜欢"]);
+    expect(wrapLines(iphone, 16, 2, 0, undefined, "zh")).toEqual(["苹果今天发布了iPhone", "“灵动岛”新功能，大家都很喜欢"]);
+    const gpt = "我们都用了ChatGPT“写作”模式来完成作业";
+    expect(cutByShare(gpt, [1, 1], "zh")).toEqual(["我们都用了ChatGPT", "“写作”模式来完成作业"]);
+    expect(wrapLines(gpt, 8, 2, 0, undefined, "zh")).toEqual(["我们都用了", "ChatGPT", "“写作”模", "式来完成作业"]);
+    for (const cpl of [12, 13, 14, 16]) expect(wrapLines(gpt, cpl, 2, 0, undefined, "zh")).toEqual(["我们都用了ChatGPT", "“写作”模式来完成作业"]);
+    // Unchanged: a German “ closes („Hallo“), an ASCII opener, a “ after a space, and a “ no ”
+    // closes later in the text.
+    expect(cutByShare("„Hallo“東京", [1, 1], "de")).toEqual(["„Hallo“", "東京"]);
+    expect(wrapLines("„Hallo“東京", 8, 2, 0, undefined, "de")).toEqual(["„Hallo“", "東京"]);
+    expect(cutByShare("Er sagte „Hallo“東京に行きました", [1, 1], "de")).toEqual(["Er sagte", "„Hallo“東京に行きました"]);
+    expect(wrapLines("Er sagte „Hallo“東京に行きました", 12, 2, 0, undefined, "de")).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
+    const ascii = '苹果今天发布了iPhone"新機能"，大家都很喜欢';
+    expect(cutByShare(ascii, [1, 2], "zh")).toEqual(["苹果今天发布了", 'iPhone"新機能"，大家都很喜欢']);
+    expect(wrapLines(ascii, 14, 2, 0, undefined, "zh")).toEqual(["苹果今天发布了iPhone", '"新機能"，大家都很喜欢']);
+    const spacedOpen = "苹果今天发布了iPhone “灵动岛”新功能，大家都很喜欢";
+    expect(cutByShare(spacedOpen, [1, 2], "zh")).toEqual(["苹果今天发布了iPhone", "“灵动岛”新功能，大家都很喜欢"]);
+    expect(wrapLines(spacedOpen, 16, 2, 0, undefined, "zh")).toEqual(["苹果今天发布了iPhone", "“灵动岛”新功能，大家都很喜欢"]);
+    const unclosed = "他们在2024“春晚上表演了节目和很多东西";
+    expect(cutByShare(unclosed, [1, 2], "zh")).toEqual(["他们在2024“", "春晚上表演了节目和很多东西"]);
+    expect(wrapLines(unclosed, 8, 2, 0, undefined, "zh")).toEqual(["他们在2024“", "春晚上表演了", "节目和很多东西"]);
+  });
   it("a German closing quote stays on its word before a glued CJK run", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
