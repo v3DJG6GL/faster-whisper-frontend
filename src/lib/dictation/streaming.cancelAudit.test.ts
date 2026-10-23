@@ -763,7 +763,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
     // Hoisted above the try, so the catch's recovery copy reads the same form.
     // An untranslated phrase's clipboard form drops its seam space; a whitespace-only form falls back to text.
-    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut\.trim\(\);\s*const clipboardText = clipForm && clipForm !== typeOut \? clipForm : undefined;\s*try \{\s*\(\{ landed, diverted \} = await $/);
+    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut\.trim\(\);\s*const clipboardText = clipForm && clipForm !== typeOut \? clipForm : undefined;\s*const spacingOnly = !typeOut\.trim\(\);\s*try \{\s*\(\{ landed, diverted \} = await $/);
     // …and nothing after it copies the phrase a second time. A JS re-copy after the await never
     // ran for an error-abort recovery (the teardown nulls insertCfg first) and, for a divert,
     // left a gapped duplicate in the clipboard history. The failed-insert catch's recovery copy
@@ -1005,8 +1005,26 @@ describe("work that must wait for the queue or the cancel", () => {
     const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(task.slice(call, task.indexOf("});", call))).toContain("withholdOnDivert: true");
-    // Only the separator: the auto-Enter calls (empty text) and every phrase insert keep the divert.
-    expect(mask(streamingSrc).match(/withholdOnDivert/g) ?? []).toHaveLength(1);
+    // Only the separator and a whitespace-only phrase (next test): the auto-Enter calls (empty
+    // text) and every phrase with words keep the divert.
+    expect(mask(streamingSrc).match(/withholdOnDivert/g) ?? []).toHaveLength(2);
+  });
+
+  it("a whitespace-only live phrase withholds itself instead of diverting, and is never recovered to the clipboard", () => {
+    // A final that only appends the server's output_suffix has no clipboard form, so Rust's fell
+    // back to the bare "\n" or " ": a divert made it the clipboard's owner over the user's copy
+    // (or the block diverted just before it), and a failed insert's recovery copied it with an
+    // "it's on the clipboard" flash. A word-less "?" is not whitespace and keeps both.
+    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    const call = final.indexOf("injectText({ text: typeOut, clipboardText,");
+    expect(call, "the live phrase insert moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(final.slice(0, call)).toMatch(/const spacingOnly = !typeOut\.trim\(\);/);
+    expect(final.slice(call, final.indexOf("}));", call))).toMatch(/, withholdOnDivert: spacingOnly $/);
+    // The catch tears down as before, without the copy (or its flash) for whitespace.
+    const catchBody = bodyAfter(final.slice(call), "catch (e) ");
+    expect(catchBody).toMatch(/const recoverable = !spacingOnly && await recoverToClipboard\(/);
+    expect(catchBody).toMatch(/recoverable\s+\? t\.method/);
+    expect(catchBody).toContain("teardownAfterFatalInject();");
   });
 
   it("a separator whose paste fails gives the user's copy back from the snapshot", () => {

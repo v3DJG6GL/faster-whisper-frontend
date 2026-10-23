@@ -2616,10 +2616,19 @@ async function ensureListeners(): Promise<void> {
             // it is pasted somewhere new. The clipboard-only method never reaches this branch:
             // holdCoerced routes it to the window copy above, which copies the whole quiet
             // window, trimmed, and replaces the clipboard each time.
+            //
+            // A whitespace-only phrase (an untranslated final that only appends the server's
+            // output_suffix) has no clipboard form: Rust's would fall back to the bare "\n" or " ",
+            // and a divert made that the clipboard's owner over the user's copy, or over the phrase
+            // diverted just before it that they were told to paste, then stood the tail's Enter
+            // down for it. Like the hard-break separator it has nothing to recover, so it is
+            // withheld instead: `landed: false` leaves the baseline un-advanced, and the whitespace
+            // goes out with the next delivered insert.
             const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
+            const spacingOnly = !typeOut.trim();
             try {
-              ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
+              ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: spacingOnly }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -2643,8 +2652,10 @@ async function ensureListeners(): Promise<void> {
               // gap, a plain phrase without its seam space): like the clipboard-only branch, the
               // clipboard is replaced, not appended to.
               // The same clipboard form Rust's own divert and recovery writes take — the
-              // `clipboardText` passed above, hoisted so both read one rule.
-              const recoverable = await recoverToClipboard(
+              // `clipboardText` passed above, hoisted so both read one rule. Whitespace alone is
+              // not copied: it would replace the user's clipboard with a lone "\n" and flash
+              // "it's on the clipboard" for nothing. The teardown below still runs.
+              const recoverable = !spacingOnly && await recoverToClipboard(
                 clipboardText ?? typeOut,
                 t,
                 t.method === "direct" ? "failed live insert" : "failed paste",
