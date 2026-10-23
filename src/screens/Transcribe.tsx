@@ -2129,11 +2129,12 @@ export default function Transcribe() {
         // files in the same run keep the full pipeline rail.
         const forText = panelKind === "text";
         const panelUrlMeta = panelItem ? urlMeta[panelItem.path] : undefined;
-        // A link whose site tracks are used translates only to the targets the site
-        // lacks (runLink's per-link rewrite, shared via linkTranslateTo): with every target
-        // covered there is no Translating stage, so the rail must not show one and paint it done.
+        // A link translates only to the targets the site lacks when its site tracks are used,
+        // and never into its own spoken language (runLink's per-link rewrite, shared via
+        // linkTranslateTo): with no target left there is no Translating stage, so the rail must
+        // not show one and paint it done.
         const panelOptions =
-          forUrl && panelUrlMeta?.siteSubs && runOptions
+          forUrl && runOptions
             ? { ...runOptions, translateTo: linkTranslateTo(runOptions, panelUrlMeta) }
             : runOptions;
         // A link answered by the site's own transcript track runs no audio stage — unless the

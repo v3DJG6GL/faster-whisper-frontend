@@ -29,13 +29,13 @@ import type {
 } from "./types";
 import { isVideoSourcePath, siteDisplayName, stampCopyPath, withoutCopyPath } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
-import { applyMultilingual, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
+import { applyMultilingual, languageCodeOf, namedLanguage, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
 import { trText } from "./transcript/cueSplit";
 import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
-import { wireCodes } from "./translationTargets";
+import { pruneTargets, wireCodes } from "./translationTargets";
 import { TRANSLATE_CHUNK_CHARS } from "./retroTranslate";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
@@ -2304,16 +2304,25 @@ export async function withSiteTracks(
 }
 
 /** The translation targets a link run actually sends: with the site's own tracks in use, only
- *  the targets the site lacks (`mtTargets`, possibly none); else the run's own. A backend without
+ *  the targets the site lacks (`mtTargets`, possibly none — the plan already leaves the link's
+ *  language out); else the run's own, less the link's own spoken language when it names one (frozen
+ *  at Add link: picked, detected or named by the site). The run's list is pruned of the SCREEN's
+ *  source only, so an English link on a German screen with an "en" chip sent translate_to ["en"]:
+ *  an en→en copy track, and a warm-up of the translation model for nothing. A backend without
  *  a T2T stage (`translateTo` undefined) sends nothing, even with a site plan frozen at Add link on
  *  one that had it; chips cleared after Add (`[]`) still send the frozen `mtTargets`. Shared by
- *  runLink and the run panel's rail, so the rail never shows a Translating stage the run skips. */
+ *  runLink, the warm-up and the run panel's rail, so the rail never shows a Translating stage the
+ *  run skips. */
 export function linkTranslateTo(
   opts: TranscribeOptions,
-  meta?: { siteSubs?: SiteSubsRun },
+  meta?: { siteSubs?: SiteSubsRun; spokenLanguage?: string },
 ): string[] | undefined {
   const site = meta?.siteSubs;
-  return site && opts.translateTo !== undefined ? site.mtTargets : opts.translateTo;
+  if (opts.translateTo === undefined) return undefined;
+  if (site) return site.mtTargets;
+  // As the screen's known source: a named code, never auto-detect or Multiple languages.
+  const own = meta?.spokenLanguage ? languageCodeOf(meta.spokenLanguage) : "";
+  return namedLanguage(own) ? pruneTargets(opts.translateTo, own) : opts.translateTo;
 }
 
 /** The link card's prefetched media id, only when the run goes to the backend that issued it:

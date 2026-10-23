@@ -179,6 +179,21 @@ describe("railStages", () => {
     // No site plan: the run's own targets.
     expect(linkTranslateTo(opts, {})).toEqual(["de"]);
   });
+  it("a link without a site plan never translates into its own spoken language", () => {
+    // Screen German, chip "en", an English link the site sends no tracks for: no en→en copy track.
+    expect(linkTranslateTo({ translateTo: ["en"] }, { spokenLanguage: "en" })).toEqual([]);
+    expect(railStages({ translateTo: linkTranslateTo({ translateTo: ["en"] }, { spokenLanguage: "en" }) }, true, false)).not.toContain("translating");
+    expect(linkTranslateTo({ translateTo: ["en", "fr"] }, { spokenLanguage: "en" })).toEqual(["fr"]);
+    // No named language (the screen's, auto-detect, Multiple languages): the run's own targets.
+    expect(linkTranslateTo({ translateTo: ["en"] }, {})).toEqual(["en"]);
+    expect(linkTranslateTo({ translateTo: ["en"] }, { spokenLanguage: "auto" })).toEqual(["en"]);
+    expect(linkTranslateTo({ translateTo: ["en"] }, { spokenLanguage: MULTI_LANGUAGE })).toEqual(["en"]);
+    // A backend without a T2T stage still sends nothing.
+    expect(linkTranslateTo({}, { spokenLanguage: "en" })).toBeUndefined();
+    // A site plan still sends its frozen targets (derive() already left the link's language out).
+    const site = { fetch: ["de"], transcriptTrackId: null, mtTargets: ["fr"] };
+    expect(linkTranslateTo({ translateTo: ["en", "fr"] }, { siteSubs: site, spokenLanguage: "en" })).toEqual(["fr"]);
+  });
   it("text sources run the translating stage alone", () => {
     expect(railStages(undefined, false, true)).toEqual(["translating"]);
     expect(railStages({ separateBgm: true, translateTo: ["de"] }, true, true)).toEqual(["translating"]);
