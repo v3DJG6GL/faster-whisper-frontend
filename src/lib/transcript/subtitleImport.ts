@@ -309,6 +309,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
 
 /** "Ein- und Ausgang" keeps its hyphen: the next line opens with a conjunction. */
 const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
+/** A line that is never a hyphenated word's second half, whatever its markup-free text: a
+ *  `<v Name>` voice tag opens a new turn ("I was going to-" / "<v Bob>what?" is an interruption),
+ *  and our VTT export's `.mt` class marks a translation line under its original. */
+const NEW_TURN_LINE = /^<v[\s.]|<c\.mt[\s.>]/;
 /** One piece of bareLine's markup: a tag, an inline timestamp, an ASS override block. */
 const MARKUP_PIECE = String.raw`${MARKUP_TAG.source}|<\d+:\d+(?::\d+)?(?:\.\d+)?>|\{\\[^}]{0,64}\}`;
 /** A line's last hyphen and the markup after it: a line wrapped in its own tag (`<i>journa-</i>`)
@@ -348,7 +352,7 @@ export function fixBroadcasterText(lines: string[]): string[] {
     // Judged on the lines without their markup: broadcaster files often wrap each line in its
     // own colour or italic tag, and the raw line then ends on "</font>", the next opens with "<font".
     const bare = bareLine(line).trimStart();
-    if (prev !== undefined && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare)) {
+    if (prev !== undefined && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare) && !NEW_TURN_LINE.test(line)) {
       out[out.length - 1] = prev.replace(HYPHEN_THEN_MARKUP, (_, tail: string) => tail.replace(MARKUP_OR_BLANK, "$1")) + line;
     } else {
       out.push(line);

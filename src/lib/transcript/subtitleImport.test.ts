@@ -573,6 +573,29 @@ describe("site subtitle cleanup", () => {
     // A conjunction after the tag still keeps the hyphen.
     expect(srt("<i>Ein- </i>", "<i>und Ausgang</i>")).toBe("Ein- und Ausgang");
   });
+  it("a line opening a voice turn or holding our .mt translation is never a hyphenated word's second half", () => {
+    const vtt = (...lines: string[]) =>
+      parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${lines.join("\n")}\n`).segments.map((s) => [s.speaker ?? null, s.text]);
+    // Colour, italic and plain wraps still rejoin.
+    expect(vtt("<c.yellow>Ein journa-</c>", "<c.white>listisch</c>")).toEqual([[null, "Ein journalistisch"]]);
+    expect(vtt("<i>Kranken-</i>", "<i>haus</i>")).toEqual([[null, "Krankenhaus"]]);
+    expect(vtt("Ein journa-", "listischer Text")).toEqual([[null, "Ein journalistischer Text"]]);
+    expect(vtt("<v Bob>Ein journa-", "listischer Text</v>")).toEqual([["Bob", "Ein journalistischer Text"]]);
+    expect(vtt("Hallo", "<c.mt>a journa-", "listic text</c>")).toEqual([[null, "Hallo a journalistic text"]]);
+    // A voice tag opens a new turn: the interruption keeps its dash and nothing glues.
+    expect(vtt("I was going to-", "<v Bob>what?")).toEqual([[null, "I was going to- what?"]]);
+    expect(vtt("<v Alice>so a self-", "<v Bob>what?")).toEqual([["Alice", "so a self-"], ["Bob", "what?"]]);
+    expect(vtt("<v Alice>so a self-</v>", "<v Bob>what?</v>")).toEqual([["Alice", "so a self-"], ["Bob", "what?"]]);
+    expect(vtt("<v Alice>Ich war im Kranken-", "<v Bob>haus?")).toEqual([["Alice", "Ich war im Kranken-"], ["Bob", "haus?"]]);
+    expect(vtt("<v Anna>Ich bin gera-</v>", "<v Anna>de da</v>")).toEqual([["Anna", "Ich bin gera-"], ["Anna", "de da"]]);
+    expect(vtt("<v.loud Anna>Ich bin gera-</v>", "<v.loud Anna>de da</v>")).toEqual([["Anna", "Ich bin gera-"], ["Anna", "de da"]]);
+    // Our VTT export's translation line under an original that ends on a dash.
+    expect(vtt("Ich wollte gera-", "<c.mt>i wanted to</c>")).toEqual([[null, "Ich wollte gera- i wanted to"]]);
+    expect(vtt("Ich wollte gera-", "<c.mt.mt-en>i wanted to</c>")).toEqual([[null, "Ich wollte gera- i wanted to"]]);
+    expect(vtt("<c.spk1>Ich wollte gera-</c>", "<c.mt.spk1>i wanted to</c>")).toEqual([[null, "Ich wollte gera- i wanted to"]]);
+    expect(vtt("<v Bob>Ich wollte gera-</v>", "<c.mt>i wanted to</c>")).toEqual([["Bob", "Ich wollte gera- i wanted to"]]);
+    expect(vtt("<c.spk1>bob:</c> Ich wollte gera-", "<c.spk1>bob:</c> <c.mt>i wanted to</c>")).toEqual([["bob", "Ich wollte gera- bob: i wanted to"]]);
+  });
   it("character references decode after the tags go: &nbsp; is a space, &lt;i&gt; stays text", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");
