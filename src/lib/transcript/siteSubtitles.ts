@@ -690,6 +690,13 @@ export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: Site
   return promote(input, m, fromMap(input, { ...st, policy, sel: { ...m.snap } }, allTargets(m)));
 }
 
+/** The "Download existing subtitles" switch. Off, the panel hands the chips to the plain picker,
+ *  whose targets are yours from then on: none stays one Custom only promoted, for a later preset
+ *  to take out of the saved list. */
+export function setSubs(input: SiteSubsInput, st: SiteSubsState, subs: boolean): SiteChange {
+  return { state: { ...st, subs, ...(subs ? {} : { promoted: [] }) }, targets: [...input.targets] };
+}
+
 /** "Translate into" for one language: picking it means machine-translating into it. */
 export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: string, on?: boolean): SiteChange {
   // Switching on reads only the target map: the model (a whole render) is built only to tell

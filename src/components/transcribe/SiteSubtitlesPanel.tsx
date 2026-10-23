@@ -11,7 +11,7 @@ import { FieldTrigger, IconButton, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
 import {
-  SITE_POLICIES, addLanguage, flip, listedLanguages, mtUsed, pickPolicy, removeLanguage,
+  SITE_POLICIES, addLanguage, flip, listedLanguages, mtUsed, pickPolicy, removeLanguage, setSubs,
   type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState, type SiteSubsView,
 } from "@/lib/transcript/siteSubtitles";
 
@@ -64,7 +64,7 @@ export function SiteSubtitlesPanel({
         <label className="inline-flex items-center gap-2 text-[12.5px] text-text">
           <Toggle
             checked={state.subs}
-            onChange={(subs) => onChange(keep({ subs }))}
+            onChange={(subs) => onChange(setSubs(input, state, subs))}
             disabled={disabled}
             ariaLabel="Download existing subtitles"
           />

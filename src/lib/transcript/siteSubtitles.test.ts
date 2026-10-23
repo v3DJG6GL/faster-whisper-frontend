@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -596,6 +596,20 @@ describe("tracks and switches", () => {
     [i, st] = apply(i, pickPolicy(i, st, "generate"));
     expect(i.targets).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
     expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
+  });
+  it("a language Custom promoted is yours once the site subtitles are switched off: a later preset keeps it", () => {
+    // With the switch off the plain picker owns the chips, and a promoted fr there is an ordinary
+    // target the run machine-translates; a preset after switching back on took it out of the list.
+    const inp = input({ tracks: [tr("en", "en"), tr("fr", "fr")], spoken: "en", targets: ["de"], maxTargets: 1 });
+    let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    expect(i.targets).toEqual(["de", "fr"]);
+    expect(st.promoted).toEqual(["fr"]);
+    [i, st] = apply(i, setSubs(i, st, false));
+    expect(st.promoted).toEqual([]);
+    [i, st] = apply(i, setSubs(i, st, true));
+    [i, st] = apply(i, pickPolicy(i, st, "generate"));
+    expect(i.targets).toEqual(["de", "fr"]);
+    expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["de", "fr"]));
   });
   it("switching off a site track drops its language when the translation limit leaves no slot", () => {
     // Prefer: es comes from the site, its MT badge idle — it never counted against the limit.
