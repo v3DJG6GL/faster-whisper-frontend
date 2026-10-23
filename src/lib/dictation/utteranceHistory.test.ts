@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
+import {
+  appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, routeUtteranceClip, utteranceInsertTranslation,
+  type UtteranceClip, type UtteranceEntry,
+} from "./utteranceHistory";
 
 describe("finalDelta", () => {
   it("is what the document gained since the previous final", () => {
@@ -75,6 +78,45 @@ describe("appendTranslation", () => {
       targets: ["fr", "de"],
     });
     expect(out.text).toBe("monde\n\nWelt");
+  });
+});
+
+describe("utteranceInsertTranslation", () => {
+  // A translated hands-free session: an utterance's ordinal final typed "Hello the", then the
+  // server's release final handed its record the held-back " world".
+  const fr = { targets: ["fr"] };
+  const release = { sent: "world", delta: " world", phrase: { text: "monde", translated: true, byLang: { fr: "monde" } } };
+
+  it("a release whose utterance went in untranslated books no translation of its word alone", () => {
+    // The ordinal insert's translate timed out: the original was typed, the record holds no
+    // translation. "monde" as the record's translatedText would be all History copies.
+    const r = { result: { text: "Hello the world" }, insertMethod: "typed" as const };
+    const out = utteranceInsertTranslation(r, release, fr);
+    expect(out.translatedText).toBeUndefined();
+    expect(out).toEqual({ translationAttempted: true });
+  });
+
+  it("a release joins its utterance's translation", () => {
+    const r = {
+      result: { text: "Hello the world" },
+      insertMethod: "typed" as const,
+      translatedText: "Bonjour le",
+      translations: { fr: "Bonjour le" },
+    };
+    const out = utteranceInsertTranslation(r, release, fr);
+    expect(out.translatedText).toBe("Bonjour le monde");
+    expect(out.translations).toEqual({ fr: "Bonjour le monde" });
+  });
+
+  it("an utterance's own insert still books its translation when the release's words landed first", () => {
+    // The release final appended " world" to the record while the ordinal's translate ran.
+    const r = { result: { text: "Hello the world" }, insertMethod: "none" as const };
+    const out = utteranceInsertTranslation(
+      r,
+      { sent: "Hello the", delta: " Hello the", phrase: { text: "Bonjour le", translated: true, byLang: { fr: "Bonjour le" } } },
+      fr,
+    );
+    expect(out.translatedText).toBe("Bonjour le");
   });
 });
 

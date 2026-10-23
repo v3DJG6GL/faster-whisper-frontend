@@ -2,6 +2,7 @@
 // record per finished utterance — streaming.ts). Pure, so the seams are testable.
 import { hasOwn } from "../own";
 import { joinTranslationBlocks } from "./dictationTranslate";
+import type { TranscriptRecord } from "../transcript/transcriptHistory";
 
 /** What one `final` adds to the document: everything past where the previous final ended.
  *  The server keeps a document append-only, so this is the utterance's own text — or, for a
@@ -63,6 +64,57 @@ export function appendTranslation(
   ];
   if (langs.length + (o.original != null ? 1 : 0) < 2) return { text: appendChunk(prev.text, chunk), tracks };
   return { text: joinTranslationBlocks(langs.map((l) => tracks[l]), o.original), tracks };
+}
+
+type InsertTranslation = Pick<
+  TranscriptRecord,
+  "translatedText" | "translations" | "translationInjected" | "translationAttempted" | "translationFailure"
+>;
+
+/** What one live insert says about its utterance record's translation (streaming.ts's
+ *  bookUtteranceInsert stamps it): `delta` is the text this final added to the record, `sent`
+ *  what the insert carried, `phrase` that insert's translate, `session` the session's
+ *  translation (null = none, nothing to say). Only an insert that carried exactly this final's
+ *  words, or a reopened window that is exactly the record's text, speaks for its translation. */
+export function utteranceInsertTranslation(
+  r: Pick<TranscriptRecord, "result" | "insertMethod" | "translatedText" | "translations" | "translationTargets" | "includeOriginal">,
+  ins: { sent: string; delta: string; phrase: { text: string; translated: boolean; byLang?: Record<string, string> }; reopened?: boolean },
+  session: { targets: readonly string[]; failure?: string } | null,
+): InsertTranslation {
+  if (!session) return {};
+  const { phrase } = ins;
+  const sent = ins.sent.trim();
+  const delta = ins.delta.trim();
+  const text = (r.result?.text ?? "").trim();
+  if (sent !== delta) {
+    // A release final that reopened its clipboard window (see streaming.ts's clipClosed) re-sent
+    // the whole window, not its own words: when that window is exactly this record's text, its
+    // translation covers the record's earlier words too and replaces theirs.
+    return ins.reopened && phrase.translated && sent === text
+      ? {
+          translatedText: phrase.text.trim(),
+          translations: phrase.byLang ?? r.translations,
+          translationInjected: true,
+          translationAttempted: true,
+        }
+      : {};
+  }
+  if (!phrase.translated) return { translationAttempted: true, translationFailure: session.failure };
+  // The record's earlier words already went out untranslated (their translate failed, or a
+  // wider window carried them): this final's translation alone is not the record's, and booked
+  // as its translatedText History would copy and search only the held-back word. Leave it
+  // unbooked so the copy falls back to the whole original. `insertMethod` tells a delivered
+  // earlier insert from one still in flight, which books after the later final's text landed.
+  if (!r.translatedText && text !== delta && (r.insertMethod === "typed" || r.insertMethod === "clipboard")) {
+    return { translationAttempted: true };
+  }
+  // A release final's own words: its translation joins the record's per language — a
+  // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
+  const out = appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {
+    targets: r.translationTargets ?? session.targets,
+    original: r.includeOriginal ? (r.result?.text ?? "") : undefined,
+  });
+  return { translatedText: out.text, translations: out.tracks, translationInjected: true, translationAttempted: true };
 }
 
 /** A per-utterance clip: its .wav and measured length (null = unmeasured). */

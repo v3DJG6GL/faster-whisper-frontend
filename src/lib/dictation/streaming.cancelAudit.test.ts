@@ -1222,10 +1222,10 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(reclose).toBeGreaterThan(booking.indexOf("if (byLang) clipByLang = byLang;"));
     expect(booking.slice(reclose)).toMatch(/^live\.booked = clipBooked;\s+if \(byLang\) live\.byLang = byLang;\s+\}\s+clipBooked = null;\s+flushClipByLang\(\);/);
     expect(finalBody).toContain('bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!live);');
-    // Its History record takes the whole window's translation when the window is exactly its text.
+    // Its History record takes the whole window's translation when the window is exactly its text
+    // (utteranceInsertTranslation — its rule is tested in utteranceHistory.test.ts).
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
-    expect(book).toMatch(/const whole =\s+reopened && !own && phrase\.translated && sessionTranslation != null && sent\.trim\(\) === \(r\.result\?\.text \?\?\s+\)\.trim\(\);/);
-    expect(book).toMatch(/\.\.\.\(whole\s+\? \{\s+translatedText: phrase\.text\.trim\(\),/);
+    expect(book).toMatch(/\.\.\.utteranceInsertTranslation\(r, \{ sent, delta: rec\.delta, phrase, reopened \}, session\)/);
     // New committed speech ends the chance (the ordinal final above), so does a hard break;
     // every start and abandon.
     expect(mask(boundaryBody)).toMatch(/clipBaseline =\s+;\s+clipClosed = null;/);

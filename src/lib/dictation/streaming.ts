@@ -24,7 +24,7 @@
 import { useApp } from "../store";
 import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
-import { appendDelta, appendTranslation, finalDelta, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
+import { appendDelta, finalDelta, routeUtteranceClip, utteranceInsertTranslation, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
 import { authoredChipTag } from "../profileTag";
@@ -1030,10 +1030,10 @@ function attachUtteranceClip(id: string, clip: UtteranceClip): void {
 }
 
 /** Per-utterance sessions: stamp what one live insert did onto its utterance's record — where
- *  the text went and, when the insert carried exactly that final's text, its translation. An
- *  insert that carried more (a clipboard window spanning utterances, a hard-break carry, a
- *  retype after an own-window skip) books only where it went: that translation is not this
- *  record's alone. */
+ *  the text went and, when the insert carried exactly that final's text, its translation
+ *  (utteranceInsertTranslation). An insert that carried more (a clipboard window spanning
+ *  utterances, a hard-break carry, a retype after an own-window skip) books only where it went:
+ *  that translation is not this record's alone. */
 function bookUtteranceInsert(
   rec: { id: string | null; delta: string } | null,
   how: "typed" | "clipboard",
@@ -1045,44 +1045,14 @@ function bookUtteranceInsert(
   // already booked or owed by the final that wrote it: re-stamping it would relabel a clipboard
   // record "typed" off a carry-only insert.
   if (!rec?.id || !rec.delta.trim()) return;
-  const own = sessionTranslation != null && sent.trim() === rec.delta.trim();
-  patchRecord(rec.id, (r) => {
-    // A release final that reopened its clipboard window (see clipClosed) re-sent the whole
-    // window, not its own words: when that window is exactly this record's text, its
-    // translation covers the record's earlier words too and replaces theirs.
-    const whole =
-      reopened && !own && phrase.translated && sessionTranslation != null && sent.trim() === (r.result?.text ?? "").trim();
-    // A release final's own words: its translation joins the record's per language — a
-    // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
-    const appended =
-      own && phrase.translated
-        ? appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {
-            targets: r.translationTargets ?? sessionTranslation?.targets ?? [],
-            original: r.includeOriginal ? (r.result?.text ?? "") : undefined,
-          })
-        : null;
-    return {
-      ...r,
-      insertMethod: r.insertMethod === "typed" ? "typed" : how,
-      ...(whole
-        ? {
-            translatedText: phrase.text.trim(),
-            translations: phrase.byLang ?? r.translations,
-            translationInjected: true,
-            translationAttempted: true,
-          }
-        : !own
-          ? {}
-          : appended
-            ? {
-                translatedText: appended.text,
-                translations: appended.tracks,
-                translationInjected: true,
-                translationAttempted: true,
-              }
-            : { translationAttempted: true, translationFailure: sessionTranslateFailure ?? undefined }),
-    };
-  });
+  const session = sessionTranslation
+    ? { targets: sessionTranslation.targets, failure: sessionTranslateFailure ?? undefined }
+    : null;
+  patchRecord(rec.id, (r) => ({
+    ...r,
+    insertMethod: r.insertMethod === "typed" ? "typed" : how,
+    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, phrase, reopened }, session),
+  }));
 }
 
 /** Per-utterance sessions: this record's own insert delivered nothing, but its text stays owed
