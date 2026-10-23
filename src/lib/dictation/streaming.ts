@@ -2568,7 +2568,16 @@ async function ensureListeners(): Promise<void> {
             // doorway — and focus leaving us during it diverted the block to a clipboard write
             // nothing booked. The baseline and the carry stay put, so the next delivered insert
             // re-sends it all, as before.
+            //
+            // Except a final that only appends the server's output_suffix (" " or "\n") with no
+            // carry pending: it is dropped, like the skipped arm below drops it when our window
+            // takes focus during the await, and the baseline moves past it. Owed, its "\n" went
+            // out first in the next phrase's insert ("\n Next."), a Return submitting the field of
+            // whatever window that phrase is typed into. A translated session drops it the same
+            // way (no block, below). Only whitespace lies past the baseline then, so nothing real
+            // is dropped with it.
             if (t.isSelf) {
+              if (!carried && !toType.trim()) injectedText = target;
               oweUtterance(uttRec, uttFrom);
               return;
             }
@@ -2836,9 +2845,10 @@ async function ensureListeners(): Promise<void> {
               // and the carry stay un-advanced, so the next delivered insert re-sends this phrase.
               // Not the server's suffix alone, withheld (focus moved, the chord still held) or
               // skipped in our own window during the await: it is dropped like the stand-down
-              // above. Re-sent, its "\n" was a Return ahead of the next phrase, in whatever window
-              // that phrase goes to. No carry or owed phrase rides with it (spacingOnly), and its
-              // utterance's delta is whitespace, so it owes no record either.
+              // above and the start-time own-window skip. Re-sent, its "\n" was a Return ahead of
+              // the next phrase, in whatever window that phrase goes to. No carry or owed phrase
+              // rides with it (spacingOnly), and its utterance's delta is whitespace, so it owes no
+              // record either.
               if (spacingOnly) injectedText = target;
               oweUtterance(uttRec, uttFrom);
             }

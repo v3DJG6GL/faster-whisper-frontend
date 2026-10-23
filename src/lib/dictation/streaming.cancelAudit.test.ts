@@ -591,6 +591,41 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(owed).toEqual([5]);
   });
 
+  it("a suffix-only final resolved to our own window is dropped, so the next phrase opens without its Return", () => {
+    // The start-time own-window exit returns before the skipped arm's drop: it owed the "\n", and
+    // the next phrase, typed once focus left us, went out as "\n Next." — a Return submitting the
+    // field it was typed into.
+    // Runs the typed branch from its diff to the own-window exit as plain JS.
+    const start = finalBody.indexOf("const toType = target.slice(");
+    const end = finalBody.indexOf("const body = withCarry(", start);
+    expect(start, "the typed branch's diff moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(end, "the typed branch's own-window exit moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(start);
+    const run = new Function(
+      "target", "base", "carryText", "t", "uttRec", "uttFrom", "oweUtterance", "commonPrefixLen",
+      `let injectedText = base;\nconst out = (() => {\n${finalBody.slice(start, end)}\nreturn "insert";\n}\nreturn "nothing";\n})();\nreturn { out, injectedText };`,
+    ) as (target: string, base: string, carryText: string, t: { isSelf: boolean }, uttRec: null, uttFrom: number, oweUtterance: (rec: null, from: number) => void, cpl: typeof commonPrefixLen) => { out: string | undefined; injectedText: string };
+    const self = { isSelf: true };
+    const owed: number[] = [];
+    const owe = (_rec: null, from: number) => {
+      owed.push(from);
+    };
+    // "Hello." typed into an app; the suffix final arrives while our own window has focus.
+    for (const suffix of ["\n", " \n", " "]) {
+      const r = run("Hello." + suffix, "Hello.", "", self, null, 6, owe, commonPrefixLen);
+      expect(r.out, `${JSON.stringify(suffix)} in our own window`).toBeUndefined();
+      // Focus back on the app, the user says "Next.": its insert is the document past the baseline.
+      const next = "Hello." + suffix + " Next.";
+      expect(next.slice(commonPrefixLen(r.injectedText, next)), `the phrase after ${JSON.stringify(suffix)}`).toBe(" Next.");
+      expect(run(next, r.injectedText, "", { isSelf: false }, null, 6, owe, commonPrefixLen).out).toBe("insert");
+    }
+    // A phrase with words, or a pending carry, is still owed: the baseline waits for the next
+    // delivered insert, which re-sends it.
+    owed.length = 0;
+    expect(run("Hello. Words.", "Hello.", "", self, null, 6, owe, commonPrefixLen)).toEqual({ out: undefined, injectedText: "Hello." });
+    expect(owed).toEqual([6]);
+    expect(run("Hello.\n", "Hello.", "Carried.", self, null, 6, owe, commonPrefixLen).injectedText).toBe("Hello.");
+  });
+
   it("an untranslated suffix-only final that types books no typed phrase, so a paid Enter is not re-armed", () => {
     // A typed " " or "\n" ran the typed booking: gapOwedApps re-armed after the phrase's Return was
     // already paid (the quiet-timer Enter then sent a second, empty submit), lastTypedApp moved to
@@ -627,7 +662,8 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // re-translated everything since focus came to us on every final (GPU work growing per phrase,
     // the queue held up to the live ceiling, a timeout raising the "translation failed" doorway).
     const final = mask(finalBody);
-    const exit = /^if \(t\.isSelf\) \{\s+oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/;
+    // (The typed branch first drops a suffix-only final: see the own-window suffix test above.)
+    const exit = /^if \(t\.isSelf\) \{\s+(?:if \(!carried && !toType\.trim\(\)\) injectedText = target;\s+)?oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/;
     for (const [open, translate] of [
       ["if (phraseClip.length > 0 && grew) {", "translatePhrase(phraseClip"],
       ["if (toType.length > 0 || carried) {", "translatePhrase(body"],
@@ -640,7 +676,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
       // baseline and the carry stay put for the next delivered insert to re-send.
       expect(final.slice(at + open.length, call).trimStart(), `${translate} must follow the own-window exit`).toMatch(exit);
     }
-    expect(final.match(/if \(t\.isSelf\) \{\s+oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/g) ?? []).toHaveLength(2);
+    expect(final.match(/if \(t\.isSelf\) \{\s+(?:if \(!carried && !toType\.trim\(\)\) injectedText = target;\s+)?oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/g) ?? []).toHaveLength(2);
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
