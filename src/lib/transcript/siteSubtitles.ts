@@ -626,11 +626,12 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
     const leftIn = (x: ReturnType<typeof model>) => Object.keys(x.codeOf).some((k) => x.codeOf[k] === c && next[k]
       && !x.capped.has(keyTrack(k) ?? "") && !(k.startsWith("mt:") && x.mtCapped.has(k.slice(3))));
     // Unless the switch-off frees the slot that cap held (Custom restores its pick, preCap):
-    // ask the caps with the change in place before machine translation takes over.
+    // ask the caps with the change in place before machine translation takes over. A slot the
+    // limit hands back by taking it from another language's only source is not freed (strands).
     let left = leftIn(m);
     if (!left) {
       const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-      left = leftIn(model({ ...input, targets: trial.targets }, trial.state));
+      left = leftIn(model({ ...input, targets: trial.targets }, trial.state)) && !strands(input, st, m, next, tg, c);
     }
     if (!left) {
       if (key.startsWith("mt:")) tg[c] = false;

@@ -572,6 +572,16 @@ describe("tracks and switches", () => {
     const v = derive(i1, s1);
     expect(v.run!.mtTargets).toEqual(["ja"]);
     expect(v.chips.map((c) => c.code)).toEqual(["ja"]);
+    // Nor when its own MT, greyed by the limit, would win the slot back once the track is off:
+    // ko's machine translation holds the slot, and es's MT is kept on under it.
+    let i = input({ tracks: [tr("es1", "es"), tr("ko1", "ko")], spoken: "en", targets: ["es", "ko"], maxTargets: 1 });
+    let st = initialSiteState(i.targets);
+    for (const key of ["mt:es", "ex:ko1", "ex:es1"]) [i, st] = apply(i, flip(i, st, key));
+    expect(i.targets).toEqual(["ko"]);
+    const w = derive(i, st);
+    expect(w.run!.mtTargets).toEqual(["ko"]);
+    expect(w.chips.map((c) => c.code)).toEqual(["ko"]);
+    expect(w.chips.filter((c) => !c.parts.some((p) => p.on)).map((c) => c.code)).toEqual([]);
   });
   it("switching machine translation on at a full translation limit changes nothing", () => {
     // Prefer: es is covered by its site track, its MT badge idle; ja holds the one slot.
