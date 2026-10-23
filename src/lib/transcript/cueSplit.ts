@@ -370,6 +370,38 @@ const INITIAL = /^(?![IVX])\p{Lu}\.$/u;
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
+/** The word after text[at..), within a bounded look-ahead. */
+const wordAfter = (text: string, at: number): string => text.slice(at, at + 24).trimStart().split(/\s/)[0];
+
+/** Languages that capitalise every noun: the capitalised word before a capital and its stop
+ *  ("Plan B. Dann") says nothing of a name there. */
+const NOUN_CAPS = new Set(["de", "lb"]);
+/** Closed-class words that open a sentence but hardly ever a surname, by base language ("Option
+ *  B. Then", "Gate A. The plane" end one); a language not listed checks against them all. */
+const SENT_OPENER = new Map(Object.entries({
+  en: "the a an then after but so and or we i it it's this that that's there there's he she they you if when now next later",
+  de: "der die das dann danach aber und wir ich es er sie du wenn jetzt ein eine man",
+  fr: "le la les puis mais et nous je il elle on ensuite alors un une ce",
+  es: "el la los las luego pero y nosotros yo él ella ellos entonces después un una si",
+  it: "il lo la le gli poi ma e noi io lui lei loro allora dopo un una se",
+  nl: "de het een dan daarna maar en wij we ik hij zij ze je als nu",
+  pt: "o a os as então depois mas e nós eu ele ela eles um uma se",
+}).map(([l, ws]) => [l, new Set(ws.split(" "))]));
+const ANY_OPENER = new Set([...SENT_OPENER.values()].flatMap((ws) => [...ws]));
+
+/** The word `before` a capital and its stop makes it a name's initial: another initial ("J. K.
+ *  Rowling") in every language, a capitalised word ("John F. Kennedy") not in a language that
+ *  capitalises its nouns ("Plan B. Dann") nor when `after` (the text after the stop) opens with a
+ *  sentence opener ("Option B. Then"). */
+function nameBefore(before: string, after: string, lang?: string): boolean {
+  const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
+  if (INITIAL.test(b)) return true;
+  if (!/^\p{Lu}/u.test(b)) return false;
+  const base = primarySubtag(lang);
+  if (NOUN_CAPS.has(base)) return false;
+  const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
+  return !(SENT_OPENER.get(base) ?? ANY_OPENER).has(w);
+}
 
 /** Languages that write an ordinal with a dot ("am 3. Mai"), by base subtag. */
 const DOTTED_ORDINAL = new Set([
@@ -389,9 +421,10 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
  *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on. A
- *  name's initial goes on before a capital when a capitalised word or another initial comes
- *  before it or another initial after it ("John F. Kennedy", "J. K. Rowling"); "a plan B. Then"
- *  ends one. */
+ *  name's initial goes on before a capital when another initial comes before or after it ("J. K.
+ *  Rowling") or a capitalised word before it ("John F. Kennedy"), that one not in German or
+ *  Luxembourgish, which capitalise every noun, nor before a sentence opener (nameBefore): "a
+ *  plan B. Then", "Option B. Then" and "Plan B. Dann" end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
@@ -406,7 +439,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
   if (
     cut && INITIAL.test(raw) && /^\p{Lu}/u.test(cut.next) &&
-    (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || /^[^\p{L}\p{N}]*\p{Lu}/u.test(cut.prev ?? ""))
+    (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
   ) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
@@ -426,16 +459,17 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
 }
 
 /** A capitalised word running on into a name's initial ("John | F. Kennedy"): the seam inside the
- *  name dangles as the one after the initial does. "a plan | B." does not. */
-const beforeInitial = (prev: string, next: string): boolean =>
-  /^[^\p{L}\p{N}]*\p{Lu}/u.test(prev) && !SENT_END.test(prev) && !CLAUSE.test(prev) &&
-  INITIAL.test(next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, ""));
+ *  name dangles as the one after the initial does. "a plan | B.", "Option | B. Then" and "Plan |
+ *  B. Dann" do not (nameBefore). `after` = the text after the initial, `lang` the track's. */
+const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean =>
+  !SENT_END.test(prev) && !CLAUSE.test(prev) &&
+  INITIAL.test(next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "")) && nameBefore(prev, after, lang);
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
 
 /** Score of breaking between `prev` and `next` (words as written) in a text of `lang`; `before` =
- *  the word before `prev`. */
-function breakScore(prev: string, next: string, lang?: string, before?: string): number {
+ *  the word before `prev`, `after` the one after `next`. */
+function breakScore(prev: string, next: string, lang?: string, before?: string, after = ""): number {
   let s = 0;
   const quoted = quoteGoesOn(prev, next);
   const cut = { next, lang, prev: before };
@@ -443,7 +477,7 @@ function breakScore(prev: string, next: string, lang?: string, before?: string):
   else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
-  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next) || beforeUnit(prev, next)) s -= 80;
+  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next, after, lang) || beforeUnit(prev, next)) s -= 80;
   // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
   if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
@@ -458,7 +492,8 @@ interface Tok {
   s: number;
   e: number;
   /** Cached breakScore of the gap before this token — it depends only on the two
-   *  adjacent tokens, which every recursion level of splitTokens shares. */
+   *  adjacent tokens and the words either side, read from the text, which every recursion level
+   *  of splitTokens shares. */
   bs?: number;
   /** An opening quote split off the word it was glued to (tokensOf): no cue ends on it. */
   opens?: boolean;
@@ -769,6 +804,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
       text.slice(ts[i].from, ts[i].to).trim(),
       L.lang,
       wordBefore(text, ts[i - 1].from),
+      wordAfter(text, ts[i].to),
     ));
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
     // Between two syllables of a Thai/Lao/Khmer/Burmese run (no space): a fallback seam, so
@@ -942,7 +978,8 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       // isSentenceEnd, which tells the title "M." from the unit "m.".
       const prevCased = sp >= 0 || i <= 9 ? back.slice(sp + 1).replace(/^[^\p{L}\p{N}]+/u, "") : "";
       const prevWord = prevCased.toLowerCase();
-      const cut = { next: text.slice(i, i + 9).trimStart(), lang, prev: prevWord ? wordBefore(text, i - back.length + sp + 1) : undefined };
+      // The next 24 chars: the initial of beforeInitial and the word after it ("B. Danach").
+      const cut = { next: text.slice(i, i + 24).trimStart(), lang, prev: prevWord ? wordBefore(text, i - back.length + sp + 1) : undefined };
       const s =
         -Math.abs(i - target) +
         // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
@@ -961,7 +998,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next) || beforeUnit(prevCased, cut.next) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next, cut.next.split(/\s+/)[1] ?? "", lang) || beforeUnit(prevCased, cut.next) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {
@@ -1355,7 +1392,7 @@ function wrapTokens(
       if (a > cpl) s -= 2000 + 50 * (a - cpl);
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
-        s += breakScore(toks[i - 1], toks[i], lang, i >= 2 && gaps[i - 1] ? toks[i - 2] : undefined) * 0.3;
+        s += breakScore(toks[i - 1], toks[i], lang, i >= 2 && gaps[i - 1] ? toks[i - 2] : undefined, toks[i + 1]) * 0.3;
         // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?", Thai
         // "บ่อย ๆ"): it
         // stays with its word — below the over-cap penalties, so a forced cut still happens,

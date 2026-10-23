@@ -1853,6 +1853,50 @@ describe("cutByShare", () => {
       expect(cues(t)[0]).toBe(first);
     }
   });
+  it("a letter after a capitalised noun ends a sentence before a sentence opener or in German; a name's initials stay held", () => {
+    // Any capitalised word before the letter read as a first name: "Option B. Then" / "Plan B. Dann"
+    // lost their sentence end, and the cut took the next sentence's first word or tore the letter off.
+    const cues = (t: string, lang: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang, words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    for (const [t, lang, want] of [
+      ["First choose Option B. Then press the green button", "en", ["First choose Option B.", "Then press the green button"]],
+      ["We went into Room C. After that we waited an hour", "en", ["We went into Room C.", "After that we waited an hour"]],
+      ["We go to Gate A. The plane leaves in an hour", "en", ["We go to Gate A.", "The plane leaves in an hour"]],
+      ["Wir brauchen jetzt Plan B. Dann gehen wir alle nach Hause", "de", ["Wir brauchen jetzt Plan B.", "Dann gehen wir alle nach Hause"]],
+      ["Nimm jeden Tag Vitamin C. Das hilft dir sehr im Winter", "de", ["Nimm jeden Tag Vitamin C.", "Das hilft dir sehr im Winter"]],
+      ["Der Zug fährt ab Gleis C. Danach steigen wir alle um", "de", ["Der Zug fährt ab Gleis C.", "Danach steigen wir alle um"]],
+      // Another initial before or after the letter holds it in every language.
+      ["The book by J. K. Rowling sold many copies worldwide", "en", ["The book by J. K. Rowling", "sold many copies worldwide"]],
+      ["Das Buch von J. K. Rowling wurde sehr oft verkauft", "de", ["Das Buch von J. K. Rowling", "wurde sehr oft verkauft"]],
+    ] as const) {
+      for (const parts of [cutByShare(t, [1, 1], lang), wrapLines(t, 32, 2, 0, undefined, lang), cues(t, lang)])
+        expect(parts).toEqual(want);
+    }
+    const option = "First choose Option B. Then press the green button to continue now";
+    expect(cutByShare(option, [22, 44], "en")).toEqual(["First choose Option B.", "Then press the green button to continue now"]);
+    expect(wrapLines(option, 30, 2, 0, undefined, "en"))
+      .toEqual(["First choose Option B.", "Then press the green", "button to continue now"]);
+    const press = "Press A. Then press the button twice.";
+    expect(cutByShare(press, [1, 1], "en")).toEqual(["Press A.", "Then press the button twice."]);
+    expect(wrapLines(press, 16, 2, 0, undefined, "en")).toEqual(["Press A.", "Then press the", "button twice."]);
+    // The letter stays with its noun: "Wir brauchen jetzt Plan" / "B. Danach …".
+    const danach = "Wir brauchen jetzt Plan B. Danach gehen wir heim";
+    expect(wrapLines(danach, 26, 2, 0, undefined, "de")).toEqual(["Wir brauchen jetzt Plan B.", "Danach gehen wir heim"]);
+    expect(cutByShare(danach, [1, 1], "de")).toEqual(["Wir brauchen jetzt Plan B.", "Danach gehen wir heim"]);
+    // A first name before the initial still holds it, with the language known or not.
+    for (const lang of ["en", undefined]) {
+      expect(cutByShare("John F. Kennedy said that we would go to the moon", [1, 4], lang))
+        .toEqual(["John F. Kennedy", "said that we would go to the moon"]);
+      const jfk = "Yesterday we met John F. Kennedy at the old airport";
+      expect(cutByShare(jfk, [1, 1], lang)).toEqual(["Yesterday we met John F. Kennedy", "at the old airport"]);
+      expect(wrapLines(jfk, 32, 2, 0, undefined, lang)).toEqual(["Yesterday we met John F. Kennedy", "at the old airport"]);
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
