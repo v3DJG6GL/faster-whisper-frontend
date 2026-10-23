@@ -508,12 +508,14 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
     (CAP_INITIALS.test(raw) && /^\p{Lu}/u.test(cut.next));
 }
 
-/** A capitalised word running on into a name's initial ("John | F. Kennedy"): the seam inside the
- *  name dangles as the one after the initial does. "a plan | B.", "Option | B. Then" and "Plan |
- *  B. Dann" do not (nameBefore). `after` = the text after the initial, `lang` the track's. */
-const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean =>
-  !SENT_END.test(prev) && !CLAUSE.test(prev) &&
-  INITIAL.test(next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "")) && nameBefore(prev, after, lang);
+/** A capitalised word running on into a name's initial or compact initials ("John | F. Kennedy",
+ *  "George | R.R. Martin"): the seam inside the name dangles as the one after the initials does.
+ *  "a plan | B.", "the | U.S. Army", "Option | B. Then" and "Plan | B. Dann" do not (nameBefore).
+ *  `after` = the text after the initials, `lang` the track's. */
+const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean => {
+  const x = next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "");
+  return !SENT_END.test(prev) && !CLAUSE.test(prev) && (INITIAL.test(x) || CAP_INITIALS.test(x)) && nameBefore(prev, after, lang);
+};
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
 

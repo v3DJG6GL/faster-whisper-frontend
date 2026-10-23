@@ -2216,6 +2216,35 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("the seam between a first name and its compact initials is held as the one before a single initial is", () => {
+    // Only "John | F. Kennedy" was penalised: "George | R.R. Martin" was an ordinary seam, so the
+    // cut, the wrap and the cue split could tear the first name off its initials.
+    const cues = (t: string, lang?: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
+      ["I have been reading George R.R. Martin all summer", 30,
+        "I have been reading | George R.R. Martin all summer", "I have been reading | George R.R. Martin all summer",
+        "I have been reading | George R.R. Martin all summer"],
+      ["The panel with George R.R. Martin starts at noon", 34,
+        "The panel with George R.R. Martin | starts at noon", "The panel with George R.R. Martin | starts at noon",
+        "The panel | with George R.R. Martin | starts at noon"],
+      // A lowercase word before an initialism holds nothing: "the U.S." still ends one before "Army".
+      ["He served in the U.S. Army for many years", 30,
+        "He served in the U.S. | Army for many years", "He served in the U.S. | Army for many years",
+        "He served in the U.S. | Army for many years"],
+    ];
+    for (const [t, cpl, cut, wrap, cue] of ROWS) {
+      for (const l of ["en", undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
+      }
+    }
+  });
   it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
     const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
     const cuesOf = (r: BatchResult, tracks = ["orig"]) => buildCues(r, STD, tracks);
