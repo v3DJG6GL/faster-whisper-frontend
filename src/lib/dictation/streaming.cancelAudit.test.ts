@@ -392,7 +392,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
     const typed = delivered.indexOf("sessionTyped = true;");
     expect(typed, "the typed branch of the delivered block").toBeGreaterThanOrEqual(0);
-    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwedApps\.add\(t\.appId\);/);
+    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+if \(opensBlock\) \{\s+gapOwedApps\.add\(t\.appId\);/);
     expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwedApps");
     // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
     // separator — all through pressReturn, which pays after its injectText, under the session
@@ -408,6 +408,28 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(boundary).not.toContain("autoEnter: true");
     // Never before a session's first phrase: every start and abandon resets it.
     expect(mask(fns.clearPhraseEnd)).toContain("gapOwedApps.clear();");
+  });
+
+  it("a translated final that only adds whitespace types it as-is, not the gap alone, and leaves the gap owed", () => {
+    // A closing final that only appends the server's output_suffix ("\n" or " ") translates to
+    // nothing (`block` is empty). Normalised to gap + block it typed PHRASE_GAP alone — three bare
+    // Returns, empty submits in a chat box — or "" with a "typed" pulse for nothing.
+    const final = mask(finalBody);
+    expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const opensBlock = !sessionTranslation \|\| block !== \s+;\s+const typeOut = sessionTranslation && block\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block\s+: phrase\.text;/);
+    // The gap is never typed without a block after it.
+    expect(final).not.toMatch(/sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP/);
+    // It neither owes a gap nor moves the Enter's app: only a phrase that opens a block does.
+    const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
+    expect(delivered).toMatch(/if \(opensBlock\) \{\s+gapOwedApps\.add\(t\.appId\);\s+lastTypedApp = t\.appId;\s+\}/);
+    expect(delivered.match(/gapOwedApps\.add\(/g) ?? []).toHaveLength(1);
+    expect(delivered.match(/lastTypedApp = /g) ?? []).toHaveLength(1);
+    // …nor pays one: the only pay site stays pressReturn's landed Return.
+    expect(final).not.toMatch(/gapOwedApps\.delete\(/);
+    // …nor joins the translated document: a whitespace phrase comes back untranslated…
+    const translate = streamingSrc.slice(streamingSrc.indexOf("async function maybeTranslate("), streamingSrc.indexOf("async function translatePhrase("));
+    expect(translate).toContain("if (!tr || !text.trim()) return { text, translated: false };");
+    // …and only a translated phrase books there.
+    expect(delivered).toMatch(/if \(phrase\.translated\) \{\s+sessionPhraseContext\.push\(body\);\s+sessionTranslatedText = /);
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
@@ -709,7 +731,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // divert / recovery arm writes that instead.
     const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     const final = mask(finalBody);
-    expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const typeOut = sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
+    expect(final).toMatch(/const typeOut = sessionTranslation && block\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
     // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
     // when the two differ (omitted = Rust's old behaviour, the clipboard gets `text`).
     const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);

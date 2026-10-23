@@ -2556,8 +2556,12 @@ async function ensureListeners(): Promise<void> {
             // clipboard copy put nothing in the field and buys no gap; a Return
             // that already ended the phrase is not followed by three more, and a
             // block typed into ANOTHER app opens its empty field without one.
+            // A whitespace-only phrase (a final that only appends the server's output_suffix,
+            // "\n" or " ") is no block: it is typed as-is, never as the gap alone (three bare
+            // Returns, empty submits in a chat box), and neither owes nor pays a gap below.
             const block = phrase.text.trim();
-            const typeOut = sessionTranslation
+            const opensBlock = !sessionTranslation || block !== "";
+            const typeOut = sessionTranslation && block
               ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block
               : phrase.text;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
@@ -2734,8 +2738,10 @@ async function ensureListeners(): Promise<void> {
               } else {
                 sessionTyped = true;
                 lastPhraseDiverted = false;
-                gapOwedApps.add(t.appId);
-                lastTypedApp = t.appId;
+                if (opensBlock) {
+                  gapOwedApps.add(t.appId);
+                  lastTypedApp = t.appId;
+                }
                 signalInsert("typed");
               }
               // Everything past the baseline went out with this insert, carry included — so did
