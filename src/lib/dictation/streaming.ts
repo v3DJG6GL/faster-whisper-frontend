@@ -342,9 +342,11 @@ let clipByLang: Record<string, string> | undefined;
  *  own. A release with no new speech since the pause re-copies the closed window with its words
  *  added instead, and its translation replaces that window's booking. `baseline` is set
  *  synchronously by the timer; `booked` / `byLang` by its queued close link, from what it closed
- *  (and re-recorded by a release that reopens it). Null once new speech starts (a partial, an
- *  `open`, an ordinal final), at a hard break, and on a server that never sent an ordinal — its
- *  finals all lack one, so each would look like a release. */
+ *  (and re-recorded by a release that reopens it). Null once new speech commits (an ordinal
+ *  final), at a hard break, and on a server that never sent an ordinal — its finals all lack one,
+ *  so each would look like a release. Not on an `open` or a partial: that utterance can still end
+ *  `dropped` (a cough, an "ähm" the server strips) with the words still held, and the server
+ *  releases only between utterances, so real new speech always lands its ordinal final first. */
 type ClosedClipWindow = { baseline: string; booked: ClipBooking | null; byLang: Record<string, string> | undefined };
 let clipClosed: ClosedClipWindow | null = null;
 /** An ordinal `final` arrived this session, so a final without one really is a release. */
@@ -2213,8 +2215,6 @@ async function ensureListeners(): Promise<void> {
     // inSession() guard the final/boundary/overrides-ignored handlers already carry.
     if (!inSession()) return;
     sessionUtteranceSeen = true;
-    // New speech: a release final after it belongs to the next phrase, not the closed window.
-    clipClosed = null;
     // Capture state, not status: during a per-phrase translate (status "translating", mic
     // open) a status gate stopped bumping the phrase-end timer, so it expired mid-speech —
     // firing the auto-Enter and resetting the clipboard baseline while the user was talking.
@@ -2778,8 +2778,6 @@ async function ensureListeners(): Promise<void> {
     const state = e.payload?.state;
     if (typeof state !== "string") return;
     if (inSession()) sessionUtteranceSeen = true;
-    // New speech, as a partial: see clipClosed.
-    if (state === "open") clipClosed = null;
     const ordinal = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
     // Per-utterance History: when the utterance began is its record's time (the first `open`).
     if (sessionPerUtterance && ordinal !== null && inSession()) {

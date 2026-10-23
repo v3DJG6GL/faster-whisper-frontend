@@ -868,11 +868,23 @@ describe("work that must wait for the queue or the cancel", () => {
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
     expect(book).toMatch(/const whole =\s+reopened && !own && phrase\.translated && sessionTranslation != null && sent\.trim\(\) === \(r\.result\?\.text \?\?\s+\)\.trim\(\);/);
     expect(book).toMatch(/\.\.\.\(whole\s+\? \{\s+translatedText: phrase\.text\.trim\(\),/);
-    // New speech ends the chance: a partial, an `open`, a hard break; every start and abandon.
-    expect(mask(bodyAfter(streamingSrc, '"stream://partial"'))).toContain("clipClosed = null;");
-    expect(mask(bodyAfter(streamingSrc, '"stream://utterance"'))).toMatch(/if \(state ===\s+\) clipClosed = null;/);
+    // New committed speech ends the chance (the ordinal final above), so does a hard break;
+    // every start and abandon.
     expect(mask(boundaryBody)).toMatch(/clipBaseline =\s+;\s+clipClosed = null;/);
     expect(mask(fns.clearPhraseEnd)).toMatch(/clipClosed = null;\s+clipOrdinalSeen = false;/);
+  });
+
+  it("an utterance that opens in the pause and ends dropped keeps the closed window reopenable", () => {
+    // A cough, a breath or an "ähm" the server strips opens an utterance (`open`, maybe a
+    // partial) and ends `dropped`: no final, no new text, the held words still held. Clearing
+    // clipClosed on that `open` or partial sent the later release back to copying "neue." alone
+    // over the phrase. Only an ordinal final — real new text — may end the chance: the server
+    // releases only between utterances, so new speech always lands that final first.
+    expect(mask(bodyAfter(streamingSrc, '"stream://partial"'))).not.toContain("clipClosed");
+    expect(mask(bodyAfter(streamingSrc, '"stream://utterance"'))).not.toContain("clipClosed");
+    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    expect(final.match(/clipClosed = null;/g)).toEqual(["clipClosed = null;"]);
+    expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
   });
 
   it("a hard break closes the clipboard window in its chained link, not synchronously", () => {
