@@ -596,6 +596,32 @@ describe("site subtitle cleanup", () => {
     expect(vtt("<v Bob>Ich wollte gera-</v>", "<c.mt>i wanted to</c>")).toEqual([["Bob", "Ich wollte gera- i wanted to"]]);
     expect(vtt("<c.spk1>bob:</c> Ich wollte gera-", "<c.spk1>bob:</c> <c.mt>i wanted to</c>")).toEqual([["bob", "Ich wollte gera- bob: i wanted to"]]);
   });
+  it("a cut-off translation line above its original keeps its dash: the closed .mt span is a whole line", () => {
+    // Translation-first track order: the original under the .mt line carries no .mt and no voice tag.
+    const r: BatchResult = {
+      text: "ich wollte",
+      segments: [{ start: 0, end: 2, text: " ich wollte", speaker: "SPEAKER_00", translations: { en: "I was going to-" } }],
+      speakers: ["SPEAKER_00"],
+    };
+    const back = (opts: Partial<Parameters<typeof generateExport>[1]>) =>
+      parseImportedText("vtt", generateExport(r, { format: "vtt", tracks: ["en", "orig"], ...opts })).segments.map((s) => s.text);
+    // No speaker markup: `<c.mt>I was going to-</c>` / `ich wollte`.
+    expect(back({ speakerNames: false })).toEqual(["I was going to- ich wollte"]);
+    // Colour mode, names hidden: `<c.mt.spk1>I was going to-</c>` / `<c.spk1>ich wollte</c>`.
+    expect(back({ speakerNames: false, speakerColors: "line" })).toEqual(["I was going to- ich wollte"]);
+    const vtt = (...lines: string[]) =>
+      parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${lines.join("\n")}\n`).segments.map((s) => s.text);
+    expect(vtt("<c.mt>I was going to-</c>", "ich wollte")).toEqual(["I was going to- ich wollte"]);
+    expect(vtt("<c.mt.mt-en>I was going to-</c>", "<c.spk1>ich wollte</c>")).toEqual(["I was going to- ich wollte"]);
+    // A translation wrapped over two lines closes its span on the second.
+    expect(vtt("<c.mt>so I was really", "going to-</c>", "ich wollte")).toEqual(["so I was really going to- ich wollte"]);
+    // Shape matrix, unchanged: original first, a span still open on the line, plain text.
+    expect(vtt("Ich wollte gera-", "<c.mt>i wanted to</c>")).toEqual(["Ich wollte gera- i wanted to"]);
+    expect(vtt("Hallo", "<c.mt>a journa-", "listic text</c>")).toEqual(["Hallo a journalistic text"]);
+    expect(vtt("<c.mt>Hallo</c>", "Ein journa-", "listischer Text")).toEqual(["Hallo Ein journalistischer Text"]);
+    expect(fixBroadcasterText(["well-", "known"])).toEqual(["wellknown"]);
+    expect(fixBroadcasterText(["<c.yellow>Ein journa-</c>", "<c.white>listisch</c>"])).toEqual(["<c.yellow>Ein journa</c><c.white>listisch</c>"]);
+  });
   it("character references decode after the tags go: &nbsp; is a space, &lt;i&gt; stays text", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");

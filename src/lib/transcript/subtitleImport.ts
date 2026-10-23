@@ -313,6 +313,8 @@ const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
  *  `<v Name>` voice tag opens a new turn ("I was going to-" / "<v Bob>what?" is an interruption),
  *  and our VTT export's `.mt` class marks a translation line under its original. */
 const NEW_TURN_LINE = /^<v[\s.]|<c\.mt[\s.>]/;
+/** Our VTT export's `.mt` translation span opening. */
+const MT_OPEN = /<c\.mt[\s.>]/;
 /** One piece of bareLine's markup: a tag, an inline timestamp, an ASS override block. */
 const MARKUP_PIECE = String.raw`${MARKUP_TAG.source}|<\d+:\d+(?::\d+)?(?:\.\d+)?>|\{\\[^}]{0,64}\}`;
 /** A line's last hyphen and the markup after it: a line wrapped in its own tag (`<i>journa-</i>`)
@@ -346,17 +348,26 @@ const ONE_LETTER_WORDS = [
  *  translates — as words. Sound tags ("[Musik]") stay. */
 export function fixBroadcasterText(lines: string[]): string[] {
   const out: string[] = [];
+  // Inside a `.mt` span opened on an earlier line (a wrapped translation), and whether the line
+  // before closed one: a translation that ends on a cut-off ("I was going to-") with the
+  // original under it (translation-first track order) is a whole line, not a word's first half.
+  let inMt = false;
+  let prevEndsMt = false;
   for (const raw of lines) {
     const line = raw.trim();
     const prev = out[out.length - 1];
+    const mt: boolean = inMt || MT_OPEN.test(line);
+    const endsMt: boolean = mt && /<\/c>$/.test(line);
+    inMt = mt && !endsMt;
     // Judged on the lines without their markup: broadcaster files often wrap each line in its
     // own colour or italic tag, and the raw line then ends on "</font>", the next opens with "<font".
     const bare = bareLine(line).trimStart();
-    if (prev !== undefined && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare) && !NEW_TURN_LINE.test(line)) {
+    if (prev !== undefined && !prevEndsMt && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare) && !NEW_TURN_LINE.test(line)) {
       out[out.length - 1] = prev.replace(HYPHEN_THEN_MARKUP, (_, tail: string) => tail.replace(MARKUP_OR_BLANK, "$1")) + line;
     } else {
       out.push(line);
     }
+    prevEndsMt = endsMt;
   }
   return out.map((l) =>
     l.replace(TAG_OR_LETTER_SPACED, (m) =>
