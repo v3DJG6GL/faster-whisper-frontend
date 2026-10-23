@@ -347,6 +347,9 @@ const ABBREV = new Set([
   "dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "vs.", "etc.", "e.g.", "i.e.", "no.", "nr.",
   "z.b.", "usw.", "bzw.", "ca.", "d.h.", "u.a.", "evtl.", "ggf.", "inkl.", "mme.", "m.",
 ]);
+/** The titles and number abbreviations of ABBREV: each goes with the name or number after it
+ *  ("Prof. Johnson", "Nr. 5"). Not "etc." or "z.B.", after which a piece may end. */
+const TITLE_ABBREV = new Set(["dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "no.", "nr.", "mme.", "m."]);
 
 /** A sentence or clause end, for the original's splitter (breakScore) and the cut of a translation
  *  onto its cues (cutByShare) alike: the mark may sit inside closing quotes or brackets
@@ -382,6 +385,15 @@ function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boo
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
 }
 
+/** Whether `word` is a title or number abbreviation, or a dotted ordinal, that isSentenceEnd
+ *  holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai"): it dangles as an article
+ *  does. Judged by isSentenceEnd, not listed in NOBREAK: "I said no. Then" ends one. */
+function heldAbbrev(word: string, cut: { next: string; lang?: string }): boolean {
+  if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
+  const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
+  return TITLE_ABBREV.has(w) || /^\d{1,2}\.$/.test(w);
+}
+
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
 
 /** Score of breaking between `prev` and `next` (words as written) in a text of `lang`. */
@@ -392,7 +404,7 @@ function breakScore(prev: string, next: string, lang?: string): number {
   else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
-  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev))) s -= 80;
+  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, { next, lang })) s -= 80;
   // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
   if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
@@ -898,7 +910,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {

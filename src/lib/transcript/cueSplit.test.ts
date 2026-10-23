@@ -1693,6 +1693,40 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1], "de"))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
   });
+  it("a title or number abbreviation and a dotted ordinal stay with the word after them in the cut and the wrap", () => {
+    // Not only the "Mr." "Mrs." "Dr." of NOBREAK: every title and number abbreviation isSentenceEnd
+    // holds no sentence end, and a German ordinal, dangle as they do.
+    const ms = "Yesterday I met Ms. Johnson at the station";
+    expect(cutByShare(ms, [19, 23], "en")).toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
+    expect(wrapLines(ms, 30, 2, 0, undefined, "en")).toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
+    const prof = "Gestern traf ich Prof. Johnson am Bahnhof dort";
+    expect(cutByShare(prof, [5, 5], "de")).toEqual(["Gestern traf ich", "Prof. Johnson am Bahnhof dort"]);
+    expect(wrapLines(prof, 30, 2, 0, undefined, "de")).toEqual(["Gestern traf ich", "Prof. Johnson am Bahnhof dort"]);
+    const am3 = "Wir treffen uns am 3. Mai im Büro der Stadt";
+    expect(cutByShare(am3, [5, 5], "de")).toEqual(["Wir treffen uns am 3. Mai", "im Büro der Stadt"]);
+    expect(wrapLines(am3, 26, 2, 0, undefined, "de")).toEqual(["Wir treffen uns am 3. Mai", "im Büro der Stadt"]);
+    expect(cutByShare("Wir nehmen die Nr. 5 ganz bestimmt mit uns", [4, 6], "de"))
+      .toEqual(["Wir nehmen die Nr. 5", "ganz bestimmt mit uns"]);
+    // Unchanged: "Mrs." and "Dr." as before, a real sentence end on "no." or an English "3.",
+    // and "etc.", after which a piece may end.
+    expect(cutByShare("Yesterday I met Mrs. Johnson at the station", [19, 23], "en"))
+      .toEqual(["Yesterday I met", "Mrs. Johnson at the station"]);
+    expect(cutByShare("Gestern traf ich Dr. Johnson am Bahnhof dort", [5, 5], "de"))
+      .toEqual(["Gestern traf ich", "Dr. Johnson am Bahnhof dort"]);
+    expect(wrapLines("Gestern traf ich Dr. Johnson am Bahnhof dort", 30, 2, 0, undefined, "de"))
+      .toEqual(["Gestern traf ich", "Dr. Johnson am Bahnhof dort"]);
+    const no = "I said no. Then we went home to sleep";
+    expect(cutByShare(no, [1, 2], "en")).toEqual(["I said no.", "Then we went home to sleep"]);
+    expect(wrapLines(no, 30, 2, 0, undefined, "en")).toEqual(["I said no.", "Then we went home to sleep"]);
+    const kids = "The kids were 3. Then we moved away to Bern";
+    expect(cutByShare(kids, [2, 3], "en")).toEqual(["The kids were 3.", "Then we moved away to Bern"]);
+    expect(wrapLines(kids, 30, 2, 0, undefined, "en")).toEqual(["The kids were 3.", "Then we moved away to Bern"]);
+    const etc = "We bought apples, pears etc. and then went home";
+    expect(cutByShare(etc, [1, 1], "en")).toEqual(["We bought apples,", "pears etc. and then went home"]);
+    expect(wrapLines(etc, 26, 2, 0, undefined, "en")).toEqual(["We bought apples, pears", "etc. and then went home"]);
+    expect(cutByShare("We bought pears etc. Then we went home happy", [1, 1], "en"))
+      .toEqual(["We bought pears etc.", "Then we went home happy"]);
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
@@ -1964,6 +1998,7 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["w to her,", "I gave it back to her, because she asked me", 30, 2, 0, "I gave it back to her, / because she asked me"],
     ["w quote", "He said, \"Go home now.\" Then we all left the place", 42, 2, 0, "He said, \"Go home now.\" / Then we all left the place"],
     ["w Mr.", "Yesterday I met Mr. Johnson at the station", 30, 2, 0, "Yesterday I met / Mr. Johnson at the station"],
+    ["w Ms.", "Yesterday I met Ms. Johnson at the station", 30, 2, 0, "Yesterday I met / Ms. Johnson at the station"],
     ["w de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 42, 2, 0, "Wir sprechen heute / über Verantwortungsbewusstsein / und Zusammengehörigkeitsgefühl."],
     ["w zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方", 16, 2, 0, "他说：「我们走吧。」然 / 后大家一起离开了这个地方"],
     ["w ja 。」", "彼は「もう帰ろう。」と言った。それから皆で", 13, 2, 0, "彼は「もう帰ろう。」 / と言った。それから皆で"],
