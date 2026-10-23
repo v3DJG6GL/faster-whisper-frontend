@@ -2135,7 +2135,7 @@ describe("cutByShare", () => {
     expect(cutByShare("They moved to the U.S. The rest of the family stayed in Ireland for good", [1, 1], "en"))
       .toEqual(["They moved to the U.S.", "The rest of the family stayed in Ireland for good"]);
   });
-  it("a name's compact initials or a capital initialism before a capital ends no sentence unless a sentence opener follows", () => {
+  it("a name's compact initials or a capital initialism before a capital is judged as a name's initial is", () => {
     // Only spaced initials were held ("J. K. Rowling"): "J.K.", "C.S.", "J.R.R." and "U.S." before
     // a capital read as a sentence end, so the cut, the wrap and the cue split tore them off the name.
     const cues = (t: string, lang?: string) => {
@@ -2146,18 +2146,19 @@ describe("cutByShare", () => {
         .cues.map((c) => c.text);
     };
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
+      // After a lowercase word it ends one, as "by F. Scott" does ("the U.S. These days").
       ["The new book by J.K. Rowling came out last week", 30,
-        "The new book by J.K. Rowling | came out last week", "The new book by J.K. Rowling | came out last week",
-        "The new book by J.K. Rowling | came out last week"],
+        "The new book by J.K. | Rowling came out last week", "The new book by J.K. | Rowling came out last week",
+        "The new book by J.K. | Rowling came out last week"],
       ["C.S. Lewis wrote it in the summer of that year", 26,
         "C.S. Lewis wrote it | in the summer of that year", "C.S. Lewis wrote it | in the summer of that year",
         "C.S. Lewis wrote it | in the summer of that year"],
       ["We all read The Hobbit by J.R.R. Tolkien last winter", 30,
-        "We all read The Hobbit | by J.R.R. Tolkien last winter", "We all read The Hobbit | by J.R.R. Tolkien last winter",
-        "We all read The Hobbit | by J.R.R. Tolkien last winter"],
+        "We all read The Hobbit by J.R.R. | Tolkien last winter", "We all read The Hobbit | by J.R.R. Tolkien last winter",
+        "We all read The Hobbit by J.R.R. | Tolkien last winter"],
       ["Soldiers of the U.S. Army arrived in the town today", 30,
-        "Soldiers of the U.S. Army | arrived in the town today", "Soldiers of the U.S. Army | arrived in the town today",
-        "Soldiers of the U.S. Army | arrived in the town today"],
+        "Soldiers of the U.S. | Army arrived in the town today", "Soldiers of the U.S. | Army arrived in the town today",
+        "Soldiers of the U.S. | Army arrived in the town today"],
       // A sentence opener after it, or the text's end, still ends one; a lowercase word runs on.
       ["We moved to the U.S. Then we bought a small house there", 30,
         "We moved to the U.S. | Then we bought a small house there", "We moved to the U.S. Then | we bought a small house there",
@@ -2174,6 +2175,42 @@ describe("cutByShare", () => {
     ];
     for (const [t, cpl, cut, wrap, cue] of ROWS) {
       for (const l of ["en", undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
+      }
+    }
+  });
+  it("a capital initialism after a lowercase word ends a sentence before any capital, a name's compact initials after a capitalised word or at the start do not", () => {
+    // "the U.S." / "den U.S.A." before a capital was held unless the next word was in the closed
+    // opener list, so "These", "Most" or "Seine" ran on into the sentence before it.
+    const cues = (t: string, lang?: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const ROWS: [text: string, langs: (string | undefined)[], cpl: number, cut: string, wrap: string, cue: string][] = [
+      ["They moved to the U.S. These days the rest of the family lives in Ireland", ["en", undefined], 36,
+        "They moved to the U.S. | These days the rest of the family lives in Ireland",
+        "They moved to the U.S. | These days the rest | of the family lives in Ireland",
+        "They moved to the U.S. | These days the rest | of the family lives in Ireland"],
+      ["She grew up in the U.K. Most of her family still lives there", ["en", undefined], 30,
+        "She grew up in the U.K. | Most of her family still lives there",
+        "She grew up in the U.K. | Most of her family | still lives there",
+        "She grew up in the U.K. | Most of her family | still lives there"],
+      ["Er lebt jetzt in den U.S.A. Seine Frau arbeitet dort", ["de"], 30,
+        "Er lebt jetzt in den U.S.A. | Seine Frau arbeitet dort", "Er lebt jetzt in den U.S.A. | Seine Frau arbeitet dort",
+        "Er lebt jetzt in den U.S.A. | Seine Frau arbeitet dort"],
+      // At the text's start or after a capitalised word they stay with the name.
+      ["J.K. Rowling wrote it in a small cafe in the city", ["en", undefined], 22,
+        "J.K. Rowling wrote it | in a small cafe in the city", "J.K. Rowling | wrote it in a small | cafe in the city",
+        "J.K. Rowling wrote it | in a small cafe in the city"],
+      ["Author J.K. Rowling wrote it in a cafe", ["en", undefined], 20,
+        "Author J.K. Rowling | wrote it in a cafe", "Author J.K. Rowling | wrote it in a cafe", "Author J.K. Rowling wrote | it in a cafe"],
+    ];
+    for (const [t, langs, cpl, cut, wrap, cue] of ROWS) {
+      for (const l of langs) {
         const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }

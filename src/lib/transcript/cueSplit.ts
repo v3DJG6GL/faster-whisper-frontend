@@ -462,13 +462,14 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
  *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on;
- *  an all-capital one ("J.K.", "U.S.") before a capital only before a sentence opener as well:
- *  "J.K. Rowling" and "the U.S. Army" go on, "the U.S. Then" ends one. A name's initial goes on
- *  before a capital when another initial comes before or after it ("J. K. Rowling"), a
- *  capitalised word, a clause or sentence mark or the text's start before it ("John F.
- *  Kennedy", "In 1924, J. Edgar"), the capitalised word not in German or Luxembourgish, which
- *  capitalise every noun, and none before a sentence opener (nameBefore): "a plan B. Then",
- *  "Option B. Then", "Plan B. What", "Plan B. Dann" and "Answer: A. How" end one. */
+ *  an all-capital one ("J.K.", "U.S.") before a capital is judged as a name's initial is. A name's
+ *  initial or compact initials go on before a capital when another initial comes before or
+ *  after it ("J. K. Rowling"), a capitalised word, a clause or sentence mark or the text's start
+ *  before it ("John F. Kennedy", "George R.R. Martin", "In 1924, J. Edgar", a text-initial "J.K.
+ *  Rowling"), the capitalised word not in German or Luxembourgish, which capitalise every noun,
+ *  and none before a sentence opener (nameBefore): "a plan B. Then", "Option B. Then", "Plan B.
+ *  What", "Plan B. Dann", "Answer: A. How", "the U.S. These days", "in den U.S.A. Seine" and,
+ *  after a lowercase word, "the U.S. Army" and "by J.K. Rowling" end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
@@ -481,12 +482,12 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (unit && cut && /^\p{Ll}/u.test(cut.next)) return false;
   if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
-  // A name's compact initials ("J.K. Rowling", "J.R.R. Tolkien") or a capital initialism ("the
-  // U.S. Army") before a capital: held as a name's initial at the text's start is, unless the
-  // word after it opens a sentence ("the U.S. Then", "in the U.S. My wife").
-  if (cut && CAP_INITIALS.test(raw) && /^\p{Lu}/u.test(cut.next) && nameBefore("", cut.next, cut.lang)) return false;
+  // A name's initial ("John F. Kennedy") or compact initials ("J.K. Rowling", "George R.R.
+  // Martin") before a capital, judged alike by the word before it: after a lowercase word the
+  // stop ends a sentence ("the U.S. These days", "in den U.S.A. Seine", and so "the U.S. Army"
+  // and "by J.K. Rowling" too, as "by F. Scott" does).
   if (
-    cut && INITIAL.test(raw) && /^\p{Lu}/u.test(cut.next) &&
+    cut && (INITIAL.test(raw) || CAP_INITIALS.test(raw)) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
   ) return false;
   const base = primarySubtag(cut?.lang);
