@@ -2245,6 +2245,38 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("a place initialism after a place name or a comma ends a sentence before any capital, as no name's initials", () => {
+    // "D.C." / "L.A." after "Washington" or "Los Angeles," were judged as a name's initials, so
+    // "Today", "Tomorrow" or "Officials" ran on into the sentence before them.
+    const cues = (t: string, lang?: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
+      ["We flew into Washington D.C. Today we drive to the coast", 34,
+        "We flew into Washington D.C. | Today we drive to the coast", "We flew into Washington D.C. | Today we drive to the coast",
+        "We flew into Washington D.C. | Today we drive to the coast"],
+      ["The vote was in Washington, D.C. Today the senators went home", 34,
+        "The vote was in Washington, D.C. | Today the senators went home",
+        "The vote was in Washington, D.C. | Today the senators went home",
+        "The vote was in Washington, D.C. | Today the senators went home"],
+      ["She flew to Los Angeles, L.A. Tomorrow she flies home", 30,
+        "She flew to Los Angeles, L.A. | Tomorrow she flies home", "She flew to Los Angeles, L.A. | Tomorrow she flies home",
+        "She flew to Los Angeles, L.A. | Tomorrow she flies home"],
+      ["He works in Washington D.C. Officials there said nothing", 30,
+        "He works in Washington D.C. | Officials there said nothing", "He works in Washington D.C. | Officials there said nothing",
+        "He works in Washington D.C. | Officials there said nothing"],
+    ];
+    for (const [t, cpl, cut, wrap, cue] of ROWS) {
+      for (const l of ["en", undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
+      }
+    }
+  });
   it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
     const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
     const cuesOf = (r: BatchResult, tracks = ["orig"]) => buildCues(r, STD, tracks);

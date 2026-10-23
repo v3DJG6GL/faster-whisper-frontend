@@ -369,6 +369,13 @@ interface SentenceCut { next: string; lang?: string; prev?: string }
 const INITIAL = /^(?![IVX])\p{Lu}\.$/u;
 /** Capitals each with its stop, written together: a name's initials ("J.K.") or an initialism ("U.S."). */
 const CAP_INITIALS = /^(?:\p{Lu}\.){2,}$/u;
+/** Place and country initialisms, which follow a capitalised place name or a comma as a name's
+ *  initials follow a first name ("Washington D.C.", "Los Angeles, L.A.") but are never a name's
+ *  initials: before a capital they end a sentence whatever the word before them ("Washington D.C.
+ *  Today", "the U.K. Government"). */
+const PLACE_INITIALS = new Set(["U.S.", "U.S.A.", "U.K.", "D.C.", "N.Y.", "N.Y.C.", "L.A.", "E.U.", "U.N.", "U.A.E.", "U.S.S.R."]);
+/** A name's initial ("F.") or compact initials ("J.K.", "R.R."), as written: not a place initialism. */
+const nameInitials = (raw: string): boolean => INITIAL.test(raw) || (CAP_INITIALS.test(raw) && !PLACE_INITIALS.has(raw));
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
@@ -462,7 +469,9 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
  *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on;
- *  an all-capital one ("J.K.", "U.S.") before a capital is judged as a name's initial is. A name's
+ *  an all-capital one ("J.K.", "R.R.") before a capital is judged as a name's initial is, but not
+ *  a place initialism (PLACE_INITIALS): "Washington D.C. Today", "Washington, D.C. Today", "Los
+ *  Angeles, L.A. Tomorrow" and "The U.S. Army" end one. A name's
  *  initial or compact initials go on before a capital when another initial comes before or
  *  after it ("J. K. Rowling"), a capitalised word, a clause or sentence mark or the text's start
  *  before it ("John F. Kennedy", "George R.R. Martin", "In 1924, J. Edgar", a text-initial "J.K.
@@ -484,10 +493,11 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
   // A name's initial ("John F. Kennedy") or compact initials ("J.K. Rowling", "George R.R.
   // Martin") before a capital, judged alike by the word before it: after a lowercase word the
-  // stop ends a sentence ("the U.S. These days", "in den U.S.A. Seine", and so "the U.S. Army"
-  // and "by J.K. Rowling" too, as "by F. Scott" does).
+  // stop ends a sentence ("by J.K. Rowling", as "by F. Scott" does). A place initialism is no
+  // name's initials: before a capital it ends one after any word ("Washington D.C. Today", "the
+  // U.S. These days", "in den U.S.A. Seine", "the U.S. Army").
   if (
-    cut && (INITIAL.test(raw) || CAP_INITIALS.test(raw)) && /^\p{Lu}/u.test(cut.next) &&
+    cut && nameInitials(raw) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
   ) return false;
   const base = primarySubtag(cut?.lang);
@@ -498,23 +508,26 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
 /** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial or
  *  initials, that isSentenceEnd holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai",
  *  "John F. Kennedy", "J.K. Rowling"): it dangles as an article does. Judged by isSentenceEnd,
- *  not listed in NOBREAK: "I said no. Then" ends one. */
+ *  not listed in NOBREAK: "I said no. Then" ends one. A place initialism ("D.C.", "U.S.") is
+ *  never held: before a lowercase word it ends no sentence but holds nothing either, as "a.m."
+ *  does ("the U.S. government"). */
 function heldAbbrev(word: string, cut: SentenceCut): boolean {
   if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
   const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
   return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw) ||
-    (CAP_INITIALS.test(raw) && /^\p{Lu}/u.test(cut.next));
+    (nameInitials(raw) && /^\p{Lu}/u.test(cut.next));
 }
 
 /** A capitalised word running on into a name's initial or compact initials ("John | F. Kennedy",
  *  "George | R.R. Martin"): the seam inside the name dangles as the one after the initials does.
- *  "a plan | B.", "the | U.S. Army", "Option | B. Then" and "Plan | B. Dann" do not (nameBefore).
+ *  "a plan | B.", "the | U.S. Army", "Option | B. Then" and "Plan | B. Dann" do not (nameBefore),
+ *  nor a place initialism, which is no name's ("Washington | D.C. Today").
  *  `after` = the text after the initials, `lang` the track's. */
 const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean => {
   const x = next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "");
-  return !SENT_END.test(prev) && !CLAUSE.test(prev) && (INITIAL.test(x) || CAP_INITIALS.test(x)) && nameBefore(prev, after, lang);
+  return !SENT_END.test(prev) && !CLAUSE.test(prev) && nameInitials(x) && nameBefore(prev, after, lang);
 };
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
