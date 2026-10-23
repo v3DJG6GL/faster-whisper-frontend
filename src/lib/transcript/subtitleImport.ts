@@ -307,9 +307,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   return out;
 }
 
-/** "Ein- und Ausgang" keeps its hyphen: the next line opens with a conjunction. Not "to" or
- *  "nor": those are also a word's last syllable ("toma-" / "to", "mi-" / "nor"). */
-const KEEPS_HYPHEN = /^(?:und|oder|bis|bzw\.|sowie|wie|and|or|et|ou|vs\.?)(?![\p{L}\p{N}])/iu;
+/** "Ein- und Ausgang" keeps its hyphen: the next line opens with a conjunction. Not "to",
+ *  "nor", "et" or "wie": those are also a word's last syllable ("toma-" / "to", "mi-" / "nor",
+ *  "qui-" / "et", "so-" / "wie"). */
+const KEEPS_HYPHEN = /^(?:und|oder|bis|bzw\.|sowie|and|or|ou|vs\.?)(?![\p{L}\p{N}])/iu;
 /** A line that is never a hyphenated word's second half, whatever its markup-free text: a
  *  `<v Name>` voice tag opens a new turn ("I was going to-" / "<v Bob>what?" is an interruption),
  *  and our VTT export's `.mt` class marks a translation line under its original. */
