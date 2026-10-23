@@ -44,6 +44,15 @@ export function seedTargets(o: {
   return (list.length ? list : [o.source === "en" ? "de" : "en"]).slice(0, o.max);
 }
 
+/** The source the translation chips leave out: while the site-subtitle panel holds them, the
+ *  link's spoken language (falling back to the known source when unknown), else the screen's
+ *  known source. ONE answer for the picker's exclude and the Toggle's seed: a seed that kept the
+ *  link's spoken language wrote a target the panel's chips never show, which then surfaced as
+ *  a chip (and a run target) once the panel let go. */
+export function chipSource(panelHolds: boolean, linkSpoken: string | null | undefined, knownSource: string | undefined): string | undefined {
+  return panelHolds ? (linkSpoken ?? knownSource) : knownSource;
+}
+
 /** Store-shape for a `TranslationOverrides` draft: drop the keys that are "inherit"
  *  so an all-inherit object stores as `undefined` (the `decodeOverrides` idiom), and
  *  KEEP the ones that are an explicit empty override.

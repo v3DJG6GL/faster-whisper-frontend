@@ -16,7 +16,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { langText, langTexts, languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
-import { pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
+import { chipSource, pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
 import {
   inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
   withDefaultModel,
@@ -1925,7 +1925,7 @@ export default function Transcribe() {
                             inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}
                             // While the panel holds the chips, the link's spoken language is never one.
-                            exclude={siteChips ? (siteInput?.spoken ?? knownSource) : knownSource}
+                            exclude={chipSource(!!siteChips, siteInput?.spoken, knownSource)}
                           >
                             <OverrideHeader
                               title="TRANSLATION_CONTEXT_SEGMENTS"
@@ -1963,13 +1963,15 @@ export default function Transcribe() {
                       onChange={(v) => {
                         if (v) {
                           // Seed: Backend Translation defaults → the caller's
-                          // server-side default → English; never the known
-                          // source (en→en would be a no-op stage), and within
-                          // the server's target cap, as the picker is.
+                          // server-side default → English; never the source the
+                          // picker excludes (en→en would be a no-op stage; while
+                          // the panel holds the chips, the link's spoken language
+                          // would be a hidden target), and within the server's
+                          // target cap, as the picker is.
                           const next = seedTargets({
                             backendTargets: backend?.translationOverrides?.translateTo,
                             serverDefault: caps?.translate_to_default,
-                            source: knownSource,
+                            source: chipSource(!!siteChips, siteInput?.spoken, knownSource),
                             max: maxTranslationTargets(caps),
                           });
                           setTranslateTo(next);

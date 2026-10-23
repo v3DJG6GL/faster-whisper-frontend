@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { languageLabel } from "./languages";
-import { countTranslationOverrides, pruneTargets, pruneTranslationOverrides, seedTargets, targetsLabel, translationRunOptions, wireCodes } from "./translationTargets";
+import { chipSource, countTranslationOverrides, pruneTargets, pruneTranslationOverrides, seedTargets, targetsLabel, translationRunOptions, wireCodes } from "./translationTargets";
+import { derive, initialSiteState } from "./transcript/siteSubtitles";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the sanitizers;
 // wireCodes is the ONE list the chips render, count and remove from and a run sends, so it is also
@@ -52,6 +53,27 @@ describe("seedTargets", () => {
     expect(seedTargets({ serverDefault: ["ca-ES-valencia"], max: 8 })).toEqual(["ca-ES-valencia"]);
     expect(seedTargets({ backendTargets: ["x".repeat(20)], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
     expect(seedTargets({ backendTargets: ["de_DE"], max: 8 })).toEqual(["en"]);
+  });
+});
+
+describe("chipSource — what the picker excludes and the Translation Toggle never seeds", () => {
+  it("is the link's spoken language while the site-subtitle panel holds the chips", () => {
+    expect(chipSource(true, "en", undefined)).toBe("en");
+    expect(chipSource(true, "en", "de")).toBe("en");
+    expect(chipSource(true, null, "de")).toBe("de");
+    expect(chipSource(false, "en", "de")).toBe("de");
+    expect(chipSource(false, "en", undefined)).toBeUndefined();
+  });
+  it("an Auto screen on an English link with site subtitles seeds no target the panel's chips hide", () => {
+    // The panel took its state while Translation was off (no targets); the Toggle then seeds.
+    const seeded = seedTargets({ source: chipSource(true, "en", undefined), max: 3 });
+    expect(seeded).toEqual(["de"]);
+    const tracks = [
+      { id: "en", lang: "en", kind: "manual" as const, ext: "vtt" as const, hoh: false },
+      { id: "de", lang: "de", kind: "manual" as const, ext: "vtt" as const, hoh: false },
+    ];
+    const chips = derive({ tracks, spoken: "en", multi: false, targets: seeded }, initialSiteState([])).chips.map((c) => c.code);
+    for (const code of seeded) expect(chips).toContain(code);
   });
 });
 
