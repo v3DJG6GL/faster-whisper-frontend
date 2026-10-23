@@ -2557,12 +2557,17 @@ async function ensureListeners(): Promise<void> {
             // that already ended the phrase is not followed by three more, and a
             // block typed into ANOTHER app opens its empty field without one.
             // A whitespace-only phrase (a final that only appends the server's output_suffix,
-            // "\n" or " ") is no block: it is typed as-is, never as the gap alone (three bare
-            // Returns, empty submits in a chat box), and neither owes nor pays a gap below.
+            // "\n" or " ") is no block and types NOTHING: not the gap alone (three bare Returns,
+            // empty submits in a chat box), and not the suffix either. A typed "\n" is still a
+            // Return that submits in a chat box, yet it would leave the gap owed, so the next
+            // block opened four line breaks down. A block trims the same suffix away, so the
+            // field reads the same whether or not the server split it into its own final. It
+            // neither owes nor pays a gap below, and Rust answers the empty insert `landed`, so
+            // the baseline still advances past it.
             const block = phrase.text.trim();
             const opensBlock = !sessionTranslation || block !== "";
-            const typeOut = sessionTranslation && block
-              ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block
+            const typeOut = sessionTranslation
+              ? (block ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block : "")
               : phrase.text;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText

@@ -410,12 +410,13 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(mask(fns.clearPhraseEnd)).toContain("gapOwedApps.clear();");
   });
 
-  it("a translated final that only adds whitespace types it as-is, not the gap alone, and leaves the gap owed", () => {
+  it("a translated final that only adds whitespace types nothing, not the gap alone, and leaves the gap owed", () => {
     // A closing final that only appends the server's output_suffix ("\n" or " ") translates to
     // nothing (`block` is empty). Normalised to gap + block it typed PHRASE_GAP alone — three bare
-    // Returns, empty submits in a chat box — or "" with a "typed" pulse for nothing.
+    // Returns, empty submits in a chat box. Typed as-is, its "\n" was still a Return (a submit)
+    // that left the gap owed, so the next block opened four line breaks down.
     const final = mask(finalBody);
-    expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const opensBlock = !sessionTranslation \|\| block !== \s+;\s+const typeOut = sessionTranslation && block\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block\s+: phrase\.text;/);
+    expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const opensBlock = !sessionTranslation \|\| block !== \s+;\s+const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block :\s+\)\s+: phrase\.text;/);
     // The gap is never typed without a block after it.
     expect(final).not.toMatch(/sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP/);
     // It neither owes a gap nor moves the Enter's app: only a phrase that opens a block does.
@@ -430,6 +431,30 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(translate).toContain("if (!tr || !text.trim()) return { text, translated: false };");
     // …and only a translated phrase books there.
     expect(delivered).toMatch(/if \(phrase\.translated\) \{\s+sessionPhraseContext\.push\(body\);\s+sessionTranslatedText = /);
+  });
+
+  it("a translated whitespace-only final hands injectText an empty text, gap owed or not", () => {
+    // Runs the phrase's seam rule itself (the statements from `block` to `typeOut`, plain JS) on
+    // the output_suffix finals, into an app that owes no gap and into one that owes it.
+    const start = finalBody.indexOf("const block = phrase.text.trim();");
+    expect(start, "the phrase's seam rule moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const end = finalBody.indexOf(": phrase.text;", start) + ": phrase.text;".length;
+    const seam = new Function(
+      "phrase", "sessionTranslation", "gapOwedApps", "t", "PHRASE_GAP",
+      `${finalBody.slice(start, end)}\nreturn { typeOut, opensBlock };`,
+    ) as (phrase: { text: string }, sessionTranslation: boolean, gapOwedApps: Set<string>, t: { appId: string }, gap: string) => { typeOut: string; opensBlock: boolean };
+    const gap = "\n\n\n";
+    for (const suffix of ["\n", " ", " \n"]) {
+      for (const owed of [new Set<string>(), new Set(["app"])]) {
+        const out = seam({ text: suffix }, true, owed, { appId: "app" }, gap);
+        expect(out.typeOut, `${JSON.stringify(suffix)} with ${owed.size ? "a" : "no"} gap owed`).toBe("");
+        expect(out.opensBlock).toBe(false);
+      }
+    }
+    // A real block still gets the gap only when it is owed; an untranslated phrase is untouched.
+    expect(seam({ text: " Hallo\n" }, true, new Set(["app"]), { appId: "app" }, gap).typeOut).toBe(gap + "Hallo");
+    expect(seam({ text: " Hallo\n" }, true, new Set(), { appId: "app" }, gap).typeOut).toBe("Hallo");
+    expect(seam({ text: "\n" }, false, new Set(["app"]), { appId: "app" }, gap).typeOut).toBe("\n");
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
@@ -731,7 +756,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // divert / recovery arm writes that instead.
     const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     const final = mask(finalBody);
-    expect(final).toMatch(/const typeOut = sessionTranslation && block\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
+    expect(final).toMatch(/const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
     // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
     // when the two differ (omitted = Rust's old behaviour, the clipboard gets `text`).
     const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);
