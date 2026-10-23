@@ -334,6 +334,31 @@ describe("linkScreenSpoken", () => {
     expect(sp.source).toBe("edited");
     expect(frozenLinkSpoken(sp)).toBe("auto");
   });
+  it("reads Multiple languages under a Default screen when the server auto-detects and multilingual is inherited", () => {
+    for (const server of ["auto", "", "  "]) {
+      expect(linkScreenSpoken("", server, true)).toBe(MULTI_LANGUAGE);
+      const sp = linkSpoken({ siteLanguage: null, check: { state: "idle" }, screen: linkScreenSpoken("", server, true), edited: null });
+      expect(sp.value).toBe(MULTI_LANGUAGE);
+      expect(sp.multi).toBe(true);
+      expect(frozenLinkSpoken(sp)).toBeUndefined();
+    }
+    // A named server default, or a server that doesn't say, is not folded.
+    expect(linkScreenSpoken("", "de", true)).toBe("de");
+    expect(linkScreenSpoken("", undefined, true)).toBe("");
+    expect(linkScreenSpoken("", "auto", false)).toBe("");
+  });
+  it("keeps a Default link multilingual after the language check, as an Auto-detect screen does", () => {
+    const check = {
+      state: "done" as const,
+      result: { language: "de", probability: 0.99, verdict: "detected" as const, also: [], pieces: [], mediaId: null, mediaExpiresAt: null },
+    };
+    const underDefault = linkSpoken({ siteLanguage: null, check, screen: linkScreenSpoken("", "auto", true), edited: null });
+    const underAuto = linkSpoken({ siteLanguage: null, check, screen: MULTI_LANGUAGE, edited: null });
+    expect(underDefault).toEqual(underAuto);
+    expect(underDefault).toMatchObject({ value: MULTI_LANGUAGE, spoken: "de", multi: true, source: "detected" });
+    // Not frozen on Add: the run sends no language and keeps the inherited multilingual default.
+    expect(frozenLinkSpoken(underDefault)).toBeUndefined();
+  });
 });
 
 describe("media link edge trim", () => {

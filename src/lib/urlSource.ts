@@ -162,11 +162,17 @@ export function frozenLinkSpoken(sp: Pick<LinkSpoken, "value" | "source">): stri
 /** The screen language a link card starts from. Under Default ("") a link sends no language
  *  (frozenLinkSpoken), so its run takes the server's DEFAULT_LANGUAGE: the card, the site-subtitle
  *  plan and the automatic language check start from that language too, not from auto-detect.
- *  It stays a screen value, so Add still lets the link follow the screen. */
-export function linkScreenSpoken(screenValue: string, serverLanguage: unknown): string {
+ *  A server default of auto-detect with `multiInherited` (the `multilingual` flag a Default run
+ *  inherits) runs as Multiple languages, as the screen's own "Default · Multiple languages"
+ *  reads it (serverLanguageLabel). It stays a screen value, so Add still lets the link follow
+ *  the screen. */
+export function linkScreenSpoken(screenValue: string, serverLanguage: unknown, multiInherited?: boolean): string {
   if (screenValue !== "") return screenValue;
-  const s = languageCodeOf(typeof serverLanguage === "string" ? serverLanguage.trim() : "");
-  return namedLanguage(s) ? s : "";
+  // A server that doesn't say its language (decode defaults not loaded) names nothing either.
+  if (typeof serverLanguage !== "string") return "";
+  const s = languageCodeOf(serverLanguage.trim());
+  if (namedLanguage(s)) return s;
+  return multiInherited === true ? MULTI_LANGUAGE : "";
 }
 
 /** Server preview of a pasted link (POST /v1/audio/url-preview). All string

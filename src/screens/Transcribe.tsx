@@ -609,7 +609,7 @@ export default function Transcribe() {
     enabled: caps?.url_language_check_enabled === true && caps?.url_subtitles_enabled === true
       && !!urlPreviewData?.subtitle_tracks?.length && !linkTooLongWhy,
     model: model.trim() || backend?.model?.trim(),
-    screen: linkScreenSpoken(spoken.value, decodeDefaults?.language?.value),
+    screen: linkScreenSpoken(spoken.value, decodeDefaults?.language?.value, inheritedBaseline.multilingual === true),
   });
   /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
   const previewSite = urlPreviewData ? siteDisplayName(draftUrl ?? "", urlPreviewData.extractor) : "";
