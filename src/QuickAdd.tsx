@@ -710,6 +710,8 @@ export default function QuickAdd() {
               <div className="mb-2.5 font-mono text-[10px] uppercase tracking-wider text-accent">add a mapping</div>
               <div className="grid grid-cols-[1fr_150px] items-end gap-2.5">
                 <div className="min-w-0">
+                  {/* The captions are sibling <label>s with no htmlFor, so they name nothing: each field
+                      carries its own name, or a screen reader reads its placeholder ("comma, edit"). */}
                   <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-wider text-faint">When you say</label>
                   <Combobox
                     key={showSeq}
@@ -719,6 +721,7 @@ export default function QuickAdd() {
                     suggestions={suggestions}
                     footerMax={recentMax}
                     placeholder="say a word…"
+                    ariaLabel="When you say"
                     onChange={setFind}
                     onSelect={(w) => {
                       setFind(w);
@@ -734,6 +737,7 @@ export default function QuickAdd() {
                     spellCheck={false}
                     autoComplete="off"
                     placeholder=","
+                    aria-label="Insert"
                     className="font-mono"
                     onChange={(e) => setInsert(e.target.value)}
                     onKeyDown={(e) => {
