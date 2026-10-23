@@ -136,6 +136,50 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetOnSummon(reloaded, dropped)).toEqual({ moved: true, target: reloaded });
   });
 
+  it("is a move when a reload under a changed override address and a masked Server URL edit is followed by dropping it", () => {
+    // The VPN address changed alongside a Server URL edit the override still masked: the reload
+    // (still through the override, so still a.lan's server) recorded b.lan as where the rows came
+    // from, the PATCH to the new override address failed, and dropping the override then passed as
+    // no move, so the retry replaced b.lan's list of the same name with a.lan's whole map.
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const viaOverride = quickAddTargetOf(pinned);
+    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+
+    expect(quickAddTargetOnSummon(viaOverride, edited).moved).toBe(true); // nothing pending: reload
+    const reloaded = quickAddTargetOnLoad(viaOverride, edited);
+    expect(reloaded).toEqual({ serverUrl: "http://100.64.0.6:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
+    // The save to 100.64.0.6 fails ("error"); the next summon, override dropped, must not follow to b.lan.
+    expect(quickAddTargetMoved(reloaded, dropped)).toBe(true);
+    expect(quickAddTargetOnSummon(reloaded, dropped)).toEqual({ moved: true, target: reloaded });
+  });
+
+  it("keeps the loaded Server URL when only the override address changes on a reload", () => {
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const moved = cfg({ backendId: "a", slug: "my-words" });
+    moved.settings.sync = { ...moved.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    expect(quickAddTargetOnLoad(quickAddTargetOf(pinned), moved)).toEqual(quickAddTargetOf(moved));
+  });
+
+  it("adopts the file's Server URL on a reload without an override before or after, or when one is added or dropped", () => {
+    // No override either side: an edited Server URL is where the reload fetched the rows from.
+    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    expect(quickAddTargetOnLoad(loaded, readdressed)).toEqual({ serverUrl: "http://a2.lan:8000", backendUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" });
+    expect(quickAddTargetOnLoad(loaded, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
+    // An override added on the reload of an edited Server URL: the rows came through it, from
+    // whatever a2.lan's backend now names, so the file's Server URL is recorded.
+    const added = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    added.settings.sync = { ...added.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    expect(quickAddTargetOnLoad(loaded, added)?.backendUrl).toBe("http://a2.lan:8000");
+    // The override dropped on the reload: the rows came straight from the file's Server URL.
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    expect(quickAddTargetOnLoad(quickAddTargetOf(pinned), readdressed)).toEqual(quickAddTargetOf(readdressed));
+  });
+
   it("adopts the file's Server URL on a first load, a new address, or another list", () => {
     expect(quickAddTargetOnLoad(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
     const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
