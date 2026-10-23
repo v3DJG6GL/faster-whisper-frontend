@@ -97,6 +97,15 @@ struct MediaFields {
     source_path: Option<String>,
 }
 
+/// A save's record re-pointed by [`repoint_moved`]: the JSON to write, and each media field it
+/// re-pointed with its new path. The webview's History mirror still names the old paths, so the
+/// save hands `fields` back: every later chunk merge or edit reads that mirror copy.
+#[derive(Debug, PartialEq)]
+struct Repointed {
+    record: String,
+    fields: std::collections::HashMap<&'static str, String>,
+}
+
 /// `record` with every media field ([`MEDIA_KEYS`]) that names a moved path re-pointed, or
 /// `None` when nothing in it moved (or it does not parse) — then it is written as sent. No stat:
 /// the save is a main-thread command and the base may be stalled. Every save after a move or
@@ -106,12 +115,12 @@ struct MediaFields {
 fn repoint_moved(
     record: &str,
     moved: &std::collections::HashMap<String, String>,
-) -> Option<String> {
+) -> Option<Repointed> {
     if moved.is_empty() {
         return None;
     }
     let media = serde_json::from_str::<MediaFields>(record).ok()?;
-    let hits: Vec<(&str, &String)> = MEDIA_KEYS
+    let hits: Vec<(&'static str, &String)> = MEDIA_KEYS
         .into_iter()
         .zip([media.media_path, media.video_path, media.source_path])
         .filter_map(|(key, path)| moved.get(path?.as_str()).map(|new| (key, new)))
@@ -122,10 +131,16 @@ fn repoint_moved(
     let mut v = serde_json::from_str::<serde_json::Value>(record).ok()?;
     // A derived struct also reads a JSON array positionally: only an object is re-pointed.
     let obj = v.as_object_mut()?;
-    for (key, new) in hits {
+    for &(key, new) in &hits {
         obj.insert(key.to_owned(), serde_json::Value::String(new.clone()));
     }
-    serde_json::to_string(&v).ok()
+    Some(Repointed {
+        record: serde_json::to_string(&v).ok()?,
+        fields: hits
+            .into_iter()
+            .map(|(key, new)| (key, new.clone()))
+            .collect(),
+    })
 }
 
 /// Sanity cap per record — a transcript with word timestamps of an hours-long
@@ -688,14 +703,15 @@ fn remove_dictation_audio(source_path: &str) {
 
 /// Write (create or replace) one history record, keeping a replaced record's date (see
 /// `write_record_keeping_mtime`). Atomic tmp+rename with owner-only permissions, cleanup on
-/// both failure paths.
+/// both failure paths. Resolves to the media fields the save re-pointed (key → new path; empty
+/// when none did), so the webview's mirror stops naming the paths a move took away.
 #[tauri::command]
 pub fn save_transcript_record(
     app: AppHandle,
     id: String,
     record: String,
     dictation: Option<bool>,
-) -> Result<(), String> {
+) -> Result<std::collections::HashMap<&'static str, String>, String> {
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
@@ -719,8 +735,14 @@ pub fn save_transcript_record(
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .and_then(|moved| repoint_moved(&record, &moved.fwd));
-    write_record_keeping_mtime(&path, repointed.as_deref().unwrap_or(&record))
-        .map_err(|e| e.to_string())
+    write_record_keeping_mtime(
+        &path,
+        repointed
+            .as_ref()
+            .map_or(record.as_str(), |r| r.record.as_str()),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(repointed.map(|r| r.fields).unwrap_or_default())
 }
 
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
@@ -1808,9 +1830,18 @@ mod tests {
             &moved.fwd,
         )
         .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out.record).unwrap();
         assert_eq!(v["mediaPath"], "/new/files/a.m4a");
         assert_eq!(v["sourcePath"], "/new/dictations/d.wav");
+        // The save hands the re-pointed fields back (the webview's mirror still names the old
+        // paths) — exactly those two, not the text.
+        assert_eq!(
+            out.fields,
+            std::collections::HashMap::from([
+                ("mediaPath", "/new/files/a.m4a".to_owned()),
+                ("sourcePath", "/new/dictations/d.wav".to_owned()),
+            ])
+        );
         // Only media fields: the same text elsewhere in the record is the user's.
         assert_eq!(v["text"], "/old/files/a.m4a");
         // A record naming no moved path is written as sent.
@@ -1869,7 +1900,7 @@ mod tests {
             Some("/c/x.wav")
         );
         let out = repoint_moved(r#"{"videoPath":"/a/x.wav"}"#, &moved.fwd).unwrap();
-        assert!(out.contains("/c/x.wav"));
+        assert!(out.record.contains("/c/x.wav"));
         // Moved back: no entry maps a path onto itself.
         note_moved_in(&mut moved, "/c/x.wav".into(), "/a/x.wav".into());
         assert_eq!(moved.fwd.get("/a/x.wav"), None);

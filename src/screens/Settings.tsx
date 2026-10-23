@@ -17,7 +17,7 @@ import {
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
 import { copyPathsBeforeWipe, stripWipedCopyPath } from "@/lib/transcript/mediaExport";
-import { clearWipedRowMediaPaths, forgetRecord, refreshRowMediaPaths } from "@/lib/transcribeRun";
+import { clearWipedRowMediaPaths, flushPersistEdits, forgetRecord, refreshRowMediaPaths } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
   deleteAllDictations,
@@ -502,7 +502,8 @@ export default function Settings() {
           // below replaces the mirror with the disk copy, so a dropped write (a translate chunk's
           // merge, a fresh correction) would be lost from both. A write on disk before the move
           // is re-pointed by the move's own rewrite, and any later save is re-pointed by
-          // save_transcript_record (the session's MOVED map) — neither puts a pre-move path back.
+          // save_transcript_record (the session's MOVED map), which hands the new paths back to
+          // the mirror — neither puts a pre-move path back.
           await flushRecordWrites();
           try {
             // Read the live base, not the click-time closure: on Linux the picker isn't modal,
@@ -512,17 +513,17 @@ export default function Settings() {
             await moveAudioBase(from, picked);
           } catch (e) {
             // A partial move already rewrote the records that did move: reload either way.
-            forgetRecord(null);
+            flushPersistEdits();
             void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
           setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
-          // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
-          // mirror still holds the pre-move paths — and would write them back on edit.
-          // A pending overlay write would too: forgetRecord drops those timers (the
-          // registry keeps the ids and re-reads the reloaded mirror).
-          forgetRecord(null);
+          // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once mirror
+          // still holds the pre-move paths. Land a pending overlay edit (a correction made
+          // during the move) before the reload, never drop it: the reload replays it over the
+          // disk copy that lacks it, and Rust re-points its save like any other.
+          flushPersistEdits();
           void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
         } finally {
           setBusy("dir", false);
@@ -540,12 +541,12 @@ export default function Settings() {
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
         setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
-        forgetRecord(null);
+        flushPersistEdits();
         void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
       })
       .catch((e) => {
         // A partial move already rewrote the records that did move: reload either way.
-        forgetRecord(null);
+        flushPersistEdits();
         void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
         reportMoveError(e);
       })

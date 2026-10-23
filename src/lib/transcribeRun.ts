@@ -21,7 +21,7 @@ import { useApp } from "./store";
 import { safeDisplayText } from "./sanitize";
 import { backendLabelById } from "./backends";
 import {
-  currentRecord, patchRecord, setRecordForgetHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
+  currentRecord, patchRecord, setRecordForgetHook, setRecordRepointHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
@@ -841,10 +841,11 @@ function registered(key: string): TranscriptRecord | undefined {
  *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk).
  *  `deleted` (bulk only): the records themselves are being deleted (Settings' clear) — stop
  *  every lost request's job too, as the single-id path does, or the finished job lands its
- *  transcript again. Without it the records are only re-homed (a storage move or reset keeps
- *  their ids): only the pending writes go, since one firing before the reload would re-save
- *  the pre-move paths. The ID registry stays — it re-reads the mirror (currentRecord), so the
- *  open record keeps its overlays and later edits save onto the moved copy. */
+ *  transcript again. Without it only the pending edit writes go (dropped, not landed); the ID
+ *  registry stays — it re-reads the mirror (currentRecord), so the open record keeps its
+ *  overlays and later edits save onto the reloaded copy. A storage move does not use this: it
+ *  lands those writes (flushPersistEdits), since Rust re-points every save onto the moved
+ *  paths and a dropped one loses the edit from both the disk and the reloaded mirror. */
 export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): void {
   if (id === null) {
     for (const t of persistTimers.values()) window.clearTimeout(t);
@@ -893,6 +894,16 @@ export function refreshRowMediaPaths(): void {
   });
   if (changed) set({ queue });
 }
+
+/** A save Rust re-pointed after a move (transcriptHistory's adoptRepointed): rows still naming
+ *  the old copy follow it. The move's refreshRowMediaPaths reads the mirror once, and a chunk
+ *  merged around the move left the mirror on the old path until this save's answer. */
+function repointRowMediaPath(from: string, to: string): void {
+  const { queue } = get();
+  if (!queue.some((it) => it.mediaPath === from)) return;
+  set({ queue: queue.map((it) => (it.mediaPath === from ? { ...it, mediaPath: to } : it)) });
+}
+setRecordRepointHook(repointRowMediaPath);
 
 /** After "Delete audio from link transcriptions" (`wiped`: the copy paths the wipe deleted,
  *  already stripped from their records): drop a queue row's copy that is one of them while its

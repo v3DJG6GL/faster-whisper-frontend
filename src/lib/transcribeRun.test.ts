@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The only Tauri command these tests care about is the history write: a record the
 // workbench must NOT re-save has to be observable. The rest of api.ts is no-op outside
 // Tauri (each command guards on `isTauri`), so the original module is kept.
-const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
+const saveTranscriptRecord = vi.fn(
+  (_id: string, _json: string, _dictation: boolean): Promise<import("./api").RepointedMedia | null> => Promise.resolve(null),
+);
 // Unset = the real outside-Tauri command; the lost-request tests make it reject.
 const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
 // Unset = the real outside-Tauri command; the text-source join test answers it.
@@ -993,6 +995,30 @@ describe("refreshRowMediaPaths after a storage move", () => {
     refreshRowMediaPaths();
     expect(row()?.mediaPath).toBe("/new/links/moved-1.m4a");
   });
+
+  // Run #88 F12: a chunk merged around the move kept the mirror on the old path past the
+  // reload, so refreshRowMediaPaths found nothing to re-point. The save Rust re-points now
+  // hands the moved path back, and the row follows it whenever that answer lands.
+  it("a row follows a save Rust re-pointed after the reload", async () => {
+    const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
+    const rec: TranscriptRecord = {
+      schemaVersion: 1, kind: "url", id: "moved-2", createdAt: "2026-10-23T12:00:00Z",
+      sourcePath: "https://host/w", sourceName: "w", status: "done", mediaPath: "/old/links/moved-2.m4a",
+      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
+    };
+    openHistoryRecord(rec);
+    const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/w");
+    await flushRecordWrites();
+    saveTranscriptRecord.mockResolvedValue({ mediaPath: "/new/links/moved-2.m4a" });
+    try {
+      patchRecord("moved-2", (r) => ({ ...r, result: { ...r.result!, text: "x y" } })); // a chunk merge
+      await flushRecordWrites();
+    } finally {
+      saveTranscriptRecord.mockImplementation(() => Promise.resolve(null));
+    }
+    expect(currentRecord("moved-2")?.mediaPath).toBe("/new/links/moved-2.m4a");
+    expect(row()?.mediaPath).toBe("/new/links/moved-2.m4a");
+  });
 });
 
 // Run #75 F12-2: the links wipe stripped the record's copy but the open transcript's queue row
@@ -1399,7 +1425,7 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
   });
 });
 
-describe("forgetRecord(null) without deleted (a storage move or reset re-homes the records)", () => {
+describe("forgetRecord(null) without deleted (the records stay; pending edits are dropped)", () => {
   const rec: TranscriptRecord = {
     schemaVersion: 1, kind: "file", id: "move-1", createdAt: "2026-10-13T12:00:00Z",
     sourcePath: "/old/m.mp3", sourceName: "m.mp3", status: "done",

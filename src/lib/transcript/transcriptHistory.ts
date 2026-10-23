@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, logLine, saveTranscriptRecord, subscribe,
+  type RepointedMedia,
 } from "../api";
 import { langText, languageCodeOf } from "../languages";
 import { useApp } from "../store";
@@ -534,9 +535,46 @@ function writeNow(rec: TranscriptRecord): Promise<void> {
     for (const [id, at] of lastWriteAt) if (now - at >= WRITE_COALESCE_MS) lastWriteAt.delete(id);
   }
   lastWriteAt.set(rec.id, now);
-  return track(saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
-    console.error("history save failed:", e),
-  ));
+  return track(
+    saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation")
+      .then((moved) => adoptRepointed(rec, moved))
+      .catch((e) => console.error("history save failed:", e)),
+  );
+}
+
+const MEDIA_KEYS = ["mediaPath", "videoPath", "sourcePath"] as const;
+
+/** transcribeRun re-points its queue rows (the viewer and the export prefer a row's mediaPath
+ *  over the record's). Registered from its module scope, like the forget hook. */
+let repointHook: ((from: string, to: string) => void) | null = null;
+export function setRecordRepointHook(fn: (from: string, to: string) => void): void {
+  repointHook = fn;
+}
+
+/** Rust re-pointed media fields of the save of `sent` (`moved`: field → new path) — this
+ *  session moved those files, and `sent` came from the mirror, which still names the old paths.
+ *  A move's forced listing has the new ones, but a copy parked or upserted around it is
+ *  replayed over that listing, and every later chunk merge or edit re-reads the mirror: patch
+ *  the mirror's copy and a pending replay's, each field only while it still names the path sent
+ *  (a later writer's own change stands). No write: the disk already has these paths. */
+function adoptRepointed(sent: TranscriptRecord, moved: RepointedMedia | null | undefined): void {
+  if (!moved) return;
+  const fix = (r: TranscriptRecord): TranscriptRecord => {
+    let out = r;
+    for (const key of MEDIA_KEYS) {
+      const to = moved[key];
+      if (to && sent[key] && r[key] === sent[key]) out = { ...out, [key]: to };
+    }
+    return out;
+  };
+  const touched = touchedSinceListing?.get(sent.id);
+  if (touched) touchedSinceListing?.set(sent.id, fix(touched));
+  const cur = currentRecord(sent.id);
+  if (cur) {
+    const next = fix(cur);
+    if (next !== cur) useTranscriptHistory.setState((s) => ({ records: s.records.map((r) => (r === cur ? next : r)) }));
+  }
+  if (sent.mediaPath && moved.mediaPath) repointHook?.(sent.mediaPath, moved.mediaPath);
 }
 
 /** DROP every coalesced write (never land it): the caller is about to wipe the records the

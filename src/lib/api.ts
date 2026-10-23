@@ -1658,15 +1658,20 @@ export async function revealSaved(paths: readonly string[]): Promise<void> {
   }
 }
 
+/** A save's media fields Rust re-pointed (see saveTranscriptRecord): field → new path. */
+export type RepointedMedia = Partial<Record<"mediaPath" | "videoPath" | "sourcePath", string>>;
+
 /** Persist one transcription-history record (opaque JSON, atomic write).
- *  `record` is pre-serialized by the caller so Rust never re-encodes it. */
+ *  `record` is pre-serialized by the caller so Rust never re-encodes it. Resolves to the media
+ *  fields Rust re-pointed because this session moved their files (field → new path; empty or
+ *  null when none did): the record sent still names the old paths. */
 export async function saveTranscriptRecord(
   id: string,
   record: string,
   dictation = false,
-): Promise<void> {
-  if (!isTauri) return;
-  await invoke("save_transcript_record", { id, record, dictation });
+): Promise<RepointedMedia | null> {
+  if (!isTauri) return null;
+  return (await invoke<RepointedMedia | null>("save_transcript_record", { id, record, dictation })) ?? null;
 }
 
 /** The effective audio-base-folder preference: the new key, with the legacy
