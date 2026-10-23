@@ -39,7 +39,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -804,7 +804,7 @@ export default function Transcribe() {
         keepVideo: linkKeepVideo ?? undefined,
         videoMaxHeight: linkVideoHeight,
         videoFormat: linkVideoFormat,
-        spokenLanguage: linkLang.sp.value !== spoken.value ? linkLang.sp.value : undefined,
+        spokenLanguage: frozenLinkSpoken(linkLang.sp, spoken.value),
         // Gated on multiOffered: a server that refuses or locks the key never gets it sent.
         spokenMultiInherited: multiOffered && inheritedBaseline.multilingual === true,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
