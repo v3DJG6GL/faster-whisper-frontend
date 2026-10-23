@@ -102,14 +102,15 @@ export function utteranceInsertTranslation(
       : {};
   }
   if (!phrase.translated) return { translationAttempted: true, translationFailure: session.failure };
-  // The record's earlier words already went out untranslated (their translate failed, or a
-  // wider window carried them): this final's translation alone is not the record's, and booked
-  // as its translatedText History would copy and search only the held-back word. Leave it
-  // unbooked so the copy falls back to the whole original. `insertMethod` tells a delivered
-  // earlier insert from one still in flight, which books after the later final's text landed.
-  if (!r.translatedText && text !== delta && (r.insertMethod === "typed" || r.insertMethod === "clipboard")) {
-    return { translationAttempted: true };
-  }
+  // A release final's held-back words on a record that holds no translation of its earlier
+  // words — their translate failed, a wider window carried them, or they are still owed (skipped
+  // in our own window, or a copy that did not land): this final's translation alone is not the
+  // record's, and booked as its translatedText History would copy and search only the held-back
+  // word. Book nothing, so the copy falls back to the whole original: a failed translate already
+  // booked its own failure, and the others claim none. Position tells these apart from the
+  // record's own insert still in flight (its booking can arrive after the release's words were
+  // appended): those words start the record's text, a release's never do.
+  if (!r.translatedText && text !== delta && !text.startsWith(delta)) return {};
   // A release final's own words: its translation joins the record's per language — a
   // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
   const out = appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {

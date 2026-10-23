@@ -93,7 +93,31 @@ describe("utteranceInsertTranslation", () => {
     const r = { result: { text: "Hello the world" }, insertMethod: "typed" as const };
     const out = utteranceInsertTranslation(r, release, fr);
     expect(out.translatedText).toBeUndefined();
-    expect(out).toEqual({ translationAttempted: true });
+    expect(out).toEqual({});
+  });
+
+  it("a release whose utterance's earlier words are still owed books no translation of its word alone", () => {
+    // Clipboard session: the ordinal final was skipped in our own window (owed, so its record is
+    // still "none"), the pause closed the window, and the release copied only " world" elsewhere.
+    // Nothing later books "Hello the"'s translation, so "monde" would stay all History copies.
+    const r = { result: { text: "Hello the world" }, insertMethod: "none" as const };
+    const out = utteranceInsertTranslation(r, release, fr);
+    expect(out.translatedText).toBeUndefined();
+    expect(out).toEqual({});
+  });
+
+  it("a release after a wider translated window claims no failed translation", () => {
+    // The record's earlier words went out inside a wider translated window (booked insertMethod
+    // only); its release word translated too. A bare translationAttempted reads in History as
+    // "translation failed — original inserted".
+    const r = { result: { text: "Hello there friend" }, insertMethod: "typed" as const };
+    const out = utteranceInsertTranslation(
+      r,
+      { sent: "friend", delta: " friend", phrase: { text: "ami", translated: true, byLang: { fr: "ami" } } },
+      fr,
+    );
+    expect(out.translationAttempted).toBeUndefined();
+    expect(out).toEqual({});
   });
 
   it("a release joins its utterance's translation", () => {
