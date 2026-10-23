@@ -53,6 +53,7 @@ pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{Job, WaylandTyper};
+    use crate::inject::{sink_gate, SinkGate};
     use ashpd::desktop::{
         remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
         PersistMode,
@@ -1168,29 +1169,6 @@ mod imp {
             .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     }
 
-    /// What a keystroke sink may do next (see [`sink_gate`]).
-    #[derive(Debug, PartialEq)]
-    enum SinkGate {
-        Proceed,
-        OwnWindow,
-        Cancelled,
-    }
-
-    /// Run the own-window probe FIRST and read the cancel AFTER it. The probe is a main-thread
-    /// round trip, so a cancel read before it misses one that lands during it, and the paste chord
-    /// and auto-Enter have no later check. A cancel wins over the own window: the job is dropped
-    /// (`Landed::Yes`), not diverted.
-    fn sink_gate(own_window: impl FnOnce() -> bool, cancelled: impl FnOnce() -> bool) -> SinkGate {
-        let own = own_window();
-        if cancelled() {
-            SinkGate::Cancelled
-        } else if own {
-            SinkGate::OwnWindow
-        } else {
-            SinkGate::Proceed
-        }
-    }
-
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
     /// on first use, and await its completion.
     #[allow(clippy::too_many_arguments)]
@@ -1719,25 +1697,6 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
-
-        /// A cancel that lands during the own-window probe (a main-thread round trip) must stop the
-        /// paste chord and auto-Enter: the cancel is read after the probe, not before it.
-        #[test]
-        fn a_cancel_during_the_own_window_probe_stops_the_sink() {
-            let cancelled = std::cell::Cell::new(false);
-            let gate = sink_gate(
-                || {
-                    cancelled.set(true);
-                    false
-                },
-                || cancelled.get(),
-            );
-            assert_eq!(gate, SinkGate::Cancelled);
-            // A cancel also wins over our own focused window: dropped, not diverted.
-            assert_eq!(sink_gate(|| true, || true), SinkGate::Cancelled);
-            assert_eq!(sink_gate(|| true, || false), SinkGate::OwnWindow);
-            assert_eq!(sink_gate(|| false, || false), SinkGate::Proceed);
-        }
 
         #[test]
         fn localectl_layout_and_variant_are_parsed() {

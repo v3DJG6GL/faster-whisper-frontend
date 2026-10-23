@@ -811,6 +811,32 @@ pub enum Landed {
 /// thread no matter who asks.
 pub type OwnWindowFocused<'a> = &'a (dyn Fn() -> bool + Sync);
 
+/// What a keystroke sink may do next (see [`sink_gate`]).
+#[derive(Debug, PartialEq)]
+pub(crate) enum SinkGate {
+    Proceed,
+    OwnWindow,
+    Cancelled,
+}
+
+/// Run the own-window probe FIRST and read the cancel AFTER it. The probe is a main-thread round
+/// trip, so a cancel read before it misses one that lands during it, and the paste chord and
+/// auto-Enter have no later check. A cancel wins over the own window: the job is dropped
+/// (`Landed::Yes`), not diverted. Shared by `inject`/`paste` here and the Wayland portal sinks.
+pub(crate) fn sink_gate(
+    own_window: impl FnOnce() -> bool,
+    cancelled: impl FnOnce() -> bool,
+) -> SinkGate {
+    let own = own_window();
+    if cancelled() {
+        SinkGate::Cancelled
+    } else if own {
+        SinkGate::OwnWindow
+    } else {
+        SinkGate::Proceed
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn inject(
     text: &str,
@@ -921,25 +947,30 @@ pub fn inject(
         }
     }
 
-    // A cancel during the typing above must not still submit what landed.
-    if auto_enter && !injection_cancelled(epoch) {
+    if auto_enter {
         // The three probes above all sit inside `if !text.is_empty()`, so a BARE auto-Enter job —
         // which `streaming.ts` sends routinely for the per-phrase and tail Enter, on both methods —
         // reached this Return having been checked by none of them, and fired blind into whatever
-        // held focus. Same sink guard, at the sink that job actually has.
-        if own_window_focused() {
-            tracing::info!("[inject] skipped the auto-Enter: our own window took focus");
-            // `NothingWritten` ONLY when this job was just the Enter. If text landed above, saying
-            // "nothing written" makes the caller re-send it — the P16 duplicate-text hazard.
-            return Ok(if text.is_empty() {
-                Landed::NothingWritten
-            } else {
-                Landed::Yes
-            });
+        // held focus. Same sink guard, at the sink that job actually has. The cancel is read AFTER
+        // the probe (`sink_gate`): a cancel during the typing above, or during the probe's
+        // main-thread round trip, must not still submit what landed.
+        match sink_gate(own_window_focused, || injection_cancelled(epoch)) {
+            SinkGate::Cancelled => {}
+            SinkGate::OwnWindow => {
+                tracing::info!("[inject] skipped the auto-Enter: our own window took focus");
+                // `NothingWritten` ONLY when this job was just the Enter. If text landed above,
+                // saying "nothing written" makes the caller re-send it — the P16 duplicate-text
+                // hazard.
+                return Ok(if text.is_empty() {
+                    Landed::NothingWritten
+                } else {
+                    Landed::Yes
+                });
+            }
+            SinkGate::Proceed => enigo
+                .key(Key::Return, Direction::Click)
+                .map_err(|e| e.to_string())?,
         }
-        enigo
-            .key(Key::Return, Direction::Click)
-            .map_err(|e| e.to_string())?;
     }
     Ok(Landed::Yes)
 }
@@ -1523,17 +1554,21 @@ fn paste(
     // And again before the chord. The transcript is on the clipboard by now, so the honest answer
     // is a DIVERT, not "nothing written" — and the restore is skipped deliberately so the text
     // stays pasteable, exactly as the failed-paste arm below does.
-    if own_window_focused() {
-        // The probe is an event-loop round trip, so a cancel can land during it — and clicking
-        // Cancel in our own window is what makes it answer true. Bail exactly as the settle check
-        // above does (the Wayland twin's `&& !injection_cancelled(epoch)` gate in text.rs).
-        if injection_cancelled(epoch) {
-            tracing::info!("[clip] paste: cancelled during the own-window probe — not pasting");
-            if !cancel_wants_recovery(epoch) || withhold_on_divert {
-                restore_clipboard_later(previous);
-            }
-            return Ok(Landed::Yes);
+    //
+    // The probe is an event-loop round trip, so a cancel can land during it — from Cancel in our
+    // own window (the probe then answers true), but just as well from the global hotkey, the tray
+    // or an error abort, which leave focus in the target app (it answers false, and the chord
+    // below has no later check). So the cancel is read AFTER the probe, whatever it answered
+    // (`sink_gate`), and bails exactly as the settle check above does.
+    let gate = sink_gate(own_window_focused, || injection_cancelled(epoch));
+    if gate == SinkGate::Cancelled {
+        tracing::info!("[clip] paste: cancelled during the own-window probe — not pasting");
+        if !cancel_wants_recovery(epoch) || withhold_on_divert {
+            restore_clipboard_later(previous);
         }
+        return Ok(Landed::Yes);
+    }
+    if gate == SinkGate::OwnWindow {
         tracing::info!("[clip] paste: skipped at the chord — our own window took focus");
         // A withheld insert is not diverted: no persistent owner and no `OnClipboard` (which
         // would arm `DELIVERED_ON_CLIPBOARD`), just the restore a pasted one gets. `Yes`, not
@@ -1772,6 +1807,30 @@ mod tests {
             Some(Landed::NothingWritten)
         );
         assert_eq!(idle_wait_gate(|| true, || false), None);
+    }
+
+    /// A cancel that lands during the own-window probe (a main-thread round trip) must stop the
+    /// paste chord and auto-Enter on every backend: `paste`/`inject` read the cancel only before
+    /// the probe, so a cancel from the hotkey, the tray or an error abort (focus stays in the
+    /// target app, the probe answers false) still pressed Ctrl+V or Return on the transcript.
+    #[test]
+    fn a_cancel_during_the_own_window_probe_stops_the_sink() {
+        use super::{sink_gate, SinkGate};
+        use std::cell::Cell;
+        for own in [true, false] {
+            let cancelled = Cell::new(false);
+            let gate = sink_gate(
+                || {
+                    cancelled.set(true); // the cancel lands while the probe runs
+                    own
+                },
+                || cancelled.get(),
+            );
+            // A cancel also wins over our own focused window: dropped, not diverted.
+            assert_eq!(gate, SinkGate::Cancelled, "own={own}");
+        }
+        assert_eq!(sink_gate(|| true, || false), SinkGate::OwnWindow);
+        assert_eq!(sink_gate(|| false, || false), SinkGate::Proceed);
     }
 
     /// `persist_transcript` (the clipboard-only insert and the mid-function divert write through
