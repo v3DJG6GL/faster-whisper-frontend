@@ -695,6 +695,13 @@ describe("site subtitle cleanup", () => {
     // A conjunction after the tag still keeps the hyphen.
     expect(srt("<i>Ein- </i>", "<i>und Ausgang</i>")).toBe("Ein- und Ausgang");
   });
+  it("a hyphen followed by many ambiguous tags and a later hyphen rejoins in linear time", () => {
+    // `<br class=x/>` parses two ways; 30 of them before " b-" took 2^30 backtracking steps.
+    const line = "a-" + "<br class=x/>".repeat(30) + " b-";
+    const t0 = performance.now();
+    expect(parseImportedText("srt", `1\n00:00:01,000 --> 00:00:03,000\n${line}\nc\n`).segments[0].text).toBe("a- bc");
+    expect(performance.now() - t0).toBeLessThan(200);
+  });
   it("a line opening a voice turn or holding our .mt translation is never a hyphenated word's second half", () => {
     const vtt = (...lines: string[]) =>
       parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${lines.join("\n")}\n`).segments.map((s) => [s.speaker ?? null, s.text]);

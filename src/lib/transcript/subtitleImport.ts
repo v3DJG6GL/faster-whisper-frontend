@@ -338,8 +338,12 @@ const MT_OPEN = /<c\.mt[\s.>]/;
 /** One piece of bareLine's markup: a tag, an inline timestamp, an ASS override block. */
 const MARKUP_PIECE = String.raw`${MARKUP_TAG.source}|<\d+:\d+(?::\d+)?(?:\.\d+)?>|\{\\[^}]{0,64}\}`;
 /** A line's last hyphen and the markup after it: a line wrapped in its own tag (`<i>journa-</i>`)
- *  ends on the tag, not on the hyphen. */
-const HYPHEN_THEN_MARKUP = new RegExp(String.raw`-((?:${MARKUP_PIECE}|\s)*)$`, "iu");
+ *  ends on the tag, not on the hyphen. Each piece is matched atomically (a lookahead, then its
+ *  backreference — MARKUP_PIECE has no groups of its own, so it is `\2`): a tag like
+ *  `<br class=x/>` parses two ways (the `/` in the value or the self-close), and a line of N such
+ *  tags whose tail then fails `$` (" b-" after them) backtracked through all 2^N parses. Every
+ *  parse of a piece ends on the same `>` or `}`, so the atomic match takes the same text. */
+const HYPHEN_THEN_MARKUP = new RegExp(String.raw`-((?:(?=(${MARKUP_PIECE}))\2|\s)*)$`, "iu");
 /** The markup of that tail, or a blank between its pieces ("$1" drops the blank). */
 const MARKUP_OR_BLANK = new RegExp(String.raw`(${MARKUP_PIECE})|\s+`, "giu");
 /** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
