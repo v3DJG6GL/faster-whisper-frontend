@@ -1168,6 +1168,29 @@ mod imp {
             .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     }
 
+    /// What a keystroke sink may do next (see [`sink_gate`]).
+    #[derive(Debug, PartialEq)]
+    enum SinkGate {
+        Proceed,
+        OwnWindow,
+        Cancelled,
+    }
+
+    /// Run the own-window probe FIRST and read the cancel AFTER it. The probe is a main-thread
+    /// round trip, so a cancel read before it misses one that lands during it, and the paste chord
+    /// and auto-Enter have no later check. A cancel wins over the own window: the job is dropped
+    /// (`Landed::Yes`), not diverted.
+    fn sink_gate(own_window: impl FnOnce() -> bool, cancelled: impl FnOnce() -> bool) -> SinkGate {
+        let own = own_window();
+        if cancelled() {
+            SinkGate::Cancelled
+        } else if own {
+            SinkGate::OwnWindow
+        } else {
+            SinkGate::Proceed
+        }
+    }
+
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
     /// on first use, and await its completion.
     #[allow(clippy::too_many_arguments)]
@@ -1335,10 +1358,9 @@ mod imp {
                 // to iterate — so without this a cancel that lands while the job waits still fires
                 // Ctrl+V, or still presses Enter, with nothing to abandon mid-loop. Re-checked here
                 // after the keymap build: the queue check above misses a cancel that lands during it.
-                if crate::inject::injection_cancelled(job.epoch) {
-                    tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
-                    return Ok(crate::inject::Landed::Yes);
-                }
+                // Read AFTER the own-window probe below (`sink_gate`): the paste chord has no later
+                // check, so a cancel landing during that round trip otherwise still pastes.
+                //
                 // Own-window re-check at the SINK, not only at `inject_text`'s entry. This is the
                 // last Wayland arm without one: the paste branch got its guards at the clipboard
                 // write and at the chord, and the X11/Windows twin got one per typed chunk — but
@@ -1356,9 +1378,16 @@ mod imp {
                 // no key has been synthesized yet. For a PASTE job the caller has already written
                 // the transcript to the clipboard, so `text.rs` turns this answer into an
                 // on-clipboard divert rather than a landed paste.
-                if own_window_focused(app) {
-                    tracing::info!("[wayland-inject] skipped before typing: our own window holds focus");
-                    return Ok(crate::inject::Landed::NothingWritten);
+                match sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch)) {
+                    SinkGate::Cancelled => {
+                        tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
+                        return Ok(crate::inject::Landed::Yes);
+                    }
+                    SinkGate::OwnWindow => {
+                        tracing::info!("[wayland-inject] skipped before typing: our own window holds focus");
+                        return Ok(crate::inject::Landed::NothingWritten);
+                    }
+                    SinkGate::Proceed => {}
                 }
                 // A transcript whose LETTERS the active layout mostly cannot produce (Chinese on a
                 // US layout, digits or not) used to skip them in the loop below, press auto-Enter
@@ -1395,8 +1424,8 @@ mod imp {
                             reachable + unreachable,
                             if unreachable_digit(&text, &charmap, caps) { ", nor is a digit" } else { "" }
                         );
-                        // `own_window_focused` above is a main-thread round trip, so a cancel can
-                        // land after the pre-job check. Re-ask right before the clipboard write,
+                        // A cancel can still land after the pre-job check (the Caps read, the
+                        // letter scan). Re-ask right before the clipboard write,
                         // like every sibling transcript write in `text.rs`, or a cancelled
                         // transcript still replaces what the user had copied.
                         if crate::inject::injection_cancelled(job.epoch) {
@@ -1454,15 +1483,17 @@ mod imp {
                     // arm was the one left with a cancel-only condition. `Landed::Yes` stays
                     // correct on the skip: the chord already landed the text, so reporting
                     // anything else would make the caller re-send and duplicate it.
-                    if job.auto_enter && !crate::inject::injection_cancelled(job.epoch) {
-                        if own_window_focused(app) {
-                            tracing::info!(
+                    if job.auto_enter {
+                        match sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch)) {
+                            SinkGate::Proceed => {
+                                tokio::time::sleep(Duration::from_millis(6)).await;
+                                press!(KEY_ENTER);
+                                release!(KEY_ENTER);
+                            }
+                            SinkGate::OwnWindow => tracing::info!(
                                 "[wayland-inject] auto-Enter skipped: our own window took focus during the paste chord"
-                            );
-                        } else {
-                            tokio::time::sleep(Duration::from_millis(6)).await;
-                            press!(KEY_ENTER);
-                            release!(KEY_ENTER);
+                            ),
+                            SinkGate::Cancelled => {}
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
@@ -1626,8 +1657,8 @@ mod imp {
                 // whatever button holds focus in our own window (Q31's finding, on the arm that
                 // reaches it after typing rather than bare).
                 if job.auto_enter
-                    && !crate::inject::injection_cancelled(job.epoch)
-                    && !own_window_focused(app)
+                    && sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch))
+                        == SinkGate::Proceed
                 {
                     press!(KEY_ENTER);
                     release!(KEY_ENTER);
@@ -1688,6 +1719,25 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        /// A cancel that lands during the own-window probe (a main-thread round trip) must stop the
+        /// paste chord and auto-Enter: the cancel is read after the probe, not before it.
+        #[test]
+        fn a_cancel_during_the_own_window_probe_stops_the_sink() {
+            let cancelled = std::cell::Cell::new(false);
+            let gate = sink_gate(
+                || {
+                    cancelled.set(true);
+                    false
+                },
+                || cancelled.get(),
+            );
+            assert_eq!(gate, SinkGate::Cancelled);
+            // A cancel also wins over our own focused window: dropped, not diverted.
+            assert_eq!(sink_gate(|| true, || true), SinkGate::Cancelled);
+            assert_eq!(sink_gate(|| true, || false), SinkGate::OwnWindow);
+            assert_eq!(sink_gate(|| false, || false), SinkGate::Proceed);
+        }
 
         #[test]
         fn localectl_layout_and_variant_are_parsed() {
