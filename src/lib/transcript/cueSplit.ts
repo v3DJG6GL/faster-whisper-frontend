@@ -1027,8 +1027,9 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       const s =
         -Math.abs(i - target) +
         // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
-        // breakScore — judged on the word before the cut when there is one.
-        (quoteGoesOn(back, text.slice(i, i + 2))
+        // breakScore — judged on the word before the cut when there is one. The quote's particle
+        // is read past the space of a spaced seam ("。」 と言って"), as breakScore reads its next word.
+        (quoteGoesOn(back, cut.next)
           ? 0
           : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevCased, cut))
             ? 16

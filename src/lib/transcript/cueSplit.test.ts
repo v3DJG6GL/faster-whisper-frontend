@@ -1723,6 +1723,18 @@ describe("cutByShare", () => {
     // A Japanese quote the sentence goes on from (」と言った) is no sentence end.
     expect(cutByShare("彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1])[0]).not.toMatch(/』$/);
   });
+  it("a Japanese quote the sentence goes on from past a space (」 と言って) is no sentence end either", () => {
+    // The particle was read from the space itself (" と"), so the spaced seam took the sentence-end
+    // bonus the cue split and the wrap never give it: the next part opened on "と言って".
+    for (const shares of [[1, 1], [12, 16]]) {
+      expect(cutByShare("彼は「もう帰ろう。」 と言って、すぐに部屋を出ていきました", shares, "ja"))
+        .toEqual(["彼は「もう帰ろう。」 と言って、", "すぐに部屋を出ていきました"]);
+      expect(cutByShare("彼は「もう帰ろう。」と言って、すぐに部屋を出ていきました", shares, "ja"))
+        .toEqual(["彼は「もう帰ろう。」と言って、", "すぐに部屋を出ていきました"]);
+      expect(cutByShare("「もう帰ろう。」 って彼が言った、それから皆で一緒に離れました", shares, "ja"))
+        .toEqual(["「もう帰ろう。」 って彼が言った、", "それから皆で一緒に離れました"]);
+    }
+  });
   it("judges a sentence or clause end by the original splitter's rules", () => {
     // No sentence ends after an abbreviation or a German ordinal: the real stop nearby wins.
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1]))
