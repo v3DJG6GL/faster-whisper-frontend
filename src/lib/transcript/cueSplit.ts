@@ -468,6 +468,10 @@ function nameBefore(before: string, after: string, lang?: string): boolean {
 const DOTTED_ORDINAL = new Set([
   "de", "da", "nb", "nn", "no", "fi", "is", "fo", "cs", "sk", "pl", "hu", "tr", "sl", "hr", "sr", "bs", "et", "lv",
 ]);
+/** A dotted ordinal of up to three digits ("am 3. Mai", "den 100. Geburtstag"); a four-digit
+ *  year ("seit 1980.") still ends a sentence. A sentence ending on a number of up to three digits
+ *  ("Er wurde 100. Dann") reads as an ordinal too: the words alone cannot tell the two apart. */
+const ORDINAL = /^\d{1,3}\.$/;
 
 /** A lowercase "m." or "ms.": the unit ("300 m.", "5 ms."), not the title "M." or "Ms.". */
 const isUnit = (raw: string): boolean => raw === "m." || raw === "ms.";
@@ -515,7 +519,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   ) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
-  return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
+  return !ORDINAL.test(w); // German ordinal "3." or "100." (a year "1980." still ends a sentence)
 }
 
 /** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial or
@@ -529,7 +533,7 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
   const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
-  return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw) ||
+  return (TITLE_ABBREV.has(w) && !isUnit(raw)) || ORDINAL.test(w) || INITIAL.test(raw) ||
     ((nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next));
 }
 

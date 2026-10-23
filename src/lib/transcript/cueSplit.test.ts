@@ -1904,6 +1904,12 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir nehmen Nr. 5 und gehen dann nach Hause", [1, 3], "de")[0]).toBe("Wir nehmen");
     const am3 = "Am 3. Mai kaufen wir Obst und Birnen. Dann gehen wir alle nach Hause zurück.";
     for (const l of ["de", "de-AT", undefined]) expect(cutByShare(am3, [1, 3], l)[0]).not.toBe("Am 3.");
+    // A three-digit ordinal is one too ("den 100. Geburtstag"); a four-digit year still ends a sentence.
+    const b100 = "Sie feiert heute den 100. Geburtstag mit der ganzen Familie im Garten";
+    for (const l of ["de", undefined]) expect(cutByShare(b100, [5, 7], l)[0]).not.toMatch(/100\.$/);
+    expect(cutByShare("Er wurde 100. Dann zog er mit allen anderen in eine neue Stadt", [1, 3], "en")[0]).toBe("Er wurde 100.");
+    expect(cutByShare("Das war im Jahr 1980. Dann zog die Familie weit weg in eine neue Stadt", [1, 2], "de")[0])
+      .toBe("Das war im Jahr 1980.");
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1], "de"))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
   });
@@ -1919,6 +1925,9 @@ describe("cutByShare", () => {
     const am3 = "Wir treffen uns am 3. Mai im Büro der Stadt";
     expect(cutByShare(am3, [5, 5], "de")).toEqual(["Wir treffen uns am 3. Mai", "im Büro der Stadt"]);
     expect(wrapLines(am3, 26, 2, 0, undefined, "de")).toEqual(["Wir treffen uns am 3. Mai", "im Büro der Stadt"]);
+    const j250 = "Wir feiern zum 250. Jubiläum im Büro der Stadt";
+    expect(cutByShare(j250, [5, 5], "de")).toEqual(["Wir feiern zum 250. Jubiläum", "im Büro der Stadt"]);
+    expect(wrapLines(j250, 28, 2, 0, undefined, "de")).toEqual(["Wir feiern zum 250. Jubiläum", "im Büro der Stadt"]);
     expect(cutByShare("Wir nehmen die Nr. 5 ganz bestimmt mit uns", [4, 6], "de"))
       .toEqual(["Wir nehmen die Nr. 5", "ganz bestimmt mit uns"]);
     // Unchanged: "Mrs." and "Dr." as before, a real sentence end on "no." or an English "3.",
