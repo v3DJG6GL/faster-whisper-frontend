@@ -377,8 +377,11 @@ function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boo
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
   // abbreviations, "(3." an ordinal, as their bare spellings are.
-  const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
-  if (ABBREV.has(w) && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
+  const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
+  const w = raw.toLowerCase();
+  // Only the capitalised "M." and "Ms." are titles: "300 m." and "5 ms." are units, and end one.
+  const unit = (w === "m." || w === "ms.") && /^\p{Ll}/u.test(raw);
+  if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
@@ -898,15 +901,17 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       // used to slice and fold the whole prefix per candidate.
       const back = text.slice(Math.max(0, i - 9), i);
       const sp = back.lastIndexOf(" ");
-      // Past any opening brackets and quotes, so "(Dr." dangles as "Dr." does.
-      const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "") : "";
+      // Past any opening brackets and quotes, so "(Dr." dangles as "Dr." does. Its case kept for
+      // isSentenceEnd, which tells the title "M." from the unit "m.".
+      const prevCased = sp >= 0 || i <= 9 ? back.slice(sp + 1).replace(/^[^\p{L}\p{N}]+/u, "") : "";
+      const prevWord = prevCased.toLowerCase();
       const s =
         -Math.abs(i - target) +
         // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
         // breakScore — judged on the word before the cut when there is one.
         (quoteGoesOn(back, text.slice(i, i + 2))
           ? 0
-          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }))
+          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevCased, { next: text.slice(i, i + 9).trimStart(), lang }))
             ? 16
             : CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && BREAK_SPACE.test(text[i]) ? 9 : 0) -
@@ -918,7 +923,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) || heldAbbrev(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, { next: text.slice(i, i + 9).trimStart(), lang }) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {

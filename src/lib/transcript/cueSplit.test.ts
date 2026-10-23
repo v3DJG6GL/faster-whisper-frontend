@@ -1780,6 +1780,20 @@ describe("cutByShare", () => {
     expect(cutByShare("We bought pears etc. Then we went home happy", [1, 1], "en"))
       .toEqual(["We bought pears etc.", "Then we went home happy"]);
   });
+  it("a lowercase unit \"m.\" or \"ms.\" ends a sentence; only the titles \"M.\" and \"Ms.\" stay with the next word", () => {
+    // Read as the titles, the units were held to the next word: "about 300" / "m. Then …".
+    const m = "The tower is about 300 m. Then we walked back home";
+    expect(cutByShare(m, [1, 1], "en")).toEqual(["The tower is about 300 m.", "Then we walked back home"]);
+    expect(wrapLines(m, 30, 2)).toEqual(["The tower is about 300 m.", "Then we walked back home"]);
+    const ms = "It took about 5 ms. Then it crashed again";
+    expect(cutByShare(ms, [1, 1], "en")).toEqual(["It took about 5 ms.", "Then it crashed again"]);
+    expect(wrapLines(ms, 30, 2, 0, undefined, "en")).toEqual(["It took about 5 ms.", "Then it crashed again"]);
+    // The titles as before.
+    expect(wrapLines("Yesterday I met Ms. Johnson at the station", 30, 2, 0, undefined, "en"))
+      .toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
+    expect(wrapLines("Hier j'ai vu M. Dupont à la gare du nord", 30, 2, 0, undefined, "fr"))
+      .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
