@@ -4,7 +4,8 @@
 //! usage stats (`/v1/usage`), and override profiles;
 //! `preload` sends the best-effort model pre-warm hint;
 //! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
-//! streaming WebSocket client; `pipeline` reads/writes the server's text rules;
+//! streaming WebSocket client (`proxy` routes it through the same proxy as reqwest);
+//! `pipeline` reads/writes the server's text rules;
 //! `sync` is the settings-sync client (`/v1/synced-client-settings`);
 //! `text` handles T2T translation (`/v1/text/translations`);
 //! `usage` reports dictation outcomes (`/v1/usage/outcome`).
@@ -18,6 +19,7 @@ pub mod jobs;
 pub mod media;
 pub mod pipeline;
 pub mod preload;
+mod proxy;
 pub mod stream;
 pub mod sync;
 pub mod text;

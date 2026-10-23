@@ -440,14 +440,18 @@ pub async fn run<F>(
     // frame is simply fragmented, so the 16 MiB frame default costs nothing and is left in force.
     let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(MAX_WS_MESSAGE));
+    let proxy = super::proxy::system_route(&params.ws_url);
+    // Empty when direct, so a direct failure reads exactly as it always has.
+    let via = proxy
+        .as_ref()
+        .map(|p| format!(" through the proxy {}", p.display()))
+        .unwrap_or_default();
+    if !via.is_empty() {
+        tracing::info!("[stream] connecting{via}");
+    }
     let connect = tokio::time::timeout(
         CONNECT_TIMEOUT,
-        tokio_tungstenite::connect_async_tls_with_config(
-            request,
-            Some(ws_config),
-            false,
-            ws_tls_connector(),
-        ),
+        super::proxy::connect(request, ws_config, ws_tls_connector(), proxy.as_ref()),
     );
     tokio::pin!(connect);
     let (ws, _resp) = loop {
@@ -461,7 +465,7 @@ pub async fn run<F>(
                 Ok(Ok(pair)) => break pair,
                 Ok(Err(e)) => fail!(format!("Could not connect to {}: {e}", display_url(&params.ws_url))),
                 Err(_) => fail!(format!(
-                    "Could not connect to {} — timed out after {}s (server unreachable?)",
+                    "Could not connect to {}{via} — timed out after {}s (server unreachable?)",
                     display_url(&params.ws_url),
                     CONNECT_TIMEOUT.as_secs()
                 )),
