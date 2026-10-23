@@ -450,19 +450,27 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     out.push(tok);
     cur = at + tw.length;
     // Whisper glues a quote to the word before it (」" ”", after a colon or comma: 说：" 说，"
-    // me:", or a Latin word or number: AI", unless it may close an uncounted one: skippedOpener):
+    // me:", or a Latin word or number: AI", unless it may close an uncounted one: skippedOpener;
+    // or an ASCII quote that closes the quotation before it: "你好"", as quoteSeams cuts there):
     // when it opens the next quotation (an even count of its kind so far, a later
     // partner, a letter right after it), it is a token of its own, so the cut never lands right
     // after it. Its clock is a zero-length one at the next word's start (the word's end until
     // that word arrives): a cue starting with it starts once that word is spoken.
-    const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po})(["'])$/u.exec(tw);
+    const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po}|(["']))(["'])$/u.exec(tw);
     if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
       flags ??= quoteFlags(text);
       const j = cur - 1;
       let n = 0;
+      /** Counted quotes of the glued ASCII quote's kind (qm[1]) through it: even when it closes one. */
+      let np = 0;
       let later = false;
-      for (let x = 0; x < text.length; x++) if (flags[x] && text[x] === qm[1]) { if (x < j) n++; else if (x > j) later = true; }
-      if (flags[j] && n % 2 === 0 && later && !(/[\p{L}\p{N}]/u.test(text[j - 1]) && skippedOpener(text, flags, j))) {
+      for (let x = 0; x < text.length; x++) {
+        if (!flags[x]) continue;
+        if (text[x] === qm[2]) { if (x < j) n++; else if (x > j) later = true; }
+        if (x < j && text[x] === qm[1]) np++;
+      }
+      if (flags[j] && n % 2 === 0 && later && (!qm[1] || (flags[j - 1] && np % 2 === 0))
+        && !(/[\p{L}\p{N}]/u.test(text[j - 1]) && skippedOpener(text, flags, j))) {
         tok.to = j;
         out.push({ from: j, to: cur, s: tok.e, e: tok.e, opens: true });
       }

@@ -1409,6 +1409,46 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
     const texts = buildCues(close, { length: "short", timing: "same" }, ["orig"]).cues.map((c) => c.text);
     expect(texts.some((c) => c.endsWith('here,"')), texts.join(" | ")).toBe(true);
   });
+  it("an ASCII quote Whisper glued to the closing quote before it (\"你好\"\") opens the next quotation: no cue ends on it", () => {
+    const head = ["我们", "的", "产品", "叫"];
+    const tail = ["然后", "我们", "一起", "走了"];
+    const long = [...tail, "很远", "很远", "的路", "大家", "都", "很", "开心", "地", "回到", "了", "家里", "休息", "了", "一下"];
+    const cuesOf = (ws: string[], length: "short" | "standard", pauses: Record<number, number> = {}) =>
+      buildCues(resOf(ws, "zh", pauses), { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+    // Glued into the quoted word ('"你好""') or timed as a word of its own ('""').
+    for (const [ws, q] of [[[...head, '"你好""', "再见", '"'], 4], [[...head, '"你好', '""', "再见", '"'], 5]] as const) {
+      expect(cuesOf([...ws, ...tail], "short").join(" | ")).toBe('我们的产品叫"你好" | "再见"然后我们一起走了');
+      expect(cuesOf([...ws, ...tail], "short", { [q]: 0.8 }).join(" | ")).toBe('我们的产品叫"你好" | "再见"然后我们一起走了');
+      expect(cuesOf([...ws, ...long], "standard", { [q]: 0.8 }).join(" | "))
+        .toBe('我们的产品叫"你好" | "再见"然后我们一起走了很远很远的路 | 大家都很开心地回到了家里休息了一下');
+    }
+    // A Latin word quoted, a ' pair, or a " after a closing '.
+    for (const [g, q] of [['"Hello""', '"'], ['"AI""', '"'], ["'你好''", "'"], ["'你好'\"", '"']]) {
+      expect(cuesOf([...head, g, "再见", q, ...tail], "short", { 4: 0.8 }).join(" | "))
+        .toBe(`我们的产品叫${g.slice(0, -1)} | ${g.slice(-1)}再见${q}然后我们一起走了`);
+    }
+    // Unchanged: a quote closing one opened between two letters (RTX"Super"), one glued to a Latin
+    // word or number (AI", iPhone", Model"X"), and a lone " timed as a word of its own.
+    for (const [ws, pauses, short, standard] of [
+      [["我们", "的", "产品", "叫", 'RTX"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"], { 4: 0.8 },
+        '我们的产品叫RTX"Super" | 和"Ultra"两个版本 | 然后我们一起走了很远的路', '我们的产品叫RTX"Super" | 和"Ultra"两个版本然后我们一起走了很远的路'],
+      [["我们", "公司", "最近", "推出", "了", 'AI"', "助手", '"', "功能", "大家", "都", "很", "喜欢", "然后", "我们", "一起", "走了"], {},
+        '我们公司最近推出了AI"助手" | 功能大家都很喜欢然后我们一起走了', '我们公司最近推出了AI"助手"功能大家都很喜欢然后我们一起走了'],
+      [["我们", "公司", "最近", "推出", "了", 'AI"', "助手", '"', "功能", "大家", "都", "很", "喜欢", "然后", "我们", "一起", "走了"], { 5: 0.8 },
+        '我们公司最近推出了AI | "助手"功能大家都很 | 喜欢然后我们一起走了', '我们公司最近推出了AI"助手"功能大家都很喜欢然后我们一起走了'],
+      [["私は", 'iPhone"', "新機能", '"', "が", "好き", "です", "そして", "毎日", "使って", "います"], { 1: 0.8 },
+        '私はiPhone | "新機能"が好きです | そして毎日使っています', '私はiPhone"新機能"が好きですそして毎日使っています'],
+      [["我们", "用", "的", "是", 'Model"X"', "和", 'Model"Y"', "两款", "车", "然后", "我们", "一起", "走了"], { 4: 0.8 },
+        '我们用的是Model"X" | 和Model"Y"两款车 | 然后我们一起走了', '我们用的是Model"X" | 和Model"Y"两款车然后我们一起走了'],
+      [["他", "说", "了", '"', "你好", "朋友", '"', "再见", "然后", "我们", "一起", "走了"], { 3: 0.8 },
+        '他说了" | 你好朋友"再见然后我们一起走了', '他说了"你好朋友"再见然后我们一起走了'],
+      [["他", "说", "了", '"你好"', '"', "再见", "朋友", '"', "然后", "我们", "一起", "走了"], { 4: 0.8 },
+        '他说了"你好"" | 再见朋友"然后我们一起走了', '他说了"你好""再见朋友"然后我们一起走了'],
+    ] as [string[], Record<number, number>, string, string][]) {
+      expect(cuesOf(ws, "short", pauses).join(" | ")).toBe(short);
+      expect(cuesOf(ws, "standard", pauses).join(" | ")).toBe(standard);
+    }
+  });
   it("a closing quote and an ASCII quote timed as one word start no cue, and the 's after them stays", () => {
     // Words on an even 0.35 s grid, as Whisper times them.
     const even = (ws: string[], language: string): BatchResult => {
