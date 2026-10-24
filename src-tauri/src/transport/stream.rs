@@ -465,7 +465,7 @@ pub async fn run<F>(
         "type": "config",
         "model": params.model,
         "response_format": params.response_format,
-        "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
+        "audio": { "format": "pcm_s16le", "sample_rate": PCM_RATE }
     });
     // Three-state language sentinel (see `StreamParams::language`): "auto" goes out as "", which
     // OVERRIDES an override profile's DEFAULT_LANGUAGE. This route only ever talks to the full
@@ -983,7 +983,7 @@ pub async fn run<F>(
             // worker.
             let dir = dir.to_path_buf();
             let wrote = tokio::task::spawn_blocking(move || {
-                let path = crate::audio::save_recording(&dir, &saved, 16_000)?;
+                let path = crate::audio::save_recording(&dir, &saved, PCM_RATE)?;
                 // Label the .wav with the session transcript IN RUST (ungated), so a superseded
                 // recording still gets its sibling .txt (a Cancel after stop discards it above,
                 // matching the batch path).
@@ -1098,6 +1098,10 @@ fn forward_saved<F: Fn(StreamEvent)>(
     }
 }
 
+/// The rate of the mono s16le PCM this route streams and saves: declared to the server in the
+/// config frame and written into every saved WAV header (32 bytes per ms).
+const PCM_RATE: u32 = 16_000;
+
 /// Playback length of 16 kHz mono s16le PCM (32 bytes per ms).
 fn pcm_duration_ms(bytes: usize) -> u64 {
     (bytes / 32) as u64
@@ -1179,7 +1183,7 @@ impl ClipWriter {
         }
         let Some((n, pcm)) = io.clip else { return };
         self.pending =
-            crate::audio::save_recording_as(&self.dir, &clip_stem(&self.stamp, n), &pcm, 16_000);
+            crate::audio::save_recording_as(&self.dir, &clip_stem(&self.stamp, n), &pcm, PCM_RATE);
         if let Some(path) = &self.pending {
             let _ = self.saved.send(StreamEvent::RecordingSaved {
                 path: path.to_string_lossy().into_owned(),
