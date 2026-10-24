@@ -3,16 +3,15 @@
 // chord). Warns (never silently drops) on a non-registerable chord. A chord that
 // clashes with another binding ends the capture as `pending`: the trigger tile
 // names the owner and offers to take the keys over (`acceptPending`, which calls
-// `onTakeOver` with the owner's id) or to try again (Shortcut Field D82 R1). Suspends global hotkeys for the duration so a press only
-// rebinds. `lowLevelActive` = the platform's raw-key backend owns the chords
-// (Linux evdev when enabled+permitted; the always-on Windows keyboard hook), which
-// distinguishes modifier sides and accepts modifier-only / AltGr chords — when
-// false the plugin registers, so chords are validated against its accelerators.
+// `onTakeOver` with the owner's id) or to try again. Suspends global hotkeys for
+// the duration so a press only rebinds. `lowLevelActive` = the platform's raw-key
+// backend owns the chords (Linux evdev when enabled+permitted; the always-on
+// Windows keyboard hook), which distinguishes modifier sides and accepts
+// modifier-only / AltGr chords — when false the plugin registers, so chords are
+// validated against its accelerators.
 //
-// Used by the Profiles editor (dictation chords) and the Dictionary screen's
-// QuickAddShortcutField (was the Settings "quick-add shortcut" row), so both
-// behave identically. `others` is the set of bindings to
-// check against for conflicts (e.g. the Profiles), passed as Profile[].
+// Every rebind surface (Profiles editor, onboarding starters, QuickAddShortcutField)
+// uses it, so all behave identically. `others` = the bindings to check for conflicts.
 
 import { useEffect, useRef, useState } from "react";
 import { profileDisplayName } from "@/lib/sanitize";
@@ -108,8 +107,7 @@ export function useHotkeyCapture(opts: {
     let peak: string[] = [];
     let done = false;
     // A validateCodes() resolution that lands after the user cancels (Escape) or the
-    // capture effect tears down must not commit the abandoned chord (mirrors the
-    // cancelled-flag guard in useOverrideContext).
+    // capture effect tears down must not commit the abandoned chord.
     let cancelled = false;
     const finalize = (codes: string[]) => {
       // A registerable chord that clashes with another binding ends the capture as `pending`
@@ -183,11 +181,10 @@ export function useHotkeyCapture(opts: {
       // The user is holding modifiers here, so the passive learner skipped this key;
       // learn its layout label now so the committed chip shows the right keycap.
       learnLetter(code, e.key);
-      // A real (non-modifier) key was attempted this hold, so this is no longer a modifier-only
-      // chord. Clear `peak` (only ever consumed by the keyup fallback below, which never holds
-      // non-modifier keys) so that if this key is rejected as unmappable OR conflicts — leaving
-      // `done` false — a later modifier release can't fall into the keyup modifier-only path and
-      // silently commit the leftover bare modifier (e.g. Ctrl+Backquote rejected → bare Ctrl bound).
+      // A real key was attempted this hold, so this is no longer a modifier-only chord: clear `peak`
+      // (read only by the keyup fallback) so that if this key is rejected or clashes, a later modifier
+      // release can't silently commit the leftover bare modifier (e.g. Ctrl+Backquote rejected → bare
+      // Ctrl bound).
       peak = [];
       // Reject an unmappable key (Backquote, Minus, ContextMenu, …) in BOTH modes. The evdev branch
       // of finalize() commits with no validateCodes gate, so without this an unmappable key under
@@ -209,12 +206,9 @@ export function useHotkeyCapture(opts: {
       if (!done && pressed.size === 0 && peak.length > 0) {
         if (lowLevelActive) {
           done = true;
-          // Consume `peak` before finalizing: `peak` is a monotonic high-water mark, so if this chord
-          // does not end the capture, a retry with an equal-or-shorter modifier-only chord (never
-          // exceeds peak.length, so the keydown branch doesn't update it) would re-finalize the OLD
-          // stale chord. Clear it so the next attempt rebuilds from scratch; when the capture ends
-          // (commit, or a clash parked as `pending`) clearing is harmless. (Complements the
-          // real-key-press clear — this is the modifier-only sibling.)
+          // Consume `peak` before finalizing: it is a high-water mark, so if this chord does not end
+          // the capture, a retry with an equal-or-shorter modifier-only chord (which never updates
+          // peak on keydown) would re-finalize the OLD stale chord.
           const chord = peak;
           peak = [];
           finalize(chord);
