@@ -42,17 +42,18 @@ impl Drop for CaptureHandle {
     }
 }
 
-/// Smooths instantaneous RMS and publishes it as f32 bits in an atomic.
-struct Meter {
+/// Smooths instantaneous RMS and publishes it as f32 bits in an atomic. Shared by the mic test
+/// and both dictation capture loops, so the 0.7/0.3 coefficients live in one place.
+pub(crate) struct Meter {
     smoothed: f32,
     out: Arc<AtomicU32>,
 }
 
 impl Meter {
-    fn new(out: Arc<AtomicU32>) -> Self {
+    pub(crate) fn new(out: Arc<AtomicU32>) -> Self {
         Meter { smoothed: 0.0, out }
     }
-    fn push(&mut self, rms: f32) {
+    pub(crate) fn push(&mut self, rms: f32) {
         let level = super::chip_level(rms);
         self.smoothed = self.smoothed * 0.7 + level * 0.3;
         self.out.store(self.smoothed.to_bits(), Ordering::Relaxed);

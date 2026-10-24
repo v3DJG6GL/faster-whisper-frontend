@@ -6,6 +6,7 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
+use crate::audio::capture::Meter;
 use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
@@ -791,13 +792,6 @@ impl LiveDetect {
     }
 }
 
-/// One EMA step of the level meter (chip_level gain + clamp, 0.7/0.3 smoothing) — mirrors the
-/// capture meter. Shared by every per-sample-format arm of both capture loops so the coefficients
-/// stay in one place.
-fn smooth(prev: f32, mono: &[f32]) -> f32 {
-    prev * 0.7 + crate::audio::chip_level(rms(mono)) * 0.3
-}
-
 /// The `stream://error` text for a capture thread whose microphone open failed.
 fn mic_open_error(e: &str) -> String {
     crate::transport::bounded_server_text(
@@ -850,15 +844,13 @@ fn run_capture(
     let stream = match format {
         SampleFormat::F32 => {
             let tx = pcm_tx.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 config,
                 move |data: &[f32], _| {
                     let mono = downmix(data, channels);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
@@ -868,15 +860,13 @@ fn run_capture(
         }
         SampleFormat::I16 => {
             let tx = pcm_tx.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 config,
                 move |data: &[i16], _| {
                     let mono = downmix(data, channels);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
@@ -886,15 +876,13 @@ fn run_capture(
         }
         SampleFormat::U16 => {
             let tx = pcm_tx.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
@@ -904,15 +892,13 @@ fn run_capture(
         }
         SampleFormat::I32 => {
             let tx = pcm_tx.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut ld = LiveDetect::new(live.clone());
             device.build_input_stream(
                 config,
                 move |data: &[i32], _| {
                     let mono = downmix(data, channels);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let _ = tx.send(mono);
                 },
@@ -1674,8 +1660,7 @@ fn run_record_capture(
         SampleFormat::F32 => {
             let buf = buffer.clone();
             let capped = capped.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
@@ -1683,8 +1668,7 @@ fn run_record_capture(
                 config,
                 move |data: &[f32], _| {
                     downmix_into(data, channels, &mut mono);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let bytes = resampler
                         .lock()
@@ -1701,8 +1685,7 @@ fn run_record_capture(
         SampleFormat::I16 => {
             let buf = buffer.clone();
             let capped = capped.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
@@ -1710,8 +1693,7 @@ fn run_record_capture(
                 config,
                 move |data: &[i16], _| {
                     downmix_into(data, channels, &mut mono);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let bytes = resampler
                         .lock()
@@ -1728,8 +1710,7 @@ fn run_record_capture(
         SampleFormat::U16 => {
             let buf = buffer.clone();
             let capped = capped.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
@@ -1737,8 +1718,7 @@ fn run_record_capture(
                 config,
                 move |data: &[u16], _| {
                     downmix_into(data, channels, &mut mono);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let bytes = resampler
                         .lock()
@@ -1755,8 +1735,7 @@ fn run_record_capture(
         SampleFormat::I32 => {
             let buf = buffer.clone();
             let capped = capped.clone();
-            let lvl = level.clone();
-            let mut sm = 0.0f32;
+            let mut meter = Meter::new(level.clone());
             let mut mono: Vec<f32> = Vec::new();
             let resampler = resampler.clone();
             let mut ld = LiveDetect::new(live.clone());
@@ -1764,8 +1743,7 @@ fn run_record_capture(
                 config,
                 move |data: &[i32], _| {
                     downmix_into(data, channels, &mut mono);
-                    sm = smooth(sm, &mono);
-                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    meter.push(rms(&mono));
                     ld.feed(&mono);
                     let bytes = resampler
                         .lock()
