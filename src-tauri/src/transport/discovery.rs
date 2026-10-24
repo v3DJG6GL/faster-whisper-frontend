@@ -76,8 +76,6 @@ fn bounded_model_id(s: &str) -> Option<String> {
     super::model_id_within(s, MODEL_ID_MAX)
 }
 
-/// The one shape every failed `test_connection` probe returns: no models, no server identity,
-/// just the whoami readout and why the probe failed.
 fn failed_probe(open_mode: bool, username: Option<String>, error: String) -> ConnectionInfo {
     ConnectionInfo {
         ok: false,
