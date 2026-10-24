@@ -23,6 +23,11 @@ const HUE_WHEEL = `conic-gradient(${[0, 60, 120, 180, 240, 300, 360]
  *  `input` stream would repaint the whole app per pixel of drag. */
 const HUE_WRITE_DEBOUNCE_MS = 60;
 
+/** The slider rows' right-hand readout. One fixed width, sized for the longest readout
+ *  ("…59.9 min · 30 s … 7 d"), so every slider keeps its size and place while the text
+ *  changes, and the readout columns of the hue, speed and arc rows line up. */
+const READOUT_CLASS = "w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim";
+
 /** Theme + Signal colour. The theme row binds the same setting the sidebar
  *  button cycles; the colour rows are hue-only (theme.ts fixes L and C). */
 export function AppearanceRows() {
@@ -165,9 +170,7 @@ export function AppearanceRows() {
                 className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill disabled:cursor-not-allowed"
                 style={{ background: HUE_TRACK }}
               />
-              {/* Fixed width (the Custom speed row's readout width), so the slider keeps its
-                  size and place while the readout changes, and the columns line up. */}
-              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
+              <span className={READOUT_CLASS}>
                 {hue}° · {custom ? "custom" : preset![0].toLowerCase()}
               </span>
             </div>
@@ -397,9 +400,7 @@ function MotionRows({
                 onChange={(e) => dragSpeed(Number(e.target.value))}
                 className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
-              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
-                  slider keeps its size and place while the number changes under a drag. */}
-              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
+              <span className={READOUT_CLASS}>
                 {fmtPer(sliderToSec(slider))} · 30 s … 7 d
               </span>
             </div>
@@ -438,8 +439,7 @@ function MotionRows({
                   />
                 ))}
               </div>
-              {/* Same fixed width as the speed readout above, so the readout columns line up. */}
-              <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
+              <span className={READOUT_CLASS}>
                 {arcName(arcFrom)} ↔ {arcName(arcTo)}
               </span>
             </div>
