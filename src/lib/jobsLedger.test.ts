@@ -98,7 +98,7 @@ describe("addRow / pruneLedger / removeRow", () => {
     expect(clampJobsTtl(3600)).toBe(3600);
     expect(clampJobsTtl(1e12)).toBe(30 * 86_400);
     for (const bad of [0, -5, NaN, Infinity, "3600", null, undefined]) expect(clampJobsTtl(bad)).toBeUndefined();
-    // A hand-edited row is re-clamped on read.
+    // A hand-edited row's TTL is re-clamped wherever it is used.
     expect(maxAgeMs(row("aaaaaaaa", NOW, 1e12))).toBe(2 * 30 * 86_400_000 + 3_600_000);
     expect(maxAgeMs(row("aaaaaaaa", NOW, -1))).toBe(maxAgeMs(row("aaaaaaaa")));
   });
