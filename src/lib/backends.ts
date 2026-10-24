@@ -196,7 +196,7 @@ export function newBackendDraft(conn?: {
     hasApiKey: false,
     model: WHISPER_ALIAS,
     endpoint: "stream",
-    // "" = the server's DEFAULT_LANGUAGE; backends created before this default keep their "auto".
+    // "" = the server's DEFAULT_LANGUAGE.
     language: "",
     prompt: "",
     responseFormat: "verbose_json",
