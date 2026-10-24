@@ -839,9 +839,9 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("the stuck-finalize recovery books its usage outcome only once the copy answers", () => {
-    // cancelLive's synchronous "nothing landed" report used to win the once-guard before the copy
-    // ran, so Statistics showed Nothing for text the chip said was on the clipboard. The watchdog
-    // claims the outcome before the cancel and settles it with the copy's answer.
+    // Otherwise cancelLive's synchronous "nothing landed" report wins the once-guard before the
+    // copy runs, and Statistics shows Nothing for text the chip says is on the clipboard. The
+    // watchdog claims the outcome before the cancel and settles it with the copy's answer.
     const body = mask(fns.armStuckWatchdog);
     const claim = body.indexOf("const settleOutcome = pending ? deferSessionOutcome() : null;");
     expect(claim, "the watchdog claims the outcome").toBeGreaterThanOrEqual(0);
@@ -889,9 +889,9 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("every failure end books abandoned exactly when nothing landed", () => {
-    // The rule lives in one helper so the failure paths cannot drift apart again: a kept-error
-    // settle (the stop-mode failed insert or sink skip, whose recovery copy failed) used to book
-    // its lost text as a delivered translation while every sibling booked it "aborted".
+    // The rule lives in one helper so the failure paths cannot drift apart — e.g. a kept-error
+    // settle (the stop-mode failed insert or sink skip, whose recovery copy failed) booking its
+    // lost text as a delivered translation while every sibling books it "aborted".
     expect(mask(fns.bookFailedEnd)).toContain("settle?.(delivery, delivery ===");
     expect(mask(fns.settleIdle)).toContain("if (keepError) bookFailedEnd(deferSessionOutcome())");
   });
@@ -1060,10 +1060,10 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("a diverted or recovered translated block reaches the clipboard bare, in Rust's one write", () => {
-    // Rust's divert / recovery arms used to put the text they were handed — the gapped typeOut —
-    // on the clipboard; pasted, it opened with three blank lines. The FIELD keeps its gap, so the
-    // live insert hands Rust the bare block as its clipboard form (`clipboardText`) and every
-    // divert / recovery arm writes that instead.
+    // Rust's divert / recovery arms put the text they are handed on the clipboard, and the gapped
+    // typeOut would paste opening with three blank lines. The FIELD keeps its gap, so the live
+    // insert hands Rust the bare block as its clipboard form (`clipboardText`) and every divert /
+    // recovery arm writes that instead.
     const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     const final = mask(finalBody);
     expect(final).toMatch(/const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
@@ -1087,7 +1087,7 @@ describe("work that must wait for the queue or the cancel", () => {
 
   it("a live phrase skipped in our own window is booked by the insert that later carries it", () => {
     // Its record opens as "none"; its text goes out with a later phrase's insert (un-advanced
-    // baseline, clipboard window or carry), which used to book only that later record.
+    // baseline, clipboard window or carry), which must book it too, not only its own record.
     for (const [anchor, book] of [
       ["if (delivered)", 'bookOwedUtterances(diverted ? "clipboard" : "typed", { kind: "body" })'],
       ["if (!t.isSelf && landed)", 'bookOwedUtterances("clipboard", { kind: "window", from: clipFrom })'],
@@ -1308,7 +1308,7 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("the separator withholds itself instead of diverting to the clipboard", () => {
-    // A Rust divert (chord still held, focus moved) used to make a lone " " the clipboard's
+    // A Rust divert (chord still held, focus moved) would make a lone " " the clipboard's
     // persistent owner over the user's copy; a separator has nothing to recover, so it opts out.
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
@@ -1330,7 +1330,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(call, "the live phrase insert moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(final.slice(0, call)).toMatch(/const spacingOnly = !typeOut\.trim\(\);/);
     expect(final.slice(call, final.indexOf("}));", call))).toMatch(/, withholdOnDivert: spacingOnly $/);
-    // The catch tears down as before, without the copy (or its flash) for whitespace.
+    // The catch still tears down, but skips the copy (and its flash) for whitespace.
     const catchBody = bodyAfter(final.slice(call), "catch (e) ");
     expect(catchBody).toMatch(/const recoverable = !spacingOnly && await recoverToClipboard\(/);
     expect(catchBody).toMatch(/recoverable\s+\? t\.method/);
@@ -1361,9 +1361,9 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("a separator paste takes its own snapshot, like each phrase", () => {
-    // The separator used to restore the snapshot taken before the LAST phrase: after the quiet
-    // timer gave the clipboard back, a copy the user made before the hard break was replaced by
-    // that older content — on a landed separator and from the catch alike.
+    // Reusing the snapshot taken before the LAST phrase would, once the quiet timer gave the
+    // clipboard back, replace a copy the user made before the hard break with that older
+    // content — on a landed separator and from the catch alike.
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
     const call = task.indexOf("injectText({ text: part,");
@@ -1399,8 +1399,8 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("a multi-line separator presses a Return per line break and sends the text between", () => {
-    // "\n\n" (a blank line) used to press ONE Return, and ".\n" lost its "." — while the carry
-    // and the Live dictation preview have the separator exactly as written.
+    // "\n\n" (a blank line) needs two Returns and ".\n" keeps its ".": the carry and the Live
+    // dictation preview have the separator exactly as written.
     const boundary = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
     const loop = boundary.indexOf("for (let i = 0; i < parts.length; i++)");
     expect(loop, "the separator loop moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
