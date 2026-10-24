@@ -397,8 +397,8 @@ export default function Settings() {
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
 
-  // Deep link: /settings?tab=<name> opens straight onto that tab (the History
-  // screen's retention readout uses it). Consumed once, like Profiles ?edit.
+  // Deep link: /settings?tab=<name> opens straight onto that tab (History's
+  // retention readout, the setup checklist). Consumed once, like Profiles ?edit.
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const t = searchParams.get("tab");
@@ -473,7 +473,7 @@ export default function Settings() {
   };
   // `dirBusy` gates every folder button while a move runs: the move walks every audio
   // file and can take minutes, and a second click (Reset during a Change) would start a
-  // concurrent move over the same folders with the same stale `current`. A store wipe in flight
+  // concurrent move over the same folders from the same stale source base. A store wipe in flight
   // (`busy.store`) refuses a move too: it deletes from the very folder the move would walk.
   const changeRecDir = () =>
     void pickRecordingsDir()
