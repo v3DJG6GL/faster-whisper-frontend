@@ -1274,6 +1274,14 @@ mod imp {
             // window, the cleanup below restores Caps Lock.
             let mut caps_flipped = false;
 
+            // One portal key event on the shared session; the caller awaits it and decides what an
+            // error means.
+            macro_rules! notify {
+                ($code:expr, $state:expr) => {
+                    proxy.notify_keyboard_keycode(&session, $code, $state, Default::default())
+                };
+            }
+
             // `press!`/`release!` mirror the shared session and keep `held` in sync.
             // Both use `?`, so a failure bails out of the inner block — after which
             // the cleanup below releases whatever is still held.
@@ -1281,20 +1289,14 @@ mod imp {
                 macro_rules! press {
                     ($code:expr) => {{
                         let code: i32 = $code;
-                        proxy
-                            .notify_keyboard_keycode(&session, code, KeyState::Pressed, Default::default())
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        notify!(code, KeyState::Pressed).await.map_err(|e| e.to_string())?;
                         held.push(code);
                     }};
                 }
                 macro_rules! release {
                     ($code:expr) => {{
                         let code: i32 = $code;
-                        proxy
-                            .notify_keyboard_keycode(&session, code, KeyState::Released, Default::default())
-                            .await
-                            .map_err(|e| e.to_string())?;
+                        notify!(code, KeyState::Released).await.map_err(|e| e.to_string())?;
                         if let Some(i) = held.iter().rposition(|&c| c == code) {
                             held.remove(i);
                         }
@@ -1562,35 +1564,14 @@ mod imp {
             // Release anything still held (an error bailed out mid-chord), ignoring errors:
             // the real failure is already being reported.
             for code in held.iter().rev() {
-                let _ = proxy
-                    .notify_keyboard_keycode(
-                        &session,
-                        *code,
-                        KeyState::Released,
-                        Default::default(),
-                    )
-                    .await;
+                let _ = notify!(*code, KeyState::Released).await;
             }
             // The held loop only releases keycodes still pressed; a Caps Lock tap is press+release,
             // so its toggle survives. If we bailed mid lock-char with Caps left flipped, tap it once
             // more to restore the user's Caps Lock state.
             if caps_flipped {
-                let _ = proxy
-                    .notify_keyboard_keycode(
-                        &session,
-                        KEY_CAPSLOCK,
-                        KeyState::Pressed,
-                        Default::default(),
-                    )
-                    .await;
-                let _ = proxy
-                    .notify_keyboard_keycode(
-                        &session,
-                        KEY_CAPSLOCK,
-                        KeyState::Released,
-                        Default::default(),
-                    )
-                    .await;
+                let _ = notify!(KEY_CAPSLOCK, KeyState::Pressed).await;
+                let _ = notify!(KEY_CAPSLOCK, KeyState::Released).await;
             }
 
             let failed = res.is_err();
