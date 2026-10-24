@@ -956,7 +956,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
     )
     .map((p) => ({
       ...p,
-      // Two sinks for an unknown activation: `GLYPH[p.activation]` in Home is rendered AS A
+      // Two sinks for an unknown activation: `GLYPH[p.activation]` in Dashboard is rendered AS A
       // COMPONENT, so it throws "Element type is invalid" and, with no error boundary, unmounts
       // the main window; and `ActivationType` is a serde enum with no fallback, so `save_config`
       // rejects the WHOLE config for the session. "hold" is the fail-safe: push-to-talk never
@@ -1385,7 +1385,6 @@ export function sanitizeBackends(list: unknown): Backend[] {
       endpoint: oneOf<EndpointKind>(b.endpoint, ENDPOINT_KINDS, "stream"),
       responseFormat: oneOf<ResponseFormat>(b.responseFormat, RESPONSE_FORMATS, "json"),
       hasApiKey: b.hasApiKey === true,
-      // Trimmed, blank → unset, like the Profile twin.
       overrideProfile:
         typeof b.overrideProfile === "string" && b.overrideProfile.trim()
           ? b.overrideProfile.trim()
@@ -1721,8 +1720,7 @@ export async function applyBlob(
           typeof accentHue === "number" && Number.isFinite(accentHue) && accentHue >= 0 && accentHue <= 360
             ? accentHue
             : nextSettings.accentHue,
-        // Same shape-check as the hue: a period of 0 or 30 s…7 d, a known range, the arc's
-        // two hues in [0, 360] if present — else keep the current one (the engine would run garbage).
+        // Same rule as the hue: a malformed value keeps the current one (the engine would run garbage).
         accentMotion: isValidAccentMotion(accentMotion)
           ? { period: accentMotion.period, range: accentMotion.range,
               ...(accentMotion.arcFrom !== undefined ? { arcFrom: accentMotion.arcFrom } : {}),
@@ -1804,11 +1802,9 @@ export async function applyBlob(
         },
       };
     }
-    // The `transcription` category: same shape check, same merge-over-current
-    // rule as `recording`. Only classified keys apply (a crafted blob can't
-    // ride arbitrary keys into the opaque transcribe blob), every value is
-    // validated per-field, and the per-machine picks apply only when this
-    // device's sub-toggle opts in.
+    // The `transcription` category: same shape check, same merge-over-current rule as
+    // `recording`. Only classified keys apply, so a crafted blob can't ride arbitrary keys
+    // into the opaque transcribe blob.
     if (cats.transcription && isPlainObject(blob.transcription)) {
       const raw = blob.transcription as Record<string, unknown>;
       const classified = pickFields(raw, TRANSCRIPTION_FIELD_SET);
@@ -3193,7 +3189,7 @@ export async function pushNow(manual = false): Promise<void> {
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
       const pushUrl = liveSyncTarget(backend);
       if (pushUrl === null) {
-        // A later attempt did reach the (old) server, so an earlier failure is stale by then.
+        // Past the first attempt an earlier one reached the (old) server, so a prior failure is stale.
         if (attempt === 0) endWithoutServer();
         else if (useApp.getState().syncStatus === "syncing") idleStatus();
         schedulePush(0); // let the corrected address receive this state instead
@@ -3350,13 +3346,14 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // revert every backend added or edited here. Leave the backends category out of the apply.
   const degraded = backendsDegraded(local, cats);
   const applyCats = degraded ? { ...cats, backends: false } : cats;
-  // This pull is unattended (startup + every window focus). If it would repoint a backend or
-  // swap a stored key, hold it for confirmation instead of adopting it silently.
+  // This pull is unattended (startup + every window focus). A security-relevant change (a
+  // repointed backend, a swapped key, a typed-text or retention change: see `catOf`) is held
+  // for confirmation instead of being adopted silently.
   const risky = gatedSecurityCheck(merged, local, applyCats);
   if (risky.length > 0) {
-    // Everything else still applies — only the backends category waits. Deliberately no
-    // persistState here: adopting the server's version as the new base would drop the held-back
-    // change, so the next pull re-offers it until the user decides.
+    // Everything else still applies — only the categories with a held-back change wait.
+    // Deliberately no persistState here: adopting the server's version as the new base would
+    // drop the held-back change, so the next pull re-offers it until the user decides.
     const applyNow = heldBack(applyCats, risky);
     const landed = await applyBlob(merged, applyNow);
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
@@ -3746,9 +3743,8 @@ export function securityChanges(
     ),
   );
   const localSecrets = local.backends?.secrets ?? {};
-  // Walk the entries `applyBlob` INSTALLS, not the raw list: a reserved, duplicate or over-cap
-  // entry would raise rows that park the category for an approval that changes nothing (and
-  // re-raise on every pull), and a blanked scheme would show an address the transport never
+  // Walk the entries `applyBlob` INSTALLS, as for profiles above (a dropped entry's rows would
+  // also re-raise on every pull), and a blanked scheme would show an address the transport never
   // receives. Fail-closed still holds: the apply stores exactly this list and
   // `reconcileBackendSecrets` writes keys only for its ids.
   for (const b of inBackends) {
@@ -4259,7 +4255,6 @@ function raiseConflict(c: PendingConflict): void {
   conflictStatus();
 }
 
-/** The status a pending conflict shows. */
 function conflictStatus(): void {
   setRuntime({
     syncStatus: "error",
