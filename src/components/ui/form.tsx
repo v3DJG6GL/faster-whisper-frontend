@@ -551,7 +551,6 @@ export function Stepper({
   };
   const filter = (raw: string) => filterStepperText(raw, min, decimals);
 
-  // −/+ step from the typed text while focused (stepBy), so their bounds must too.
   const cur = stepBase(text, focused, value);
   const showInheritedText = !focused && inheriting && inherited === undefined && inheritedText != null;
   // The inherited text wins over the zero label: an unset field with no numeric inherited value
