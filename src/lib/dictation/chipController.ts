@@ -70,7 +70,7 @@ export function configuredRouteTargets(
 
 /** How many targets `chipRouteTargets` left out. A route is a promise about what will be
  *  typed, so a three-target session must not read as a two-target one: the chip shows
- *  "→ FR IT +1", as the tray tooltip and the Profile card already do. */
+ *  "→ FR IT +1", as the tray tooltip and Home's profile rows already do. */
 export function chipRouteMore(
   sessionTargets: string[] | null,
   profileTargets: string[] | undefined,
@@ -305,7 +305,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     configLoaded: state.configLoaded,
     // The shared default array is only serialized here, never mutated.
     quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
-    // …and why its dictate / cycle-profile buttons are off while idle, worded like Home's.
+    // Why the quick-launch dictate / cycle-profile buttons are off while idle, worded like Home's.
     canStart,
     startHint,
     canCycle,
@@ -325,9 +325,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // idle transition.
     lastInsert: state.lastInsert,
     sessionOutcome: state.sessionOutcome,
-    // "none" that was NOT a cancel: the picker was aborted after release, so the transcript
-    // was kept (and, "-saved", recorded) but nothing was inserted. Ungated like the outcome
-    // it qualifies — it lands on the same idle transition.
+    // Qualifies the outcome (not inserted / incomplete, see the store doc). Ungated like the
+    // outcome — it lands on the same idle transition.
     sessionNote: state.sessionNote,
     // Why the translation didn't land, so the done marker can qualify itself instead of
     // showing an unearned "typed" over text that was inserted in the ORIGINAL language.
