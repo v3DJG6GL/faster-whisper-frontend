@@ -614,9 +614,8 @@ function parseJsonExport(body: string): ImportedText {
   }
   // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
   // from a locally parsed file and otherwise reached the meta line and track chips raw.
-  // A word ("english", what OpenAI's verbose_json writes) becomes its code when it names a
-  // Whisper language, so the original groups, limits and titles like the code it stands for and
-  // goes out as the translation source; a word no language goes by stays as the file said.
+  // A language word ("english", what OpenAI's verbose_json writes) becomes its code, so the
+  // original groups, limits and titles like that code and goes out as the translation source.
   const shown = safeDisplayText(obj.language, 64).trim() || undefined;
   const language = shown ? languageCodeOf(shown) : undefined;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
