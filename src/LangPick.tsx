@@ -326,7 +326,7 @@ export default function LangPick() {
 }
 
 /** One of the footer's three answers. `onMouseDown` swallows the press so focus stays in the
- *  filter field: a click that moved focus to the button would drop the next typed digit
+ *  filter field: a click that moved focus to the button would drop the next typed letters
  *  (the window-level keydown still fires, but the field no longer receives the text). */
 function FooterButton({
   tone,
