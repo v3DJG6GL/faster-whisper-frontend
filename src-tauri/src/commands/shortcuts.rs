@@ -25,8 +25,8 @@ static APPLY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Suspend ALL hotkey backends (while the user captures a new binding) so pressing
 /// an existing profile's chord only rebinds — it must not also fire dictation. This
-/// silences both the global-shortcut plugin AND the evdev reader (which otherwise
-/// keeps firing from /dev/input). Pair with `reregister_shortcuts` (apply_bindings)
+/// silences the global-shortcut plugin AND the low-level listener (the evdev reader /
+/// the Windows hook), which otherwise keeps firing. Pair with `reregister_shortcuts`
 /// to restore whichever backend is active when capture ends.
 #[tauri::command]
 pub async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
@@ -36,8 +36,7 @@ pub async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
 }
 
 fn suspend_shortcuts_blocking(app: &AppHandle) {
-    // Off the main thread now, so it could race a suspend-watch apply_bindings re-arming the
-    // backend this is tearing down; take the same lock to keep the two in order.
+    // Same lock as the suspend-watch's re-arm, so it can't race the teardown below.
     let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
     crate::hotkeys::triggers::unregister_all(app);
@@ -79,14 +78,13 @@ pub fn shortcut_mods_held(app: AppHandle, codes: Vec<String>) -> bool {
 /// Apply the current bindings to the right backend: when the evdev backend is
 /// enabled AND permitted it owns the Profiles' chords and the global-shortcut
 /// plugin is silenced (mutual exclusion); otherwise the plugin registers and evdev stops.
+/// On Windows the low-level hook backend always owns them.
 pub fn apply_bindings(app: &AppHandle) {
-    // Serialize the whole load→branch→apply. This is invoked from the suspend-watch thread, the
-    // reregister_shortcuts* command handlers, and setup, which can overlap (a resume runs
-    // apply_bindings AND emits system://resumed → the frontend calls reregister). Without this lock,
-    // if the on-disk config flips evdev_enabled between two concurrent runs' loads, the two take
-    // opposite branches and the evdev-XOR-plugin invariant breaks: both backends end up live (every
-    // chord double-fires) or neither is registered (no hotkeys until the next reregister). See
-    // APPLY_LOCK for the threads that may (and may not) hold it.
+    // Serialize the whole load→branch→apply, as every other applier does: if the on-disk config
+    // flips evdev_enabled between two overlapping runs' loads, they take opposite branches and the
+    // evdev-XOR-plugin invariant breaks: both backends end up live (every chord double-fires) or
+    // neither is registered (no hotkeys until the next reregister). See APPLY_LOCK for the threads
+    // that may (and may not) hold it.
     let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     apply_bindings_locked(app);
 }
@@ -200,7 +198,7 @@ fn apply_bindings_unless_capturing(app: &AppHandle) -> bool {
 
 /// Re-read config and re-apply bindings (call after hotkeys / evdev toggle change).
 /// `async` + spawn_blocking so the wait on APPLY_LOCK happens off the main thread and off
-/// the tokio workers (see there).
+/// the tokio workers (see APPLY_LOCK).
 #[tauri::command]
 pub async fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -283,13 +281,9 @@ pub fn spawn_suspend_watch(app: AppHandle, seed: SuspendWatchSeed) {
                 // sure the chip did not come back underneath something.
                 #[cfg(windows)]
                 crate::aux_windows::overlay::repair_topmost(&app);
-                // Keep the node set current across the resume. The apply above just enumerated, so
-                // what was pending is moot; the watch re-baselines on the listing taken before the
-                // apply, so a node new relative to the last pre-suspend tick (a keyboard
-                // re-enumerated across the suspend) stays pending and gets one settled-tick
-                // keyboard probe, and any node that appears during or after the apply's enumerate,
-                // under any name, reads as new on the next tick. A failed listing keeps the old
-                // baseline.
+                // Re-baseline on the listing taken before the apply (see
+                // `InputNodeWatch::after_apply`): a keyboard re-enumerated across the suspend stays
+                // pending for one settled-tick probe. A failed listing keeps the old baseline.
                 #[cfg(target_os = "linux")]
                 match listing {
                     Some(now) => nodes.after_apply(now),
@@ -303,8 +297,8 @@ pub fn spawn_suspend_watch(app: AppHandle, seed: SuspendWatchSeed) {
 /// The suspend watch's starting input-node baseline. setup takes it BEFORE its apply_bindings
 /// enumerates keyboards, as the resume path does around its own apply: baselined on the watch's
 /// first tick instead (2 s later), a keyboard that appeared in between — a Bluetooth or dock
-/// keyboard connecting right after login — was never probed, and its chords stayed dead until
-/// something else re-applied.
+/// keyboard connecting right after login — would never be probed, and its chords would stay dead
+/// until something else re-applied.
 pub struct SuspendWatchSeed(#[cfg(target_os = "linux")] Option<std::collections::BTreeSet<String>>);
 
 pub fn suspend_watch_seed() -> SuspendWatchSeed {
@@ -490,7 +484,7 @@ const LOSS_STABLE_TICKS: u32 = 30;
 #[cfg(target_os = "linux")]
 impl InputNodeWatch {
     /// A watch baselined on `listing`, taken before an apply enumerated (see `after_apply`); a
-    /// failed listing leaves the first tick to baseline, as before.
+    /// failed listing leaves the first tick to baseline.
     fn seeded(listing: Option<std::collections::BTreeSet<String>>) -> Self {
         let mut w = Self::default();
         if let Some(now) = listing {
@@ -565,9 +559,9 @@ impl InputNodeWatch {
 
 /// Linux: the time spent suspended, measured directly. CLOCK_BOOTTIME counts suspend and
 /// CLOCK_MONOTONIC does not, so their difference grows ONLY across a suspend. Neither is stepped
-/// by NTP or a manual clock change, and a stalled thread grows both alike — the wall-clock gap
-/// this replaces fired the full resume path (cancelling an in-flight dictation) on any forward
-/// clock step of a few seconds.
+/// by NTP or a manual clock change, and a stalled thread grows both alike — a wall-clock gap
+/// would fire the full resume path (cancelling an in-flight dictation) on any forward clock step
+/// of a few seconds.
 #[cfg(target_os = "linux")]
 struct SleepClock {
     last: Option<std::time::Duration>,
@@ -765,7 +759,7 @@ mod tests {
         assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
         assert_eq!(w.pending, set(&["event5"]));
         assert_eq!(w.observe(set(&["event0", "event5"]), false), Some(false));
-        // A failed seed listing keeps the old behaviour: the first tick is the baseline.
+        // A failed seed listing: the first tick is the baseline.
         let mut w = InputNodeWatch::seeded(None);
         assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
         assert!(w.pending.is_empty());
