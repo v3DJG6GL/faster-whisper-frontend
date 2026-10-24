@@ -32,12 +32,11 @@ import {
 import { currentRecord, historyLoadFailed, loadHistory } from "./transcript/transcriptHistory";
 import type { JobStatus } from "./types";
 
-/** Where a ledgered job is asked about: its backend's CURRENT address (`effectiveServerUrl`, with
- *  this device's override), as every other surface pairs it with the key. The jobs commands
- *  resolve the key by backend id at call time, so the address frozen at post time would send the
- *  current key to a host the backend no longer points at; a backend repointed at another server
- *  then reports the job not found. A deleted backend keeps the stored address (no key resolves for
- *  it, and the reconcile pass and a watcher forget its rows). */
+/** Where a ledgered job is asked about: its backend's CURRENT address. The jobs commands resolve
+ *  the key by backend id at call time, so the address frozen at post time would send the current
+ *  key to a host the backend no longer points at (trade-off: a backend repointed at another server
+ *  reports the job not found). A deleted backend keeps the stored address (no key resolves for it,
+ *  and the reconcile pass and a watcher forget its rows). */
 function rowServerUrl(row: LedgerRow): string {
   const st = useApp.getState();
   const b = st.backends.find((x) => x.id === row.backendId);
@@ -106,11 +105,11 @@ function failedText(status: JobStatus): string {
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
  *  (transport error, an HTTP status, or the result is not published yet). A stored result
  *  Rust can never accept (over the body cap, not valid text, a parse failure) settles the run
- *  failed with the reason: re-polling would refuse the same bytes until the row's age limit,
- *  days of a "running" rail, where the live POST path fails the same body once. Attached: an epoch move
- *  during either fetch (the result, then a link's site subtitles) means the user cancelled (or started something else) and the
- *  stop hook already released the rail and forgot the row — drop the result. `stopped`:
- *  the watcher was stopped meanwhile (stopOrphan: the user retried) — drop it too. */
+ *  failed with the reason, as the live POST path does: re-polling would refuse the same bytes
+ *  for days of a "running" rail. Attached: an epoch move during either fetch (the result, then
+ *  a link's site subtitles) means the user moved on and the stop hook already released the
+ *  rail and forgot the row — drop the result. `stopped`: the watcher was stopped meanwhile
+ *  (stopOrphan: the user retried) — drop it too. */
 async function ingestDone(
   row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number, stopped: () => boolean = () => false,
 ): Promise<boolean> {
@@ -204,11 +203,9 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
       return;
     }
     // The backend was deleted mid-watch (here, or by a sync pull): no key resolves for it, so an
-    // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Forget the
-    // row; the rail's run settles failed and names why, and a lost request (this session's, or an
-    // earlier launch's that left its failed record) settles that record (and queue row) with the
-    // reason. A row with no record (the app quit mid-request) is forgotten without one; a failed
-    // History listing cannot tell the two apart, so it keeps the row.
+    // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Settle the
+    // run or lost record (and queue row) with the reason and forget the row; a row with no record
+    // (the app quit mid-request) is forgotten without one.
     const app = useApp.getState();
     if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
       stop();
@@ -267,7 +264,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
           return;
         }
         // Back off like a status error (failures is not reset on "done", so a result
-        // that keeps failing slows down to MAX_BACKOFF_MS instead of 1 s for 72 h).
+        // that keeps failing slows down to MAX_BACKOFF_MS instead of polling at base until maxAge).
         failures += 1;
         delay = Math.min(base * 2 ** failures, MAX_BACKOFF_MS);
         return;
@@ -412,9 +409,8 @@ export async function reconcileJobs(): Promise<void> {
         if (stoppedIds.has(row.jobId)) continue;
         switch (r.kind) {
           case "error":
-            // Only a request that got no answer says the host is down; a per-row failure
-            // (one entry's revoked key, one job's 500 or unreadable body) must not hold back
-            // the server's other rows every pass until it ages out.
+            // A per-row failure must not hold back the server's other rows every pass until
+            // it ages out.
             if (!isPerRowJobError(r.message)) unreachable.add(url);
             retry = true;
             continue;
@@ -513,7 +509,6 @@ export async function initJobReconcile(): Promise<void> {
   await reconcileJobs();
 }
 
-/** Tests only. */
 export function _resetReconcileForTests(): void {
   started = false;
   inFlight = false;
