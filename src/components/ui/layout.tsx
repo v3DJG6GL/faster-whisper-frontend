@@ -390,7 +390,7 @@ export function SettingRow({
   expand,
 }: {
   /** A string, deliberately: it doubles as the accessible name auto-cloned onto a
-   *  Toggle/Select child below, which a node could not provide. */
+   *  Toggle/Select/Segmented child below, which a node could not provide. */
   title: string;
   desc?: string;
   children: ReactNode;
