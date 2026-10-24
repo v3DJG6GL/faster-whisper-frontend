@@ -85,7 +85,7 @@ mod imp {
         /// The capital is reachable ONLY via Caps Lock, not Shift — e.g. Swiss-German Ü/Ä/Ö,
         /// whose keys use the XKB `FOUR_LEVEL` type (Shift gives è/à/é, and Lock isn't in the
         /// type's modifiers, so KWin capitalizes the lowercase keysym under Caps Lock). The
-        /// typer brackets such a keypress with a Caps Lock toggle. See `build_charmap`.
+        /// typer brackets such a keypress with a Caps Lock toggle. See `charmap_from_keymap`.
         lock: bool,
         /// Does toggling Shift on this glyph's press, under a live Caps Lock, still type THIS glyph
         /// (a normal A–Z key)? When a live Caps Lock capitalizes alphabetic output, the typer
@@ -578,7 +578,7 @@ mod imp {
                 }
                 let u = up[0];
                 if u == ch || map.contains_key(&u) {
-                    return None; // capital already typeable via Shift (normal A–Z) — leave it.
+                    return None;
                 }
                 let key = xkb::Keycode::new(spec.keycode as u32 + EVDEV_OFFSET);
                 let g = group % keymap.num_layouts_for_key(key);
@@ -973,8 +973,8 @@ mod imp {
     /// Is Caps Lock currently on? Read from the keyboard's `capslock` LED in sysfs —
     /// works on native Wayland without X, and reflects the compositor's lock state
     /// (KWin drives the hardware LED). We need it because the portal injects raw
-    /// keycodes that KWin resolves under the LIVE Caps Lock, while our charmap only
-    /// models Shift/AltGr. Best-effort: if no capslock LED is exposed, assume off.
+    /// keycodes that KWin resolves under the LIVE Caps Lock, which `caps_plan` must
+    /// compensate for. Best-effort: if no capslock LED is exposed, assume off.
     fn caps_lock_on() -> bool {
         let Ok(entries) = std::fs::read_dir("/sys/class/leds") else {
             return false;
@@ -1018,8 +1018,8 @@ mod imp {
         .await
     }
 
-    /// Synthesize Ctrl+V on the shared session (the caller has already set the
-    /// clipboard). Raw keycodes via the portal — reliable on Wayland, where enigo's
+    /// Synthesize the paste chord `chord_codes` on the shared session (the caller has already
+    /// set the clipboard). Raw keycodes via the portal — reliable on Wayland, where enigo's
     /// XTEST Ctrl+V mis-fires into the wrong shortcut (e.g. opening editor tabs).
     pub async fn paste(
         app: &AppHandle,
@@ -1144,7 +1144,7 @@ mod imp {
             return vec![KEY_LEFTCTRL, v];
         }
         // A main key but no recognized modifier would press a BARE key — typing the literal char
-        // instead of pasting. Prepend Ctrl, mirroring the X11 path (inject/mod.rs paste_keystroke).
+        // instead of pasting. Prepend Ctrl, mirroring the X11 path (inject/mod.rs paste_chord_keys).
         if mods.is_empty() {
             mods.push(KEY_LEFTCTRL);
         }
@@ -1287,8 +1287,9 @@ mod imp {
             // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
             // and wedges the desktop (clicks/drag/selection break) until a VT switch.
             let mut held: Vec<i32> = Vec::new();
-            // Set while we've tapped Caps Lock ON for a lock-char (Ü/Ä/Ö) but not yet tapped it
-            // back; if an error bails out in that window, the cleanup below restores Caps Lock.
+            // Set while a `flip_caps` tap (Caps ON for a lock-char like Ü, or OFF around a
+            // non-caps-safe key like ü) awaits its restoring tap; if an error bails out in that
+            // window, the cleanup below restores Caps Lock.
             let mut caps_flipped = false;
 
             // `press!`/`release!` mirror the shared session and keep `held` in sync.
@@ -1324,7 +1325,7 @@ mod imp {
                 // reads it AFTER the own-window probe: the paste chord has no later check, so a cancel
                 // landing during that round trip would otherwise still paste.
                 //
-                // Own-window re-check at the SINK too: since `inject_text`'s last check sit the latch
+                // Own-window re-check at the SINK too: between `inject_text`'s last check and here sit the latch
                 // consume, the `focused_app_now` snapshot, on the fallback path a failed virtual-keyboard
                 // attempt, `submit`'s task spawn + portal session (maybe the KDE consent modal) and the queue
                 // wait. A focus change there would type the transcript into our own settings, API-key or
@@ -1401,7 +1402,7 @@ mod imp {
                 }
                 if job.paste {
                     // Resolved here, once the charmap is built, so the main key maps by keysym on the active
-                    // layout (see `main_key_keycode`). Press in order, release in reverse.
+                    // layout (see `main_key_keycode`).
                     let chord = chord_to_keycodes(&job.chord_codes, &charmap);
                     let n = chord.len();
                     for (i, &code) in chord.iter().enumerate() {
@@ -1476,10 +1477,8 @@ mod imp {
                         }
                         SinkGate::Proceed => {}
                     }
-                    // Counted HERE, the moment this character is committed to being typed — not at the bottom of
-                    // the body, where a `continue` would skip it. The transcript is remote and untrusted: a run
-                    // of such skipped characters (lock-only capitals) would hold `typed` at 0 and the focus
-                    // probe would never fire for the whole job.
+                    // Counted the moment this character is committed to being typed: the transcript is untrusted,
+                    // and a counter some path can step past would hold `typed` at 0 and starve the focus probe.
                     typed += 1;
 
                     // One char can take several keys: a dead-key prefix (`spec.dead`), or a base
@@ -1737,7 +1736,7 @@ mod imp {
             assert_eq!(source, KeymapSource::LiveKeymap);
             assert_eq!(charmap_from_keymap(&keymap, 0, None)[&'z'].keycode, KEY_Y);
 
-            // No live keymap, or one that does not compile: the names chain, as before.
+            // No live keymap, or one that does not compile: the names chain.
             for live in [None, Some("not a keymap".to_string())] {
                 let (keymap, source) = compile_keymap(&ctx, live, us).expect("us keymap");
                 assert_eq!(source, KeymapSource::Setxkbmap);
@@ -2104,7 +2103,7 @@ mod imp {
             );
             // With the Caps key remapped that tap would be Escape, ü, Escape: no tap, ü skipped.
             assert_eq!(caps_plan(&ue, true, false), None);
-            // Caps off, or a case-pair key cancelled by Shift: typed as before, no Caps tap.
+            // Caps off, or a case-pair key cancelled by Shift: typed with no Caps tap.
             assert_eq!(caps_plan(&ue, false, false), Some((false, false)));
             assert_eq!(caps_plan(&map[&'a'], true, false), Some((false, true)));
         }
@@ -2224,7 +2223,7 @@ mod imp {
                 };
                 let map = charmap_from_keymap(&keymap, 0, None);
                 for (&c, spec) in &map {
-                    // Caps off: every press is the glyph's own level, as before.
+                    // Caps off: every press is the glyph's own level.
                     assert_eq!(
                         caps_plan(spec, false, true),
                         Some((spec.lock, spec.shift)),
@@ -2344,7 +2343,7 @@ mod imp {
                     }
                 }
                 if layout == "us" {
-                    // The main-row 2 key (evdev 3), bare, as before.
+                    // The main-row 2 key (evdev 3), bare.
                     let two = map[&'2'];
                     assert_eq!((two.keycode, two.shift, two.altgr), (3, false, false));
                 }
@@ -2369,7 +2368,7 @@ mod imp {
             assert_eq!(letter_reach(text, &vn_like(false), CAPS_OFF), (6, 0));
             assert!(divert_unreachable(text, &vn_like(false), CAPS_OFF));
             assert!(divert_unreachable("2024", &vn_like(false), CAPS_OFF));
-            // With main-row digits the line types as before.
+            // With main-row digits the line types, no divert.
             assert!(!divert_unreachable(text, &vn_like(true), CAPS_OFF));
         }
 
