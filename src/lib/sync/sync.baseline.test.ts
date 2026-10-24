@@ -1914,6 +1914,12 @@ function endLaunch(io: { release: (v: Record<string, string>) => void }, store: 
   store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
 }
 
+/** Let a fresh engine's parked launch read restore b1's stashed key, then wait out initSync. */
+async function finishLaunch(io: { release: (v: Record<string, string>) => void }, init: Promise<void>): Promise<void> {
+  io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+  await init;
+}
+
 // initSync holds the engine lock across the launch work (the keyring restore parks up to 10 s on a
 // locked wallet), and a manual Push / Pull clicked then must not drop at the gate without a word —
 // the startup pull that follows is an automatic one, so the forced push would never happen. A fresh
@@ -2003,8 +2009,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       const click = engine.pushNow(true);
       await Promise.resolve();
       expect(io.pushes).toEqual([]);
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await click;
       expect(io.pushes.length).toBe(1); // forced: the hash check would have skipped an automatic one
       expect(io.pushes[0].afterRelease).toBe(true);
@@ -2022,8 +2027,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     let hung = true;
     io.pullFn = () => (hung ? new Promise(() => {}) : Promise.resolve(io.pull));
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(io.pulls).toBe(1)); // the startup pull, now hung
       hung = false;
       store.setState((st) => ({
@@ -2042,8 +2046,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     try {
       const click = engine.pushNow(true);
       await engine.resetSyncState(); // supersedes the launch epoch
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await click;
       expect(io.pushes).toEqual([]);
     } finally {
@@ -2059,8 +2062,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       const click = engine.pushNow(true);
       await new Promise((r) => setTimeout(r, 50));
       expect(io.pushes).toEqual([]);
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await click;
       expect(io.pushes.length).toBeGreaterThan(0); // the click ran
       expect(io.pushes.every((p) => p.afterRelease)).toBe(true);
@@ -2074,8 +2076,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     const { engine, store, init } = await launchEngine();
     try {
       const clicks = [engine.pushNow(true), engine.pushNow(true), engine.pushNow(true)];
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await Promise.all(clicks);
       expect(io.pushes.length).toBe(1);
     } finally {
@@ -2090,8 +2091,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       const before = engine.pushNow(true); // voided by the delete below
       await engine.resetSyncState();
       const after = engine.pushNow(true);
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await Promise.all([before, after]);
       expect(io.pushes.length).toBe(1);
     } finally {
@@ -2105,8 +2105,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     try {
       const pull = engine.pullNow(true);
       const push = engine.pushNow(true);
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await Promise.all([pull, push]);
       expect(io.pulls).toBe(2); // the startup pull and the click
       expect(io.pushes.length).toBeGreaterThan(0); // the Push click (a forced pull may add one)
@@ -2123,8 +2122,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     try {
       const reset = engine.resetSyncState(); // holds the lock until its keyring delete lands
       const click = engine.pushNow(true);
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init; // launch ends; the startup pull dropped at the reset's lock
+      await finishLaunch(io, init); // launch ends; the startup pull dropped at the reset's lock
       await new Promise((r) => setTimeout(r, 50));
       expect(io.pushes).toEqual([]);
       endDelete();
@@ -2253,8 +2251,7 @@ describe("a sync edit made during the launch work", () => {
       store.setState((st) => ({
         settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...sub, logLevel: true } } },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
@@ -2280,8 +2277,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       await new Promise((r) => setTimeout(r, 30)); // a push the reconcile queued would land now
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
@@ -2302,8 +2298,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
@@ -2314,8 +2309,7 @@ describe("a sync edit made during the launch work", () => {
   it("a category turned ON after launch asks too, and nothing is pushed while the dialog waits", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       const pullsBefore = io.pulls;
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
@@ -2339,8 +2333,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await engine.resolveSyncConflicts({ logging: "local" }, engine.getPendingConflict()!.id);
       await vi.waitFor(() => expect(io.pushes).toBe(1));
@@ -2366,8 +2359,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
@@ -2380,8 +2372,7 @@ describe("a sync edit made during the launch work", () => {
     const { engine, store, init } = await launchEngine({ sub: { ...offSub, logLevel: true } }, serverCopy, { freshCats: ["logging", "nonsense"] });
     try {
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
@@ -2409,8 +2400,7 @@ describe("a sync edit made during the launch work", () => {
   it("a setting switched ON in a category that already syncs asks when its value differs, and records the question", async () => {
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
@@ -2429,8 +2419,7 @@ describe("a sync edit made during the launch work", () => {
   it("a setting switched ON with the server's value merges, and an unpushed edit to another setting of the group still goes up", async () => {
     const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logsInSidebar: true } }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       // An edit to a synced setting whose push has not gone out yet, then the switch.
       store.setState(logging({ logLevel: "debug", showInSidebar: false, keepDays: 30 }));
@@ -2447,8 +2436,7 @@ describe("a sync edit made during the launch work", () => {
   it("taking the server's value for the re-enabled setting keeps this device's edit to another setting of the group", async () => {
     const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logsInSidebar: true } }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(logging({ logLevel: "debug", showInSidebar: false, keepDays: 90 }));
       store.setState(turnOn({ ...levelOnly, logsInSidebar: true, logRetention: true }));
@@ -2472,8 +2460,7 @@ describe("a sync edit made during the launch work", () => {
     });
     try {
       store.setState(logging({ logLevel: "info", keepDays: 90 }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       expect(store.getState().settings.logging?.logLevel).toBe("info"); // nothing applied yet
       await engine.resolveSyncConflicts({ logging: "local" }, engine.getPendingConflict()!.id);
@@ -2488,8 +2475,7 @@ describe("a sync edit made during the launch work", () => {
   it("turning the re-enabled setting off again drops its question and lets pushes through", async () => {
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
@@ -2508,8 +2494,7 @@ describe("a sync edit made during the launch work", () => {
     // "Log folder" is machine-specific (off by default): no device ever sent a logDir.
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(logging({ logLevel: "debug", logDir: "/var/log/me" }));
       store.setState(turnOn({ ...levelOnly, logFolder: true }));
@@ -2552,8 +2537,7 @@ describe("a sync edit made during the launch work", () => {
       io.remote = { ...serverCopy, backends: { list: [list[0], { ...list[2], name: "three!" }], secrets: { b1: "sk-1" } } } as SyncBlob;
       store.setState({ backends: [list[0], { ...list[1], serverUrl: "http://here" }, list[2]] });
       store.setState(logging({ logLevel: "debug" }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().backends.map((b) => b.name)).toEqual(["local", "three!"]));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
@@ -2569,8 +2553,7 @@ describe("a sync edit made during the launch work", () => {
       io.remote = { ...serverCopy, backends: { list, secrets: { b1: "sk-2" } } } as SyncBlob; // the peer rotated it
       io.locked = true;
       store.setState(logging({ logLevel: "debug" }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncError).toMatch(/keyring/));
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushes).toBe(0);
@@ -2584,8 +2567,7 @@ describe("a sync edit made during the launch work", () => {
     try {
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
@@ -2599,8 +2581,7 @@ describe("a sync edit made during the launch work", () => {
     const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logRetention: true } }, serverCopy, { freshGates: ["logRetention", "notASetting"] });
     try {
       store.setState(keepLocal(90));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
@@ -2612,8 +2593,7 @@ describe("a sync edit made during the launch work", () => {
   it("an automatic pull with a re-enabled category still to reconcile reconciles it, rather than pushing to start a second pull", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(keepLocal(90));
       // The server is unreachable when the setting comes on: its reconcile has not landed.
@@ -2643,8 +2623,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       const before = store.getState().syncStatus;
@@ -2683,8 +2662,7 @@ describe("a sync edit made during the launch work", () => {
     const setSync = (patch: Partial<NonNullable<AppSettings["sync"]>>) =>
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, ...patch } } }));
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
       // (b) the gate comes on while sync is off, then sync comes back on.
@@ -2713,8 +2691,7 @@ describe("a sync edit made during the launch work", () => {
           sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
         },
       }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await new Promise((r) => setTimeout(r, 30));
@@ -2728,8 +2705,7 @@ describe("a sync edit made during the launch work", () => {
     const { engine, store, init } = await launchEngine({ enabled: false });
     try {
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
@@ -2743,8 +2719,7 @@ describe("a sync edit made during the launch work", () => {
     // Same gate set as above, ON from launch: an unchanged version is "nothing new", as before.
     const { engine, store, init } = await launchEngine({});
     try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
+      await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()).toBeNull();
