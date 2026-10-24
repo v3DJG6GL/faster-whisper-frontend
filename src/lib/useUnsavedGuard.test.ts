@@ -1,6 +1,6 @@
 // "Save and leave" must only leave when the save actually persisted: both the App Rules
 // editor (a rule with no app id) and the Backends editor (a failed keyring write) can abort
-// their save, and leaving anyway discarded the draft the button promised to keep.
+// their save, and leaving anyway would discard the draft the button promised to keep.
 import { describe, expect, it, vi } from "vitest";
 import { afterSave, isDirty } from "./useUnsavedGuard";
 
