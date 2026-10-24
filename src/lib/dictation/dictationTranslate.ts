@@ -150,7 +150,7 @@ export interface DictationTranslateResult {
  *
  *  `chars` is every character SUBMITTED — the context segments as well as the
  *  phrase — because the server translates all of them (its own log says
- *  `3 segments × 2 targets`). Pricing the phrase alone, once, is what made
+ *  `3 segments × 2 targets`). Pricing the phrase alone, once, would make
  *  short multi-target phrases fail deterministically. */
 export function pricedMs(chars: number, targets: number): number {
   return Math.max(1, targets) * (400 + chars * 5);
@@ -189,8 +189,8 @@ export function translateCeilingMs(
 /** How long the server may go SILENT before we give up on it.
  *
  *  A cold start is the reason there are two values: downloading and loading a
- *  GGUF produces no measurable progress for tens of seconds, and treating that
- *  silence as a hang is precisely the mistake the old budget made. Once the
+ *  GGUF produces no measurable progress for tens of seconds, a silence that must
+ *  not read as a hang. Once the
  *  session has seen one translation land, the model is resident and a long
  *  silence really is a wedge — but the text route only ticks when a whole
  *  target FINISHES, so one target's pass over `chars` is silent by design: the
@@ -256,7 +256,7 @@ export async function runDictationTranslate(
   const stallMs = translateStallMs(req.warm, submittedChars, ceilingMs);
   const clock = deps.now ?? (() => Date.now());
   const pollMs = deps.pollMs ?? 1_000;
-  // Only a race WE abandoned owes the server a cancel; set at the catch.
+  // Every failure's cause, set at the catch; only timeout/cancelled (a race WE abandoned) owe a cancel.
   let lost: TranslateFailure | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
@@ -332,7 +332,7 @@ export async function runDictationTranslate(
     const last = r.results[lastIdx] ?? {};
     // A target the server's quality guard KEPT as the source text is not a translation
     // (text.rs: "the frontend must not present those as translations"). Presenting it as
-    // one typed the untranslated original under the target's label — worse than the
+    // one would type the untranslated original under the target's label — worse than the
     // failure path, which at least says so. A kept target reads as a missing one here, so
     // "every target kept" falls into the EmptyTranslation fallback below.
     const kept = new Set(r.kept?.[lastIdx] ?? []);
