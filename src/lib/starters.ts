@@ -5,7 +5,7 @@
 // chord_engine.rs's designed nesting (hold ⊂ hands-free = in-place upgrade) does not apply
 // between the DEFAULTS; the engine still supports it for a user-configured hands-free superset.
 
-import { conflicts, quickAddPeer } from "./hotkeyConflicts";
+import { conflicts, withQuickAddPeer } from "./hotkeyConflicts";
 import { needsLowLevel } from "./keys";
 import type { Profile } from "./types";
 
@@ -37,9 +37,8 @@ export function starterProfiles(backendId: string | null): Profile[] {
  *  persistence gate. One rule for the onboarding step and the Profiles checklist card.
  *  `collapseSides` as `conflicts` takes it — pass true while the registrar is still unknown. */
 export function startersClearOf(backendId: string | null, quickAddHotkey: string[], collapseSides: boolean): Profile[] {
-  const qa = quickAddHotkey.length > 0 ? [quickAddPeer(quickAddHotkey)] : [];
   return starterProfiles(backendId).map((p) =>
-    conflicts([...qa, p], collapseSides).length > 0 ? { ...p, hotkey: [] } : p,
+    conflicts(withQuickAddPeer([p], quickAddHotkey), collapseSides).length > 0 ? { ...p, hotkey: [] } : p,
   );
 }
 
