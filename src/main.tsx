@@ -45,8 +45,8 @@ initKeyboardLayout();
 if (label === "overlay" || label === "quickadd" || label === "langpick") {
   // Initial guess before any data arrives: resolve "auto" against the OS scheme (the
   // config isn't loaded yet). The chip then follows the theme broadcast on
-  // `dictation://update` (Overlay.tsx); the quick-add window applies the loaded
-  // config's setting on every summon (QuickAdd.tsx).
+  // `dictation://update` (Overlay.tsx); the quick-add and language-picker windows apply
+  // the loaded config's setting on every summon (QuickAdd.tsx, LangPick.tsx).
   applyTheme("auto");
 }
 
