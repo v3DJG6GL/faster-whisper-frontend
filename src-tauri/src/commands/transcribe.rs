@@ -1,5 +1,5 @@
 //! Batch transcription and translation of files and links, link media fetches,
-//! and media export, each cancelled through its own epoch below.
+//! and media export; transcription and export each cancel through their own epoch below.
 
 use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS, HEAL_STAMP};
 use crate::transport;
@@ -833,7 +833,7 @@ pub async fn copy_media_to(
     .map_err(|e| e.to_string())?
 }
 
-/// Abort every in-flight file transcription (the Transcribe screen's Cancel).
+/// Abort every request waiting in `until_file_epoch_bumps` (the Transcribe screen's Cancel).
 #[tauri::command]
 pub fn cancel_file_transcription() {
     FILE_TRANSCRIBE_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
