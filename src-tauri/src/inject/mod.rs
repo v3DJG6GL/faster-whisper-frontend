@@ -1393,7 +1393,7 @@ fn paste(
             // Answered as the cancel check below answers (see there). An error abort only gets
             // here once the whole wait ran out (unless withheld), so its line names the wait and
             // the recovery.
-            if cancel_wants_recovery(epoch) && !withhold_on_divert {
+            if !cancel_discards(epoch, withhold_on_divert) {
                 tracing::info!(
                     "[clip] paste: error abort — the clipboard-job lock (a quick-add copy grab or \
                      a stuck snapshot read) was still held after {}s; nothing written, the \
@@ -1536,7 +1536,7 @@ fn paste(
     if injection_cancelled(epoch) {
         tracing::info!("[clip] paste: cancelled during the settle — not pasting");
         // A withheld insert has nothing for that recovery to keep (`inject_text` skips it).
-        if !cancel_wants_recovery(epoch) || withhold_on_divert {
+        if cancel_discards(epoch, withhold_on_divert) {
             restore_clipboard_later(previous);
         }
         return Ok(Landed::Yes);
@@ -1553,7 +1553,7 @@ fn paste(
     let gate = sink_gate(own_window_focused, || injection_cancelled(epoch));
     if gate == SinkGate::Cancelled {
         tracing::info!("[clip] paste: cancelled during the own-window probe — not pasting");
-        if !cancel_wants_recovery(epoch) || withhold_on_divert {
+        if cancel_discards(epoch, withhold_on_divert) {
             restore_clipboard_later(previous);
         }
         return Ok(Landed::Yes);
