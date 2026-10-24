@@ -1141,8 +1141,7 @@ export default function Transcribe() {
     // The run's own settings (the store's), like retry(): runOverrides is unpersisted state that
     // a remount resets and later panel edits change.
     const next = retryOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
-    // The panel keeps the user's later edits and only flips the switch; the retry itself
-    // replays the run's own settings.
+    // The panel keeps the user's later edits and only flips the switch.
     setRunOverrides((prev) => ({ ...prev, vad_filter: false }));
     const ctx = buildCtx(next);
     if (ctx) retryFile(path, ctx, next);
@@ -3273,9 +3272,9 @@ export default function Transcribe() {
   // ONE tree for both arrangements, switched by className only: stacked is
   // the centered column, studio puts config + queue in a self-scrolling left
   // rail with the transcript as a full-height pane beside it. Because the
-  // element positions never change, React keeps every node alive across a
-  // layout switch (or an auto-switch on resize) — playback, scroll position
-  // and edit state in the transcript viewer all survive.
+  // viewer's position never changes, React keeps it alive across a layout
+  // switch (or an auto-switch on resize) — playback, scroll position and
+  // edit state in the transcript viewer all survive.
   return (
     <div
       className={
