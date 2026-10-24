@@ -379,6 +379,23 @@ export default function Settings() {
         setBusy("store", false);
       });
   };
+  // One store row's Delete… / confirm pair: arming re-reads the counts (armStoreAction), and the
+  // confirm waits for that read ("Counting…") before it can run.
+  const storeDeleteControl = (kind: StoreKind, confirmLabel: string) =>
+    confirming === kind ? (
+      <span className="flex items-center gap-2">
+        <Button size="sm" variant="danger" onClick={() => runStoreAction(kind)} disabled={storeLocked || storeCounting}>
+          {deletingKind === kind ? "Deleting…" : storeCounting ? "Counting…" : confirmLabel}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
+          Cancel
+        </Button>
+      </span>
+    ) : (
+      <Button size="sm" variant="danger" disabled={storeLocked} onClick={() => armStoreAction(kind)}>
+        {deletingKind === kind ? "Deleting…" : "Delete…"}
+      </Button>
+    );
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
   // both on change. Rust enforces the same value on both sweeps
@@ -913,32 +930,13 @@ export default function Settings() {
               desc={`Removes all ${plural(dictN, "stored dictation")}${dictAudioN > 0 ? ` and ${plural(dictAudioN, "audio file")}` : " and their audio"}. The retention clock stays as set.`}
               last
             >
-              {confirming === "dict" ? (
-                <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")} disabled={storeLocked || storeCounting}>
-                    {deletingKind === "dict"
-                      ? "Deleting…"
-                      : storeCounting
-                        ? "Counting…"
-                        : dictN > 0
-                          ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
-                          : dictAudioN > 0
-                            ? `Delete ${plural(dictAudioN, "audio file")}`
-                            : "Delete"}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                    Cancel
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={storeLocked}
-                  onClick={() => armStoreAction("dict")}
-                >
-                  {deletingKind === "dict" ? "Deleting…" : "Delete…"}
-                </Button>
+              {storeDeleteControl(
+                "dict",
+                dictN > 0
+                  ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
+                  : dictAudioN > 0
+                    ? `Delete ${plural(dictAudioN, "audio file")}`
+                    : "Delete",
               )}
             </SettingRow>
 
@@ -1002,98 +1000,26 @@ export default function Settings() {
               title="Delete audio from file transcriptions"
               desc={`Frees ${storeStats ? fmtBytes(storeStats.fileMediaBytes) : "0 KB"}. Transcripts stay, and the originals on disk aren't touched — only in-app playback for moved originals is lost.`}
             >
-              {confirming === "files" ? (
-                <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")} disabled={storeLocked || storeCounting}>
-                    {deletingKind === "files" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.fileMediaFiles ?? 0, "file")}`}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                    Cancel
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={storeLocked}
-                  onClick={() => armStoreAction("files")}
-                >
-                  {deletingKind === "files" ? "Deleting…" : "Delete…"}
-                </Button>
-              )}
+              {storeDeleteControl("files", `Delete ${plural(storeStats?.fileMediaFiles ?? 0, "file")}`)}
             </SettingRow>
             <SettingRow
               title="Delete audio from link transcriptions"
               desc={`Frees ${storeStats ? fmtBytes(storeStats.linkMediaBytes) : "0 KB"}. Transcripts stay, but this audio can't be re-downloaded — playback for these link transcriptions is gone for good.`}
             >
-              {confirming === "links" ? (
-                <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")} disabled={storeLocked || storeCounting}>
-                    {deletingKind === "links" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.linkMediaFiles ?? 0, "file")}`}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                    Cancel
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={storeLocked}
-                  onClick={() => armStoreAction("links")}
-                >
-                  {deletingKind === "links" ? "Deleting…" : "Delete…"}
-                </Button>
-              )}
+              {storeDeleteControl("links", `Delete ${plural(storeStats?.linkMediaFiles ?? 0, "file")}`)}
             </SettingRow>
             <SettingRow
               title="Delete videos from link transcriptions"
               desc={`Frees ${storeStats ? fmtBytes(storeStats.videoMediaBytes) : "0 KB"}. Transcripts and audio stay; a video can be fetched again from its link when you export.`}
             >
-              {confirming === "video" ? (
-                <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")} disabled={storeLocked || storeCounting}>
-                    {deletingKind === "video" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.videoMediaFiles ?? 0, "file")}`}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                    Cancel
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={storeLocked}
-                  onClick={() => armStoreAction("video")}
-                >
-                  {deletingKind === "video" ? "Deleting…" : "Delete…"}
-                </Button>
-              )}
+              {storeDeleteControl("video", `Delete ${plural(storeStats?.videoMediaFiles ?? 0, "file")}`)}
             </SettingRow>
             <SettingRow
               title="Delete all transcriptions"
               desc={`Removes all ${plural(storeStats?.fileCount ?? 0, "file, link or text transcription", "file, link and text transcriptions")}, with their corrections, speaker names and stored audio.`}
               last
             >
-              {confirming === "clear" ? (
-                <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")} disabled={storeLocked || storeCounting}>
-                    {deletingKind === "clear" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.fileCount ?? 0, "transcript")}`}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
-                    Cancel
-                  </Button>
-                </span>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={storeLocked}
-                  onClick={() => armStoreAction("clear")}
-                >
-                  {deletingKind === "clear" ? "Deleting…" : "Delete…"}
-                </Button>
-              )}
+              {storeDeleteControl("clear", `Delete ${plural(storeStats?.fileCount ?? 0, "transcript")}`)}
             </SettingRow>
             {storeMsg && (
               <div className={`py-2 text-[12px] ${storeMsg.error ? "text-warn" : "text-dim"}`}>{storeMsg.text}</div>

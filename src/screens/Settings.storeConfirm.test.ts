@@ -25,16 +25,23 @@ describe("store delete confirms re-read their counts on arm", () => {
     expect(refresh).toMatch(/\.catch\(\(\) => \{\s*if \(my === statsSeq\.current\) setStatsSettled\(my\);/);
   });
 
+  // Every row renders its Delete… / confirm pair through one helper.
+  const control =
+    settingsSrc.match(/const storeDeleteControl = \(kind: StoreKind, confirmLabel: string\) =>([\s\S]*?)\n {4}\);\n/)?.[1] ?? "";
+  const rendersVia = (kind: string) => new RegExp(`storeDeleteControl\\(\\s*"${kind}",`);
+
   it.each(KINDS)("the %s confirm waits for the arm's count", (kind) => {
-    const i = settingsSrc.indexOf(`onClick={() => runStoreAction("${kind}")}`);
+    expect(settingsSrc).toMatch(rendersVia(kind));
+    const i = control.indexOf("onClick={() => runStoreAction(kind)}");
     expect(i).toBeGreaterThan(-1);
-    const btn = settingsSrc.slice(i, i + 260);
-    expect(btn).toMatch(/^onClick=\{\(\) => runStoreAction\("\w+"\)\} disabled=\{storeLocked \|\| storeCounting\}>/);
+    const btn = control.slice(i, i + 260);
+    expect(btn).toMatch(/^onClick=\{\(\) => runStoreAction\(kind\)\} disabled=\{storeLocked \|\| storeCounting\}>/);
     expect(btn).toMatch(/"Deleting…"\s*:\s*storeCounting\s*\?\s*"Counting…"/);
   });
 
   it.each(KINDS)("the %s row arms through the helper, never setConfirming directly", (kind) => {
-    expect(settingsSrc).toContain(`onClick={() => armStoreAction("${kind}")}`);
+    expect(settingsSrc).toMatch(rendersVia(kind));
+    expect(control).toContain("onClick={() => armStoreAction(kind)}");
     expect(settingsSrc).not.toContain(`setConfirming("${kind}")`);
   });
 });
