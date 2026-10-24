@@ -43,8 +43,7 @@ pub fn load(dir: &Path) -> std::io::Result<Option<serde_json::Value>> {
         .filter(|v| v.is_object()))
 }
 
-/// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
-/// Refuses (Err) a document over the cap rather than truncating it.
+/// Atomic, owner-only write. Refuses (Err) a document over the cap rather than truncating it.
 pub fn save(dir: &Path, ledger: &serde_json::Value) -> anyhow::Result<()> {
     let text = serde_json::to_string(ledger)?;
     if text.len() > MAX_LEDGER_BYTES {
@@ -72,7 +71,6 @@ mod tests {
         // Not an object → refused on read.
         std::fs::write(dir.join("jobs-ledger.json"), "[1,2]").unwrap();
         assert!(load(&dir).unwrap().is_none());
-        // Oversized → refused on write.
         let big = serde_json::json!({"x": "y".repeat(MAX_LEDGER_BYTES)});
         assert!(save(&dir, &big).is_err());
         let _ = std::fs::remove_dir_all(&dir);
