@@ -66,10 +66,10 @@ describe("normalizeMediaUrl", () => {
     expect(pastesSeveralLinks("\t https://x.com/a \t")).toBe(false);
   });
   it("says 'several links' only for a link followed by horizontal whitespace and another link (shape matrix)", () => {
-    // [pasted text, several links?, normalizeMediaUrl]. Changed vs 68f08787 / HEAD, with intent:
-    // edge U+00A0/U+3000/U+FEFF and text before a link no longer read as several links (the
-    // hint then names the real problem); a line break inside the text is dropped first, as the
-    // parsers drop it — a soft-wrapped archive link is one link again, "a ht\ntps://b" is two.
+    // [pasted text, several links?, normalizeMediaUrl]. Edge U+00A0/U+3000/U+FEFF and text before
+    // a link do not read as several links (the hint then names the real problem); a line break
+    // inside the text is dropped first, as the parsers drop it — a soft-wrapped archive link is
+    // one link, "a ht\ntps://b" is two.
     const matrix: [string, boolean, string | null][] = [
       ["https://a/x", false, "https://a/x"],
       ["https://a/x https://b/y", true, null],
