@@ -111,8 +111,8 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
  *  key (never persisted); `k` = spoken phrase, `v` = inserted symbol. */
 export type MapRow = { id: number; k: string; v: string };
 
-// Module-global row-id counter — unique, stable React keys for editor rows (map
-// pairs, regex entries). Shared across editors that import it.
+// Module-global so React keys stay unique and stable across every editor's rows (map pairs,
+// regex entries).
 let _rowId = 1;
 export const nextRowId = (): number => _rowId++;
 
