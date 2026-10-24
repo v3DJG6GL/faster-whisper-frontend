@@ -1730,6 +1730,12 @@ mod imp {
             usable: true,
         };
 
+        /// Caps Lock on, and the Caps key remapped so it cannot be tapped off.
+        const CAPS_STUCK: LiveCaps = LiveCaps {
+            on: true,
+            usable: false,
+        };
+
         /// a-z, plus the main-row digits (bare, untouched by Caps Lock) every Latin layout but
         /// a keypad-digit one has.
         fn us_letters() -> HashMap<char, KeySpec> {
@@ -2129,11 +2135,7 @@ mod imp {
                 assert_eq!(caps_plan(&cedilla, true, true), Some((true, true)));
                 assert_eq!(caps_plan(&cedilla, false, true), Some((false, true)));
                 // A Caps key that cannot be tapped blocks ç, so the job diverts instead.
-                let stuck = LiveCaps {
-                    on: true,
-                    usable: false,
-                };
-                assert!(typeable_keys('\u{e7}', &map, stuck).is_none());
+                assert!(typeable_keys('\u{e7}', &map, CAPS_STUCK).is_none());
             }
         }
 
@@ -2187,12 +2189,8 @@ mod imp {
             assert_eq!(typed, "Stra\u{df}e");
             // A Caps key that cannot be tapped blocks ß (its Caps-off press needs the tap): the
             // job diverts instead of typing ẞ.
-            let stuck = LiveCaps {
-                on: true,
-                usable: false,
-            };
-            assert!(typeable_keys('\u{df}', &map, stuck).is_none());
-            assert!(divert_unreachable("Stra\u{df}e", &map, stuck));
+            assert!(typeable_keys('\u{df}', &map, CAPS_STUCK).is_none());
+            assert!(divert_unreachable("Stra\u{df}e", &map, CAPS_STUCK));
         }
 
         /// On a multi-layout keymap whose first layout has no AltGr (us,de), the active de group's
@@ -2286,15 +2284,11 @@ mod imp {
             };
             let map = latin_with(&[('\u{fc}', ue), ('\u{df}', spec(12, false, None))]);
             let text = "Gr\u{fc}\u{df}e f\u{fc}r J\u{fc}rg";
-            let stuck = LiveCaps {
-                on: true,
-                usable: false,
-            };
             // The typing loop skips every ü under that Caps state; the divert check must see them.
-            assert_eq!(letter_reach(text, &map, stuck), (9, 3));
-            assert!(typeable_keys('\u{fc}', &map, stuck).is_none());
+            assert_eq!(letter_reach(text, &map, CAPS_STUCK), (9, 3));
+            assert!(typeable_keys('\u{fc}', &map, CAPS_STUCK).is_none());
             // ...and divert the line: the layout has ü, so these are no stray accents to skip.
-            assert!(divert_unreachable(text, &map, stuck));
+            assert!(divert_unreachable(text, &map, CAPS_STUCK));
             assert!(!divert_unreachable(text, &map, CAPS_OFF));
             // Caps off, or a Caps key that still taps Caps Lock: ü is typed, nothing unreachable.
             assert_eq!(letter_reach(text, &map, CAPS_OFF), (12, 0));
