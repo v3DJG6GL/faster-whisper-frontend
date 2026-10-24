@@ -33,7 +33,7 @@ import type {
   UsageQuery,
 } from "./types";
 import type { UrlPreview } from "./urlSource";
-import type { MediaExportProgress, MediaStreams } from "./transcript/mediaExport";
+import type { MediaContainer, MediaExportProgress, MediaStreams } from "./transcript/mediaExport";
 import type {
   ExportEnvelope,
   ImportResult,
@@ -369,7 +369,7 @@ export async function packageMedia(args: ServerTarget & {
   /** With `sourceMediaId`: the local copy that id stands for, so Rust refuses a
    *  `destPath` that is that file (the remux would replace the original). */
   localSource?: string | null;
-  container: "mkv" | "mp4";
+  container: MediaContainer;
   subtitles: SubtitleTrackIn[];
   defaultTrack: number | null;
   /** Index of the original-language track (Matroska FlagOriginal). */

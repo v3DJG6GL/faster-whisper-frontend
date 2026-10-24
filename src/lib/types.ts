@@ -3,6 +3,7 @@
 // live in the OS keyring (Rust); the UI only knows whether a key is set.
 
 import type { CueLimits, SubtitleLength, TranslationTiming } from "./transcript/cueSplit";
+import type { MediaContainer } from "./transcript/mediaExport";
 
 export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";
@@ -483,7 +484,7 @@ export interface TranscribeSettings {
   urlVideoMaxHeight?: number | null;
   /** The export panel's Media section defaults. */
   exportMedia?: "none" | "audio" | "video";
-  exportContainer?: "mkv" | "mp4";
+  exportContainer?: MediaContainer;
   exportSubtitleMode?: "embedded" | "sidecar" | "both";
   /** SRT/VTT cue length (cueSplit): absent = "standard". */
   subtitleLength?: SubtitleLength;
@@ -677,7 +678,7 @@ export interface Capabilities {
    *  with `media_package.reason` explaining a false. */
   media_package_enabled?: boolean;
   media_package?: {
-    containers: ("mkv" | "mp4")[];
+    containers: MediaContainer[];
     max_tracks: number;
     max_upload_bytes: number;
     reason?: string;
