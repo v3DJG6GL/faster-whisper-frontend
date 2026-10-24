@@ -438,7 +438,7 @@ describe("apply: keep-local per gate", () => {
 
   it("an inbound lenient http(s) scheme is canonicalised the way the editor stores it, not blanked", () => {
     // Older builds stored these verbatim and the transport reads them as http(s)://host, so
-    // blanking broke a working backend (and pushed the "" back to the peer).
+    // blanking would break a working backend (and push the "" back to the peer).
     const cases: [string, string][] = [
       ["http:/host:8000", "http://host:8000"],
       ["HTTPS:\\\\srv.example", "https://srv.example"],
