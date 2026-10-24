@@ -25,8 +25,8 @@ const tail = (id: string) => id.split("/").pop() ?? id;
 export const WHISPER_ALIAS = "whisper-1";
 
 /** The model a backend names as its own, trimmed; "" when it leaves the model to the server. On a
- *  server that is not standard (OpenAI-compatible) the `whisper-1` alias loads the server's
- *  DEFAULT_MODEL, so it is no name of its own there; on a standard server it is the real model sent. */
+ *  server that is not standard the `whisper-1` alias loads the server's DEFAULT_MODEL, so it is no
+ *  name of its own there; on a standard (OpenAI-compatible) server it is the real model sent. */
 export function ownModelName(model: string | undefined, kind: string): string {
   const m = (model ?? "").trim();
   return m === WHISPER_ALIAS && kind !== "standard" ? "" : m;
