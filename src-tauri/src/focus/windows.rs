@@ -13,7 +13,7 @@
 //! App identity: the foreground process' exe basename, lowercased, `.exe`
 //! stripped — `firefox`, `code`, `chrome` — which lines up with the Linux
 //! AT-SPI application names for the cross-platform apps people write rules for,
-//! and with the frontend's exact case-insensitive rule matcher. UWP apps hosted
+//! and with the frontend's case-insensitive rule matcher. UWP apps hosted
 //! by ApplicationFrameHost are resolved to the real app via their CoreWindow
 //! child. Shell surfaces (taskbar, desktop, Alt-Tab flicker) are skipped by
 //! WINDOW CLASS — the Windows counterpart of the plasmashell name-filter, which
