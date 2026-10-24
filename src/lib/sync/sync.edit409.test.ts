@@ -52,22 +52,10 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 it("a setting edited while a push is on the wire survives the 409 auto-merge", async () => {
-  await resetSyncState();
-  const settings = structuredClone(DEFAULT_SETTINGS);
-  settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
-  useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-  await pushNow(true); // the v1 base
-  const base = structuredClone(api.pushed) as SyncBlob;
   // A different category from the peer's, so the two auto-merge instead of conflicting.
-  const edited = useApp.getState().settings.recording.chipScale === 1.5 ? 1.25 : 1.5;
-  const peerStart = !useApp.getState().settings.general.startMinimized;
-  const remote = structuredClone(base);
-  remote.general = { ...remote.general, startMinimized: peerStart } as never;
+  const { edited, peerStart, remote } = await seed();
   api.conflicts = [{ version: 5, updated_ts: 5, device: "peer", blob: remote }];
-  api.onPush = () => {
-    const s = useApp.getState().settings;
-    useApp.setState({ settings: { ...s, recording: { ...s.recording, chipScale: edited } } });
-  };
+  api.onPush = () => editChipScale(edited);
   await pushNow(true);
   const s = useApp.getState();
   expect(s.syncStatus).toBe("ok");
