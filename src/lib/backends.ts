@@ -15,8 +15,8 @@ const RUST_TRIM =
  *
  *  Both the browser's `URL` and Rust's `url` crate (behind reqwest) delete every ASCII tab, LF and
  *  CR from ANYWHERE in the input, and strip leading/trailing C0 controls and spaces (JS `trim()`
- *  does not strip C0). Testing the raw string let `"h<TAB>ttp://evil.tld"` read as schemeless here
- *  (host `"http"`: local, no plaintext warning) while reqwest sent the key and audio to evil.tld.
+ *  does not strip C0). Testing the raw string would let `"h<TAB>ttp://evil.tld"` read as schemeless
+ *  here (host `"http"`: local, no plaintext warning) while reqwest sends the key and audio to evil.tld.
  *
  *  Before both, the Rust transport `str::trim`s the stored address, stripping the Unicode
  *  White_Space set at the edges (U+00A0, U+2028, U+3000 …), so the edges lose exactly that set
@@ -48,7 +48,7 @@ export function normalizeUrl(raw: string): string {
  *  an unchanged save), and anything else stays verbatim so the connect error still names it. */
 export function storedTypedUrl(raw: string): string {
   // A lenient http(s) scheme (`http:/h`, `HTTPS:\\h`) is canonicalised first: WHATWG reads it as
-  // `http://h`, but it fails the two-slash test, so stored verbatim it connected in cleartext
+  // `http://h`, but it fails the two-slash test, so stored verbatim it would connect in cleartext
   // with no not-encrypted warning. With NO slash (`http:evil.tld:8000`) the parsers still read a
   // special scheme followed by the authority, so it gains `//` too — unless the remainder is a
   // port (the isSchemelessAddress rule): `http:8000` (host `http`, port 8000) keeps its
@@ -58,9 +58,9 @@ export function storedTypedUrl(raw: string): string {
 }
 
 /** The lenient-scheme step of `storedTypedUrl` alone, on an already-cleaned string: `http:/h`,
- *  `HTTPS:\\h`, `http:h` → `http(s)://h`, read the way the parsers read them. Shared with the sync
- *  sanitizer, which must not apply `storedTypedUrl`'s JS `trim()` (it also strips U+FEFF, which
- *  `stripUrlNoise` keeps because the transport does). */
+ *  `HTTPS:\\h`, `http:h` → `http(s)://h`, read the way the parsers read them. Shared with
+ *  `serverUrlFromPeer` (the sync/import path), which must not apply `storedTypedUrl`'s JS `trim()`
+ *  (it also strips U+FEFF, which `stripUrlNoise` keeps because the transport does). */
 export function canonicalHttpScheme(t: string): string {
   if (/^https?:\/\//i.test(t)) return t;
   const canon = (_m: string, s: string) => `${s.toLowerCase()}://`;
@@ -143,7 +143,7 @@ function isLocalAddress(host: string): boolean {
   const h = host.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h === "::1" || h.endsWith(".localhost")) return true;
   if (h.endsWith(".local") || h.endsWith(".home.arpa") || h.endsWith(".internal")) return true;
-  if (!h.includes(".") && !h.includes(":")) return true; // bare LAN hostname
+  if (!h.includes(".") && !h.includes(":")) return true;
   const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   // ULA / link-local, but ONLY for an IPv6 LITERAL (always contains ":") — otherwise public
   // names like fcc.gov or fdic.gov would read as LAN and suppress the warning.
