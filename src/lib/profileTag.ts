@@ -27,7 +27,7 @@ export function authoredChipTag(tag: unknown): string {
  *
  *  The authored cap is the editor's own limit, so a typed tag shows in full, but it still matters:
  *  a sync blob controls `tag` (`sanitizeProfiles` type-checks it but does not bound it), and it
- *  feeds the `dictation://update` payload rebuilt on every level tick — an unbounded tag was
+ *  feeds the `dictation://update` payload rebuilt on every level tick — an unbounded tag would be
  *  re-broadcast cross-window and re-laid-out several times a second. Display only; the stored
  *  tag is untouched. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
