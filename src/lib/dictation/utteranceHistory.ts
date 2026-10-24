@@ -56,7 +56,7 @@ export function appendTranslation(
 ): { text: string; tracks: Record<string, string> | undefined } {
   const tracks = mergeTracks(prev.tracks, add);
   // Without the earlier tracks (or this chunk's) the merged map is not the whole record: a
-  // rebuild from it would drop text, so join as before.
+  // rebuild from it would drop text, so join with appendChunk.
   if (!prev.text || !prev.tracks || !add || !tracks) return { text: appendChunk(prev.text, chunk), tracks };
   const langs = [
     ...o.targets.filter((l) => hasOwn(tracks, l)),
