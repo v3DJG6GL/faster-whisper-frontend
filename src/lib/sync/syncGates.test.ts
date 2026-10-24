@@ -99,10 +99,9 @@ describe("compose: scalar gate passthrough", () => {
       includeSecrets: false,
       sub: SUB_ALL,
     });
-    // `logging.logDir` is the one deliberate difference: its gate is what
-    // ships the path at all (an ungated compose — the export contract —
-    // never includes it). Everything else must be byte-identical.
-    // Only `logDir` — the other logging fields must stay byte-identical too.
+    // `logging.logDir` is the one deliberate difference: its gate is what ships the path at
+    // all (an ungated compose — the export contract — never includes it). Everything else,
+    // the other logging fields included, must be byte-identical.
     for (const b of [gated, ungated]) {
       const lg = (b as Record<string, unknown>).logging;
       if (lg && typeof lg === "object") delete (lg as Record<string, unknown>).logDir;
@@ -415,9 +414,9 @@ describe("apply: keep-local per gate", () => {
   });
 
   it("an inbound scheme-less address is stored the way the keyboard path stores it", async () => {
-    // Bare "host:8000" reached the transport scheme-less (opaque URL-parse error on every
-    // request) while every display helper re-normalised it; a scheme this app does not speak
-    // still blanks, and a well-formed address is stored cleaned/verbatim.
+    // A bare "host:8000" would reach the transport scheme-less (URL-parse error on every request)
+    // while display helpers re-normalise it; an unspoken scheme blanks; a well-formed one is
+    // stored cleaned/verbatim.
     gateOff();
     await applyBlob(
       {
