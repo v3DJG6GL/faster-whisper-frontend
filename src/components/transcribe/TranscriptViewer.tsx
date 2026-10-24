@@ -157,7 +157,6 @@ export function TranscriptViewer({
   const translationsStaleAll = useTranscribeRun((s) => s.translationsStale);
 
   const [copied, setCopied] = useState(false);
-  // Reset per file, so a new (possibly huge) transcript starts collapsed again.
   const [showFullText, setShowFullText] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
@@ -326,7 +325,6 @@ export function TranscriptViewer({
   // The row tag falls back on the sanitized code too: a blank or format-only
   // language would otherwise draw an empty tag beside every original line.
   const origLang = langShown || "??";
-  // Overlay slot: the record id when known, else the path (see overlayKey).
   const okey = overlayKey ?? path;
   // The record on screen NOW — a run's completion must not fold another record's panel.
   const okeyRef = useRef(okey);
