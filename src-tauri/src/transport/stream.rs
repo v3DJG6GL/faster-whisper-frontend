@@ -676,8 +676,7 @@ pub async fn run<F>(
                                     break;
                                 }
                                 Err(_) => {
-                                    // Stalled send → the connection is gone. Surface it and
-                                    // close so the UI returns to idle instead of hanging.
+                                    // Stalled send → the connection is gone.
                                     tracing::warn!("[stream] audio send timed out — connection lost");
                                     on_event(StreamEvent::Error(
                                         "stream connection lost (send timed out)".into(),
@@ -1471,10 +1470,10 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
     }
 }
 
-/// Ceiling on ONE transcript field (`partial`/`final` text). tungstenite's message limit
-/// (`MAX_WS_MESSAGE`) is PER MESSAGE, so it bounds nothing cumulative. These fields reach a
-/// cross-window IPC emit plus an overlay re-render on every frame, and `injectText`, which on
-/// direct-typing synthesizes them key by key into whatever window has focus.
+/// Ceiling on ONE transcript field (`partial`/`final` text), far below tungstenite's 48 MiB
+/// per-message limit (`MAX_WS_MESSAGE`). These fields reach a cross-window IPC emit plus an
+/// overlay re-render on every frame, and `injectText`, which on direct-typing synthesizes them
+/// key by key into whatever window has focus.
 ///
 /// `bounded` and NOT `bounded_server_text`: a transcript legitimately contains newlines, and
 /// folding controls to spaces would destroy every hard break. Sized for headroom — an hour of
