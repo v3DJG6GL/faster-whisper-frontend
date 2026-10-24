@@ -331,14 +331,12 @@ export default function History() {
     void loadHistory();
   }, []);
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
-  // The view survives navigation: filters mirror into the module store as
-  // they change…
   useEffect(() => {
     viewMemory.query = query;
     viewMemory.segment = segment;
     viewMemory.appFilter = appFilter;
   }, [query, segment, appFilter]);
-  // …and the scroll position of the app's <main> is restored on mount and
+  // The scroll position of the app's <main> is restored on mount and
   // captured on unmount (the container itself persists across routes, so
   // without this the list opened wherever the previous page left it). A
   // layout effect: its cleanup runs before the route's DOM is swapped — a
