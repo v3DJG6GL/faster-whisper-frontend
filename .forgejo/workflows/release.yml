@@ -348,9 +348,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       # No rust-cache on this leg (see ci.yml's step): it never restored a byte
-      # here, and its post step added ~2 min that Forgejo doesn't render (no post
-      # steps shown). The VM's CARGO_HOME persists across jobs, so the build
-      # still downloads zero crates.
+      # here, and its post step added ~2 min that Forgejo doesn't render. The VM's
+      # CARGO_HOME persists across jobs, so the build still downloads zero crates.
 
       - run: pnpm install --frozen-lockfile
 
