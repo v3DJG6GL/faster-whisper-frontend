@@ -545,6 +545,10 @@ Ein- und Ausgang, Vor-
 oder Nachteil.
 `;
 
+/** SRT cue `n` (1..8), one second long and contiguous with cue n+1, ending its block. */
+const rollCue = (n: number, ...lines: string[]) =>
+  `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${lines.join("\n")}\n\n`;
+
 describe("site subtitle cleanup", () => {
   it("YouTube rolling auto captions read every line once, the last cue extends the one before", () => {
     const back = parseImportedText("vtt", YOUTUBE_AUTO);
@@ -1031,39 +1035,31 @@ describe("site subtitle cleanup", () => {
   });
   it("a three-cue file with two opening repeats is still too short: its repeated lines stay", () => {
     // Two cues open with the line before — one short of the minimum of three.
-    const cue = (n: number, a: string, b?: string) =>
-      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
-    const srt = cue(1, "Wait.") + cue(2, "Wait.", "Did you hear that?") + cue(3, "Did you hear that?", "No.");
+    const srt = rollCue(1, "Wait.") + rollCue(2, "Wait.", "Did you hear that?") + rollCue(3, "Did you hear that?", "No.");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
       "Wait.", "Wait. Did you hear that?", "Did you hear that? No.",
     ]);
   });
   it("cleans a longer roll-up file without freeze cues", () => {
-    const cue = (n: number, a: string, b?: string) =>
-      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
-    const srt = cue(1, "one") + cue(2, "one", "two") + cue(3, "two", "three") + cue(4, "three", "four");
+    const srt = rollCue(1, "one") + rollCue(2, "one", "two") + rollCue(3, "two", "three") + rollCue(4, "three", "four");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["one", "two", "three", "four"]);
   });
   it("cleans a three-line roll-up file", () => {
     // Each cue repeats the cue before's last TWO lines: its first line is never that cue's last.
-    const cue = (n: number, ...lines: string[]) => `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${lines.join("\n")}\n\n`;
-    const srt = cue(1, "one") + cue(2, "one", "two") + cue(3, "one", "two", "three")
-      + cue(4, "two", "three", "four") + cue(5, "three", "four", "five");
+    const srt = rollCue(1, "one") + rollCue(2, "one", "two") + rollCue(3, "one", "two", "three")
+      + rollCue(4, "two", "three", "four") + rollCue(5, "three", "four", "five");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["one", "two", "three", "four", "five"]);
   });
   it("keeps a word said at the end of one cue and the start of the next in an ordinary file", () => {
     // Our own export of "Wait." / "Wait. Did you hear that?" among other two-line cues.
-    const cue = (n: number, a: string, b?: string) =>
-      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
-    const srt = cue(1, "Wait.") + cue(2, "Wait.", "Did you hear that?") + cue(3, "It came from", "the attic.")
-      + cue(4, "Let's go", "and look.");
+    const srt = rollCue(1, "Wait.") + rollCue(2, "Wait.", "Did you hear that?") + rollCue(3, "It came from", "the attic.")
+      + rollCue(4, "Let's go", "and look.");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
       "Wait.", "Wait. Did you hear that?", "It came from the attic.", "Let's go and look.",
     ]);
   });
   it("a cue repeated whole does not make an ordinary file a roll-up", () => {
-    const cue = (n: number, ...lines: string[]) => `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${lines.join("\n")}\n\n`;
-    const srt = cue(1, "Na na na", "Hey hey") + cue(2, "Na na na", "Hey hey") + cue(3, "Hey hey", "goodbye");
+    const srt = rollCue(1, "Na na na", "Hey hey") + rollCue(2, "Na na na", "Hey hey") + rollCue(3, "Hey hey", "goodbye");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
       "Na na na Hey hey", "Na na na Hey hey", "Hey hey goodbye",
     ]);
