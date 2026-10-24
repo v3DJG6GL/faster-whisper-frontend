@@ -239,8 +239,8 @@ describe("alignSegmentWords", () => {
 
 describe("segmentWordRanges", () => {
   it("gives a word on an exact segment boundary to the segment it starts", () => {
-    // Real case: seg[7] ends at 34.27 and seg[8] starts at 34.27; "den" starts
-    // at 34.27 and must belong to seg[8], not fall into seg[7]'s +0.05 slack.
+    // From a real transcript: both segments meet at 34.27 and "den" starts there, so it
+    // belongs to the second one, not to the first one's +0.05 slack.
     const segments = [
       { start: 31.45, end: 34.27, text: "… noch jemand durchschickt," },
       { start: 34.27, end: 35.75, text: "den man gar nicht durchdürfen darf." },
