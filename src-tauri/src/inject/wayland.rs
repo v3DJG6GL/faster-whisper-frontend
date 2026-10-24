@@ -43,8 +43,8 @@ pub struct Job {
     reply: oneshot::Sender<Result<crate::inject::Landed, String>>,
 }
 
-/// Sender to the persistent RemoteDesktop typer task (started lazily on the first
-/// direct-typing injection); see the module doc for why one session is reused.
+/// Sender to the persistent RemoteDesktop typer task (started lazily by the first portal
+/// job, typed text or a paste chord); see the module doc for why one session is reused.
 #[derive(Default)]
 #[cfg_attr(windows, allow(dead_code))] // only the Linux portal path reads the sender; managed state on all platforms
 pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
@@ -457,7 +457,7 @@ mod imp {
     }
 
     /// The char → key map of `keymap` in layout group `group`. Split from `build_charmap` so tests
-    /// can compile a real layout without `setxkbmap` or an X display.
+    /// can compile a real layout without the live keymap queries or an X display.
     fn charmap_from_keymap(
         keymap: &xkb::Keymap,
         group: u32,
@@ -1073,8 +1073,7 @@ mod imp {
     }
 
     /// evdev keycode for a single-letter `KeyboardEvent.code` (KeyA..KeyZ). Physical-position Linux
-    /// input-event-codes (NOT alphabetical), mirroring hotkeys::evdev::imp::letter_key and the KEY_V
-    /// const above (V == 47).
+    /// input-event-codes (NOT alphabetical), mirroring hotkeys::evdev::imp::letter_key.
     fn letter_keycode(code: &str) -> Option<i32> {
         let letter = code.strip_prefix("Key").filter(|s| s.len() == 1)?;
         Some(match letter {
@@ -1109,8 +1108,8 @@ mod imp {
     }
     /// The MAIN (non-modifier) key's keycode, resolved by KEYSYM via the active-layout charmap so the
     /// focused app receives the intended character (e.g. 'v' for Ctrl+V) regardless of physical layout —
-    /// matching the X11 path (inject/mod.rs binds keysym 'v'). Falls back to the fixed physical position when
-    /// the layout has no such keysym, or for a non-letter main key (Insert).
+    /// matching the X11 path (inject/mod.rs code_to_enigo sends the letter's keysym). Falls back to the
+    /// fixed physical position when the layout has no such keysym, or for a non-letter main key (Insert).
     fn main_key_keycode(code: &str, charmap: &HashMap<char, KeySpec>) -> Option<i32> {
         if let Some(letter) = code.strip_prefix("Key").filter(|s| s.len() == 1) {
             let ch = letter.chars().next().unwrap().to_ascii_lowercase();
@@ -1259,8 +1258,7 @@ mod imp {
             // portal session stays open, so there is no consent re-prompt. A bare auto-Enter job (no text,
             // no chord) presses only KEY_ENTER, so it skips the build, and a keymap failure cannot fail
             // an Enter that needs no keymap. On the blocking pool: xkbcomp, XOpenDisplay and the xkb
-            // compile must not stall a runtime worker. A paste job reads only the chord's letter key, so
-            // it skips the compose table and the dead-key pass.
+            // compile must not stall a runtime worker.
             let charmap = if !job.paste && job.text.is_empty() {
                 Some((HashMap::new(), true))
             } else {
