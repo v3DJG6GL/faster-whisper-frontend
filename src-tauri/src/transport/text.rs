@@ -329,7 +329,12 @@ mod provenance_tests {
 mod request_body_tests {
     use super::build_request_body;
 
-    fn body(source: Option<&str>, glossary: Option<&str>) -> serde_json::Value {
+    fn body_with(
+        source: Option<&str>,
+        model: Option<&str>,
+        mode: Option<&str>,
+        glossary: Option<&str>,
+    ) -> serde_json::Value {
         let texts = vec!["hallo".to_string()];
         let targets = vec!["en".to_string()];
         serde_json::to_value(build_request_body(
@@ -337,8 +342,8 @@ mod request_body_tests {
             &[1],
             &targets,
             source,
-            None,
-            None,
+            model,
+            mode,
             glossary,
             None,
             None,
@@ -346,6 +351,10 @@ mod request_body_tests {
             None,
         ))
         .unwrap()
+    }
+
+    fn body(source: Option<&str>, glossary: Option<&str>) -> serde_json::Value {
+        body_with(source, None, None, glossary)
     }
 
     #[test]
@@ -404,38 +413,10 @@ mod request_body_tests {
     fn model_and_mode_are_trimmed_and_blank_after_trim_is_omitted() {
         // A synced " gemma " must name the same model the preload warmed, and an
         // all-blank id is no choice at all (unlike the glossary, which stays verbatim).
-        let texts = vec!["hallo".to_string()];
-        let targets = vec!["en".to_string()];
-        let padded = serde_json::to_value(build_request_body(
-            &texts,
-            &[1],
-            &targets,
-            None,
-            Some(" gemma "),
-            Some(" fast\t"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        ))
-        .unwrap();
+        let padded = body_with(None, Some(" gemma "), Some(" fast\t"), None);
         assert_eq!(padded["translation_model"], "gemma");
         assert_eq!(padded["translation_mode"], "fast");
-        let blank = serde_json::to_value(build_request_body(
-            &texts,
-            &[1],
-            &targets,
-            None,
-            Some("  "),
-            Some("  "),
-            None,
-            None,
-            None,
-            None,
-            None,
-        ))
-        .unwrap();
+        let blank = body_with(None, Some("  "), Some("  "), None);
         assert!(blank.get("translation_model").is_none());
         assert!(blank.get("translation_mode").is_none());
     }
