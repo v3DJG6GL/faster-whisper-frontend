@@ -1,8 +1,8 @@
 // Hold this window's accent drift while nobody can see it (theme.ts `setAccentDriftPaused`).
 //
 // Every webview lives for the whole app lifetime and is only ever hidden, so without this a
-// hidden quick-add or picker kept restamping the accent 4× a second — a steady CPU cost, and
-// memory the hidden page built up and never released. Two independent reasons, either of
+// hidden quick-add or picker would keep restamping the accent 4× a second — a steady CPU cost,
+// and memory the hidden page builds up and never releases. Two independent reasons, either of
 // which pauses:
 //   "window"   — Rust's own show/hide (`window://visibility`, aux_windows/visibility.rs). Exact, and the one
 //                that also works where the page is never told (WebView2 on a hidden HWND).
@@ -12,8 +12,7 @@
 // Runs once per document from main.tsx, outside React (StrictMode cannot double it).
 //
 // The same two reasons also answer `isWindowHidden()` / `onWindowHiddenChange()` for the rest of
-// the page: polls and timers (usage.ts, logViewer.ts, transcribeRun.ts, `everyWhileVisible`…)
-// slow down or skip while nobody can see it.
+// the page, so its polls and timers slow down or skip while nobody can see it.
 
 import { setAccentDriftPaused } from "./theme";
 
@@ -95,7 +94,7 @@ export function watchWindowVisibility(label: string, deps: VisibilityDeps = defa
     .then(async () => {
       // An emit with no listener is dropped, never queued: a show or hide from before this
       // listener existed (start minimized, a summon in the first moments of life) left no
-      // trace — ask once. A failed query fails OPEN (drift runs, as it always did before).
+      // trace — ask once. A failed query fails OPEN (drift runs).
       const asked = seq;
       const visible = await tauri.isVisible().catch(() => true);
       if (seq === asked) setHidden("window", !visible);
