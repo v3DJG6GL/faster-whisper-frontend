@@ -76,9 +76,11 @@ export function fmtDurationAxis(seconds: number): string {
 // format with timeZone:"UTC" so the rendered date matches that integer exactly,
 // independent of the viewer's offset (avoids an off-by-one near midnight).
 const DAY_MS = 86_400_000;
-const _tickDay = new Intl.DateTimeFormat("de-CH", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
-const _tickMonth = new Intl.DateTimeFormat("de-CH", { month: "short", timeZone: "UTC" });
-const _full = new Intl.DateTimeFormat("de-CH", { weekday: "short", day: "numeric", month: "long", timeZone: "UTC" });
+/** A day-integer date formatter: the page's date locale, pinned to UTC (see above). */
+export const utcDateFormat = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("de-CH", { ...o, timeZone: "UTC" });
+const _tickDay = utcDateFormat({ day: "2-digit", month: "2-digit" });
+const _tickMonth = utcDateFormat({ month: "short" });
+const _full = utcDateFormat({ weekday: "short", day: "numeric", month: "long" });
 
 /** days-since-epoch → a Date at UTC midnight of that calendar day. */
 export function dayToDate(day: number): Date {

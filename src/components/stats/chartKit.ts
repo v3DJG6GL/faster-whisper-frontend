@@ -1,12 +1,12 @@
 // The usage charts' shared non-component helpers: date and measure formatters, the line
 // path, the width hook, the kind fills. Their shared components live in primitives.tsx.
 import { useLayoutEffect, useRef, useState } from "react";
-import { dayToDate, fmtDateTick, fmtFull, fmtCompact, fmtDuration, fmtDurationAxis } from "@/lib/format";
+import { dayToDate, fmtDateTick, fmtFull, fmtCompact, fmtDuration, fmtDurationAxis, utcDateFormat } from "@/lib/format";
 import { KIND_VAR, METRIC_UNIT, isDurationMetric, type BucketMode, type ChartMetric } from "@/lib/usageDerive";
 import type { UsageKind } from "@/lib/types";
 
-const _spanDate = new Intl.DateTimeFormat("de-CH", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "numeric", timeZone: "UTC" });
+const _spanDate = utcDateFormat({ day: "numeric", month: "short", year: "numeric" });
+const _monthYear = utcDateFormat({ month: "long", year: "numeric" });
 /** `1. Aug. 2026`. */
 export const fmtSpanDate = (day: number) => _spanDate.format(dayToDate(day));
 export const fmtMonthYear = (day: number) => _monthYear.format(dayToDate(day));
