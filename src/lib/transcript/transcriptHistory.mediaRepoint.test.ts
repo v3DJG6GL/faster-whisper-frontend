@@ -1,9 +1,8 @@
 // An audio-folder move rewrites the records' media paths on disk, and Rust re-points every
 // later save that still names a moved path (MOVED, save_transcript_record). The History
 // mirror is not on disk: a translate chunk parked or upserted around the move's forced reload
-// is replayed over the reloaded listing with the PRE-move paths, and every later merge re-read
-// that copy — playback and export of the record pointed at a file the move took away for the
-// rest of the session. The save now hands the re-pointed fields back and the mirror adopts them.
+// would replay the PRE-move paths over the reloaded listing, so the save hands the re-pointed
+// fields back and the mirror adopts them.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RepointedMedia } from "../api";
 
