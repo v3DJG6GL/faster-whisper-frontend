@@ -1230,6 +1230,22 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
     const b = ownProp(v, k);
     if (typeof b === "boolean") out[k] = b;
   }
+  const ENUMS: Record<string, readonly string[]> = {
+    speakerMode: ["auto", "count", "range"],
+    // Listed under the manifest's Translation row, so the sync switch promises it travels.
+    translationMode: ["fluent", "faithful"],
+    exportFormat: ["srt", "vtt", "txt", "lrc", "json"],
+    subtitleLength: ["transcribed", "standard", "short", "custom"],
+    translationTiming: ["same", "own"],
+    // The export panel's Media defaults (manifest row exportMedia promises these travel).
+    exportMedia: ["none", "audio", "video"],
+    exportContainer: ["mkv", "mp4"],
+    exportSubtitleMode: ["embedded", "sidecar", "both"],
+  };
+  for (const [k, allowed] of Object.entries(ENUMS)) {
+    const s = ownProp(v, k);
+    if (typeof s === "string" && allowed.includes(s)) out[k] = s;
+  }
   const int = (k: string, lo: number, hi: number) => {
     const n = roundedIn(ownProp(v, k), lo, hi);
     if (n !== undefined) out[k] = n;
@@ -1237,33 +1253,11 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   int("historyRetentionDays", 0, 3650);
   int("dictationRetentionDays", 0, 3650);
   int("numSpeakers", 0, 32);
-  const mode = ownProp(v, "speakerMode");
-  if (mode === "auto" || mode === "count" || mode === "range") out.speakerMode = mode;
-  // Listed under the manifest's Translation row, so the sync switch promises it travels.
-  const trMode = ownProp(v, "translationMode");
-  if (trMode === "fluent" || trMode === "faithful") out.translationMode = trMode;
   int("minSpeakers", 1, 32);
   int("maxSpeakers", 1, 32);
-  const fmt = ownProp(v, "exportFormat");
-  if (fmt === "srt" || fmt === "vtt" || fmt === "txt" || fmt === "lrc" || fmt === "json") {
-    out.exportFormat = fmt;
-  }
-  const len = ownProp(v, "subtitleLength");
-  if (len === "transcribed" || len === "standard" || len === "short" || len === "custom") {
-    out.subtitleLength = len;
-  }
   const custom = sanitizeCueLimits(ownProp(v, "subtitleCustom"));
   if (custom) out.subtitleCustom = custom;
-  const timing = ownProp(v, "translationTiming");
-  if (timing === "same" || timing === "own") out.translationTiming = timing;
-  // The export panel's Media defaults and the link-video keep height (manifest rows
-  // exportMedia / urlVideoQuality promise these travel).
-  const media = ownProp(v, "exportMedia");
-  if (media === "none" || media === "audio" || media === "video") out.exportMedia = media;
-  const box = ownProp(v, "exportContainer");
-  if (box === "mkv" || box === "mp4") out.exportContainer = box;
-  const subs = ownProp(v, "exportSubtitleMode");
-  if (subs === "embedded" || subs === "sidecar" || subs === "both") out.exportSubtitleMode = subs;
+  // The link-video keep height (manifest row urlVideoQuality promises it travels).
   if (ownProp(v, "urlVideoMaxHeight") === null) out.urlVideoMaxHeight = null;
   else int("urlVideoMaxHeight", 144, 4320);
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
