@@ -1283,12 +1283,7 @@ function awaitRunUrlVideo(
             // This attempt's request failed and marked the row (the handler, a microtask
             // behind, ends the poll); a stale attempt's failure cannot paint (pid check).
             if (request && onDemandVideoPid === pid && s.stageMeta.downloading?.video?.state === "failed") return s;
-            return {
-              stageMeta: {
-                ...s.stageMeta,
-                downloading: foldVideo(s.stageMeta.downloading, video, Date.now()),
-              },
-            };
+            return withVideo(s, video);
           });
         }
         const st = p.video?.state;
@@ -1355,9 +1350,7 @@ function awaitRunUrlVideo(
             error: null,
           }
         : { ...prev, state: "failed", error: res?.sourceVideoError ?? fallback };
-      set((s) => ({
-        stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
-      }));
+      set((s) => withVideo(s, video));
     }
     if (mediaId) pull(mediaId);
   }
@@ -1389,9 +1382,7 @@ function awaitRunUrlVideo(
         container: dl.container ?? prev?.container,
         error: null,
       };
-      set((s) => ({
-        stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
-      }));
+      set((s) => withVideo(s, video));
     }
     pull(dl.mediaId);
   });
@@ -1722,6 +1713,11 @@ function foldVideo(dl: StageMeta | undefined, video: VideoProgress, now: number)
     videoDlStart: dl?.videoDlStart ?? (video.state === "downloading" ? now : undefined),
     videoDlEnd: videoTerminal(video.state) ? (dl?.videoDlEnd ?? now) : undefined,
   };
+}
+
+/** The store slice that folds `video` into the download row's meta, timed now. */
+function withVideo(s: TranscribeRunState, video: VideoProgress): Pick<TranscribeRunState, "stageMeta"> {
+  return { stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) } };
 }
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
