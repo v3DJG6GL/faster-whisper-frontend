@@ -9,7 +9,7 @@ type ChipVisKey = {
 
 // The chip's visibility settings are all the same Off / Always / On-hover tri-state, backed by a
 // (visible, onHover) boolean pair on RecordingSettings. One control keyed on those two fields keeps
-// the four identical Segmented blocks (live transcript / profile / usage / target) from drifting.
+// the identical Segmented blocks from drifting.
 export function HoverModeSegmented({
   visibleKey,
   hoverKey,
@@ -19,7 +19,7 @@ export function HoverModeSegmented({
   visibleKey: ChipVisKey;
   hoverKey: ChipVisKey;
   disabled?: boolean;
-  // Names the role="group" so a screen reader can tell the four identical Off/Always/On-hover
+  // Names the role="group" so a screen reader can tell the identical Off/Always/On-hover
   // triplets apart (SettingRow auto-labels only a direct Toggle/Select child, not this composite).
   ariaLabel?: string;
 }) {
