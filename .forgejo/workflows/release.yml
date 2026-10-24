@@ -78,7 +78,7 @@ jobs:
       # scripts/version.mjs below runs on node.
       - uses: actions/setup-node@v7
         with:
-          node-version: 24.22.0
+          node-version: 24.22.1
 
       # Own CARGO_HOME — /root/.cargo is shared between concurrent job containers
       # on this runner and another job's rust-cache post step prunes it (full
@@ -179,7 +179,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24.22.0
+          node-version: 24.22.1
           cache: pnpm
 
       # ci.yml's list + librsvg/patchelf/xdg-utils, which only the AppImage
