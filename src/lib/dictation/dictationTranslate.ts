@@ -98,8 +98,8 @@ export interface DictationTranslateRequest {
   /** The stop-timing single insert: the LAST task in the inject chain, so a
    *  long wait here blocks nothing. */
   oneShot: boolean;
-  /** Inject-queue depth read SYNCHRONOUSLY at enqueue time (see the budget
-   *  table). */
+  /** Inject-queue depth read SYNCHRONOUSLY at enqueue time (see
+   *  translateCeilingMs's table). */
   queued: number;
   abort?: AbortHandle;
   /** Fires once the progress id exists, before the request goes out — the
