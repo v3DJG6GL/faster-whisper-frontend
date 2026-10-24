@@ -87,7 +87,6 @@ describe("usage outcome queue", () => {
       q = enqueue(q, { backendId: "a", serverUrl: "u", outcome: oc(hex(i)) }, i);
     }
     q = enqueue(q, { backendId: "b", serverUrl: "u", outcome: oc(hex(500)) }, 0);
-    // The cap keeps the newest 200; the first due item is the oldest kept.
     const batch = nextBatch(q, 10_000);
     expect(batch).not.toBeNull();
     expect(batch!.backendId).toBe("a");
