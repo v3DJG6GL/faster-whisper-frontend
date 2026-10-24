@@ -160,6 +160,7 @@ export function TriggerTile({
   const reduce = useReducedMotion();
   const mode = activation === "handsfree" ? "handsfree" : "hold";
 
+  const keys = <b className="font-semibold text-text">{phrase}</b>;
   let sentence: ReactNode;
   if (codes.length === 0) {
     sentence =
@@ -167,24 +168,11 @@ export function TriggerTile({
         ? "No shortcut yet. Record one to open quick add over any app."
         : "No shortcut yet. Record one to start this profile from any app.";
   } else if (purpose === "quickadd") {
-    sentence = (
-      <>
-        Press <b className="font-semibold text-text">{phrase}</b> over any app to map a misheard word onto the
-        pinned list.
-      </>
-    );
+    sentence = <>Press {keys} over any app to map a misheard word onto the pinned list.</>;
   } else if (mode === "hold") {
-    sentence = (
-      <>
-        Hold <b className="font-semibold text-text">{phrase}</b> while you speak, let go to stop.
-      </>
-    );
+    sentence = <>Hold {keys} while you speak, let go to stop.</>;
   } else {
-    sentence = (
-      <>
-        Press <b className="font-semibold text-text">{phrase}</b> to start dictating, press it again to stop.
-      </>
-    );
+    sentence = <>Press {keys} to start dictating, press it again to stop.</>;
   }
 
   // What a screen reader hears when the strip changes (recording, clash, warning).
