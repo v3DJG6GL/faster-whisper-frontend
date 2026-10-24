@@ -231,6 +231,13 @@ function omitFields(obj: Record<string, unknown>, fields: ReadonlySet<string>): 
   return out;
 }
 
+/** `obj[k] = v` as an own enumerable data property, even for `k === "__proto__"`: parsed server
+ *  JSON carries that as an ordinary own key, and a plain assignment would invoke the prototype
+ *  setter instead, swapping `obj`'s prototype and dropping the key. */
+function defineOwn(obj: object, k: string, v: unknown): void {
+  Object.defineProperty(obj, k, { value: v, writable: true, enumerable: true, configurable: true });
+}
+
 /**
  * Normalize a blob from before the category split (one "recording" holding
  * the chip fields, the quick-add chord under `general`, the pin under
@@ -560,8 +567,7 @@ function echoElementKeys<T extends { id: string }>(list: T[], snapList: unknown,
     for (const [k, v] of Object.entries(snap)) {
       if (v === undefined || known.has(k) || hasOwn(el, k)) continue;
       copy ??= { ...el };
-      // defineProperty: the snapshot is parsed server JSON, so `__proto__` can be an own key.
-      Object.defineProperty(copy, k, { value: v, writable: true, enumerable: true, configurable: true });
+      defineOwn(copy, k, v);
     }
     if (!copy) return el;
     changed = true;
@@ -717,9 +723,8 @@ export async function composeBlob(
       if (!cats[c] || !isPlainObject(out) || !isPlainObject(snap)) continue;
       const known = knownKeysOf(c);
       for (const [k, v] of Object.entries(snap)) {
-        // defineProperty: the snapshot is parsed server JSON, so `__proto__` can be an own key.
         if (v === undefined || known.has(k) || hasOwn(out, k)) continue;
-        Object.defineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
+        defineOwn(out, k, v);
       }
     }
     // …and per element of the two typed lists: Rust's `Profile` / `Backend` have no catch-all,
@@ -860,15 +865,10 @@ export function mergeBlobs(
   const known = new Set<string>(ALL_CATEGORIES);
   for (const side of [local, remote]) {
     for (const [k, v] of Object.entries(side)) {
-      // defineProperty, not `[]=`: the remote blob is parsed server JSON, so an own
-      // `__proto__` key arrives here and a plain assignment would invoke the setter —
-      // replacing `merged`'s prototype and silently DROPPING the key (the one thing this
-      // block promises never to do). composeBlob's twin never reaches its assignment for
-      // `__proto__` (`k in blob` is true via the prototype), so it skips the key rather
-      // than swapping the prototype.
-      if (!known.has(k) && v !== undefined) {
-        Object.defineProperty(merged, k, { value: v, writable: true, enumerable: true, configurable: true });
-      }
+      // `defineOwn`, not `[]=`: dropping the key is the one thing this block promises never to
+      // do. composeBlob's twin never reaches its assignment for `__proto__` (`k in blob` is true
+      // via the prototype), so it skips the key rather than swapping the prototype.
+      if (!known.has(k) && v !== undefined) defineOwn(merged, k, v);
     }
   }
   return { merged, conflicts };
