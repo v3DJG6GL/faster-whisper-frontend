@@ -183,7 +183,7 @@ describe("clampDecodeOverrides", () => {
     // A synced NUMBER below 1e-6 is spelled out too, so the field shows "0.0000001", not "1e-7"…
     expect(sanitizeDecodeValue("temperature", 1e-7)).toBe("0.0000001");
     expect(sanitizeDecodeValue("temperature", 1.5e-7)).toBe("0.00000015");
-    // …unless the spelled-out form passes the length cap: then it stays a number.
+    // …unless the spelled-out form exceeds the length cap: then it stays a number.
     expect(sanitizeDecodeValue("temperature", 5e-324)).toBe(5e-324);
     // …and the spelled-out text stays editable (it may grow, as the exponent form may not).
     expect(parseLadderInput("0.00000015", false, "0.0000001")).toBe("0.00000015");
