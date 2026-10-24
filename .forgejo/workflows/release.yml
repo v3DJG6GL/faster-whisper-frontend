@@ -1,6 +1,6 @@
 # Installer builds: deb + AppImage on Linux, MSI + NSIS on Windows.
 #
-# Forgejo Actions port of the GitHub workflow — structural changes:
+# Forgejo-specific notes:
 #
 #   * Actions unqualified — resolved via DEFAULT_ACTIONS_URL against local
 #     pull mirrors; see ci.yml.
@@ -19,7 +19,7 @@
 #     Forgejo's API doesn't implement. Release create / asset upload /
 #     publish are plain curl against the Forgejo API instead, using the
 #     run-scoped actions token.
-#   * permissions: blocks dropped — GitHub token-permission model.
+#   * No permissions: blocks — they belong to GitHub's token-permission model.
 #   * upload-artifact -> local mirror of the Forgejo-maintained fork
 #     (github's v4+ refuses non-github.com instances — never reference
 #     actions/upload-artifact here, that mirrors the GitHub original).
