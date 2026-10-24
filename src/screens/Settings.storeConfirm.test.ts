@@ -2,7 +2,6 @@
 // or finishing a run sends no event the tab listens to, so arming must re-read the store stats or
 // the confirm promises the count from the last read ("Delete 5 dictations" for a wipe of 50).
 import { describe, expect, it } from "vitest";
-// Raw source (vite `?raw`).
 import settingsSrc from "./Settings.tsx?raw";
 
 const KINDS = ["dict", "files", "links", "video", "clear"] as const;
