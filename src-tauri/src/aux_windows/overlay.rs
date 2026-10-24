@@ -25,9 +25,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 
 /// Logical size of the chip strip at "Chip size" 1 (the window in tauri.conf.json is this ×
-/// `CHIP_SCALE_MAX`, see `window_size`). The pill is centred in it and capped to it; widened
-/// so a full readout (tag │ lang · mode │ stats │ target) plus up to ~6 quick-launch buttons
-/// fits on one line without the last button being clipped.
+/// `CHIP_SCALE_MAX`, see `window_size`). The pill is centred in it and capped to it; wide
+/// enough that a full readout (tag │ lang · mode │ stats │ target) plus up to ~6 quick-launch
+/// buttons fits on one line without the last button being clipped.
 const CHIP_W: f64 = 820.0;
 const CHIP_H: f64 = 132.0;
 
@@ -743,7 +743,8 @@ mod kwin {
     /// skips its (stale) position and leaves it to the newer thread.
     static PLACE_GEN: AtomicU64 = AtomicU64::new(0);
 
-    /// Claim a placement generation — call on the show path, before spawning.
+    /// Claim a placement generation — call on the calling thread, before spawning the
+    /// placement thread.
     pub fn next_place_gen() -> u64 {
         PLACE_GEN.fetch_add(1, Ordering::Relaxed) + 1
     }
