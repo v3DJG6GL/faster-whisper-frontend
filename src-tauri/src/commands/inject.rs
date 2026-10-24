@@ -17,8 +17,8 @@ pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 #[tauri::command]
 pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), String> {
     // Read the clipboard OFF the GTK main thread, time-bounded (see read_selection_bounded). This is
-    // called PER PHRASE, and a SYNC command runs on the UI thread — on the UI thread the blocking read
-    // freezes the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
+    // called PER PHRASE, and a SYNC command runs on the UI thread, where the blocking read freezes
+    // the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
     // the clipboard ourselves (the user copied nothing new), so the existing snapshot already has it.
     // `read_prior_text` retries a clipboard briefly held by another process (≤ 50 ms, inside the
     // 400 ms cap) instead of reading that as "nothing copied". A Windows quick-add copy grab in
