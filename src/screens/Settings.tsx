@@ -157,6 +157,10 @@ export default function Settings() {
   // The chip "off" position disables every dependent Chip-tab control; compute once so a row and
   // its control can't drift out of sync.
   const chipOff = s.recording.indicatorPosition === "off";
+  // Only "Clipboard paste" uses the paste chord and the clipboard restore.
+  const pasteOff = s.general.insertMethod !== "paste";
+  // The auto-hide rows: greyed with the chip, and while auto-hide itself is off.
+  const peekOff = !s.recording.overlayPeek || chipOff;
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
   /** History settings ride the opaque settings.transcribe blob (merge-patch over the live
@@ -676,14 +680,14 @@ export default function Settings() {
             <SettingRow
               title={SETTING.pasteShortcut.label}
               desc="The keys sent for “Clipboard paste”. Terminals (Konsole, kitty…) need Ctrl + Shift + V."
-              disabled={s.general.insertMethod !== "paste"}
+              disabled={pasteOff}
               disabledReason={`Only used by “Clipboard paste”. Set ${SETTING.insertMethod.label} to Clipboard paste to choose a chord.`}
             >
               <Select
                 value={pasteKey(s.general.pasteShortcut)}
                 onChange={(v) => updateGeneral({ pasteShortcut: pasteCodes(v) })}
                 options={PASTE_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
-                disabled={s.general.insertMethod !== "paste"}
+                disabled={pasteOff}
               />
             </SettingRow>
             {IS_LINUX && (
@@ -716,13 +720,13 @@ export default function Settings() {
             <SettingRow
               title={SETTING.restoreClipboard.label}
               desc="Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…) and apps an App rule marks as remote desktop, where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes."
-              disabled={s.general.insertMethod !== "paste"}
+              disabled={pasteOff}
               disabledReason={`Only “Clipboard paste” replaces your clipboard, so only it has anything to put back. Set ${SETTING.insertMethod.label} to Clipboard paste to use this.`}
             >
               <Toggle
                 checked={s.general.restoreClipboard}
                 onChange={(v) => updateGeneral({ restoreClipboard: v })}
-                disabled={s.general.insertMethod !== "paste"}
+                disabled={pasteOff}
               />
             </SettingRow>
             {/* Not gated on the insertion method: "Clipboard only", the no-text-field divert and
@@ -1110,7 +1114,7 @@ export default function Settings() {
             <SettingRow
               title={SETTING.hideAfter.label}
               desc="How long the chip sits idle before it hides against the edge."
-              disabled={!s.recording.overlayPeek || chipOff}
+              disabled={peekOff}
             >
               <Stepper
                 ariaLabel="hide after"
@@ -1121,17 +1125,17 @@ export default function Settings() {
                 step={0.5}
                 decimals={1}
                 unit="s"
-                disabled={!s.recording.overlayPeek || chipOff}
+                disabled={peekOff}
               />
             </SettingRow>
             <SettingRow
               title={SETTING.stayHiddenWhileDictating.label}
               desc="Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript."
-              disabled={!s.recording.overlayPeek || chipOff}
+              disabled={peekOff}
             >
               <Toggle
                 checked={s.recording.peekWhileActive}
-                disabled={!s.recording.overlayPeek || chipOff}
+                disabled={peekOff}
                 onChange={(v) => updateRecording({ peekWhileActive: v })}
               />
             </SettingRow>
