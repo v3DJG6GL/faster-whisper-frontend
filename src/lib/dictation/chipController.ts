@@ -10,7 +10,7 @@
 import { useApp } from "../store";
 import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "../api";
 import { chipTagFor } from "../profileTag";
-import { backendForProfile, homeTargetProfile, pickerOffHint, startOffHint } from "./dictation";
+import { backendForProfile, homeTargetProfile, pickerOffHint, startOffHint, type RoutePending } from "./dictation";
 import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
@@ -79,6 +79,9 @@ export function chipRouteMore(
   return Math.max(0, validRouteTargets(sessionTargets, profileTargets).length - max);
 }
 
+/** The chip's route stand-ins: the store's plus the idle "ask" preview, "" = none. */
+export type ChipRoutePending = "" | "ask" | NonNullable<RoutePending>;
+
 /** What the chip shows in the route slot INSTEAD of a promise, when there is none to make.
  *
  *  A running session's own `routePending` wins ("undecided" / "choosing" / "original" — see
@@ -87,10 +90,10 @@ export function chipRouteMore(
  *  preselection, and previewing them as the route promised what the user had not decided
  *  yet. Everything else is "" — the route (session or configured preview) is the truth. */
 export function chipRoutePending(
-  routePending: "undecided" | "choosing" | "original" | null,
+  routePending: RoutePending,
   status: string,
   profileAsks: boolean | undefined,
-): "" | "ask" | "undecided" | "choosing" | "original" {
+): ChipRoutePending {
   if (routePending) return routePending;
   if (status === "idle" && profileAsks) return "ask";
   return "";
@@ -104,10 +107,10 @@ export function chipRoutePending(
 export function chipRoute(
   sessionTargets: string[] | null,
   configured: string[] | undefined,
-  routePending: "undecided" | "choosing" | "original" | null,
+  routePending: RoutePending,
   status: string,
   profileAsks: boolean | undefined,
-): { routePending: "" | "ask" | "undecided" | "choosing" | "original"; translateTo: string[]; translateMore: number } {
+): { routePending: ChipRoutePending; translateTo: string[]; translateMore: number } {
   const rp = chipRoutePending(routePending, status, profileAsks);
   if (rp === "ask") return { routePending: rp, translateTo: [], translateMore: 0 };
   const preview = status === "idle" ? configured : undefined;
@@ -200,7 +203,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     mode?: "stream" | "batch";
     translateTo?: string[];
     translateMore?: number;
-    routePending?: "" | "ask" | "undecided" | "choosing" | "original";
+    routePending?: ChipRoutePending;
   } = {};
   // The Profile to label the chip with: the one dictating, or — for a persistent
   // idle dock — the home target it would launch (so standby previews that Profile).

@@ -403,15 +403,15 @@ export function startOffHint(
   return "Add a backend to begin";
 }
 
+/** The store's route stand-in (`routePending`), derived so no copy can drift from it. */
+export type RoutePending = ReturnType<typeof useApp.getState>["routePending"];
+
 /** Why a start / profile cycle is off while the hands-free target picker is open, "" when it
  *  is not. startHandsFree and the cycle bail on `pickerOpen` while status stays "idle"; its
  *  store-visible twin is routePending "choosing", which only the picker writes — in the same
  *  tick pickerOpen goes up, and cleared no later than it drops. The chip and the Home button
  *  both read it ahead of startOffHint, so neither offers a dead click. */
-export function pickerOffHint(
-  routePending: "undecided" | "choosing" | "original" | null,
-  status: DictationStatus,
-): string {
+export function pickerOffHint(routePending: RoutePending, status: DictationStatus): string {
   return routePending === "choosing" && status === "idle" ? "Answer the target picker first" : "";
 }
 
