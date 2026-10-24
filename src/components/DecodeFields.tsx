@@ -159,7 +159,6 @@ export function DecodeFields({
     }
     const range = spec.min !== undefined && spec.max !== undefined ? `${spec.min}–${spec.max}${spec.unit ? ` ${spec.unit}` : ""}` : undefined;
     if (spec.kind === "ladder") {
-      // One number, or a retry ladder "0.0,0.2,0.4" — a standard server takes one number only.
       return (
         <TextInput
           aria-label={spec.env}
