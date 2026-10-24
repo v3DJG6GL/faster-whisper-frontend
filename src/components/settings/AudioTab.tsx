@@ -223,8 +223,7 @@ export function AudioTab() {
   }, []);
 
   // Replay the last capture. Rust guarantees a single playback at a time (a new
-  // play stops the previous), so we just reflect "playing" and let the play-ended
-  // event clear it, with a duration-based fallback.
+  // play stops the previous), so nothing here stops an earlier one first.
   const replay = useCallback(() => {
     if (clipSecsRef.current <= 0) return;
     setPlaying(true);
