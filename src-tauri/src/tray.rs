@@ -47,7 +47,6 @@ enum MenuEntry {
     Separator,
 }
 
-/// The tray menu: "Show window", every screen, "Quit".
 fn menu_entries() -> Vec<MenuEntry> {
     let item = |id: String, label| MenuEntry::Item { id, label };
     let mut entries = vec![item("show".into(), "Show window"), MenuEntry::Separator];
@@ -280,8 +279,7 @@ mod sni {
         /// Also called when a watcher refuses the registration: after `watcher_online` when
         /// the watcher came back, or without it when a new watcher took the name over directly
         /// (ksni calls `watcher_online` only when there was no owner, so a later successful
-        /// takeover leaves MISSING set until the watcher goes away and returns). A refusal is
-        /// logged as a failure, not as an absent watcher.
+        /// takeover leaves MISSING set until the watcher goes away and returns).
         fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
             if watcher_absent(&reason) {
                 tracing::warn!(
