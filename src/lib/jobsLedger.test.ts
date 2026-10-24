@@ -63,7 +63,6 @@ describe("addRow / pruneLedger / removeRow", () => {
     const l = addRow({ v: 1, rows: input }, big(20), NOW + 20);
     expect(new TextEncoder().encode(JSON.stringify({ v: 1, rows: l.rows })).length).toBeLessThanOrEqual(MAX_LEDGER_BYTES);
     expect(l.rows[l.rows.length - 1].jobId).toBe(big(20).jobId);
-    // The kept rows are the newest suffix of the input order.
     const kept = l.rows.slice(0, -1).map((r) => r.jobId);
     expect(kept).toEqual(input.slice(input.length - kept.length).map((r) => r.jobId));
     expect(kept.length).toBeLessThan(MAX_ROWS - 1);
