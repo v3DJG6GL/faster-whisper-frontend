@@ -20,6 +20,5 @@ export function sourceTone(kind: SiteBadge["kind"], hoh?: boolean, variant: Tone
   return SOURCE_TONE[kind === "existing" && hoh ? "hoh" : kind][variant];
 }
 
-/** An export track's source colour. */
 export const trackTone = (t: Pick<TrackInfo, "source" | "hoh">, variant: ToneVariant = "soft") =>
   sourceTone(sourceKind(t), t.hoh, variant);
