@@ -24,7 +24,6 @@ describe("alignSegmentWords", () => {
   it("keeps every timing when only one word is replaced", () => {
     const out = alignSegmentWords(LINE, "Das ist so passiert im Velo-Navi-Test des TCS");
     expect(out).toHaveLength(8);
-    // Untouched words keep their objects' timings verbatim.
     expect(out[0]).toEqual(LINE[0]);
     expect(out[3]).toEqual(LINE[3]);
     expect(out[7]).toEqual(LINE[7]);
@@ -36,7 +35,6 @@ describe("alignSegmentWords", () => {
 
   it("ignores punctuation and case when matching", () => {
     const out = alignSegmentWords(LINE, "das ist so passiert, im Velonavitest des TCS!");
-    // Every token matches something — all original timings survive.
     expect(out.map((x) => x.start)).toEqual(LINE.map((x) => x.start));
   });
 
@@ -48,7 +46,6 @@ describe("alignSegmentWords", () => {
     // Inserted between "im" (ends 1.1) and "Velonavitest" (starts 1.12).
     expect(inserted.start).toBeGreaterThanOrEqual(LINE[4].end);
     expect(inserted.end).toBeLessThanOrEqual(LINE[5].start + 1e-9);
-    // The following matched word is untouched.
     expect(out[6]).toEqual(LINE[5]);
   });
 
@@ -82,8 +79,8 @@ describe("alignSegmentWords", () => {
   });
 
   it("keeps the untouched words' timings when one character of a CJK line changes", () => {
-    // Unspaced text: a whitespace split used to give one token that matched no old word,
-    // and the whole line collapsed into one segment-long word.
+    // Unspaced text: a whitespace split gives one token that matches no old word, and the
+    // whole line would collapse into one segment-long word.
     const ja: TranscriptWord[] = [
       { word: "今日", start: 0, end: 0.4 },
       { word: "は", start: 0.4, end: 0.6 },
@@ -119,7 +116,7 @@ describe("alignSegmentWords", () => {
   });
 
   it("keeps the untouched words' timings when one syllable of a Thai line changes", () => {
-    // Thai is unspaced too: the edit used to collapse the line into one 0-3 word.
+    // Thai is unspaced too: a whitespace split would collapse the line into one 0-3 word.
     const th: TranscriptWord[] = [
       { word: "สวัสดี", start: 0, end: 1 },
       { word: "ครับ", start: 1, end: 2 },
@@ -135,8 +132,8 @@ describe("alignSegmentWords", () => {
   });
 
   it("cuts each unspaced run of a spaced line per old word (ja with a Latin word)", () => {
-    // The whitespace split used to keep "今日は雨" as one token that matched nothing,
-    // collapsing 今日/は/晴れ into one word.
+    // A whitespace split keeps "今日は雨" as one token that matches nothing, collapsing
+    // 今日/は/晴れ into one word.
     const ja: TranscriptWord[] = [
       { word: " 今日", start: 0, end: 0.4 },
       { word: "は", start: 0.4, end: 0.6 },
