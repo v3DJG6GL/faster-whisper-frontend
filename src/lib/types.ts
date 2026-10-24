@@ -181,7 +181,7 @@ export interface TranslationOverrides {
 
 /** Reserved override-profile value meaning "apply NO server profile — plain
  *  defaults", distinct from undefined (inherit / server default). Sent to the
- *  backend verbatim; MUST match the backend's config_store.NO_PROFILE_SENTINEL. */
+ *  backend verbatim; MUST match the backend's settings/schema.py NO_PROFILE_SENTINEL. */
 export const NO_OVERRIDE_PROFILE = "__none__";
 
 /** A per-application injection rule, keyed by the focused window's app_id. Overrides are
@@ -210,9 +210,10 @@ export interface AppRule {
   remoteDesktop?: boolean | null;
 }
 
-/** The focused app as reported by AT-SPI: its id/title plus — when "deep field detection"
- *  is on — whether the focused element is an editable text field. `editable` is
- *  null/undefined when unknown (app not on the a11y bus, or detection off) → type anyway. */
+/** The focused app as reported by AT-SPI (on Windows: the foreground window, `editable` always
+ *  unknown): its id/title plus — when "deep field detection" is on — whether the focused
+ *  element is an editable text field. `editable` is null/undefined when unknown (app not on
+ *  the a11y bus, or detection off) → type anyway. */
 export interface FocusedApp {
   appId: string;
   title: string;
@@ -1069,7 +1070,7 @@ export interface Config {
   settings: AppSettings;
   backends: Backend[];
   profiles: Profile[];
-  appRules?: AppRule[]; // per-application injection rules
+  appRules?: AppRule[];
   version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ CONFIG_VERSION in store.ts)
 }
 
@@ -1299,7 +1300,6 @@ export type JobOutcome<T> =
   | { kind: "disabled" }
   | { kind: "error"; message: string };
 
-/** Result of a batch transcription. */
 export interface BatchResult {
   text: string;
   language?: string;
