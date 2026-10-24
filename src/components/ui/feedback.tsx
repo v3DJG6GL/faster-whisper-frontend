@@ -143,7 +143,7 @@ export function Toast({
     if (!durationMs) return;
     const t = window.setTimeout(onDismiss, durationMs);
     return () => window.clearTimeout(t);
-    // Re-arm when the message changes so a second reset gets its full window.
+    // Re-arm when the message changes so the new message gets its full window.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [children, durationMs]);
   return createPortal(
