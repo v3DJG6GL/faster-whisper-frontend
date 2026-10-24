@@ -1388,7 +1388,7 @@ async fn post(
     if let Some(s) = opts.separate_bgm {
         form = form.text("separate_bgm", s.to_string());
     }
-    // T2T targets as a CSV of screened language codes. When present, the
+    // T2T targets as a CSV of screened language codes. When it names any, the
     // whisper `task` field is never sent (T2T wins over translate-to-EN —
     // the UI enforces the exclusivity, this is the belt-and-braces).
     //
