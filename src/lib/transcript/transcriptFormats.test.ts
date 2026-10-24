@@ -567,8 +567,9 @@ describe("kept-original translations (quality guard)", () => {
   });
 });
 
-// With ONE target a language marker is redundant; with two, every format (VTT cue class,
-// SRT/TXT tag, TXT block) and the file name must say which language each line is.
+// With ONE target a language marker is redundant (bar a translation whose blank original was
+// dropped); with two, every format (VTT cue class, SRT/TXT tag, TXT block) and the file name
+// must say which language each line is.
 
 const TWO_TARGETS: BatchResult = {
   ...RESULT,
