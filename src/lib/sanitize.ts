@@ -123,7 +123,8 @@ export const dropJoiners = (s: string): string => s.replace(/[\u200c\u200d]/g, "
  *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
  *  Arabic/Syriac format characters that one deliberately excludes and minus ZWNJ/ZWJ (U+200C/D),
  *  which shape scripts and emoji sequences, so they stay in the stored key and interior text and are
- *  dropped only from a display head (`trimLeadingInvisible`) and from the COMPARISON key
+ *  dropped only where they join nothing (a display head via `trimLeadingInvisible`, a run
+ *  `safeIdentityText` folds), from a language code's display text, and from the COMPARISON key
  *  (`appRuleKey` / Rust `rule_key`) — state that when extending either, so the next omission is
  *  visible.
  *
