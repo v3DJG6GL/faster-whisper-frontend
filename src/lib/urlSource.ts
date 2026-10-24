@@ -89,7 +89,6 @@ export function normalizeMediaUrl(raw: string): string | null {
   if (t.length === 0 || t.length > 2048) return null;
   if (!/^https?:\/\//i.test(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.
-  // Judged on the raw text — the tab between two pasted cells is gone from `t`.
   if (pastesSeveralLinks(raw)) return null;
   let url: URL;
   try {
