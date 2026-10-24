@@ -1,7 +1,7 @@
 // First-run onboarding — "connect first, branch after".
 //
 // Mounted by App INSTEAD of the shell when a loaded config has no backends AND
-// no profiles (fresh install; seeds are gone). One gate screen asks the only
+// no profiles (fresh install: nothing is seeded). One gate screen asks the only
 // day-one question — where is your server? — then branches on what the server
 // knows: synced settings found → restore offer; nothing → editable starter
 // profiles → optional quick-add step (full backends only). "Skip for now" and
@@ -338,8 +338,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const bringsQuickAdd = !!pulledBlob && carriesQuickAddPin(migrateBlob(pulledBlob));
   // How the restore's collision pass resolves hotkeys (all categories on), predicted as the Sync
   // tab's restore preview does: `applyBlob` switches off an incoming profile that collides with
-  // this device's quick-add chord (the default one, when the copy brings none) or with another
-  // profile, and `finish()` then skips Profiles — so say so here.
+  // the quick-add chord (the copy's, else this device's) or with another profile, and `finish()`
+  // then skips Profiles — so say so here.
   const chordFix = useMemo(() => {
     if (!pulledBlob) return null;
     const m = migrateBlob(pulledBlob);
