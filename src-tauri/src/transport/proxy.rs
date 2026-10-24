@@ -33,11 +33,11 @@ impl Proxy {
     }
 }
 
-/// A this-host address: `localhost` / `*.localhost`, 127.0.0.0/8, `::1`, the unspecified
-/// 0.0.0.0/8 and `::` (the bind-all address uvicorn prints, which `isLocalAddress` in backends.ts
-/// also counts as this host), and an IPv4-mapped `::ffff:` form of any of those (bracketed or
-/// not). Both the HTTP client and the WebSocket send these direct whatever the proxy settings say:
-/// through a proxy they would dial the proxy's own host.
+/// A this-host address: `localhost` / `*.localhost`, 127.0.0.0/8, `::1`, the unspecified `::` and
+/// 0.0.0.0/8 (the bind-all address uvicorn prints, which `isLocalAddress` in backends.ts also counts
+/// as this host), and an IPv4-mapped `::ffff:` form of any of those (bracketed or not). Both the
+/// HTTP client and the WebSocket send these direct whatever the proxy settings say: through a proxy
+/// they would dial the proxy's own host.
 pub(super) fn is_loopback_host(host: &str) -> bool {
     use std::net::IpAddr;
     let host = host
