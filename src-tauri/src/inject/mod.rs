@@ -1672,16 +1672,18 @@ fn paste(
     res.map(|()| Landed::Yes)
 }
 
+/// The platform paste modifier: Cmd on macOS, Ctrl elsewhere.
+const PASTE_MOD: Key = if cfg!(target_os = "macos") {
+    Key::Meta
+} else {
+    Key::Control
+};
+
 /// Map a KeyboardEvent.code to an enigo key + whether it's a modifier. "Control" maps to
 /// Cmd on macOS so the default paste chord stays correct there.
 fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
-    let ctrl = if cfg!(target_os = "macos") {
-        Key::Meta
-    } else {
-        Key::Control
-    };
     Some(match code {
-        "ControlLeft" | "ControlRight" => (ctrl, true),
+        "ControlLeft" | "ControlRight" => (PASTE_MOD, true),
         "ShiftLeft" | "ShiftRight" => (Key::Shift, true),
         "AltLeft" | "AltRight" => (Key::Alt, true),
         "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" => (Key::Meta, true),
@@ -1720,11 +1722,7 @@ fn paste_chord_keys(chord: &[String]) -> (Vec<Key>, Key) {
         }
     };
     if mods.is_empty() {
-        mods.push(if cfg!(target_os = "macos") {
-            Key::Meta
-        } else {
-            Key::Control
-        });
+        mods.push(PASTE_MOD);
     }
     (mods, main)
 }
@@ -2345,12 +2343,8 @@ mod tests {
     /// literal 'V' while reporting a paste.
     #[test]
     fn unmapped_paste_key_falls_back_to_the_whole_paste_chord() {
-        use super::{paste_chord_keys, Key};
-        let paste_mod = if cfg!(target_os = "macos") {
-            Key::Meta
-        } else {
-            Key::Control
-        };
+        use super::{paste_chord_keys, Key, PASTE_MOD};
+        let paste_mod = PASTE_MOD;
         let chord = |codes: &[&str]| codes.iter().map(|c| c.to_string()).collect::<Vec<_>>();
         assert_eq!(
             paste_chord_keys(&chord(&["ShiftLeft", "F13"])),
