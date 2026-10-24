@@ -99,8 +99,8 @@ export function normalizeMediaUrl(raw: string): string | null {
   if (!url.hostname) return null;
   // The cap belongs on the value we hand out, not just the input: WHATWG
   // serialization percent-encodes non-ASCII 1→6 chars, so a passing input
-  // could return a queue key ~6× over the bound (and one this very function
-  // then rejected when addFiles re-normalized it).
+  // could return a queue key ~6× over the bound, which this function would
+  // then reject when stageFiles re-normalizes it.
   const out = url.toString();
   return out.length > 2048 ? null : out;
 }
