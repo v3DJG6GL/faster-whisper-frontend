@@ -120,7 +120,6 @@ async function ingestDone(
   if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
   switch (r.kind) {
     case "ok": {
-      // A second network await (the link's site subtitles): the epoch can move during it too.
       const result = await withSiteTracks(r.value, row.path, row.urlMeta, ctx);
       if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
       ingestJobResult({ ...row, ctx }, result, tookMsOf(status, row), { attached });
@@ -333,11 +332,10 @@ setOrphanForget((jobId) => {
   stopOrphan(jobId);
 });
 
-/** Does a getJob "error" say nothing about the host being reachable? A status the server
- *  answered (a revoked key on ONE backend entry, a 500 for one job), an unreadable body or a
- *  malformed id is per-row; only a request that got no answer (connect, timeout, a dropped
- *  connection) is per-server — errors.ts isAnsweredError reads Rust's message shapes. Anything
- *  unrecognised stays per-server, which only costs the skipped rows a retry pass. */
+/** Does a getJob "error" say nothing about the host being reachable? An answered request (a
+ *  revoked key on ONE backend entry, a 500 for one job) is per-row; only one that got no answer
+ *  is per-server (see isAnsweredError). Anything unrecognised stays per-server, which only costs
+ *  the skipped rows a retry pass. */
 export const isPerRowJobError = isAnsweredError;
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
@@ -471,8 +469,9 @@ export async function reconcileJobs(): Promise<void> {
     passRows.clear();
     inFlight = false;
   }
-  // A timer that fired mid-pass already waited its RETRY_MS and spent its budget unit: run its
-  // pass now, which schedules its own (charged) retry if it still needs one.
+  // A call that landed mid-pass (a retry timer, which already waited and spent its budget unit,
+  // or a late ledger read): run its pass now, which schedules its own (charged) retry if it
+  // still needs one.
   const owed = rerun;
   rerun = false;
   if (owed) void reconcileJobs();
