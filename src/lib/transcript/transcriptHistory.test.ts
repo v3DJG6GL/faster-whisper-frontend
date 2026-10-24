@@ -383,7 +383,7 @@ describe("loadHistory", () => {
     expect(segs[3]?.translationsKept).toEqual(["de"]);
     for (const s of segs) for (const lang of ["de", "fr"]) expect(() => trText(s, lang)).not.toThrow();
     expect(trText(segs[0]!, "fr")).toBe("Salut");
-    // A string map listed its indexes "0".."3" as language tracks.
+    // A string map would list its indexes "0".."3" as language tracks.
     expect(translationTracks(a.result!)).toEqual(["fr"]);
     // A clean record is handed back as the very object the listing read.
     expect(saved("clean-tr")).toBe(clean);
