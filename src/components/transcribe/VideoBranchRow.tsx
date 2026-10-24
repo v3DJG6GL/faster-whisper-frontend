@@ -8,8 +8,9 @@ import { aboutLeft, fmtElapsed, STAGE_COLORS } from "@/components/transcribe/rai
 
 /** The Video row: the kept copy's own download, hanging off the Audio
  *  stage by a dashed connector — its own status word, its own clock, a
- *  thinner bar. Past an approximate total the bar holds at 99 % and the
- *  label says what arrived, never a number the picture contradicts. */
+ *  thinner bar. Past the reported total (often approximate) the bar holds
+ *  at 99 % and the label says what arrived, never a number the picture
+ *  contradicts. */
 export function VideoBranchRow({
   v,
   dlStart,
