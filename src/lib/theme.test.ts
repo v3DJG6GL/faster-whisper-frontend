@@ -239,6 +239,12 @@ describe("applyTheme + setAccentHue", () => {
     vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal("window", { matchMedia });
   };
+  // Starts a wheel drift of `period` seconds on the dark theme; returns the driver's stop.
+  const startWheelDrift = (period: number) => {
+    setAccentMotion({ period, range: "wheel" });
+    applyTheme("dark");
+    return startAccentDrift();
+  };
   afterEach(() => {
     _resetThemeEngineForTests();
     vi.unstubAllGlobals();
@@ -317,9 +323,7 @@ describe("applyTheme + setAccentHue", () => {
   it("reduced motion keeps the driver Still", () => {
     bootDriftClock((q: string) => ({ matches: q.includes("reduced-motion") }));
     setAccentHue(65);
-    setAccentMotion({ period: 360, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(360);
     vi.advanceTimersByTime(10_000);
     expect(currentAccentHue()).toBe(65);
     expect(props.size).toBe(0); // the default hue, untouched
@@ -335,9 +339,7 @@ describe("applyTheme + setAccentHue", () => {
     }));
     let ticks = 0;
     subscribeAccentHue(() => ticks++);
-    setAccentMotion({ period: 360, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(360);
     const stop = startAccentDrift();
     // One reduced-motion listener and one interval, not two.
     expect(adds).toBe(1);
@@ -356,9 +358,7 @@ describe("applyTheme + setAccentHue", () => {
     let stamps = 0;
     subscribeAccentHue(() => stamps++);
     setAccentHue(100);
-    setAccentMotion({ period: 604_800, range: "wheel" }); // 7 d: one degree every 28 min
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(604_800); // 7 d: one degree every 28 min
     stamps = 0;
     vi.advanceTimersByTime(5 * 60_000); // ten 30 s ticks, none of them a new degree
     expect(stamps).toBe(0);
@@ -370,9 +370,7 @@ describe("applyTheme + setAccentHue", () => {
   it("a paused driver arms no timer and catches up from the clock on resume", () => {
     bootDriftClock();
     setAccentHue(65);
-    setAccentMotion({ period: 360, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(360);
     setAccentDriftPaused("window", true);
     expect(isAccentDriftPaused()).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
@@ -387,9 +385,7 @@ describe("applyTheme + setAccentHue", () => {
   it("a window that boots paused never arms the timer", () => {
     bootDriftClock();
     setAccentDriftPaused("window", true);
-    setAccentMotion({ period: 60, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(60);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -398,9 +394,7 @@ describe("applyTheme + setAccentHue", () => {
     let stamps = 0;
     subscribeAccentHue(() => stamps++);
     setAccentHue(275);
-    setAccentMotion({ period: 360, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(360);
     setAccentDriftPaused("window", true);
     stamps = 0;
     applyTheme("light");
@@ -412,9 +406,7 @@ describe("applyTheme + setAccentHue", () => {
 
   it("the drift runs only once every pause reason is lifted", () => {
     bootDriftClock();
-    setAccentMotion({ period: 360, range: "wheel" });
-    applyTheme("dark");
-    startAccentDrift();
+    startWheelDrift(360);
     setAccentDriftPaused("window", true);
     setAccentDriftPaused("document", true);
     setAccentDriftPaused("window", false);
