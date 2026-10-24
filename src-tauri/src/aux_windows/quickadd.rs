@@ -537,7 +537,7 @@ pub(crate) mod win_seed {
     /// `GetAsyncKeyState`'s high bit is independent of our hook and of any message
     /// queue — so unlike `HeldKeys` it cannot be reset to an empty map by a worker
     /// restart. But it reflects only key events no low-level hook swallowed: under a
-    /// capturing RDP client it reads the chord UP (see the menu-mask comment).
+    /// capturing RDP client it reads the chord UP (see the menu-mask comment in `grab`).
     /// VK_SHIFT/CONTROL/MENU cover both sides.
     #[cfg(windows)]
     fn modifier_physically_down() -> bool {
@@ -600,12 +600,10 @@ pub(crate) mod win_seed {
                 .as_ref()
                 .is_some_and(|(rdv, generation)| !rdv.is_current(*generation))
         };
-        // The single-flight lives HERE, not in `show`: `commands::get_focused_selection` (the
-        // correct-on-close re-grab, ~400ms after the window hides) calls straight through and can
-        // last SECONDS (the ≤3 s release gate, an un-timed clipboard prologue, then the copy
-        // deadline) without ever being superseded (`cancel: None`) — a summon in that window must
-        // not start a second grab (the interleave described on SEED_GRAB_ACTIVE). Owning it here
-        // also holds it for as long as the grab runs, not until some caller's timeout fires.
+        // The single-flight (see SEED_GRAB_ACTIVE): the correct-on-close re-grab, ~400ms after the
+        // window hides, can last SECONDS (the ≤3 s release gate, an un-timed clipboard prologue,
+        // then the copy deadline) without ever being superseded (`cancel: None`) — a summon in
+        // that window must not start a second grab.
         if SEED_GRAB_ACTIVE
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
@@ -870,8 +868,7 @@ pub(crate) mod win_seed {
             );
             return None;
         }
-        // Non-Windows twin of the injection (never called — kept so the Linux dev loop
-        // type-checks the module). Windows injects via `send_copy_chord`: see there.
+        // Non-Windows twin of the injection (never called; see the module docs).
         #[cfg(not(windows))]
         {
             let mut enigo = Enigo::new(&Settings::default()).ok()?;
@@ -890,7 +887,6 @@ pub(crate) mod win_seed {
         if !remote {
             ready.signal();
         }
-        // The copy lands asynchronously in the source app.
         let deadline = injected_at
             + Duration::from_millis(if remote {
                 COPY_DEADLINE_RDP_MS
