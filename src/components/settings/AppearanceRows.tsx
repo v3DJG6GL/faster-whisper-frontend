@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { SETTING } from "@/lib/settingsManifest";
 import {
   ACCENT_PRESETS, DEFAULT_ACCENT_HUE, DEFAULT_ACCENT_MOTION, DEFAULT_ARC_HUE, currentAccentHue, deriveAccent, nearestPreset,
-  fmtPer, motionCostNote, prefersReducedMotion, resolvedTheme, secToSlider, sliderToSec, subscribeAccentHue,
+  REDUCED_MOTION_MQ, fmtPer, motionCostNote, prefersReducedMotion, resolvedTheme, secToSlider, sliderToSec, subscribeAccentHue,
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 
@@ -240,7 +240,7 @@ function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(prefersReducedMotion);
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const mq = window.matchMedia(REDUCED_MOTION_MQ);
     const onChange = () => setReduced(mq.matches);
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);

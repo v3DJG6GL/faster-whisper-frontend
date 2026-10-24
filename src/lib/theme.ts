@@ -34,7 +34,7 @@
 import type { AccentMotion, ThemeName } from "./types";
 
 const LIGHT_MQ = "(prefers-color-scheme: light)";
-const REDUCED_MOTION_MQ = "(prefers-reduced-motion: reduce)";
+export const REDUCED_MOTION_MQ = "(prefers-reduced-motion: reduce)";
 
 export function resolvedTheme(t: ThemeName): "dark" | "light" {
   if (t !== "auto") return t;
