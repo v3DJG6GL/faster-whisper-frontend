@@ -197,9 +197,10 @@ export const SegmentRow = memo(function SegmentRow({
             // Remount from props when the screen and the stored text disagree: React
             // never rewrites a contentEditable the user typed into, so an emptied line
             // (committed as "no edit") would stay blank while Copy and the exports keep
-            // its text, and pasted markup would stay though only plain text is stored. A bare blur (Alt-Tab mid-correction)
-            // keeps the span so the caret comes back on refocus. The stored text is
-            // trimmed: a trailing space just typed is no reason to remount.
+            // its text, and pasted markup would stay though only plain text is stored.
+            // A bare blur (Alt-Tab mid-correction) keeps the span so the caret comes
+            // back on refocus. The stored text is trimmed: a trailing space just typed
+            // is no reason to remount.
             if (shown !== typed.trim() || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
@@ -300,8 +301,7 @@ export const SegmentRow = memo(function SegmentRow({
         }
         // Follow-along on translated lines: MT text has no word timing, so
         // the original words' progress through the segment is mapped onto
-        // the translated words proportionally — an honest approximation
-        // (the same char-share philosophy the fluent redistributor uses).
+        // the translated words proportionally — an honest approximation.
         const followable = isActive && !stale && range && range[1] > range[0];
         const trWords = followable ? trText.split(/\s+/) : null;
         let trCur = -1;
@@ -341,7 +341,7 @@ export const SegmentRow = memo(function SegmentRow({
                     k === trCur && "rounded px-0.5 font-medium",
                     k !== trCur && k <= trPassed && "opacity-60",
                   )}
-                  // Soft speaker-accent fill (chipStyle idiom): reads as the
+                  // Soft fill of the line's accent (chipStyle idiom): reads as the
                   // follow-along highlight in both themes.
                   style={
                     k === trCur
