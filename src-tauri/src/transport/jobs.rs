@@ -50,8 +50,8 @@ pub enum JobOutcome<T> {
 }
 
 /// One job row (`GET /v1/jobs/{id}`), snake_case on the wire, camelCase to
-/// the webview. Every field defaults so a newer server's additive keys and
-/// an older one's missing keys both parse.
+/// the webview. Every field defaults so an older server's missing keys parse;
+/// a newer one's additive keys are ignored.
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobStatus {
