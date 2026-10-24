@@ -640,18 +640,18 @@ export interface TranscribeRunState {
   stageTimes: Partial<Record<RailStage, StageTime>>;
   /** Model/device chips per stage of the RUNNING file (reset per file). */
   stageMeta: Partial<Record<RailStage, StageMeta>>;
-  /** Per-file speaker renames / palette-index picks (label-keyed). */
+  /** Per-record (overlay key) speaker renames / palette-index picks (label-keyed). */
   renames: Record<string, Record<string, string>>;
   speakerColors: Record<string, Record<string, number>>;
-  /** Per-file pre-export corrections: segment index → replacement text /
+  /** Per-record pre-export corrections: segment index → replacement text /
    *  reassigned speaker label. Same lifetime as renames; both flow into
    *  Copy and every export. */
   edits: Record<string, Record<number, string>>;
   speakerEdits: Record<string, Record<number, string>>;
-  /** Per-file segment indexes whose translations went stale (the ORIGINAL
+  /** Per-record segment indexes whose translations went stale (the ORIGINAL
    *  text was edited after the MT ran). Cleared per index by re-translate. */
   translationsStale: Record<string, Record<number, true>>;
-  /** Per-file segment indexes whose CURRENT translations were made from a
+  /** Per-record segment indexes whose CURRENT translations were made from a
    *  correction (a re-translate ran while it was in place): dropping that
    *  correction restores a text the MT never saw, so it marks them stale. Kept
    *  through a revert or a Discard until a merge re-translates the line. */
@@ -1321,7 +1321,7 @@ function awaitRunUrlVideo(
   }
   // Read the video's outcome off the job row: pull a finished one, else mark the row failed
   // so Try again shows (the row would otherwise stay at its last "downloading"). A transport
-  // error is asked once more a poll later before it becomes the verdict.
+  // error is asked once more a second later before it becomes the verdict.
   // `gone` = the reason when the row names no outcome of its own.
   function settleFromJob(retries: number, gone = NO_LONGER_TRACKED) {
     void getJobResult({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, jobId: pid })
@@ -2121,9 +2121,9 @@ export async function translateParsed(
   // An imported JSON may name its language as a word ("english"): only a code goes out.
   const srcCode = translateSourceCode(parsed.language);
   for (let at = 0, end = 0; targets.length && at < parsed.segments.length; at = end) {
-    // Close the chunk before the segment that would cross either cap (the 400 above, and the
-    // server's character cap: TRANSLATE_CHUNK_CHARS); a lone segment over the character
-    // budget still goes out alone (the server answers for it).
+    // Close the chunk before the segment that would cross either cap (the 400 above, and
+    // TRANSLATE_CHUNK_CHARS, kept under the server's character cap); a lone segment over the
+    // character budget still goes out alone (the server answers for it).
     let chars = parsed.segments[at].text.length;
     for (end = at + 1; end < parsed.segments.length && end - at < CHUNK; end++) {
       chars += parsed.segments[end].text.length;
