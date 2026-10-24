@@ -212,9 +212,8 @@ export const SegmentRow = memo(function SegmentRow({
             } else if (e.key === "Escape") {
               // Revert to the last SAVED text (seg.text = fileEdits[i] ?? server
               // text), not the raw server text: the blur commit compares to the
-              // original and would delete an earlier saved correction.
-              // Stripped like the display below, or Escape re-injects bidi marks
-              // that reorder the line against what Read shows and what is stored.
+              // original and would delete an earlier saved correction. Cleaned
+              // like the span's children below.
               e.currentTarget.textContent = stripControlChars(seg.text).trim();
               e.currentTarget.blur();
             }
