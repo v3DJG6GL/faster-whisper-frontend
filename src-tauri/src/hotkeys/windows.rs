@@ -24,7 +24,7 @@
 //! the activated app installs its own hook) and a slow watchdog re-arm (the OS
 //! silently removes hooks it deems slow) — so it always sits ABOVE mstsc's and
 //! sees keys before they're swallowed. Raw input stays as the primary feed: it
-//! has no watchdog, needs no re-arming, and covers the µs re-arm gaps.
+//! has no watchdog and needs no re-arming.
 //!
 //! The two feeds also patch each other's blind spots: raw input drops
 //! `hDevice == 0` events, which besides SendInput can be a precision touchpad or
@@ -578,9 +578,10 @@ mod imp {
     }
 
     /// The raw-input receiver: a message-only window registered for keyboard raw
-    /// input with `RIDEV_INPUTSINK` (delivery regardless of foreground — this is
-    /// what keeps chords alive while an RDP client is focused; see module docs),
-    /// pumping messages until shutdown posts WM_QUIT.
+    /// input with `RIDEV_INPUTSINK` (delivery regardless of foreground; keys a
+    /// capturing RDP client swallows never arrive here, which is what the LL hook
+    /// feed armed below is for — see module docs), pumping messages until shutdown
+    /// posts WM_QUIT.
     fn input_thread(ready: &Sender<Option<u32>>, abandoned: &std::sync::atomic::AtomicBool) {
         unsafe {
             let class_name: Vec<u16> = "fwf-raw-input\0".encode_utf16().collect();
@@ -684,11 +685,10 @@ mod imp {
     }
 
     /// Re-arm scheduling. In steady state the timer ticks every WATCHDOG_MS and each
-    /// tick re-arms (silent-removal insurance — each re-arm has a µs blind gap, so
-    /// steady-state re-arms are kept rare, and an idle app wakes no more often than
-    /// that). A foreground change arms immediately AND switches the timer to TICK_MS
-    /// for a BURST of per-tick re-arms: the EVENT_SYSTEM_FOREGROUND callback can run
-    /// BEFORE the newly-activated app (mstsc) finishes installing its own capture
+    /// tick re-arms (silent-removal insurance, kept rare so an idle app wakes no more
+    /// often than that). A foreground change arms immediately AND switches the timer to
+    /// TICK_MS for a BURST of per-tick re-arms: the EVENT_SYSTEM_FOREGROUND callback can
+    /// run BEFORE the newly-activated app (mstsc) finishes installing its own capture
     /// hook, so the immediate re-arm alone can lose the newest-hook race — the burst
     /// covers the late install. The last burst tick drops back to WATCHDOG_MS.
     const TICK_MS: u32 = 250;
