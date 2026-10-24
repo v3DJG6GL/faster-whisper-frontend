@@ -98,7 +98,7 @@ function editChipScale(value: number): void {
 
 // The recompose reads the store and THEN waits on the keyring (up to 10 s behind a wallet
 // prompt); applyBlob's stale guard only covers its own wait, so an edit made during the
-// compose's was in neither the compose nor the merge, and the apply reverted it.
+// compose's is in neither the compose nor the merge, and the apply would revert it.
 it("a setting edited while the 409 recompose waits on the keyring survives the auto-merge", async () => {
   const { edited, peerStart, remote } = await seed();
   api.conflicts = [{ version: 5, updated_ts: 5, device: "peer", blob: remote }];
@@ -126,8 +126,8 @@ it("a setting edited while a pull's compose waits on the keyring survives the me
 
 // The approval decides "edited since the raise" from the store as it moved during the signature's
 // keyring wait. Its compose then waits on the keyring too, and recomposes when the store moved
-// meanwhile, so an edit made in THAT wait was in the live compose and in no "edited" test: the
-// conflicting category counted as untouched, and the reviewed value went back over the edit.
+// meanwhile, so an edit made in THAT wait is in the live compose and in no "edited" test: the
+// conflicting category would count as untouched, and the reviewed value go back over the edit.
 it("a setting edited while an approval's compose waits on the keyring survives the approval", async () => {
   const { edited, remote } = await seed();
   // The peer changes the chip (applied at the raise) and lowers the retention (held for review).
@@ -153,9 +153,9 @@ it("a setting edited while an approval's compose waits on the keyring survives t
   expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
 });
 
-// The Sync tab shows `syncError` only while `syncUnsupported` is clear, and only a pull's or a
-// push's 200 cleared it: after an old server's 404 and a backend update, a push's conflict
-// notice stayed hidden behind "doesn't support settings sync".
+// The Sync tab shows `syncError` only while `syncUnsupported` is clear: a flag cleared by nothing
+// but a pull's or a push's 200 would leave a push's conflict notice, after an old server's 404
+// and a backend update, hidden behind "doesn't support settings sync".
 it("a push conflict clears an earlier 404's unsupported-server flag", async () => {
   const { edited, remote } = await seed();
   api.fail = 404;
@@ -172,7 +172,7 @@ it("a push conflict clears an earlier 404's unsupported-server flag", async () =
   expect(s.syncError).toMatch(/resolve the conflict/);
 });
 
-// The same for every other answer: after a backend update a wrong key's 401 (or a 5xx) stayed
+// The same for every other answer: after a backend update a wrong key's 401 (or a 5xx) would stay
 // hidden behind "update faster-whisper-backend". No answer at all (status 0) says nothing.
 it("an answered push failure after a 404 clears the unsupported-server flag, an unreachable one keeps it", async () => {
   const { edited } = await seed();
