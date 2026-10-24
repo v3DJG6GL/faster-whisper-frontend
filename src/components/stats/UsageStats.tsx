@@ -122,19 +122,15 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
           const share = pct(st.runs, st.of_runs);
           const runsWord = row.key === "translating" ? "session" : "file & link session";
           let detail: ReactNode;
+          const rtf = <>RTF <Num>{st.audio_s > 0 ? (st.secs / st.audio_s).toFixed(2) : "–"}</Num></>;
           if (row.key === "translating") {
             detail = <>avg <Num>+{(st.secs / st.runs).toFixed(1)} s</Num> / run</>;
           } else if (row.key === "diarizing") {
-            detail = (
-              <>
-                RTF <Num>{st.audio_s > 0 ? (st.secs / st.audio_s).toFixed(2) : "–"}</Num>
-                {st.speakers_avg != null && <> · avg <Num>{st.speakers_avg.toFixed(1)}</Num> speakers</>}
-              </>
-            );
+            detail = <>{rtf}{st.speakers_avg != null && <> · avg <Num>{st.speakers_avg.toFixed(1)}</Num> speakers</>}</>;
           } else if (row.key === "vad") {
-            detail = st.retained_avg != null ? <><Num>{Math.round((1 - st.retained_avg) * 100)} %</Num> of audio skipped</> : <>RTF <Num>{st.audio_s > 0 ? (st.secs / st.audio_s).toFixed(2) : "–"}</Num></>;
+            detail = st.retained_avg != null ? <><Num>{Math.round((1 - st.retained_avg) * 100)} %</Num> of audio skipped</> : rtf;
           } else {
-            detail = <>RTF <Num>{st.audio_s > 0 ? (st.secs / st.audio_s).toFixed(2) : "–"}</Num></>;
+            detail = rtf;
           }
           const targets = row.key === "translating" ? targetShares(st) : [];
           const kept = row.key === "translating" ? (st.kept_original ?? 0) : 0;
