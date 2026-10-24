@@ -133,8 +133,7 @@ fn outcome_for<T>(status: reqwest::StatusCode, detail: Option<&str>) -> JobOutco
 
 /// The shared front half of every jobs call: screen the id, send
 /// `{method} /v1/jobs/{id}{suffix}`, and fold a transport failure or a non-2xx
-/// status into the outcome the caller returns as-is. `timeout` is `None` only
-/// where the shared client's default must apply (the result payload).
+/// status into the outcome the caller returns as-is.
 async fn job_request<T>(
     server_url: &str,
     api_key: Option<&str>,
