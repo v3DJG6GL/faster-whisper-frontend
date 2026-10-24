@@ -49,7 +49,7 @@ function ScrollReset() {
   const { pathname } = useLocation();
   useEffect(() => {
     noteRoute(pathname);
-    if (pathname === "/history") return;
+    if (pathname === SCREEN_PATH.history) return;
     document.querySelector("main")?.scrollTo(0, 0);
   }, [pathname]);
   return null;
@@ -220,7 +220,7 @@ function LogsDoorwayBanner() {
               openLogsPrefiltered("warn");
               // Already on Logs (the prefilter applies in place): skip the push like the sidebar
               // and the overlay bridge do, or a duplicate /logs entry makes the next Back a no-op.
-              if (pathname !== "/logs") navigate("/logs");
+              if (pathname !== SCREEN_PATH.logs) navigate(SCREEN_PATH.logs);
             };
             if (tryNavigate(go)) go();
           }}
@@ -383,18 +383,18 @@ export default function App() {
         <Sidebar />
         <main className="flex-1 overflow-y-auto">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/transcribe" element={<Transcribe />} />
-            <Route path="/history" element={<HistoryScreen />} />
-            <Route path="/profiles" element={<Profiles />} />
-            <Route path="/backends" element={<Backends />} />
-            <Route path="/dictionary" element={<Dictionary />} />
-            <Route path="/app-rules" element={<AppRules />} />
-            <Route path="/statistics" element={<Statistics />} />
-            <Route path="/logs" element={<Logs />} />
+            <Route path={SCREEN_PATH.dashboard} element={<Dashboard />} />
+            <Route path={SCREEN_PATH.transcribe} element={<Transcribe />} />
+            <Route path={SCREEN_PATH.history} element={<HistoryScreen />} />
+            <Route path={SCREEN_PATH.profiles} element={<Profiles />} />
+            <Route path={SCREEN_PATH.backends} element={<Backends />} />
+            <Route path={SCREEN_PATH.dictionary} element={<Dictionary />} />
+            <Route path={SCREEN_PATH["app-rules"]} element={<AppRules />} />
+            <Route path={SCREEN_PATH.statistics} element={<Statistics />} />
+            <Route path={SCREEN_PATH.logs} element={<Logs />} />
             {/* legacy path → Backends (renamed from "Servers"/models) */}
-            <Route path="/models" element={<Navigate to="/backends" replace />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/models" element={<Navigate to={SCREEN_PATH.backends} replace />} />
+            <Route path={SCREEN_PATH.settings} element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

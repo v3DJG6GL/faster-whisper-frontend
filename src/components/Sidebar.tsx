@@ -5,7 +5,7 @@ import { Settings as SettingsIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
 import { appVersion } from "@/lib/api";
-import { VISIBLE_SCREENS } from "@/lib/screenRegistry";
+import { SCREEN_PATH, VISIBLE_SCREENS } from "@/lib/screenRegistry";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictation/dictationVisual";
 import { runBadgeFraction, useTranscribeRun } from "@/lib/transcribeRun";
@@ -214,8 +214,8 @@ export function Sidebar() {
 
         <div className="flex items-center gap-1 border-t border-line pt-3">
           <NavLink
-            to="/settings"
-            onClick={guardedNav("/settings")}
+            to={SCREEN_PATH.settings}
+            onClick={guardedNav(SCREEN_PATH.settings)}
             className={({ isActive }) =>
               cn(
                 "flex flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium transition-colors",

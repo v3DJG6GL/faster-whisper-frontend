@@ -1,5 +1,5 @@
 // Single source of truth for the app's navigable screens and the dictation
-// actions the overlay can trigger. Keep each `path` in sync with the <Route>s in App.tsx.
+// actions the overlay can trigger. App.tsx's <Route>s take their paths from SCREEN_PATH.
 
 import { LayoutDashboard, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History, ScrollText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
