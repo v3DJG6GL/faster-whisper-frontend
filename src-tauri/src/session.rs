@@ -1,5 +1,5 @@
-//! Streaming dictation session: microphone capture → resample → WebSocket,
-//! surfacing transcript events to the UI.
+//! Dictation sessions, streaming (microphone capture → resample → WebSocket) and batch record
+//! (one buffered clip POSTed on stop), surfacing transcript events to the UI.
 //!
 //! The `cpal::Stream` lives on a dedicated capture thread (it is `!Send`) and
 //! forwards mono f32 chunks over a channel to an async WS task. Levels are
@@ -1375,7 +1375,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
 // exactly those on drop. There's no mid-session watcher, so audio that STARTS after dictation
 // begins isn't muted. Falls back to muting the whole default sink when pactl can't enumerate
 // streams (no PulseAudio / pipewire-pulse); off unix a deliberate no-op (see `apply_mute`). A hard
-// crash mid-dictation can leave streams muted until the next dictation restores them.
+// crash mid-dictation leaves those streams muted: the next session sees them as already muted and
+// skips them, so nothing restores them automatically.
 
 /// What the guard did, so Drop undoes exactly that.
 ///
