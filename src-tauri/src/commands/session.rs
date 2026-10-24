@@ -129,12 +129,9 @@ pub async fn cancel_stream(
                 .lock()
                 .map_err(|_| "stream state poisoned".to_string())?;
             let sess = guard.take();
-            // No live session: the user's Cancel is aimed at the one still draining after a stop —
-            // discard its recording, as cancel_record does for a detached batch. Not for the
-            // closed-handler release, nor for a recovery cancel (stuck finalize, wake from sleep)
-            // where the saved audio may be the only copy of what was said: that one RELEASES the
-            // drain instead, so its keep is final and no later stray Cancel can still reach it.
-            // A live session taken on any path is the newest one, so it releases the drain too.
+            // Settle the drain still running after a stop (see `settle_detached_on_cancel`): a
+            // recovery cancel (stuck finalize, wake from sleep) releases it instead of discarding,
+            // since its saved audio may be the only copy of what was said.
             session::settle_detached_on_cancel(sess.is_some(), user_initiated, discard_recording);
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
             // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
@@ -289,15 +286,12 @@ pub async fn cancel_record(
         // "transcribing…" shows) has its result dropped and its .wav removed with no .txt
         // written, so nothing is left on disk after a UI that says cancelled.
         //
-        // Only a user's Cancel with no live session: a live session taken on ANY path (a Cancel,
-        // the closed-handler release) supersedes the earlier detached batch, which is released so
-        // a later Cancel cannot disown a legitimate earlier transcription still in flight (stop A
-        // → start B → cancel B → stray Cancel would have discarded A's result); the release with
-        // no live session leaves it alone. A recovery cancel (`discard_recording: false`) releases
-        // it too, since the saved audio may be the only copy of what was said: that keep is
-        // final — released even when a live session WAS found, since its device-loss salvage may
-        // already have published its epoch as the detached batch (a salvage that fires inside the
-        // join below publishes after this forget, so that one stays reachable).
+        // Who disowns, supersedes or releases the detached batch: see
+        // `settle_detached_batch_on_cancel`. Superseding on a live take stops a stray Cancel from
+        // discarding an earlier legitimate result (stop A → start B → cancel B → stray Cancel). A
+        // recovery cancel releases it because the saved audio may be the only copy, even when a
+        // live session WAS found: that session's device-loss salvage may already have published
+        // its epoch as the detached batch.
         let sess = {
             let mut guard = state
                 .0
