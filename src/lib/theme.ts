@@ -293,8 +293,6 @@ function hueNow(): number {
   return Math.round(driftHue(accentHue, m, Date.now())) % 360;
 }
 
-/** Stamp the derived accent tokens for the resolved theme, or clear them for the default
- *  hue so app.css's hand-tuned amber applies untouched. */
 function applyAccent(dark: boolean): void {
   stampHue(hueNow(), dark);
 }
