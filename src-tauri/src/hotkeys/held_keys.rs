@@ -175,7 +175,6 @@ impl HeldKeys {
         }
     }
 
-    /// Is any of `codes` currently held?
     pub fn any_held(&self, codes: &[u16]) -> bool {
         self.0
             .map
