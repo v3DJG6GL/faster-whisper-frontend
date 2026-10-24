@@ -157,9 +157,9 @@ mod imp {
     /// permanent read of every `/dev/input` device — system-wide keylogging capability — and it is
     /// the polkit dialog, not this process, that supplies the privilege. The environment is
     /// writable by anything that launches us (a .desktop entry, a shell rc, a wrapper script), so
-    /// taking the target account from it let that name be pointed at a DIFFERENT existing account
-    /// while the polkit prompt showed only "usermod" — an administrator approving it had no way to
-    /// see whom they were granting it to. The uid we are actually running as cannot be spoofed.
+    /// taking the target account from it would let that name point at a DIFFERENT existing account
+    /// while the polkit prompt shows only "usermod" — an administrator approving it cannot see
+    /// whom they are granting it to. The uid we are actually running as cannot be spoofed.
     pub async fn setup() -> Result<String, String> {
         let user =
             current_username().ok_or_else(|| "couldn't determine the current user".to_string())?;
@@ -335,7 +335,7 @@ mod imp {
             tasks.len(),
             chords.len()
         );
-        *g = Some(Running { tasks }); // still holding the guard from the top → atomic stop→store
+        *g = Some(Running { tasks });
     }
 
     /// `chord_mods` = the firing chord's OWN modifier keycodes, so `inject_text` can tell "the
@@ -563,8 +563,7 @@ mod imp {
                 // release the teardown bookkeeping, emit no "stop".
                 Fire::ReleaseHold(pid) => forget_hold(&pid),
                 Fire::Toggle(pid) => {
-                    // A fresh rising edge: this press IS in the map, so the still-held check
-                    // works normally for it and any pending loss latch is now a dud.
+                    // A fresh rising edge, as for Start: any pending loss latch is now a dud.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
