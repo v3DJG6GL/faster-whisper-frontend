@@ -1,5 +1,5 @@
-//! Local transcription history: one JSON file per finished batch run under
-//! `<app_data_dir>/transcripts/<id>.json`.
+//! Local transcription history: one JSON file per finished run under
+//! `<app_data_dir>/transcripts/<id>.json` (dictation sessions under `transcripts/dictation/`).
 //!
 //! The record content is FRONTEND-OWNED opaque JSON (result, user corrections,
 //! speaker renames/colors and the settings used) — Rust stores and lists it
@@ -1047,7 +1047,7 @@ pub async fn transcript_store_stats(
     .map_err(|e| e.to_string())?
 }
 
-/// "Delete all dictations now": every stored session record AND every app-owned
+/// "Delete all dictations": every stored session record AND every app-owned
 /// file in the recordings folder (.wav + .txt sidecars matching the `dictation-*`
 /// naming convention — a user-chosen folder may hold foreign files).
 /// The retention clocks stay as set. Returns records + AUDIO files removed — the sidecars go
