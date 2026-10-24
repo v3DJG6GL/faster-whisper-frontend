@@ -229,10 +229,7 @@ pub async fn translate_texts(
     glossary: Option<&str>,
     context_segments: Option<u32>,
     progress_id: Option<&str>,
-    // The capture row whose log receipt the server is holding open for this
-    // translation. Opaque here; the server links the two halves with it.
     captured_id: Option<&str>,
-    // The session's client-minted id; names the session on the receipt.
     client_job: Option<&str>,
 ) -> anyhow::Result<TextTranslationResult> {
     if texts.is_empty() {
