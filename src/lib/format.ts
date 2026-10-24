@@ -11,15 +11,18 @@ export function fmtFull(n: number): string {
   return Math.round(n || 0).toLocaleString("en-US");
 }
 
+/** One decimal, without a trailing ".0": 1.2 → "1.2", 3.0 → "3". */
+const dec1 = (x: number) => x.toFixed(1).replace(/\.0$/, "");
+
 /** Compact for large totals: `840` · `1.2k` · `84k` · `1.2M`. */
 export function fmtCompact(n: number): string {
   const v = Math.round(n || 0);
   const a = Math.abs(v);
   if (a < 1000) return v.toLocaleString("en-US");
-  if (a < 10_000) return `${(v / 1000).toFixed(1).replace(/\.0$/, "")}k`;
+  if (a < 10_000) return `${dec1(v / 1000)}k`;
   // Use M once the rounded kilo saturates to 1000 (e.g. 999,999 → "1M", not "1000k").
   if (a < 1_000_000 && Math.abs(Math.round(v / 1000)) < 1000) return `${Math.round(v / 1000)}k`;
-  return `${(v / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  return `${dec1(v / 1_000_000)}M`;
 }
 
 /** Seconds → readable duration for tiles: `0s` · `47s` · `17m` · `3h` · `3h 12m`. */
@@ -66,7 +69,7 @@ export function fmtDurationAxis(seconds: number): string {
   if (s < 60) return `${s}s`;
   // Once the minutes round up to 60, show hours (3599 → "1h", not "60m").
   if (Math.round(s / 60) < 60) return `${Math.round(s / 60)}m`;
-  return `${(s / 3600).toFixed(1).replace(/\.0$/, "")}h`;
+  return `${dec1(s / 3600)}h`;
 }
 
 // The series carries `day` = days-since-epoch in the query's `tz` (the viewer's zone). We
