@@ -4,9 +4,9 @@
 
 /// Shell surfaces that foreground a plain `Windows.UI.Core.CoreWindow` — a class every real
 /// UWP app shares, so they cannot be filtered by class like the taskbar; filter by process
-/// name instead, the way `is_noise` filters plasmashell on Linux. Without this the Start
-/// menu became `current`, the chip's "→ app" readout named it, and a per-app rule for the
-/// app the user came from silently stopped applying to a chord fired over the open menu.
+/// name instead, the way `is_noise` filters plasmashell on Linux. Otherwise the Start menu
+/// becomes `current` and a per-app rule for the app the user came from stops applying to a
+/// chord fired over the open menu.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn is_shell_exe(base: &str) -> bool {
     matches!(
@@ -31,14 +31,11 @@ pub(super) fn normalize_exe_basename(path: &str) -> Option<String> {
         .unwrap_or(base);
     // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
     // overlay payload, a persisted AppRule that rides the sync push, the once-a-second log line).
-    // The earlier refutation — "an NTFS filename cannot contain control characters" — is right for
-    // Cc and wrong for Cf: a filename may carry U+202E/U+2066/U+200B, which is why the overlay's
-    // target readout had to be defanged at the render.
+    // An NTFS filename cannot hold Cc control characters but CAN hold Cf ones (U+202E/U+2066/U+200B).
     //
-    // Doing it HERE rather than at each consumer is what keeps the app-rule matcher honest. The
-    // rule side is normalized with the same character class, and an exe basename that kept an
-    // invisible mark while the rule had it stripped would turn a working "never type here" rule
-    // into a silent no-op — the failure the rule-side normalization exists to prevent, inverted.
+    // Done HERE rather than at each consumer: the rule side is normalized with the same character
+    // class, and an exe basename that kept an invisible mark the rule had stripped would turn a
+    // working "never type here" rule into a silent no-op.
     let id = crate::transport::bounded_server_text(&base, super::APP_ID_MAX);
     if id.trim().is_empty() {
         return None;
