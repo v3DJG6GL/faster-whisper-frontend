@@ -21,7 +21,6 @@ pub struct Resampler16k {
 impl Resampler16k {
     pub fn new(in_rate: u32) -> anyhow::Result<Self> {
         if in_rate == 16_000 {
-            // No resampling needed — pass through (just pack to s16le).
             return Ok(Self {
                 inner: None,
                 acc: Vec::new(),
@@ -51,7 +50,6 @@ impl Resampler16k {
     pub fn push(&mut self, samples: &[f32]) -> Vec<u8> {
         let mut out = Vec::new();
         if self.inner.is_none() {
-            // Pass-through: already 16 kHz.
             out.reserve(samples.len() * 2);
             for &s in samples {
                 push_i16le(&mut out, s);
@@ -62,8 +60,8 @@ impl Resampler16k {
         self.acc.extend_from_slice(samples);
         while self.acc.len() >= self.needed && self.needed > 0 {
             let needed = self.needed;
-            // Convert the front block in place into the reused output buffer — `process_into_buffer`
-            // avoids the per-chunk input/output heap allocations `process()` does on the audio thread.
+            // `process_into_buffer`, not `process()`: no per-chunk input/output heap allocations on
+            // the audio thread.
             let res = self.inner.as_mut().unwrap().process_into_buffer(
                 &[&self.acc[..needed]],
                 &mut self.out,
@@ -98,7 +96,7 @@ impl Resampler16k {
             self.acc.clear();
             return out;
         }
-        self.acc.resize(self.needed, 0.0); // pad the partial block with silence
+        self.acc.resize(self.needed, 0.0);
         let needed = self.needed;
         let res = self.inner.as_mut().unwrap().process_into_buffer(
             &[&self.acc[..needed]],
@@ -155,7 +153,7 @@ mod tests {
         let mut r = Resampler16k::new(48_000).unwrap();
         // Fewer than one input block → buffered, nothing emitted yet.
         assert!(r.push(&vec![0.3f32; 100]).is_empty());
-        // Flush pads + resamples that tail, so it's no longer dropped.
+        // Flush pads + resamples that tail.
         assert!(!r.flush().is_empty());
     }
 }
