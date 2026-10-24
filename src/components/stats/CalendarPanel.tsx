@@ -36,8 +36,6 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
   const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
   const streak = streakFor(streaks, scope);
   const ref = useRef<HTMLDivElement | null>(null);
-  // Cells are sized by CSS: one 1fr track per week column, square cells — they fill the
-  // panel's width exactly and shrink to 12 px before the strip scrolls sideways.
   const today = localTodayDay();
   const withWord = withS.length ? ` · with ${withS.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" + ")}` : "";
   const { tip, onMove, onLeave, onFocus, onBlur } = useCellTip();
