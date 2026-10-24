@@ -1,7 +1,7 @@
 //! Capture engine: opens an input device and emits a smoothed RMS level
 //! (`audio://level`, f32 in 0..1) at ~30 Hz until stopped. While running it also
 //! records the down-mixed mono audio into a shared [`MicClip`] (capped to the last
-//! few seconds) so the Settings mic-test can replay what it just heard.
+//! `MAX_CLIP_SECS`) so the Settings mic-test can replay what it just heard.
 //!
 //! The `cpal::Stream` is not `Send`, so it lives entirely on a dedicated capture
 //! thread; the [`CaptureHandle`] only carries a stop flag + join handle (both
@@ -60,7 +60,7 @@ impl Meter {
 }
 
 /// Appends captured mono samples to the shared clip, dropping the oldest so it
-/// never holds more than `cap` samples (a simple ring of the last few seconds).
+/// never holds more than `cap` samples.
 struct Recorder {
     clip: Arc<Mutex<MicClip>>,
     cap: usize,
