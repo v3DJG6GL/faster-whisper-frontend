@@ -77,8 +77,8 @@ interface Entry {
 const leases = new Map<string, Entry>();
 /** The last hint sent under a key, remembered ACROSS release → re-acquire: React runs an
  *  effect's cleanup before re-running it, so every dep change on a warm-holding effect is
- *  a release (entry deleted) followed by a fresh acquire — which, with the memory on the
- *  entry alone, was an immediate POST of a byte-identical plan on every option click. */
+ *  a release (entry deleted) then a fresh acquire, which would otherwise re-POST a
+ *  byte-identical plan on every option click. */
 const lastSent = new Map<string, { sentKey: string; sentAt: number }>();
 
 /** Map a run's rail stages onto the model families the server should warm.
@@ -164,10 +164,9 @@ export function acquireWarm(key: string, spec: PreloadSpec): WarmLease {
   } else {
     const prev = lastSent.get(key);
     // The first renew tick is due RENEW_MS after the carried send, not after this
-    // re-acquire: every React caller releases and re-acquires on any dep change, and a
-    // re-acquire at t=119 s was debounced (no POST) while a fresh interval put the next
-    // POST at t≈239 s — past the server's 180 s plan lease, with the app believing it
-    // held the models warm.
+    // re-acquire: React callers release and re-acquire on any dep change, so a debounced
+    // re-acquire at t=119 s plus a fresh interval would next POST at t≈239 s, past the
+    // server's 180 s plan lease.
     const e0: Entry = {
       key,
       spec,
