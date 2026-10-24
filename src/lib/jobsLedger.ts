@@ -9,9 +9,7 @@
 // came from: decode overrides, the override profile and the capability gates are
 // transient screen state that cannot be re-derived after a restart.
 //
-// Persisted through Rust (`jobs-ledger.json`, opaque there). The pure half
-// (`parseLedger` / `pruneLedger` / `addRow` / `removeRow`) is unit-tested; the runtime
-// wrapper at the bottom owns the singleton and the awaited save.
+// Persisted through Rust (`jobs-ledger.json`, opaque there).
 
 import { isTauri, loadJobsLedger, saveJobsLedger } from "./api";
 import type { RunContext, TranscribeRunState } from "./transcribeRun";
@@ -113,7 +111,7 @@ export function pruneLedger(l: Ledger, now: number): Ledger {
 
 /** Keep the newest MAX_ROWS (rows run oldest first) — and within MAX_LEDGER_BYTES: a row's
  *  options carry user text verbatim (the glossary), and Rust refuses an oversized save whole,
- *  which froze the disk copy. The oldest rows go first, never the last one. */
+ *  which would freeze the disk copy. The oldest rows go first, never the last one. */
 export function boundLedger(rows: LedgerRow[]): Ledger {
   if (rows.length > MAX_ROWS) rows = rows.slice(rows.length - MAX_ROWS);
   const enc = new TextEncoder();
@@ -133,8 +131,6 @@ export function removeRow(l: Ledger, jobId: string): Ledger {
   const rows = l.rows.filter((r) => r.jobId !== jobId);
   return rows.length === l.rows.length ? l : { v: 1, rows };
 }
-
-// ── Runtime singleton ─────────────────────────────────────────────────────────
 
 let ledger: Ledger = EMPTY_LEDGER;
 let loaded = false;
@@ -215,7 +211,6 @@ export async function forgetRow(jobId: string): Promise<void> {
   await write();
 }
 
-/** Tests only. */
 export function _resetLedgerForTests(): void {
   ledger = EMPTY_LEDGER;
   loaded = false;
