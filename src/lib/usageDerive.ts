@@ -1,9 +1,6 @@
-// Pure derivations for the usage surfaces (Statistics page, Home strip): the
-// per-kind densified series, scope filtering, tile values, the page query (range presets,
-// custom span, stage filter) and its URL form, chart bucketing, the quantile calendar and
-// hour-grid levels, streaks and the stage-row vocabulary. No React, no store — every function takes its inputs so
-// vitest covers it without a webview. The charts in components/stats/ only
-// lay these numbers out.
+// Pure derivations for the usage surfaces (Statistics page, Home strip). No React, no
+// store — every function takes its inputs so vitest covers it without a webview; the
+// charts in components/stats/ only lay these numbers out.
 
 import { dayToDate, fmtFull, plural } from "@/lib/format";
 import { langCode } from "@/lib/languages";
@@ -39,7 +36,7 @@ export const KIND_VAR: Record<UsageKind, string> = {
   text: "var(--c-chart-text)",
 };
 
-/** `?scope=` off the URL (or anything untrusted) → a scope, "all" when unrecognised. */
+/** `?kind=` (or the older `?scope=`) off the URL, or anything untrusted → a scope, "all" when unrecognised. */
 export function parseScope(v: string | null | undefined): UsageScope {
   return v === "dictation" || v === "file" || v === "url" || v === "text" ? v : "all";
 }
@@ -86,8 +83,8 @@ export function scopeTotals(k: UsageKinds, scope: UsageScope): UsageKindTotals {
   return safeTotals(k[scope]);
 }
 
-/** The page-wide measure (D35/D38): the six counters every kind carries, keyed exactly as
- *  the backend's own measure bar keys them (`?metric=`), so a link carries across. The two
+/** The page-wide measure: the six counters every kind carries, keyed exactly as the
+ *  backend's own measure bar keys them (`?metric=`), so a link carries across. The two
  *  `_s` measures are SECONDS; the formatters render them as durations. Client-side like the
  *  kind filter — it never changes the fetch. */
 export type ChartMetric = "audio_s" | "words" | "sessions" | "requests" | "processing_s" | "errors";
@@ -155,8 +152,6 @@ export function niceMax(v: number): number {
   return Math.max(4, (u <= 1 ? 1 : u <= 2 ? 2 : u <= 4 ? 4 : u <= 8 ? 8 : 10) * p);
 }
 
-/* ── tiles ──────────────────────────────────────────────────────────────── */
-
 /** Typing baseline the "time saved" figure is measured against (the Aalto 136M-keystroke
  *  study's mean is 52 wpm; 40 is the conservative baseline the server uses too). */
 export const TYPING_WPM = 40;
@@ -175,8 +170,6 @@ export function fmtTimeSaved(seconds: number): string {
   const m = min % 60;
   return `${h}h ${String(m).padStart(2, "0")}m`;
 }
-
-/* ── the page query: range · with-stages ────────────────────────────────── */
 
 /** Range presets in display order; `custom` carries `from`/`to`. */
 export const RANGE_PRESETS = ["7", "30", "90", "180", "365", "all", "custom"] as const;
@@ -226,7 +219,7 @@ function parseStageList(v: string | null | undefined): UsageStageKey[] {
   return STAGE_KEYS.filter((k) => set.has(k));
 }
 
-/** `?kind=&with=&range=&from=&to=&metric=` (plus the older `?scope=`) → page state. Anything
+/** `?kind=&with=&range=&from=&to=&metric=&rhythm=` (plus the older `?scope=`) → page state. Anything
  *  unrecognised falls back to the default; a custom range without a usable span too. */
 export function parsePageQuery(get: (key: string) => string | null): { scope: UsageScope; query: UsagePageQuery; metric: ChartMetric; rhythm: Rhythm } {
   const scope = parseScope(get("kind") ?? get("scope"));
@@ -295,8 +288,6 @@ export function isFiltered(scope: UsageScope, q: UsagePageQuery): boolean {
   return scope !== "all" || q.with.length > 0;
 }
 
-/* ── view signatures ────────────────────────────────────────────────────── */
-
 /** The parts of a usage-view signature (lib/usage.ts viewSignature's `[backendId, target,
  *  query]`), or null for a missing or malformed one. The one parser store.ts and usage.ts share. */
 export function viewSigParts(sig: string | null | undefined): unknown[] | null {
@@ -318,8 +309,6 @@ export function viewSigBackend(sig: string | null | undefined): string | null {
   const id = viewSigParts(sig)?.[0];
   return typeof id === "string" ? id : null;
 }
-
-/* ── days ───────────────────────────────────────────────────────────────── */
 
 const DAY_MS = 86_400_000;
 /** Day-since-epoch → weekday with Monday = 0 (1970-01-01 was a Thursday). */
@@ -362,7 +351,6 @@ export function quarterStart(day: number): number {
   return Math.floor(Date.UTC(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1) / DAY_MS);
 }
 
-/** The custom-span presets: This month · Last month · This quarter · This year · Last year. */
 export function spanPresets(today: number): { label: string; from: number; to: number }[] {
   return [
     { label: "This month", from: monthStart(today), to: today },
@@ -372,8 +360,6 @@ export function spanPresets(today: number): { label: string; from: number; to: n
     { label: "Last year", from: yearStart(today, 1), to: yearStart(today) - 1 },
   ];
 }
-
-/* ── chart bucketing ────────────────────────────────────────────────────── */
 
 export type BucketMode = "day" | "week" | "month";
 
@@ -420,14 +406,12 @@ export function bucketize(dense: readonly UsageSeriesPoint[], mode: BucketMode):
   return out;
 }
 
-/* ── quantile levels (calendar + hour grid) ──────────────────────────────── */
-
 export type Level = 0 | 1 | 2 | 3 | 4;
 /** The three breaks between the four active quarters (inclusive upper bounds). */
 export type Breaks = [number, number, number];
 export const QUARTER_NAME = ["", "lower quarter", "second quarter", "third quarter", "top quarter"] as const;
 
-/** S1: the four shades are the four quarters of the ACTIVE values (> 0) by rank, so the
+/** The four shades are the four quarters of the ACTIVE values (> 0) by rank, so the
  *  busiest value is always the darkest step and a handful of active days still spread
  *  (one day → top; two → second + top; four → one per step). Equal values share the lower
  *  of their steps. Returned as the inclusive upper bound of steps 1–3; empty → [0, 0, 0]. */
@@ -485,8 +469,6 @@ export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1, top?
   return out;
 }
 
-/* ── per-kind cells (D31/D33): what a grid cell's tooltip lists ──────────── */
-
 /** A cell's per-kind totals plus the scoped measure it is levelled on. */
 export interface KindSplit {
   kinds: UsageKinds;
@@ -502,7 +484,7 @@ export function presentKinds(kinds: UsageKinds, m: ChartMetric, scope: UsageScop
 }
 
 /** How many times each weekday (Mon=0) occurs in `[from, to]` — the hour tooltip's
- *  "≈ N per Tuesday · 78 Tuesdays in range" line (D32). */
+ *  "≈ N per Tuesday · 78 Tuesdays in range" line. */
 export function weekdayCounts(from: number, to: number): [number, number, number, number, number, number, number] {
   const out: [number, number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0, 0];
   if (!isDay(from) || !isDay(to) || from > to) return out;
@@ -510,8 +492,6 @@ export function weekdayCounts(from: number, to: number): [number, number, number
   for (let d = from; d <= end; d++) out[dowOf(d)]++;
   return out;
 }
-
-/* ── calendar ───────────────────────────────────────────────────────────── */
 
 export interface CalendarCell extends KindSplit {
   day: number;
@@ -597,8 +577,6 @@ export function weekColumns(cells: readonly CalendarCell[]): CalendarColumn[] {
   return cols;
 }
 
-/* ── the busy panel's rhythms (D40 R1): weekday × hour, day of month × hour, year × month ── */
-
 export type Rhythm = "hours" | "days" | "months";
 export const RHYTHMS: readonly Rhythm[] = ["hours", "days", "months"];
 
@@ -606,7 +584,7 @@ export function parseRhythm(v: string | null | undefined): Rhythm {
   return (RHYTHMS as readonly string[]).includes(v ?? "") ? (v as Rhythm) : "hours";
 }
 
-/** The count beside the measure in the busy tooltip and peak line (D45 C1): sessions, or
+/** The count beside the measure in the busy tooltip and peak line: sessions, or
  *  processing time when the measure IS sessions — the backend's pairing. */
 export function companionMetric(m: ChartMetric): ChartMetric {
   return m === "sessions" ? "processing_s" : "sessions";
@@ -627,13 +605,14 @@ export interface RhythmCell extends KindSplit {
   level: Level;
   /** The scoped companion measure (companionMetric). */
   companion: number;
-  /** False for a day-of-month column a one-month window does not reach, or a month the
-   *  window does not touch (months); rendered hatched, never levelled or counted. */
+  /** False for a weekday a short window never reaches (hours), a day-of-month column a
+   *  one-month window does not reach (days), or a month the window does not touch (months);
+   *  rendered hatched, never levelled or counted. */
   inWindow: boolean;
 }
 
-/** How one rhythm is laid out and named. Hours: weekday rows × hour columns. Days (D42 A2,
- *  the backend's geometry): hour rows × day-of-month columns. Months: year rows × month columns. */
+/** How one rhythm is laid out and named. Hours: weekday rows × hour columns. Days (the
+ *  backend's geometry): hour rows × day-of-month columns. Months: year rows × month columns. */
 export interface RhythmLayout {
   rows: number;
   cols: number;
@@ -941,15 +920,11 @@ export function rhythmModel(
 
 export const DOW_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-/* ── streaks ────────────────────────────────────────────────────────────── */
-
 export function streakFor(streaks: Partial<UsageStreaks> | null | undefined, scope: UsageScope): UsageStreak {
   const s = streaks?.[scope];
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
   return { current: n(s?.current), best: n(s?.best) };
 }
-
-/* ── stages ─────────────────────────────────────────────────────────────── */
 
 export interface StageRowMeta {
   key: UsageStageKey;
@@ -1021,8 +996,7 @@ export function pct(n: number, of: number): number {
  *  drops a space a folded control or stripped edge character leaves behind. */
 const targetCode = (c: string) => langCode(c.trim(), 12).trim();
 
-/** Target codes as `DE 61 %`-style shares of the stage's runs (sanitized and clipped like
- *  translationRows), top `max`. */
+/** Target codes as `DE 61 %`-style shares of the stage's runs, top `max`. */
 export function targetShares(stage: UsageStage, max = 4): { code: string; pct: number }[] {
   // Same code as translationRows, so the chip and the facet name a target alike.
   const list = (stage.targets ?? []).filter(
@@ -1031,8 +1005,6 @@ export function targetShares(stage: UsageStage, max = 4): { code: string; pct: n
   list.sort((a, b) => b.runs - a.runs);
   return list.slice(0, max).map((t) => ({ code: targetCode(t.code), pct: pct(t.runs, stage.runs) }));
 }
-
-/* ── horizontal-bar facets ──────────────────────────────────────────────── */
 
 export interface FacetRow {
   label: string;
@@ -1069,7 +1041,7 @@ export function facetRows(
 
 /** The "Translated into" facet: one row per target code (upper-case, the picker's codes),
  *  then the outcomes that were not a translation, dim. Codes come from the server and are
- *  shown as-is (D26: code only) through langCode — sanitized, so a bidi or control character
+ *  shown as codes only, through langCode — sanitized, so a bidi or control character
  *  cannot reach the label or its title, and clipped to 12 code points — the bound the
  *  dictation targets themselves carry (chipController.ts), so two regional variants such as
  *  zh-Hant-TW and zh-Hant-HK stay apart. */
