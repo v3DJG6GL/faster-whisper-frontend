@@ -780,12 +780,10 @@ function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonl
   return null;
 }
 
-/** One rhythm of the busy panel for the scoped kind and the page's measure: the cells,
- *  levelled by quartiles of the active ones, the peak, the side-bar totals relative to a
- *  flat distribution, occurrences, the phrase, and whether this server sent what it needs.
- *  `bounded` = `from`..`to` is the window the document really covers; false for a stand-in
- *  (all time before the server named its first day), which must not hatch weekday rows or
- *  days of the month. */
+/** One rhythm of the busy panel for the scoped kind and the page's measure, its cells
+ *  levelled by quartiles of the in-window active ones. `bounded` = `from`..`to` is the window
+ *  the document really covers; false for a stand-in (all time before the server named its
+ *  first day), which must not hatch weekday rows or days of the month. */
 export function rhythmModel(
   rhythm: Rhythm,
   src: RhythmSource,
@@ -932,7 +930,7 @@ export interface StageRowMeta {
   label: string;
   /** CSS token for the stage's dot + meter (the existing pipeline-stage hues). */
   colorVar: string;
-  /** The empty-state row's second sentence, after "Not used in the last N days." */
+  /** The empty-state row's second sentence, after "Not used in <range>." */
   emptyCopy: string;
 }
 
