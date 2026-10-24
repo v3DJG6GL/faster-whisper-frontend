@@ -42,7 +42,7 @@ const STATE_TEXT: Record<DictationTone, string> = {
 };
 
 /** Subscribes to the high-frequency dictation `level` (~30Hz) on its own, so a level tick
- *  re-renders just this leaf — not all of Home + every ProfileCard. Waveform reads the level
+ *  re-renders just this leaf — not all of Home + every ProfileRow. Waveform reads the level
  *  into a ref and self-animates via rAF, so isolating the subscription here costs nothing. */
 function LiveWaveform(props: Omit<ComponentProps<typeof Waveform>, "level">) {
   const level = useApp((s) => s.level);
