@@ -435,9 +435,9 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
     }
 }
 
-/// The most recent chip hit region (logical px) requested by the webview, so a (re)show can
-/// restore it the instant `ignore_cursor` wipes the input shape (the webview also re-reports its
-/// exact bounds a beat later).
+/// The most recent persistent chip hit region (logical px; never a persist=false hover hold), so
+/// a (re)show can restore it the instant `ignore_cursor` wipes the input shape (the webview also
+/// re-reports its exact bounds a beat later).
 #[cfg(target_os = "linux")]
 static LAST_HIT_REGION: std::sync::Mutex<Option<(f64, f64, f64, f64)>> =
     std::sync::Mutex::new(None);
