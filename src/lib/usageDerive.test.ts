@@ -134,7 +134,7 @@ describe("usageDerive", () => {
     // One active day (500 words): its breaks are [0, 0, 0] and it sits in the top step.
     expect(legendRanges(quantileBreaks([500]), String)).toEqual(["0", "—", "—", "—", "1+"]);
     expect(legendRanges([0, 0, 0], String)).toEqual(["0", "—", "—", "—", "1+"]);
-    // Two active days.
+    // Two active days, then three.
     expect(legendRanges([0, 3, 3], String)).toEqual(["0", "—", "1–3", "—", "3+"]);
     expect(legendRanges([0, 5, 50], String)).toEqual(["0", "—", "1–5", "5–50", "50+"]);
     // Durations under a second open at the caller's lo.
