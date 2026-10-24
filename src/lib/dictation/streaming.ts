@@ -183,14 +183,11 @@ function clearWarmTimer(): void {
 // prepend this to keep earlier lines visible while the next sentence is spoken.
 let committedDoc = "";
 // Coalescing state for `stream://partial` (see the handler). MODULE scope, not the listener
-// closure, because `partial` has five writers and only one of them is that handler: `final`
-// folds the utterance into `committedDoc` and republishes, `boundary` clears it, and
-// startLiveInner / cancelLive / flashError reset it. A trailing tick armed up to
-// PARTIAL_MIN_MS earlier would otherwise fire AFTER any of those and overwrite it with the
-// pre-`final` text — a write REORDERING the unthrottled handler could not produce, since it
-// wrote synchronously in arrival order. `inSession()` cannot catch it: it stays true through
-// `boundary`, through the post-`final` drain, and into a fresh session. So every other writer
-// calls `resetPartialPreview()` and the tick has nothing stale left to publish.
+// closure: `final`, `boundary`, startLiveInner, cancelLive and flashError also write `partial`,
+// and a trailing tick armed up to PARTIAL_MIN_MS earlier would otherwise fire AFTER them and
+// overwrite their write with the pre-`final` text. `inSession()` cannot catch it (it stays true
+// through `boundary`, the post-`final` drain and into a fresh session), so each of those writers
+// calls `resetPartialPreview()`.
 const PARTIAL_MIN_MS = 33;
 let lastPartialAt = 0;
 let partialTimer: ReturnType<typeof setTimeout> | undefined;
@@ -378,23 +375,19 @@ interface InsertCfg {
   timing: "off" | "stop" | "live";
   method: "paste" | "direct" | "clipboard";
   /** The Profile's insertion overrides, frozen for the session — the one layer that CAN'T
-   *  be re-read live (see resolveTarget). The app-rule layer above it stays live per phrase,
-   *  which is the whole point: rules follow window switches, the profile does not change
-   *  mid-session.
-   *
-   *  `autoEnter`/`restoreClipboard` deliberately do NOT live here as resolved values any
-   *  more. They used to be frozen at start, which meant an app rule could not govern them —
-   *  two controls on one App Rules screen with opposite semantics. They now come off
-   *  `resolveTarget`'s result at each site, like `method` always has. */
+   *  be re-read live (see resolveTarget). The app-rule layer above it stays live per phrase:
+   *  rules follow window switches, the profile does not change mid-session.
+   *  `autoEnter`/`restoreClipboard` are deliberately NOT frozen here: they come off
+   *  `resolveTarget`'s result at each site, like `method`, so an app rule can govern them. */
   profileInsertion?: InsertionOverrides;
-  live: boolean; // timing !== "off", hands-free (or clipboard in any mode), on a streaming backend
+  live: boolean; // timing !== "off", no settle-time target pick, and liveAllowed (asked for, streaming, not hold unless clipboard)
   targetApp: FocusedApp | null; // focused app at start (per-app rules + chip + field guard)
   blocked: boolean; // a per-app rule blocks typing here → coerced to clipboard-only
   notEditable: boolean; // deep detection: focused element isn't a text field → coerced to clipboard-only
   activation: ActivationKind; // hold/PTT must never live-TYPE (the held chord folds into the keys)
 }
 let insertCfg: InsertCfg | null = null;
-// P19: per-phrase insert feedback. `sessionTyped`/`sessionClipboard` accumulate what actually
+// Per-phrase insert feedback. `sessionTyped`/`sessionClipboard` accumulate what actually
 // happened this session, so the chip's end-of-session done marker is truthful; `insertSeq`
 // bumps on every landed phrase so the chip re-triggers its calm green "inserted" pulse.
 let sessionTyped = false;
@@ -414,11 +407,10 @@ function endOutcome(): "typed" | "clipboard" | "none" {
   return sessionTyped ? "typed" : sessionClipboard ? "clipboard" : "none";
 }
 
-// ── Dictation history capture ────────────────────────────────────────────────
-// Everything known at session START, frozen at module scope: by settle time the
-// startLiveInner locals (backend/model/language) are long gone and settleIdle
-// itself clears activeProfile. Cleared by cancelLive so a cancelled session's
-// late `closed` can never record it.
+// History capture: everything known at session START, frozen at module scope: by settle time
+// the startLiveInner locals (backend/model/language) are long gone and settleIdle itself
+// clears activeProfile. Cleared by cancelLive so a cancelled session's late `closed` can never
+// record it.
 let sessionMeta: {
   startedAt: number;
   backendId: string;
@@ -459,15 +451,11 @@ export function translationOutcome(s: {
   return s.translated ? "translated" : "kept_original";
 }
 
-/** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts).
- *  Once per session, through the guard in deferSessionOutcome — every terminal path books, and
- *  whichever runs first wins: settleIdle reports the truthful delivery; cancelLive reports what
- *  already landed (live phrases typed or copied, else "none") with `abandoned` — before it resets
- *  sessionTyped/sessionClipboard. The failure paths book through bookFailedEnd instead:
- *  teardownAfterFatalInject and a kept-error settle book what landed before the failure; the
- *  stuck-finalize watchdog, the stream://error handler and the stopLive reject claim through
- *  deferSessionOutcome before their teardown and book the recovery copy's answer (or, with no
- *  stop-mode text to recover, what landed) themselves. */
+/** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts),
+ *  once per session through deferSessionOutcome's guard. settleIdle reports the truthful
+ *  delivery; cancelLive reports what already landed (else "none") with `abandoned`, before it
+ *  resets sessionTyped/sessionClipboard. The failure paths book through bookFailedEnd /
+ *  deferSessionOutcome instead (see there). */
 function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
   deferSessionOutcome()?.(delivery, abandoned);
 }
@@ -526,10 +514,10 @@ type RecordingFrame = { path: string; utterance: number | null; durationMs: numb
 let sessionRecordingPath: string | null = null;
 let capturedRecordId: string | null = null;
 
-// ── Per-utterance History (hands-free type-as-you-speak) ────────────────────
-// Such a session types each utterance as it finishes, so History keeps one record per
-// utterance too — written at its `final`, not at settle, so a crash keeps what was said.
-// Insert-at-stop and push-to-talk sessions keep the one record per session above.
+// Per-utterance History: a hands-free type-as-you-speak session types each utterance as it
+// finishes, so History keeps one record per utterance too — written at its `final`, not at
+// settle, so a crash keeps what was said. Insert-at-stop and push-to-talk sessions keep the
+// one record per session above.
 /** Decided once at stream start (the per-utterance clip param can only be said then): a
  *  later in-place upgrade to hands-free keeps the settle-time record. */
 let sessionPerUtterance = false;
@@ -559,12 +547,11 @@ function resetUtteranceHistory(): void {
   utteranceByOrdinal.clear();
 }
 
-// ── T2T dictation translation (per-profile "Translate output") ──────────────
-// Frozen per session from Backend→Profile translationOverrides; target set =
-// every injection carries the translation instead of the original. All doc
-// bookkeeping (committedDoc/injectedText/seenDoc/clipBaseline) stays in
-// ORIGINAL text — only the outbound copy is swapped — so phrase diffing,
-// history capture and recovery paths are structurally untouched.
+// Dictation translation (per-profile "Translate output"), frozen per session from
+// Backend→Profile translationOverrides; target set = every injection carries the translation
+// instead of the original. All doc bookkeeping (committedDoc/injectedText/seenDoc/clipBaseline)
+// stays in ORIGINAL text — only the outbound copy is swapped — so phrase diffing, history
+// capture and recovery paths are structurally untouched.
 /** The session's resolved translation context WITHOUT targets, kept so a settle-time pick
  *  can create a translation the Profile didn't configure (`applySessionTargets`). Set at
  *  every session start, even when `sessionTranslation` itself is null. */
@@ -603,17 +590,12 @@ function releaseWarmLease(): void {
   warmLease = null;
 }
 
-// Stop-timing: the translated text that actually got injected (History keeps both).
+// The translated text that actually got injected, live or stop-timing (History keeps both).
 let sessionTranslatedText: string | null = null;
-/** The same text, accumulated PER LANGUAGE across the session's phrases.
- *
- *  In live mode each phrase is translated separately and its already-joined
- *  blob used to be appended to the previous one with a space — so phrase 2's
- *  German ran straight into phrase 1's French and a multi-target session
- *  collapsed into `DE EN FR DE EN FR…` in a single paragraph, with even the
- *  blank-line boundaries destroyed at every phrase seam. Accumulating by
- *  language instead keeps each track continuous and readable, and is what
- *  History renders. */
+/** The same text, accumulated PER LANGUAGE across the session's phrases — what History
+ *  renders. Live mode translates each phrase separately, so appending the joined blobs would
+ *  interleave a multi-target session into `DE EN FR DE EN FR…`; per language, each track
+ *  stays continuous. */
 // Null-prototype: the keys are language codes from `translateTo`, which sanitizeProfiles
 // type-checks but does not allowlist, and the server echoes them back. On a plain `{}` a code
 // spelled like an inherited member ("constructor", "toString"…) reads a non-nullish function,
@@ -703,50 +685,29 @@ export function abortDictationTranslate(): void {
 let sessionPhraseContext: string[] = [];
 const PHRASE_CONTEXT_MAX = 3;
 
-/** What a phrase translate produced, and whether it actually translated.
- *
- *  `translated` used to be inferred as `out !== in`, which is wrong twice over:
- *  a translation that legitimately equals the original reads as a failure, and
- *  it forced every caller to re-derive a fact this function already knew. */
+/** What a phrase translate produced, and whether it actually translated. `translated` is
+ *  explicit, not inferred as `out !== in`: a translation that legitimately equals the
+ *  original would read as a failure. */
 interface PhraseOut {
   text: string;
   translated: boolean;
   byLang?: Record<string, string>;
 }
 
-/** The gap between consecutive PHRASES of a translated live session.
- *
- *  One blank line already separates the languages WITHIN a phrase (the
- *  `\n\n` join in runDictationTranslate), so phrases need a wider gap or the
- *  two boundaries are indistinguishable — you cannot see where one phrase's
- *  French ends and the next phrase's German begins.
- *
- *  It also has to be inserted explicitly, because the two paths disagreed
- *  about whitespace: a translated phrase is trimmed and joined, arriving with
- *  no leading space at all, while a phrase whose translation was abandoned is
- *  the raw document slice and keeps Whisper's leading space. That asymmetry is
- *  what glued an untranslated German phrase onto the end of the previous
- *  phrase's French line. */
+/** The gap between consecutive PHRASES of a translated live session. Wider than the `\n\n`
+ *  that separates languages WITHIN a phrase (runDictationTranslate), or the two boundaries
+ *  are indistinguishable. Inserted explicitly because a translated phrase arrives trimmed,
+ *  while one whose translation was abandoned is the raw slice with Whisper's leading space. */
 const PHRASE_GAP = "\n\n\n";
 
-// ── Cold-translate progress ─────────────────────────────────────────────────
-// A cold llama.cpp server spends tens of seconds downloading/loading the GGUF
-// before a single token is produced. The chip's "translating…" alone reads as a
-// hang for that long, so the stop-timing one-shot (the only path that waits
-// that long) publishes a phase label from the server's progress entry.
-// Same vocabulary as the retro-translate card: downloading → a real fraction,
-// loading → indeterminate, translating → a real fraction.
-//
-// This module no longer runs its own interval: runDictationTranslate polls the
-// SAME endpoint for EVERY phrase (that poll is how it tells a slow server from
-// a wedged one) and hands each reading here, so one poll now serves both. The
-// early-out below is what keeps a live phrase's polling invisible — the phase
-// card only exists for the cold one-shot.
-// Same stages as the retro-translate card (its labels are shorter — it sits under
-// a translate-only heading). BatchProgress.stage is a plain
-// string, so an unknown stage (no entry yet — the request hasn't registered the
-// id) is absent here and keeps what we show — read through ownProp, so a server stage
-// named like an inherited key ("constructor") is unknown too, not a function label.
+// A cold llama.cpp server spends tens of seconds downloading/loading the GGUF before the
+// first token, and "translating…" alone reads as a hang, so the stop-timing one-shot (the
+// only path that waits that long) shows a phase label from the server's progress entry —
+// the retro-translate card's stages: downloading → fraction, loading → indeterminate,
+// translating → fraction. runDictationTranslate's stall-detector poll hands every reading
+// here; the early-out below keeps a live phrase's polls invisible.
+// An unknown stage (the request hasn't registered the id yet) keeps what we show — read
+// through ownProp, so a stage named like an inherited key ("constructor") is unknown too.
 const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
   downloading: "Downloading the translation model…",
   loading: "Loading the translation model…",
@@ -793,16 +754,12 @@ async function maybeTranslate(
   // session opened, and reading `sessionMeta` late stamped that session's job on this receipt.
   const clientJob = sessionMeta?.clientJob ?? null;
   try {
-    // Pair this phrase with ITS OWN capture row before the request goes out.
-    // The one-shot claims nothing: it translates the whole transcript in one
-    // call, so there is no single utterance whose receipt it completes — and
-    // taking "the most recent id" (what it used to do) meant stealing the last
-    // live phrase's receipt.
-    // …and only when this session TOLD the server to hold per-utterance receipts. A hold
-    // session opens with `live` off and declares `per_utterance: false`; when its hands-free
-    // superset upgrades it in place (`applyReclassify`) the phrases take the live path, but
-    // the server was never asked for receipts and sends no `captured` frame — waiting for
-    // one would park every phrase for the full timeout.
+    // Pair this phrase with ITS OWN capture row before the request goes out. The one-shot
+    // claims nothing: it translates the whole transcript, so no single utterance's receipt is
+    // its own (taking the latest id would steal the last live phrase's). And only when this
+    // session TOLD the server to hold per-utterance receipts: a hold session declares
+    // `per_utterance: false`, and after an in-place hands-free upgrade (`applyReclassify`) no
+    // `captured` frame ever comes — waiting for one would park every phrase for the full timeout.
     const capturedId = await captureIds.take(
       oneShot || !sessionPerUtteranceDeclared ? null : (opts?.utterance ?? null),
     );
@@ -848,8 +805,8 @@ async function maybeTranslate(
           myProgressId = progressId;
           activeTranslateCancel = { serverUrl: tr.serverUrl, backendId: tr.backendId, progressId };
           // Only the one-shot waits long enough for the silence to read as a
-          // hang; a live phrase's 20 s cap lands while the user is still
-          // talking, and a per-phrase progress card would fight the chip.
+          // hang; a live phrase's shorter budget (20 s floor) runs out while the
+          // user is still talking, and a per-phrase progress card would fight the chip.
           if (oneShot && cold) {
             useApp.getState().setDictation({
               dictationPhase: {
@@ -1114,10 +1071,8 @@ function captureDictationHistory(): boolean {
       translatedText: sessionTranslatedText ?? undefined,
       translationTarget: tr?.targets.join(", "),
       translationInjected: sessionTranslatedText != null,
-      // The tracks kept apart, plus the target list as an ARRAY. The joined
-      // `translationTarget` above stays for records already on disk, but it
-      // is display-only: RouteBadge needs the parts, and a 3+ target list was
-      // being truncated mid-code.
+      // The tracks kept apart, plus the target list as an ARRAY: RouteBadge needs the
+      // parts. The joined `translationTarget` above stays for records already on disk.
       translations: sessionTracks(),
       translationTargets: tr ? [...tr.targets] : undefined,
       includeOriginal: tr?.includeOriginal || undefined,
@@ -1246,13 +1201,10 @@ function enqueueInject(fn: () => Promise<void>): boolean {
  *  path (no clipboard), so the per-phrase Enter never clobbers the clipboard. Clipboard-only
  *  types nothing, so it no-ops there. */
 function enqueueAutoEnter(): void {
-  // Capture the session token SYNCHRONOUSLY (before the queued task's awaited resolveTarget) so the
-  // task bails on BOTH a cancel (insertCfg→null) AND a cancel-then-fresh-restart (insertCfg→a NEW
-  // object) landing during the await — a plain `!insertCfg` catches only the null case, so a
-  // cancel-then-restart would fire a stray Enter into the next session's window. Mirrors the live
-  // final / boundary-separator / stop tasks (all capture cfg before their enqueue). Within a session
-  // insertCfg keeps a stable identity, and stopLive leaves it intact, so a normal end-of-session
-  // Enter still fires.
+  // Capture the session token SYNCHRONOUSLY so the task bails on a cancel (insertCfg→null) AND on
+  // a cancel-then-restart (a NEW insertCfg) landing during the await — else a stray Enter fires into
+  // the next session's window. insertCfg is stable within a session and stopLive leaves it intact,
+  // so a normal end-of-session Enter still fires.
   const cfg = insertCfg;
   enqueueInject(async () => {
     const t = await resolveTarget(cfg);
@@ -1288,18 +1240,16 @@ function enqueueAutoEnter(): void {
 async function pressReturn(t: Awaited<ReturnType<typeof resolveTarget>>, cfg: InsertCfg | null): Promise<boolean> {
   const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
   // The Return ended the phrase in the field: the next translated block opens on a fresh line,
-  // not three more Returns. The session token, like every task's post-await write. Only a Return
-  // in the window that owes the gap pays it.
+  // not three more Returns. Only a Return in the window that owes the gap pays it.
   if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
   return landed && !diverted;
 }
 
 /** (Re)arm the phrase-end quiet timer — the single "you paused, the phrase is done" signal that
  *  drives the per-phrase actions: auto-Enter, clipboard restore, AND advancing the clipboard-only
- *  phrase baseline. Called on every partial/final while live, so ongoing speech keeps deferring
- *  them; once speech stops for PHRASE_END_QUIET_MS the phrase is done. The backend hard-break
- *  boundary (~20s) is a backstop. Armed for ANY live session (not just Enter/restore) so the
- *  clipboard-only baseline still advances on a pause. */
+ *  phrase baseline (so it is armed for ANY live session). Called on every partial/final while
+ *  live, so ongoing speech keeps deferring them. The backend hard-break boundary (~20s) is a
+ *  backstop. */
 function bumpPhraseEnd(deferred = false): void {
   if (!insertCfg?.live) return;
   // A bump from OUTSIDE (a partial, a final, a dropped utterance) is news; only the timer's own
@@ -1308,16 +1258,12 @@ function bumpPhraseEnd(deferred = false): void {
   if (phraseEndTimer) clearTimeout(phraseEndTimer);
   phraseEndTimer = setTimeout(() => {
     phraseEndTimer = null;
-    // "Quiet for 1.2 s" was only ever a stand-in for "the phrase is done" — and it is wrong in
-    // exactly the moment it matters: the server stops sending partials when you pause, waits
-    // out its own commit silence (~1.2 s) and only THEN decodes, so this expired while the
-    // phrase was still on its way. After a forced commit (a long sentence) or with partials
-    // skipped (server behind realtime) it expired MID-SPEECH, and the Enter landed between two
-    // halves of one thought. The server now says when it still holds an utterance: while it
-    // does, keep waiting. Its terminal frame re-arms this timer fresh (`final` via the `grew`
-    // bump, `dropped` via the utterance listener), so the Enter still follows the text by the
-    // same 1.2 s. Bounded: utterancePending stops believing a stale `open` on its own, and the
-    // cap below covers anything else — a withheld Enter must never be a permanent one.
+    // Quiet is not "the phrase is done": on a pause the server waits out its own commit silence
+    // (~1.2 s) and only THEN decodes, and after a forced commit or skipped partials this fires
+    // mid-speech. So while the server still holds an utterance, keep waiting; its terminal frame
+    // re-arms this timer fresh (`final` via the `grew` bump, `dropped` via the utterance
+    // listener). Bounded: utterancePending drops a stale `open` on its own and the cap below
+    // covers anything else — a withheld Enter must never be a permanent one.
     if (isCapturing() && pendingIsLive(pending, performance.now())) {
       const t = performance.now();
       if (phraseDeferSince === null) phraseDeferSince = t;
@@ -1348,22 +1294,16 @@ function bumpPhraseEnd(deferred = false): void {
         : undefined;
     if (closing !== undefined) clipClosed = closing;
     clipBaseline = committedDoc;
-    // Everything else is decided IN the queue, after the Enter above and after every phrase
-    // task enqueued before this pause has landed. Those tasks set clipDirty and book the window
-    // only after an awaited translate + inject — on a cold model that outlasts this 1.2 s — so
-    // a synchronous read here saw clipDirty still false (no restore; the transcript then sat on
-    // the user's clipboard through the pause) and closed the window before its booking (the
-    // late booking then left a stale clipBooked that the next window rolled back over, losing
-    // this window's translation, context and per-language tracks). Chained directly rather than
-    // via enqueueInject so the flood cap can never drop the window close; the session token
-    // guards a cancel-then-restart (both reset all of this themselves).
+    // Everything else is decided IN the queue, after the Enter above and every phrase task
+    // enqueued before this pause: those set clipDirty and book the window only after an awaited
+    // translate + inject (a cold model outlasts 1.2 s), so a synchronous read here would skip the
+    // restore and close the window before its booking — the next window then rolls back over it.
+    // Chained directly rather than via enqueueInject so the flood cap can never drop the window
+    // close; the session token guards a cancel-then-restart (both reset all of this themselves).
     {
       const cfg = insertCfg;
       injectChain = injectChain.then(async () => {
         if (insertCfg !== cfg) return;
-        // Restore the user's clipboard now the phrase's paste has landed — so between phrases
-        // the clipboard is theirs, not the transcript. The snapshot survives in Rust, so the
-        // next pasted phrase restores again.
         if (clipDirty && beganInjection) {
           clipDirty = false;
           await giveClipboardBack();
@@ -1417,11 +1357,7 @@ function clearPhraseEnd(): void {
  *     shortcut in the focused app instead of typing. Live-in-hold is therefore allowed
  *     only for clipboard; that is enforced at session start, but focus can move
  *     mid-session to a window whose rule resolves to paste/direct, so the check has to
- *     repeat per phrase.
- *
- *  Extracted because it was written out five times across three files. Four of those
- *  were the same expression; the fifth (`applyReclassify`) had silently dropped a term
- *  while its comment claimed it recomputed the others "exactly". */
+ *     repeat per phrase. */
 export function holdCoerced(activation: ActivationKind | undefined, method: InsertMethod): boolean {
   return method === "clipboard" || activation === "hold";
 }
@@ -1450,8 +1386,6 @@ export function holdCoerced(activation: ActivationKind | undefined, method: Inse
  *  quick-launch both start a hold Profile hands-free, so a Profile-only test would be
  *  wrong for exactly those two entry points. */
 export function liveAllowed(args: {
-  /** Did the user ask for it? (Item 6 moves this from the global insert-timing to a
-   *  per-Profile "Type as I speak"; the other two terms are unaffected either way.) */
   wants: boolean;
   endpoint: EndpointKind;
   activation: ActivationKind;
@@ -1496,11 +1430,6 @@ export function resolveInjectionTarget(
 } {
   // Our own window is focused → dictation won't type here (the Rust injection guard skips it).
   // Don't match an app rule or the field guard, and don't coerce to clipboard-only.
-  //
-  // Folded IN here rather than left at the two call sites that used to open-code it. Both
-  // read `g.insertMethod`/`g.pasteShortcut` directly, which was already the cause of one
-  // documented divergence — and with a Profile layer they would have silently ignored it.
-  // This function's own docblock forbids exactly that duplication.
   if (targetApp?.isSelf) {
     return {
       rule: undefined,
@@ -1586,22 +1515,18 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
   // start-of-session value. Our own window shows as "→ this app": neutral, no warn hint.
   publishTarget(targetApp ?? null, resolved.isSelf ? null : rule?.block ? "blocked" : notEditable ? "notEditable" : null);
-  // Always hand Rust the app we resolved against, our own window included. `null` DISABLES the
-  // sink-side focus re-check, so a null here meant: alt-tab between this resolve and the keys
-  // going out and the resolved method was used with no re-check and no per-app rule — `block`
-  // included. A real id makes that move a mismatch, which degrades to clipboard-only.
+  // Always hand Rust the app we resolved against, our own window included: `null` DISABLES the
+  // sink-side focus re-check, so an alt-tab before the keys go out would use the resolved method
+  // with no per-app rule (`block` included). A real id makes that move a mismatch, which degrades
+  // to clipboard-only.
   return { ...resolved, appId: targetApp?.appId ?? null };
 }
 
 /** Copy `text` to the clipboard for a RESOLVED target — the clipboard-only phrase path and the
- *  recovery copies after a failed insert. `expectAppId` is passed for
- *  uniformity only: on a clipboard-method call Rust returns from its clipboard arm BEFORE the
- *  per-app sink re-check that reads it, so it is inert here. The guard that CAN answer
- *  `landed: false` is inject_text's own-window ENTRY check (or a clipboard write that failed
- *  before any keystroke) —
- *  callers believe that answer rather than the attempt. The target-less recovery copies
- *  (stuck-finalize, stream://error, stopLive reject) and the stop-mode sink-skip recovery go
- *  through the guard-free `recoverUnguarded` instead. */
+ *  recovery copies after a failed insert. `expectAppId` is inert here: Rust's clipboard arm returns
+ *  BEFORE the per-app sink re-check that reads it. `landed: false` comes from inject_text's
+ *  own-window ENTRY check or a failed clipboard write, and callers believe that answer rather than
+ *  the attempt. Target-less recoveries go through the guard-free `recoverUnguarded` instead. */
 function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>>) {
   return injectText({
     text,
@@ -1668,7 +1593,7 @@ function startTargetPoll(): void {
   // errors. In this fire-and-forget poll there's no caller to surface them, so attach .catch here
   // to avoid an unhandled rejection on each tick — matching every other void-ed IPC in this file.
   const poll = () => void resolveTarget(insertCfg).catch((e) => console.error("target poll failed:", e));
-  poll(); // resolve once immediately, then keep it fresh
+  poll();
   targetPollTimer = setInterval(poll, TARGET_POLL_MS);
 }
 function stopTargetPoll(): void {
@@ -1678,9 +1603,8 @@ function stopTargetPoll(): void {
   }
 }
 
-// Hold the "injecting" state at least this long, so the writing-out phase is actually
-// perceivable on screen. A sub-frame flash would just read as the chip snapping shut
-// the instant you stop — which is the very thing we're fixing.
+// Hold the "injecting" state at least this long so the writing-out phase is perceivable; a
+// sub-frame flash reads as the chip snapping shut the instant you stop.
 const MIN_INJECT_VISIBLE_MS = 450;
 
 // A hold PRESS that landed while the previous session was still "finalizing…"/"inserting…"
@@ -1746,10 +1670,8 @@ function consumePendingHoldStart(): void {
  *  status/dictationError stay so flashError's linger can show the hint; flashError's timer
  *  idles later. */
 function settleIdle(keepError = false): void {
-  // The success end of a session: the models this run asked the server to keep
-  // hot are no longer ours to hold. Unlike the cancel below this is NOT paired
-  // with cancelDictationTranslate — releasing a lease stops a renew timer, it
-  // never interrupts server-side work.
+  // The models this run asked the server to keep hot are no longer ours to hold. Releasing a
+  // lease only stops a renew timer; it never interrupts server-side work.
   releaseWarmLease();
   // A short session (stream://incomplete) decides its surface here, after the whole tail
   // ran: the docs and the delivery flags are final. Not over a kept error (keepError): the
@@ -1757,15 +1679,11 @@ function settleIdle(keepError = false): void {
   const incomplete = keepError
     ? null
     : incompleteSurface(sessionIncomplete !== null, bankedDoc + committedDoc, endOutcome());
-  // NO cancelDictationTranslate() here, deliberately. Settling is the SUCCESS
-  // path: we only reach it after the injection queue drained, which means every
-  // translate already resolved and maybeTranslate's finally dropped the handle.
-  // Cancelling a finished translation would either 404 or, worse, abort a
-  // translate belonging to a session that started meanwhile. The teardown paths
-  // (cancelLive / stopLive-reject / stream://error / teardownAfterFatalInject)
-  // are the ones that abandon work mid-flight, and they all cancel.
+  // NO cancelDictationTranslate() here (see abandonSessionWork): we only reach this after the
+  // injection queue drained, so every translate already resolved, and cancelling would either
+  // 404 or abort a translate of a session that started meanwhile.
   //
-  // Flush any buffered clipboard-window translations before capture reads them.
+  // Buffered clipboard-window translations must be in the docs before capture reads them.
   flushClipByLang();
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
@@ -1819,10 +1737,7 @@ function settleIdle(keepError = false): void {
     // (history, outcome "none", lease), and BEFORE the hold-start below. flashError voids a
     // queued fast re-press; this flash is not the press's failure, so keep it across the call
     // (the release path still voids it as usual) — the new session then replaces the error.
-    // Not the Rust notice verbatim: it says only the last phrase may be missing, which
-    // understates a session where nothing survived (the handler's warn keeps the raw text).
-    // Its cause stays — a restart or a lost connection is not a slow server. Its own doorway
-    // line is the generic one; put this specific message back.
+    // flashError sets the generic doorway line; put this specific message back.
     const msg = incompleteFlashMessage(sessionIncomplete);
     const queued = pendingHoldStart;
     flashError(msg);
@@ -1935,10 +1850,8 @@ function applySessionTargets(targets: string[]): void {
     // No session context to build on — don't advertise a route nothing will produce.
     return;
   }
-  // Republish so the chip's route matches what will actually be injected.
-  // `[]`, not null, while the session lives: null means "no session" (the chip then previews
-  // the Profile's configured route), and an EMPTY pick is a real answer — publishing null for it
-  // made the chip advertise "→ FR IT" for a session that inserts the original untranslated.
+  // `[]`, not null, while the session lives: null means "no session" and the chip would preview
+  // the Profile's configured route for a session that inserts the original untranslated.
   // The pick settles the "undecided" route: a real target list clears the pending glyph, an
   // empty one becomes the brief "· original" acknowledgement.
   useApp.getState().setDictation({ sessionTargets: clean, routePending: clean.length ? null : "original" });
@@ -1978,11 +1891,8 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
       if (insertCfg === cfg && curStatus === "injecting") {
         settleIdle();
       } else if (insertCfg === cfg && curStatus === "error") {
-        // An error flashed during the wait (the drained-chain case settled above).
-        // flashError is showing the message for ERROR_LINGER_MS.
-        // Run the same bookkeeping settleIdle does (lease, history, outcome, session fields)
-        // but leave status/dictationError intact so the user can read the recovery hint.
-        // flashError's own timer will clear to idle when it expires.
+        // An error flashed during the wait (the drained-chain case settled above): bookkeeping
+        // only, flashError's linger keeps the hint and idles later.
         settleIdle(true);
       }
     }, wait);
@@ -2029,14 +1939,11 @@ function armStuckWatchdog(): void {
       // Same "no `closed` will ever arrive" condition as stream://error and the stopLive reject: in
       // stop-timing mode the whole transcript lives only in committedDoc/bankedDoc until the `closed`
       // tail injects it. Read it BEFORE cancelLive() clears those globals, then copy it to the
-      // clipboard so a lost connection doesn't silently drop the transcript — the (N+1)th sibling of
-      // those two recovery paths. Live mode injected per-phrase already → "". endInjection (chained by
+      // clipboard. Live mode injected per-phrase already → "". endInjection (void-chained by
       // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
       // The recovery copy WAITS for cancelLive, so cancelStream(true) and the synchronous idle land
-      // before the copy and before the superseded check below. endInjection is only void-chained by
-      // cancelLive, not awaited; it is a no-op in stop mode (nothing snapshotted), which is the only
-      // mode with a pending transcript here.
+      // before the copy and before the superseded check below.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
       // With text to recover, the usage outcome waits for the copy's answer: claiming it here makes
       // cancelLive's own report a no-op, and the snapshot keeps the old session's
@@ -2140,10 +2047,9 @@ async function ensureListeners(): Promise<void> {
         micLiveHits = 0;
       }
     }
-    // Hands-free auto-stop (when armed): track silence via the shared speaking detector and end the
-    // session after the configured quiet stretch. Fires once, then disarms itself.
-    // The detector now runs for EVERY session, not only an auto-stop one: whether the user is
-    // speaking also decides how long a server `open` is believed (utterancePending.ts).
+    // Speaking detector: drives the hands-free auto-stop when armed, and runs for EVERY session
+    // because whether the user is speaking also decides how long a server `open` is believed
+    // (utterancePending.ts).
     {
       const tNow = performance.now();
       // "Is the mic open", NOT "is the status listening": a per-phrase translate holds the
@@ -2172,9 +2078,7 @@ async function ensureListeners(): Promise<void> {
       }
       lastLevelAt = performance.now();
       // Same guard as the trailing tick below: the capture thread keeps emitting level for a few ms
-      // after cancelLive sets {idle, level:0} and awaits the join (level emits are NOT epoch-gated),
-      // so a late leading-edge level must not resurrect a non-zero meter over the just-cleared idle
-      // state (it would stick until the next session + churn a cross-window emit). Bookkeeping above
+      // after cancelLive sets {idle, level:0} (level emits are NOT epoch-gated). Bookkeeping above
       // stays unconditional so coalescing remains correct regardless of status.
       if (isCapturing()) setDictation({ level: latestLevel });
     } else if (!levelTimer) {
@@ -2192,12 +2096,12 @@ async function ensureListeners(): Promise<void> {
 
   // Rust confirmed real audio on the RAW capture (a few consecutive non-silent chunks — see
   // session.rs LiveDetect). This is the PRIMARY go-live signal: the smoothed+gained level gate
-  // below starts from a 0-seeded EMA against a threshold a quiet mic's noise floor only hovers
-  // AT, so on such mics it held "warming up…" until the user actually spoke (~2s of grey chip
-  // after the hands-free press). The level gate stays as a fallback (it can only fire later, and the
-  // warmTimer guard makes whichever lands first the only one that acts). Same stale-emit safety
-  // as level events: the capture thread is joined before the next session starts, and a post-stop
-  // arrival no-ops because stopLive/cancelLive already cleared the warm timer.
+  // in stream://level above starts from a 0-seeded EMA against a threshold a quiet mic's noise
+  // floor only hovers AT, so on such mics it held "warming up…" until the user actually spoke.
+  // The level gate stays as a fallback (it can only fire later, and the warmTimer guard makes
+  // whichever lands first the only one that acts). Same stale-emit safety as level events: the
+  // capture thread is joined before the next session starts, and a post-stop arrival no-ops
+  // because stopLive/cancelLive already cleared the warm timer.
   await reg<null>("stream://mic-live", () => {
     if (warmTimer !== null) {
       clearWarmTimer();
@@ -2208,35 +2112,23 @@ async function ensureListeners(): Promise<void> {
   await reg<{ committed: string; pending: string }>("stream://partial", (e) => {
     const live = e.payload.committed + e.payload.pending;
     const sep = committedDoc && live && !/\s$/.test(committedDoc) && !/^\s/.test(live) ? " " : "";
-    // A partial can still arrive AFTER stopLive() — the finalize drain emits buffered
-    // transcription — or even after `closed`. Update the preview text, but NEVER resurrect
-    // "listening" once we've left it: that stuck the indicator at "listening" with the mic
-    // already closed, and disabled the stuck-finalize watchdog (which only fires while
-    // "transcribing"). Only hold the status / defer per-phrase actions while truly capturing.
-    // Drop a late drain partial once the session has fully settled (post-cancel idle / post-error):
-    // re-populating `partial` there resurrects a stale preview into an idle/errored chip. A legitimate
-    // post-stop drain (transcribing/injecting) still passes and updates the preview. Mirrors the
-    // inSession() guard the final/boundary/overrides-ignored handlers already carry.
+    // A partial can still arrive AFTER stopLive() (the finalize drain) or even after `closed`.
+    // A post-stop drain (transcribing/injecting) still updates the preview, but once the session
+    // settled (post-cancel idle / post-error) it would resurrect a stale preview into the chip.
+    // Never touch the status here: resurrecting "listening" with the mic closed also disabled the
+    // stuck-finalize watchdog (which only fires while "transcribing").
     if (!inSession()) return;
     sessionUtteranceSeen = true;
     // Capture state, not status: during a per-phrase translate (status "translating", mic
     // open) a status gate stopped bumping the phrase-end timer, so it expired mid-speech —
     // firing the auto-Enter and resetting the clipboard baseline while the user was talking.
     const capturing = isCapturing();
-    // Coalesced for the same measured reason as `stream://level` above, and against a worse
-    // pacer. `chipController.ts` subscribes on `state.partial !== prev.partial` exactly as it does on
-    // `level`, so every partial rebuilds the whole chip payload, IPC-emits it cross-window and
-    // re-renders both windows — the churn that comment records as having bloated the shared
-    // WebKitGTK renderer to multiple GB over a long session. But `level` is hardware-paced at
-    // 50-100 Hz, while the partial rate is chosen entirely by the untrusted server: Rust bounds
-    // each field at MAX_TRANSCRIPT and applies no frame-rate or frame-count limit, and
-    // `store.ts`'s patch apply does no coalescing. A server flooding partials pins the main
-    // thread of the main window AND the chip — including the cancel affordance the user would
-    // reach for. Leading edge then a trailing tick, so the preview still settles on the last
-    // text rather than freezing mid-throttle.
-    //
-    // Only the preview setState is throttled. `bumpPhraseEnd()` below stays on every frame, so
-    // per-phrase timing (Enter, clipboard restore, phrase boundary) is unchanged.
+    // Coalesced like `stream://level` above (chipController.ts re-broadcasts the chip cross-window
+    // on every `partial` change too), and against a worse pacer: the partial rate is chosen by
+    // the untrusted server — Rust bounds each field at MAX_TRANSCRIPT but not the frame rate, and
+    // `store.ts` does no coalescing — so a flood would pin the main window AND the chip, including
+    // its cancel affordance. Leading edge then a trailing tick, so the preview settles on the last
+    // text. Only the preview is throttled: `bumpPhraseEnd()` below stays on every frame.
     latestPartial = committedDoc + sep + live;
     const pWait = PARTIAL_MIN_MS - (performance.now() - lastPartialAt);
     if (pWait <= 0) {
@@ -2271,12 +2163,9 @@ async function ensureListeners(): Promise<void> {
   await reg<FinalFrame>("stream://final", (e) => {
     // An errored session's draining stop (or a stop_record detached POST) can still emit a late
     // `final` on the un-advanced epoch before retire_session_epoch lands, so emit_if_active
-    // still passes. cancel_stream/cancel_record retire the epoch themselves; this guard is the
-    // client-side backstop for those. Don't let a late final resurrect the preview / re-inject
-    // after the cancel cleared everything: only fold in a final while genuinely busy. Mirrors the partial handler's
-    // `capturing` discriminator — a legitimate post-stop drain runs while transcribing/
-    // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
-    // (idle) and post-error (error) late emits are dropped.
+    // still passes; cancel_stream/cancel_record retire the epoch themselves. Same inSession()
+    // guard as the partial handler: a post-stop drain (transcribing/injecting) passes, a late
+    // final after cancel or error must not resurrect the preview or re-inject.
     if (!inSession()) return;
     sessionUtteranceSeen = true;
     // A final is the terminal frame of whatever utterance the server had announced — any final
@@ -2301,12 +2190,8 @@ async function ensureListeners(): Promise<void> {
     const ordinal = typeof e.payload.utterance === "number" && !e.payload.last ? e.payload.utterance : null;
     // Per-utterance History: written now, before the insert — the queued task reports back to it.
     const uttRec = sessionPerUtterance ? recordUtteranceFinal(ordinal) : null;
-    // Live mode (append-only): type the newest phrase from `tail` immediately,
-    // only ever APPENDING what's new beyond what we've already typed — we never
-    // backspace/revise. On the rare occasion the backend re-tidies a seam (e.g.
-    // a space before a comma) this can leave a tiny artifact, but nothing is ever
-    // un-typed. `injectedText` tracks the backend's document so later phrases
-    // append at the right point.
+    // Live mode is append-only: when the backend re-tidies a seam (e.g. a space before a comma)
+    // this can leave a tiny artifact, but nothing is ever un-typed.
     if (insertCfg?.live) {
       // Snapshot the document synchronously (so it can't change under the queued task), then pick +
       // inject inside the queue after resolving the CURRENT window's rule — so the method/paste-
@@ -2336,42 +2221,29 @@ async function ensureListeners(): Promise<void> {
       // leading whitespace) — so the clipboard branch can ask "was everything BEFORE this window
       // already delivered?" against the typed baseline, which lives in those coordinates.
       const lead = committedDoc.length - target.length;
-      // Did the document GROW vs the last final? Distinguishes a real new phrase from a re-sent
-      // `final` (the flush final the drain emits at hands-free end). Advanced synchronously per final and
-      // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
-      // regardless of whether/where the phrase actually typed.
+      // Did the document GROW vs the last final? False for a re-sent `final` (the drain's flush
+      // final at hands-free end). Kept separate from the typed baseline (injectedText), so it holds
+      // wherever the phrase actually typed.
       // Where this final's new text starts, in `target` coordinates — an owed record's place
       // (oweUtterance) when its own insert delivers nothing.
       const uttFrom = commonPrefixLen(seenDoc, target);
       const grew = uttFrom < target.length;
       seenDoc = target;
-      // Capture the session token SYNCHRONOUSLY (before the task's awaited resolveTarget) so the task
-      // bails on BOTH a cancel (insertCfg→null) AND a cancel-then-fresh-restart (insertCfg→a NEW object)
-      // landing during EITHER await — mirrors the stop-timing task (cfg captured before its enqueue).
-      // Within a session insertCfg keeps a stable identity, so a normal phrase still injects.
+      // Captured synchronously so the task bails on a cancel (insertCfg→null) or a cancel-then-restart
+      // (a new object) landing during either await; within a session insertCfg keeps a stable identity.
       const cfg = insertCfg;
-      // Inject-queue depth read HERE, synchronously at enqueue time, and carried
-      // into the queued task: it decides how long this phrase's translate may
-      // wait on a cold model (20 s when nothing is behind it, the short
-      // length-based budget when a backlog exists — see translateCeilingMs).
-      // Read inside the task instead and it would report the depth at DRAIN
-      // time, by which point this task is the one being drained.
+      // Queue depth read at enqueue time: it sets how long this phrase's translate may wait on a
+      // cold model (see translateCeilingMs). Read inside the task, it would report the depth at
+      // drain time, when this task is the one being drained.
       //
-      // NB the translate deliberately happens INSIDE the queue, after the
-      // append-only diff: `toType` is computed in-queue on purpose so a phrase
-      // the own-window guard skips leaves `injectedText` untouched and gets
-      // retyped later. Translating before the diff (in a separate serial
-      // translate queue, say) would advance the typed baseline at diff time and
-      // lose skip-and-retype.
+      // The translate stays INSIDE the queue, after the append-only diff, so a phrase the
+      // own-window guard skips leaves `injectedText` untouched and is retyped later; translating
+      // before the diff would advance the typed baseline and lose skip-and-retype.
       const queuedAtEnqueue = injectDepth.n;
-      // The server's ordinal for THIS utterance, captured synchronously with
-      // everything else the queued task needs. It is how the phrase finds its
-      // own capture id (and so its own held log receipt) instead of taking
-      // whichever id happened to arrive last.
-      // `null` from a server that predates the ordinal: pair nothing, rather than
-      // keying every phrase of the session onto ordinal 0. `null` for a release final too: no
-      // `captured` frame ever comes for the closing final's phantom ordinal, so pairing on it
-      // would only wait out CAPTURE_ID_WAIT_MS.
+      // The server's ordinal for THIS utterance, so the phrase pairs with its own capture id (and
+      // held log receipt) rather than whichever arrived last. `null` from a pre-ordinal server pairs
+      // nothing; `null` for a release final too: no `captured` frame comes for its phantom ordinal,
+      // so pairing would only wait out CAPTURE_ID_WAIT_MS.
       const utterance = ordinal;
       const queued = enqueueInject(async () => {
         const t = await resolveTarget(cfg);
@@ -2393,28 +2265,17 @@ async function ensureListeners(): Promise<void> {
           const live = reopen?.landed ? reopen : null;
           const phraseClip = live ? reopenClip : plainClip;
           const clipFrom = Math.max(0, (live ? reopenStartRaw : plainStartRaw) - lead);
-          // Clipboard: copy just the current hard-break window (everything since your last pause) —
-          // never the whole session — so the clipboard doesn't pile up. Each copy flashes the chip's
-          // clipboard glyph PER PHRASE (mirroring the typed green pulse) so a hands-free session shows
-          // confirmation continuously. Skip our own window (the injection guard copies nothing there →
-          // would be a false confirmation). `grew` is the document-grew guard: false for a re-sent
-          // final (the flush final the drain emits at hands-free end), so a clipboard hands-free session that ends
-          // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
+          // Copy just the current hard-break window (everything since the last pause), never the whole
+          // session, and pulse the chip's clipboard glyph per phrase. `grew` is false for a re-sent final
+          // (the drain's flush final at hands-free end), so that doesn't re-copy and re-pulse the last phrase.
           //
-          // Nor on a final that only appends the server's output_suffix ("\n" or " ") to text
-          // already delivered: `grew` is true for it, yet the window it would copy is the one on
-          // the clipboard already (or, after the pause, the closed window a release reopens). The
-          // copy put that old phrase back over whatever the user copied since, with another
-          // "copied" pulse, and a translated one re-ran the GPU translate, whose failure put the
-          // original back over the translation. It is dropped like the typed branch's suffix:
-          // only the baseline moves past it, so a later typed phrase opens without its Return.
-          // The baseline can lag behind the window, though: a phrase from before it that was
-          // skipped in our own window keeps it there for the rest of the document (see the
-          // landed copy below). Only whitespace past this window's last landed copy (the same
-          // text to copy again) drops the suffix then too, and the baseline stays put: that
-          // earlier phrase is still owed, and no copy of this window carries it. Real text past
-          // both (a phrase of this window skipped in our own window) still copies the window,
-          // which delivers it.
+          // A final that only appends the server's output_suffix ("\n" or " ") is skipped too: the window
+          // it would copy is already on the clipboard (or is the closed window a release reopens), and
+          // re-copying would put the old phrase back over the user's newer copy (a translated one re-running
+          // the GPU translate). Only the baseline moves past it, so a later typed phrase opens without its
+          // Return. When the baseline lags behind the window (an earlier phrase skipped in our own window is
+          // still owed), whitespace past this window's last landed copy is dropped the same way but the
+          // baseline stays put; real text past both still copies the window, which delivers it.
           const suffixOnly = !target.slice(commonPrefixLen(injectedText, target)).trim();
           const copiedAlready = clipLastCopy?.from === clipFrom && clipLastCopy.text === phraseClip;
           if (grew && (suffixOnly || copiedAlready)) {
@@ -2438,10 +2299,9 @@ async function ensureListeners(): Promise<void> {
             try {
               ({ landed } = await copyForTarget(clipOut, t));
             } catch (e) {
-              // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
-              // flashError sets status "error" no further phrase reaches this catch (the old "just
-              // refresh the one red state" model was wrong), so without teardown the Rust capture keeps
-              // the mic open + system muted while the rest of the speech is silently dropped.
+              // A live phrase's clipboard copy failed: surface it AND tear the session down. Once flashError
+              // sets status "error" no further phrase reaches this catch, so without teardown the Rust capture
+              // keeps the mic open + system muted while the rest of the speech is silently dropped.
               console.error("live clipboard insert failed:", e);
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't flash a red error or tear down the freshly-started session B.
@@ -2453,15 +2313,12 @@ async function ensureListeners(): Promise<void> {
             // A cancel / fresh session that landed during the awaited inject nulled or replaced
             // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
             if (insertCfg !== cfg) return;
-            // `!t.isSelf` alone is the answer resolved one IPC hop EARLIER — the same start-time vs
-            // sink-time divergence the typed sibling below fixed with `delivered`. If our own window
-            // took focus during the await, Rust wrote nothing and returned `landed: false`; booking
-            // the copy anyway pulses a "copied" confirmation for a phrase that reached no clipboard,
-            // and clears a restore debt an earlier real paste still owes the user.
-            // Booked only for a DELIVERED copy (mirrors the typed branch's `if (delivered)`): an
-            // own-window skip or a failed write must not add a phrase History never got. And
-            // per WINDOW: the copy re-sends the whole quiet window on every final, so this
-            // replaces the window's earlier booking instead of appending it again.
+            // `landed` is the sink's answer; `!t.isSelf` was resolved one IPC hop earlier. If our own window
+            // took focus during the await, Rust wrote nothing and returned `landed: false`, and booking the
+            // copy would pulse a false "copied" and clear a restore debt an earlier paste still owes. Booked
+            // only for a delivered copy (as the typed branch's `if (delivered)`), and per WINDOW: the copy
+            // re-sends the whole quiet window on every final, so this replaces the window's earlier booking
+            // instead of appending it again.
             if (translated && !t.isSelf && landed) {
               // Reopened by a release final: the pause's link closed this window (FIFO, so it has
               // run and recorded what it closed). Replace that booking, not append after it.
@@ -2504,29 +2361,22 @@ async function ensureListeners(): Promise<void> {
               // window went out with it.
               bookOwedUtterances("clipboard", { kind: "window", from: clipFrom });
               bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang });
-              // The clipboard now holds THIS clipboard-only transcript (what the user wants to
-              // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
-              // clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
-              // restore puts the old snapshot back over it. Covers a fast paste→clipboard-only
-              // switch with no pause between, which would otherwise leave clipDirty set from the paste.
+              // The clipboard now holds this transcript, which the user wants to paste, so no restore is
+              // owed: clear clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
+              // one puts the old snapshot back — including after a fast paste→clipboard-only switch.
               clipDirty = false;
               // Nor an Enter or newline separator after it, like a typed phrase's divert: the
               // phrase sits on the clipboard, and a Return now lands in whatever window the user
               // moves to for pasting it — submitting that draft before the paste.
               lastPhraseDiverted = true;
-              // The phrase was DELIVERED — to the clipboard, not typed, but delivered: it is on
-              // the clipboard for the user to paste, and they will. So it counts against the typed
-              // baseline like a typed phrase does. Leaving `injectedText` behind here meant that
-              // when focus later moved to a typing window (or a blocked app's rule stopped
-              // applying), the next typed phrase re-typed every clipboard-routed phrase before it,
-              // and the hard-break carry would do the same.
+              // Delivered (to the clipboard), so the phrase advances the typed baseline like a typed one;
+              // otherwise, once focus moved to a typing window, the next typed phrase (and the hard-break
+              // carry) re-typed every clipboard-routed phrase before it.
               //
-              // Only when everything BEFORE this clipboard window was already delivered, though.
-              // The copy carries the current window alone, so a phrase from before it that the
-              // own-window guard skipped (typed-baseline still short of `clipFrom`) is on no
-              // clipboard and in no field; advancing over it would drop it for good. That case
-              // keeps the old behaviour — the next typed phrase re-sends from the baseline — and
-              // says so in the log.
+              // Only when everything BEFORE this window was already delivered, though: an earlier phrase the
+              // own-window guard skipped (baseline still short of `clipFrom`) is on no clipboard and in no
+              // field, so advancing over it would drop it for good. Then the next typed phrase re-sends from
+              // the baseline, and the log says so.
               noteDivergence("clipboard", injectedText, target, utterance);
               if (commonPrefixLen(injectedText, target) >= clipFrom) injectedText = target;
               else
@@ -2542,12 +2392,10 @@ async function ensureListeners(): Promise<void> {
             }
           }
         } else {
-          // Typed (paste/direct), append-only. Diff IN-QUEUE against the typed baseline (NOT
-          // synchronously): the queue is serial, so a phrase that actually lands advances the
-          // baseline before the next phrase diffs — AND a phrase the own-window guard SKIPS (our
-          // window focused) leaves the baseline untouched, so after a focus switch that text is
-          // re-typed into the real window instead of being silently dropped. Empty toType = a
-          // re-sent final or already-typed text → skip.
+          // Typed (paste/direct), append-only. Diffed IN-QUEUE against the typed baseline: the queue is
+          // serial, so a landed phrase advances the baseline before the next one diffs, and a phrase the
+          // own-window guard skips leaves it untouched and is re-typed into the real window after a focus
+          // switch. Empty toType = a re-sent final or already-typed text → skip.
           noteDivergence("typed", injectedText, target, utterance);
           const toType = target.slice(commonPrefixLen(injectedText, target));
           // Text a hard break carried over untyped goes out FIRST, joined by that break's separator
@@ -2555,23 +2403,16 @@ async function ensureListeners(): Promise<void> {
           // is worth an insert — an empty re-sent final is the first chance to type it.
           const carried = carryText;
           if (toType.length > 0 || carried) {
-            // Our own window holds focus: Rust's guard writes nothing there and the insert is
-            // never delivered (`delivered` below), so the phrase is skipped BEFORE its translate,
-            // not after. Translated first, every final re-translated everything past the un-moved
-            // baseline (all the phrases since focus came to us, the carry included) for text
-            // nobody would read: GPU work that grew with each phrase, the serial queue held for up
-            // to the live ceiling each time, and a timeout raising the "translation failed"
-            // doorway — and focus leaving us during it diverted the block to a clipboard write
-            // nothing booked. The baseline and the carry stay put, so the next delivered insert
-            // re-sends it all, as before.
+            // Our own window holds focus: Rust's guard writes nothing there, so the phrase is skipped BEFORE
+            // its translate. Translating first re-translated everything past the un-moved baseline on every
+            // final (growing GPU work, the serial queue held up to the live ceiling, timeouts raising the
+            // "translation failed" doorway, and a divert nothing booked if focus left mid-translate). The
+            // baseline and the carry stay put, so the next delivered insert re-sends it all.
             //
-            // Except a final that only appends the server's output_suffix (" " or "\n") with no
-            // carry pending: it is dropped, like the skipped arm below drops it when our window
-            // takes focus during the await, and the baseline moves past it. Owed, its "\n" went
-            // out first in the next phrase's insert ("\n Next."), a Return submitting the field of
-            // whatever window that phrase is typed into. A translated session drops it the same
-            // way (no block, below). Only whitespace lies past the baseline then, so nothing real
-            // is dropped with it.
+            // Except a final that only appends the server's output_suffix (" " or "\n") with no carry
+            // pending: it is dropped and the baseline moves past it. Owed, its "\n" would open the next
+            // phrase's insert ("\n Next.") with a Return submitting whatever field that phrase is typed into.
+            // Only whitespace lies past the baseline then, so nothing real is dropped.
             if (t.isSelf) {
               if (!carried && !toType.trim()) injectedText = target;
               oweUtterance(uttRec, uttFrom);
@@ -2586,49 +2427,36 @@ async function ensureListeners(): Promise<void> {
               utterance,
             });
             if (insertCfg !== cfg) return;
-            // A translated session types BLOCKS, so normalise the seam here
-            // rather than inheriting whichever whitespace each path happened to
-            // carry. The gap follows the field's last TYPED phrase (gapOwedApps), across
-            // a hard break too, carry included — the break empties `injectedText`
-            // but not the field. A phrase the own-window guard skipped or a
-            // clipboard copy put nothing in the field and buys no gap; a Return
-            // that already ended the phrase is not followed by three more, and a
-            // block typed into ANOTHER app opens its empty field without one.
-            // A whitespace-only phrase (a final that only appends the server's output_suffix,
-            // "\n" or " ") is no block and types NOTHING: not the gap alone (three bare Returns,
-            // empty submits in a chat box), and not the suffix either. A typed "\n" is still a
-            // Return that submits in a chat box, yet it would leave the gap owed, so the next
-            // block opened four line breaks down. A block trims the same suffix away, so the
-            // field reads the same whether or not the server split it into its own final.
+            // A translated session types BLOCKS, so normalise the seam here. The gap follows the field's
+            // last TYPED phrase (gapOwedApps), across a hard break and carry too — the break empties
+            // `injectedText` but not the field. A skipped phrase or a clipboard copy put nothing in the field
+            // and buys no gap; a Return that already ended the phrase is not followed by three more; a block
+            // typed into ANOTHER app opens its empty field without one.
+            // A whitespace-only phrase (the server's output_suffix alone) is no block and types NOTHING:
+            // neither the gap alone (three bare Returns, empty submits in a chat box) nor the suffix (a Return
+            // that would also leave the gap owed). A block trims the same suffix, so the field reads the same
+            // whether or not the server split it into its own final.
             const block = phrase.text.trim();
             const opensBlock = !sessionTranslation || block !== "";
             const typeOut = sessionTranslation
               ? (block ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block : "")
               : phrase.text;
-            // So it is no insert at all: only the baseline moves past it. Sent anyway, Rust answers
-            // an empty text `landed` before it looks at focus or the chord, and the task booked
-            // that as a typed paste: a snapshot and a restore debt for a paste that never happened
-            // (the restore then put the user's old clipboard back over a block diverted just
-            // before it), a green "typed" pulse, and `lastPhraseDiverted` cleared, so the Enter
-            // that divert stood down submitted the field without the block on the clipboard. It
-            // owes and pays no gap, and books no record: its text is whitespace, so is its
-            // utterance's delta. No carry is pending here either: a carry is real text, which
-            // makes the block non-empty.
+            // So it is no insert at all: only the baseline moves past it. Sent anyway, Rust answers an
+            // empty text `landed` before checking focus or the chord, and the task would book a typed paste
+            // that never happened — a snapshot and restore debt (restoring the old clipboard over a block
+            // diverted just before), a green "typed" pulse, and `lastPhraseDiverted` cleared so the
+            // stood-down Enter fires. It owes no gap and books no record (its delta is whitespace); no carry
+            // is pending, since a carry would make the block non-empty.
             if (!opensBlock) {
               injectedText = target;
               return;
             }
-            // Past here only an UNTRANSLATED final can be whitespace alone (a translated one with no
-            // block returned just above): the server's output_suffix, " " or "\n". It is no phrase.
-            // While the last phrase sits on the clipboard its Enter is stood down, and the suffix
-            // stands down with it, before the snapshot and the insert: a "\n" typed now is a Return
-            // submitting the field without the diverted phrase, in the window the user went to
-            // paste it into. It is dropped, not owed, like the translated sibling above and a
-            // withheld hard-break separator: the baseline moves past it. Left owed, it went out
-            // first in the next phrase's insert ("\n Next.") — the same Return, one phrase later,
-            // ahead of that phrase in the window it is typed into. Only whitespace lies past the
-            // baseline here, so nothing else is owed: an owed phrase or a carry is real text, which
-            // makes typeOut non-blank.
+            // Past here only an UNTRANSLATED final can be whitespace alone (the server's output_suffix).
+            // While the last phrase sits on the clipboard its Enter is stood down, and the suffix stands down
+            // with it, before the snapshot and insert: a "\n" typed now would submit the field without the
+            // diverted phrase. It is dropped, not owed (the baseline moves past it); owed, it would open the
+            // next phrase's insert ("\n Next.") with the same Return. Nothing else is owed here: an owed
+            // phrase or a carry is real text, which makes typeOut non-blank.
             const spacingOnly = !typeOut.trim();
             if (spacingOnly && lastPhraseDiverted) {
               injectedText = target;
@@ -2656,44 +2484,29 @@ async function ensureListeners(): Promise<void> {
                 console.error("beginInjection failed:", e);
               }
             }
-            // A cancel (insertCfg→null) OR cancel-then-restart (insertCfg→a new object) landing during
-            // the awaited beginInjection above must not paste this discarded phrase into the now-
-            // refocused / next session's window — mirrors the post-resolveTarget / post-translate guards
-            // above and the injectText catch's guard below; beginInjection was the lone await between
-            // guard and paste left open.
-            // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
+            // A cancel or cancel-then-restart during the awaited beginInjection must not paste this
+            // discarded phrase into the next session's window. Any snapshot taken is restored by
+            // cancelLive's unconditional chained endInjection.
             if (insertCfg !== cfg) return;
             let landed = true;
             let diverted = false;
-            // The field gets `typeOut`, gap or seam space included; the clipboard gets its clipboard
-            // form (a translated block without the gap, a plain phrase trimmed). ONE rule
-            // for the phrase's clipboard form, shared by Rust's writes and the catch's recovery
-            // copy below (`clipboardText ?? typeOut`), so the two can never put different text on
-            // the clipboard. Every Rust arm that leaves the phrase on the clipboard for the user —
-            // a divert (chord still held, focus moved, our own window at the chord, an untypeable
-            // layout), a failed paste and the error-abort recoveries — writes `clipboardText` in
-            // place of `text`, in that ONE write. A gap owed to the FIELD would otherwise open the
-            // pasted text with three blank lines (three empty submits in a chat box). It has to be
-            // Rust's write: a recovery's outcome arrives after the teardown nulled insertCfg, so a
-            // JS re-copy after the await never ran for it, and one that did ran a second, gapped
-            // clipboard write into the user's clipboard history. An untranslated phrase's form
-            // drops the seam space it is typed with (" Second phrase."): diverted or recovered,
-            // it is pasted somewhere new. The clipboard-only method never reaches this branch:
-            // holdCoerced routes it to the window copy above, which copies the whole quiet
-            // window, trimmed, and replaces the clipboard each time.
+            // The field gets `typeOut` (gap or seam space included); the clipboard gets the phrase's
+            // clipboard form (a translated block without the gap, a plain phrase trimmed). ONE rule, shared
+            // by Rust's writes and the catch's recovery copy below (`clipboardText ?? typeOut`). Every Rust
+            // arm that leaves the phrase on the clipboard — a divert (chord held, focus moved, our own window
+            // at the chord, an untypeable layout), a failed paste and the error-abort recoveries — writes
+            // `clipboardText` in place of `text`, so pasted text never opens with the field's gap. It has to
+            // be Rust's write: a recovery's outcome arrives after the teardown nulled insertCfg, so a JS
+            // re-copy never ran for it, and one that did added a second, gapped clipboard-history entry.
+            // The clipboard-only method never reaches this branch (holdCoerced routes it above).
             //
-            // A whitespace-only phrase (an untranslated final that only appends the server's
-            // output_suffix) has no clipboard form: Rust's would fall back to the bare "\n" or " ",
-            // and a divert made that the clipboard's owner over the user's copy, or over the phrase
-            // diverted just before it that they were told to paste, then stood the tail's Enter
-            // down for it. Like the hard-break separator it has nothing to recover, so it is
-            // withheld instead. Withheld before anything is written, Rust answers `landed: false`,
-            // and the whitespace is dropped (see the skipped arm below), never re-sent ahead of
-            // the next phrase into the window focus moved to. Withheld at the paste chord (our
-            // own window took focus after the paste write), it answers `landed: true, diverted:
-            // false` and restores the clipboard itself: the task cannot tell that from a typed
-            // one, so it advances past whitespace that never landed, and the delivered block
-            // below books no typed phrase for it.
+            // A whitespace-only phrase (the server's output_suffix alone) has no clipboard form, so it is
+            // withheld on a divert rather than replacing the user's copy (or the phrase just diverted for
+            // them to paste) with a bare "\n". Withheld before any write, Rust answers `landed: false` and
+            // the whitespace is dropped (see the skipped arm below). Withheld at the paste chord (our own
+            // window took focus after the paste write), it answers `landed: true, diverted: false` and
+            // restores the clipboard itself: the task advances past whitespace that never landed, and the
+            // delivered block books no typed phrase for it.
             const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
             try {
@@ -2706,24 +2519,13 @@ async function ensureListeners(): Promise<void> {
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't recover/flash/teardown the freshly-started session B.
               if (insertCfg !== cfg) return;
-              // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
-              // A failed paste: the Rust paste path leaves the transcript on the clipboard on
-              // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
-              // WITHOUT restoring, so it should still be recoverable — ASK, don't assert.
-              //
-              // The comment that used to sit here claimed `inject_text` returns `landed: true`
-              // unconditionally for the clipboard method, so asking was pointless. That stopped
-              // being true: `set_clipboard_persistent` now returns a Result and the clipboard
-              // branch reports `landed: false` on a write failure. Asserting therefore promised
-              // a clipboard recovery in exactly the broken-clipboard environment where there
-              // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
-              // The phrase's clipboard form is copied (a translated block without the field's phrase
-              // gap, a plain phrase without its seam space): like the clipboard-only branch, the
-              // clipboard is replaced, not appended to.
-              // The same clipboard form Rust's own divert and recovery writes take — the
-              // `clipboardText` passed above, hoisted so both read one rule. Whitespace alone is
-              // not copied: it would replace the user's clipboard with a lone "\n" and flash
-              // "it's on the clipboard" for nothing. The teardown below still runs.
+              // Direct typing never touches the clipboard, so copy the phrase to make it recoverable. A failed
+              // paste should already have left the transcript there (Rust skips the restore on a failed paste,
+              // and the teardown drops the snapshot unrestored), but ASK, don't assert: a clipboard write can
+              // fail (`landed: false`), so asserting would promise a recovery exactly where the clipboard is
+              // broken. Re-copying cannot duplicate text — the paste already failed. The copy takes the same
+              // clipboard form Rust's own writes take (`clipboardText`). Whitespace alone is not copied: a lone
+              // "\n" over the user's clipboard, flashing "on the clipboard" for nothing. The teardown still runs.
               const recoverable = !spacingOnly && await recoverToClipboard(
                 clipboardText ?? typeOut,
                 t,
@@ -2754,27 +2556,20 @@ async function ensureListeners(): Promise<void> {
             // A cancel / fresh session that landed during the awaited inject nulled or replaced
             // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
             if (insertCfg !== cfg) return;
-            // A real paste just clobbered the user's clipboard with the transcript → it owes a
-            // restore at phrase end. Direct typing never touches the clipboard, so don't — and our own
-            // window (guard-skipped, !t.isSelf) clobbered nothing either.
+            // A real paste just clobbered the user's clipboard with the transcript, so it owes a restore at
+            // phrase end; direct typing and a guard-skipped own window clobbered nothing.
             //
-            // `landed` is the SINK's answer, and `t.isSelf` is the answer we resolved ~1s earlier.
-            // Both are needed. `t.isSelf` covers a start-time skip (the task returns for one before
-            // its translate, above; it stays here so `delivered` reads whole); `landed` covers the
-            // case this block used to get wrong — our own window taking focus DURING the insert, where
-            // `t.isSelf` is false because we really did resolve another window, and Rust's skip is
-            // indistinguishable from success. Booking that phrase advanced `injectedText`, so the
-            // next final's common-prefix slice skipped it and it was dropped for good — with a
-            // green "Inserted" pulse claiming otherwise, and nothing on the clipboard to recover
-            // from, because the sink skip returns before any clipboard write.
+            // `landed` is the SINK's answer; `t.isSelf` the one resolved ~1s earlier. Both are needed:
+            // `t.isSelf` covers a start-time skip (returned above; kept so `delivered` reads whole), `landed`
+            // our own window taking focus DURING the insert, where Rust's skip otherwise looks like success.
+            // Advancing `injectedText` over that phrase would drop it for good under a green "Inserted"
+            // pulse, with nothing on the clipboard to recover from.
             const delivered = !t.isSelf && landed;
             if (delivered && diverted) {
-              // Rust wrote a persistent clipboard owner INSTEAD of pasting, so our transcript is
-              // what the user must now paste — we owe no restore over it. Mirrors the clipboard-only
-              // phrase path above exactly; without this the end-of-phrase restore would put the
-              // user's old clipboard back over the text we just told them to paste. (Like that
-              // path, the copy carries no phrase gap: Rust wrote the `clipboardText` it was handed
-              // (the bare block, or the trimmed phrase), not the `typeOut` the field would have got.)
+              // Rust wrote a persistent clipboard owner INSTEAD of pasting, so our transcript is what the
+              // user must now paste and no restore is owed (as on the clipboard-only path): the end-of-phrase
+              // restore would put the user's old clipboard back over it. The copy is the `clipboardText` Rust
+              // was handed, without the field's phrase gap.
               clipDirty = false;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
               // dictation (this phrase sits on the clipboard), and Enter would submit that part —
@@ -2785,10 +2580,9 @@ async function ensureListeners(): Promise<void> {
               // of its own Enter.
               lastPhraseDiverted = true;
             } else if (t.method === "paste" && delivered) {
-              // The latest paste owns the clipboard, so ITS window's rule decides the restore —
-              // the snapshot gate and the separator path already honor t.restoreClipboard. A
-              // bare `true` re-armed an earlier window's snapshot over a restore-off app's
-              // transcript; `false` here also cancels that earlier window's pending restore.
+              // The latest paste owns the clipboard, so ITS window's rule decides the restore (as the
+              // snapshot gate and separator path do); `false` also cancels an earlier window's pending
+              // restore, which would otherwise land over a restore-off app's transcript.
               clipDirty = t.restoreClipboard;
             }
             // Advance the TYPED baseline + pulse ONLY when the phrase actually landed: leaving it
@@ -2806,19 +2600,15 @@ async function ensureListeners(): Promise<void> {
                   : block;
                 accumulateByLang(phrase.byLang);
               }
-              // Tell the truth about WHERE it went. Rust can divert a typed/pasted insert to the
-              // clipboard — the trigger chord is still held, or focus moved to another app — and
-              // until it reported that back, this stamped the green "typed" pulse over it either
-              // way. The user saw a success confirmation and no text, with nothing to explain it.
+              // Report WHERE it went: Rust can divert a typed/pasted insert to the clipboard (chord still
+              // held, or focus moved to another app), and a green "typed" pulse would claim a success with
+              // no text in the field.
               if (diverted) {
-                // The chip's clipboard glyph IS the signal here — the same one the clipboard-only
-                // phrase path uses, for the same reason: it repeats per phrase, so a hands-free session
-                // shows it continuously. Deliberately NOT flashError: that sets status "error",
-                // which drops out of `isActiveDictation`, so every later frame of a session that is
-                // still capturing would be discarded while Rust holds the mic and the system mute —
-                // a session-killer in exchange for a message. And this fires on the routine
-                // focus-moved-to-another-app divert too, which the sink comment expects in any live
-                // or hands-free session.
+                // The chip's clipboard glyph is the signal, as on the clipboard-only path: it repeats per
+                // phrase, so a hands-free session shows it continuously. Deliberately NOT flashError: status
+                // "error" drops out of `isActiveDictation`, so every later frame of a still-capturing session
+                // would be discarded while Rust holds the mic and system mute — and this fires on the routine
+                // focus-moved divert in any live or hands-free session.
                 sessionClipboard = true;
                 signalInsert("clipboard");
               } else if (!spacingOnly) {
@@ -2837,14 +2627,11 @@ async function ensureListeners(): Promise<void> {
               bookOwedUtterances(diverted ? "clipboard" : "typed", { kind: "body" });
               bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);
             } else {
-              // Skipped (our own window, or the sink refused with nothing written): the baseline
-              // and the carry stay un-advanced, so the next delivered insert re-sends this phrase.
-              // Not the server's suffix alone, withheld (focus moved, the chord still held) or
-              // skipped in our own window during the await: it is dropped like the stand-down
-              // above and the start-time own-window skip. Re-sent, its "\n" was a Return ahead of
-              // the next phrase, in whatever window that phrase goes to. No carry or owed phrase
-              // rides with it (spacingOnly), and its utterance's delta is whitespace, so it owes no
-              // record either.
+              // Skipped (our own window, or the sink refused with nothing written): the baseline and the
+              // carry stay un-advanced, so the next delivered insert re-sends this phrase. Not the server's
+              // suffix alone (withheld, or skipped in our own window during the await): it is dropped like the
+              // stand-down above, since re-sent its "\n" would be a Return ahead of the next phrase. Nothing
+              // rides with it (spacingOnly) and its delta is whitespace, so it owes no record either.
               if (spacingOnly) injectedText = target;
               oweUtterance(uttRec, uttFrom);
             }
@@ -2855,15 +2642,12 @@ async function ensureListeners(): Promise<void> {
       // and the next delivered insert carries it — owed like a skip. Chained (uncounted), so the
       // inserts queued before it, whose text ends before this phrase, cannot book it.
       if (!queued && uttRec?.id && uttRec.delta.trim()) oweDroppedInsert(cfg, uttRec.id, uttFrom);
-      // A phrase's text just landed AND the document actually GREW (`grew` is false for a re-sent
-      // final — e.g. the flush `final` the drain emits when you end a hands-free session — so we must NOT re-arm
-      // for text that was already typed + Entered; doing so is what fired a second Enter at hands-free
-      // end). (Re)start the quiet timer so the per-phrase Enter + clipboard restore fire
-      // ~PHRASE_END_QUIET_MS after you stop speaking (not at the ~20s hard break). Ongoing speech
-      // keeps bumping the timer via stream://partial. Only while capturing, like the partial's
-      // bump: after stopLive the timer's wait-for-the-server deferral is off, so a drain final
-      // re-arming it pressed Enter 1.2 s later while the stopped utterance was still decoding —
-      // the `closed` tail enters the drained text instead, off phraseDirty.
+      // Text landed and the document GREW (`grew` is false for a re-sent final, e.g. the drain's
+      // flush final at hands-free end; re-arming for it fired a second Enter). (Re)start the quiet
+      // timer so the per-phrase Enter + clipboard restore fire ~PHRASE_END_QUIET_MS after speech
+      // stops; stream://partial keeps bumping it. Only while capturing: after stopLive the timer no
+      // longer waits for the server, so a drain final re-arming it pressed Enter while the stopped
+      // utterance was still decoding — the `closed` tail enters the drained text instead.
       if (grew) {
         // Unconditional: this flag means "text landed since the last Enter", not "Enter is
         // armed" — whether an Enter is actually wanted is resolved per target, later.
@@ -2954,21 +2738,13 @@ async function ensureListeners(): Promise<void> {
     // but the bank and clear below run before any insertCfg check, so only process a boundary
     // while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
     if (!inSession()) return;
-    // Long-silence hard break: the server reset its document. Bank what we have (for
-    // the stop-timing single insert), drop our live baseline so the next utterance
-    // starts fresh, clear the preview, and optionally type the configured separator.
+    // Long-silence hard break: the server reset its document.
     const sep = e.payload || "";
     // Always bank the finished document for the "stop"-timing single insert (it reads bankedDoc
-    // back). Typed live ignores it (resets committedDoc/injectedText below and appends from there),
-    // and clipboard-only now ignores it too (it copies just the current window per phrase).
-    // Bounded, the mirror of Rust's MAX_SIDECAR_BYTES on the same accumulation. Rust caps each
-    // `final` field at MAX_TRANSCRIPT and caps the banked sidecar `Vec` at 8 MiB precisely because
-    // "a server looping final/boundary grew this without limit" — but this string, the frontend's
-    // copy of the same thing, had no ceiling and no frame-count limit. It grows once per boundary
-    // frame for the whole session in the shared WebKitGTK renderer, and at `closed` a second full
-    // copy is allocated, crossed over the IPC in one call, and on direct typing synthesized key by
-    // key. Same budget and same trade as Rust's: drop the overflow rather than the session, so a
-    // real dictation (an hour is ~50 KB) is untouched and what was already typed still stands.
+    // back); typed live and clipboard-only ignore it. Bounded like Rust's MAX_SIDECAR_BYTES on the
+    // same accumulation: a server looping final/boundary would grow it without limit in the shared
+    // WebKitGTK renderer, and `closed` copies it again over the IPC. Drop the overflow rather than
+    // the session, so a real dictation (an hour is ~50 KB) is untouched and what was typed stands.
     if (committedDoc && bankedDoc.length + committedDoc.length + sep.length <= MAX_BANKED_DOC) {
       bankedDoc += committedDoc + sep;
     }
@@ -2989,13 +2765,11 @@ async function ensureListeners(): Promise<void> {
     utteranceDocEnd = 0;
     lastUtterance = null;
     // The TYPED baseline is cleared IN the inject chain, not here: a phrase task enqueued before
-    // this boundary diffs against `injectedText` at DRAIN time (deliberately — see the final
-    // handler's skip-and-retype note), so a synchronous clear made it re-type everything already
-    // in the window — the flush final at hands-free end re-typed the whole document, and a real
-    // final that raced the boundary re-typed the earlier phrases too. The clipboard path never
-    // had this exposure (its baseline is read synchronously at enqueue). Chained directly rather
-    // than via enqueueInject so the flood cap can never drop the reset; the session token guards
-    // a cancel-then-restart landing while it waits (the restart resets the baseline itself).
+    // this boundary diffs against `injectedText` at DRAIN time (see the final handler's
+    // skip-and-retype note), so a synchronous clear would re-type everything already in the window.
+    // The clipboard path reads its baseline synchronously at enqueue. Chained directly rather than
+    // via enqueueInject so the flood cap can never drop the reset; the session token guards a
+    // cancel-then-restart landing while it waits (the restart resets the baseline itself).
     //
     // The same link CARRIES what the old document never delivered: at drain time `injectedText`
     // is final for it, so whatever of `docAtBreak` lies beyond it (a phrase the own-window guard
@@ -3046,23 +2820,16 @@ async function ensureListeners(): Promise<void> {
     // Same reason as the final handler's: a pending tick would undo this clear.
     resetPartialPreview();
     setDictation({ partial: "" });
-    // A hard break = a finished phrase. In live mode, emit (into the window focused NOW)
-    // any configured separator AND — when "Press Enter after" is on — a REAL Enter, so each
-    // phrase is submitted/newlined as you speak. This is what makes "Press Enter after" work
-    // in hands-free/ongoing dictation, which never reaches the stop-time tail. A "\n" is always a
-    // real Enter (a pasted newline gets swallowed by some apps); clipboard-only types nothing
-    // (its last quiet window is already on the clipboard; bankedDoc feeds only the stop-timing insert).
-    // The phrase ended (hard break). The per-phrase Enter is normally driven by the quiet
-    // timer (~PHRASE_END_QUIET_MS after you stop, well before this ~20s hard break), so it's
-    // already been pressed. Cancel the pending timer; only Enter here as a backstop if it
-    // somehow hasn't. When auto-enter is off, fall back to the configured separator behavior.
+    // A hard break ends the phrase. In live mode, emit into the window focused NOW any configured
+    // separator or — when "Press Enter after" is on — a real Enter: hands-free dictation never
+    // reaches the stop-time tail. The per-phrase Enter normally already fired off the quiet timer
+    // (~PHRASE_END_QUIET_MS, well before this ~20s break), so cancel that timer and Enter here only
+    // as a backstop. A "\n" is always a real Enter (a pasted newline gets swallowed by some apps);
+    // clipboard-only types nothing (its last quiet window is already on the clipboard).
     clearPhraseEndTimer();
     if (insertCfg?.live) {
-      // Enter-vs-separator is now decided INSIDE the queued task, after the target resolves.
-      // It used to fork synchronously on the frozen `insertCfg.autoEnter`, which is precisely
-      // what stopped an app rule from governing Enter: the branch was taken before anyone
-      // asked which window the text was going to. Costs one extra focus round-trip per hard
-      // break (~20s), the cost already noted for this path.
+      // Enter-vs-separator is decided INSIDE the queued task, against the resolved target, so an
+      // app rule can govern Enter. Costs one extra focus round-trip per hard break (~20s).
       if (phraseDirty || sep) {
         // Capture the session token synchronously (mirrors the live/stop tasks) so a cancel-then-restart
         // during resolveTarget OR the paste below bails — don't fire a stray separator/Enter into the
@@ -3084,8 +2851,7 @@ async function ensureListeners(): Promise<void> {
           // neither its Enter nor a separator — a newline separator is a real Return too — may
           // follow, into whatever window focus moved to.
           if (lastPhraseDiverted) return;
-          // Enter wins over the separator when this target wants it — the same precedence the
-          // synchronous fork had, just evaluated against the window actually being typed into.
+          // Enter wins over the separator when this target wants it.
           if (t.autoEnter) {
             // Into the app the phrase was typed into only, as enqueueAutoEnter.
             if (dirtyAtBreak && t.appId === lastTypedApp && gapOwedApps.has(t.appId)) await pressReturn(t, cfg);
@@ -3120,12 +2886,11 @@ async function ensureListeners(): Promise<void> {
           // back. Either way the separator is never re-sent; a missing space between two
           // phrases is the lesser harm.
           const sendSepText = async (part: string): Promise<boolean> => {
-            // The snapshot is per separator part, taken right here exactly as the phrase task takes
-            // one per phrase: the quiet timer has usually given the clipboard back by now, and
-            // the user may have copied something since. The previous phrase's snapshot is older
-            // than that copy, so restoring IT after the separator (or from the catch) replaced
-            // the user's newer copy with stale content. Gated on !clipDirty like the phrase task:
-            // Rust keeps the prior snapshot when the clipboard holds our own text (is_own_injected).
+            // The snapshot is per separator part, taken right here as the phrase task takes one per
+            // phrase: the user may have copied something since the previous phrase's snapshot, and
+            // restoring that older one would replace their newer copy. Gated on !clipDirty like the
+            // phrase task: Rust keeps the prior snapshot when the clipboard holds our own text
+            // (is_own_injected).
             if (t.method === "paste" && t.restoreClipboard && !clipDirty && !t.isSelf) {
               try {
                 await beginInjection();
@@ -3156,15 +2921,12 @@ async function ensureListeners(): Promise<void> {
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (a restore) onto the new one — mirrors the inject tasks' guard.
             if (insertCfg !== cfg) return false;
-            // The separator paste just clobbered the clipboard with the part (set_clipboard + Ctrl+V).
-            // (!t.isSelf: an own-window separator is Rust-guard-skipped, so the clipboard is untouched
-            // there and the boundary backstop below handles any owed restore — don't touch bookkeeping.)
-            // `landed` for the same reason as the phrase task: a sink-side own-window skip wrote
-            // nothing, so there is no clobber to restore.
-            // The snapshot above (or, while the clipboard held our text, the earlier one Rust kept)
-            // is the user's clipboard — put it back (mirrors the per-phrase restore contract); the
-            // snapshot survives in Rust and isn't consumed. With no snapshot the part (OUR text) stays:
-            // Rust's next begin_injection keeps the prior snapshot over it (is_own_injected).
+            // Give the user's clipboard back after a landed separator paste: the snapshot above (or,
+            // while the clipboard held our text, the earlier one Rust kept), which survives in Rust.
+            // !t.isSelf / `landed`: an own-window or sink-side skip wrote nothing, so there is no
+            // clobber to restore (the boundary backstop below handles any owed restore). With no
+            // snapshot the part (OUR text) stays: Rust's next begin_injection keeps the prior
+            // snapshot over it (is_own_injected).
             if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed && beganInjection) {
               await giveClipboardBack();
               // The debt is paid, so the backstop link below does not restore it a second time.
@@ -3189,10 +2951,9 @@ async function ensureListeners(): Promise<void> {
     // The phrase ended hard → restore the clipboard too, as a backstop in case the quiet timer
     // hadn't already (clearPhraseEndTimer above just dropped its queued restore). Decided IN the
     // queue, like bumpPhraseEnd's link: a phrase task still awaiting its translate sets clipDirty
-    // only after its paste lands, so a synchronous read here saw false and its synchronous clear
-    // then left that late debt unrestored (the transcript sat on the clipboard).
-    // Chained directly so the flood cap can never drop it; the session token guards a
-    // cancel-then-restart (both reset all of this themselves).
+    // only after its paste lands, which a synchronous read here would miss. Chained directly so
+    // the flood cap can never drop it; the session token guards a cancel-then-restart (both reset
+    // all of this themselves).
     {
       const cfg = insertCfg;
       const live = !!insertCfg?.live;
@@ -3230,14 +2991,14 @@ async function ensureListeners(): Promise<void> {
       // load can't force-idle a dictation whose transcript is seconds away —
       // the Rust drain's idle window resets on the same frames.
       if (useApp.getState().status === "transcribing") armStuckWatchdog();
-      // …and while the mic is still open, SAY so. The frame used to change nothing on screen:
-      // a cold load (tens of seconds) sat on amber "listening", inviting speech the server was
-      // not transcribing yet. Cleared by `ready` above and by every teardown.
+      // …and while the mic is still open, SAY so: on amber "listening" a cold load (tens of
+      // seconds) invites speech the server is not transcribing yet. Cleared by `ready` above and by
+      // every teardown.
       else if (useApp.getState().status === "listening" && isCapturing()) publishServerWork("loading");
     } else if (e.payload === "closed") {
       capturing = false; // covers the closes that ran no stopLive (capture death, server-initiated)
       clearStuckWatchdog(); // the stream resolved on its own
-      stopTargetPoll(); // session ending — stop tracking focus for the chip
+      stopTargetPoll();
       clearWarmTimer(); // reconcile the warm-up gate: a close that bypasses stopLive/cancelLive
       // (e.g. a silent-mic capture-thread death emits `closed` directly) would otherwise leave the
       // armed backstop running and `warming` stuck true (the chip reads it ungated by status).
@@ -3259,12 +3020,10 @@ async function ensureListeners(): Promise<void> {
         setDictation({ level: 0 });
         return;
       }
-      // Capture has stopped; freeze the meter and move to "transcribing" (finalizing). No-op on a
-      // normal stop (stopLive already set it), but a capture-death / server-initiated close ran no
-      // stopLive, so status would still be "listening" — and the no-tail live branch below settles
-      // to idle only from "transcribing", so without this a no-tail capture-death close would wedge
-      // the chip at "listening" with the mic already gone (no stuck-watchdog runs for it either).
-      // From here the hasTail branch moves to "injecting" while the transcript is written out.
+      // Capture has stopped: freeze the meter and move to "transcribing". A normal stop already set
+      // it, but a capture-death / server-initiated close ran no stopLive, and the no-tail live branch
+      // below settles to idle only from "transcribing" — without this the chip would wedge at
+      // "listening" with the mic gone (no stuck-watchdog runs for it either).
       resetServerWork();
       setDictation({ level: 0, warming: false, serverWork: null, status: "transcribing" });
       // (The saved recording and its transcript .txt sidecar are written in Rust, in the streaming
@@ -3291,20 +3050,15 @@ async function ensureListeners(): Promise<void> {
 
       const startedAt = performance.now();
       if (cfg.live) {
-        // Phrases were written + Enter'd + clipboard-restored live (per phrase, off the quiet
-        // timer) as you spoke. The tail handles only what's left when the session ends: a real
-        // Enter for the LAST, in-progress phrase — one you ended a hands-free session on before pausing, so its
-        // quiet-timer Enter never fired — plus a FINAL clipboard restore that also clears the
-        // snapshot. `phraseDirty` is true only if that last Enter hasn't already fired (the quiet
-        // timer / boundary clear it), and crucially we only set it for a final that GREW the
-        // document — so the drain's re-sent flush `final` can't resurrect it into a double Enter.
-        // Skip the "injecting" flash when there's no tail work.
-        // `phraseDirty` alone here, deliberately. Whether an Enter is actually wanted is now
-        // the TARGET's decision, and this runs outside the queue — there is no resolved target
-        // yet. So the tail is armed on "is there an un-Entered phrase", and enqueueAutoEnter
-        // resolves and drops it if the window doesn't want one. The only cost of arming
-        // optimistically is the brief "injecting" flash below on a session that then sends
-        // nothing; the cost of the reverse would be a missed Enter, which loses a submit.
+        // Phrases were written, Enter'd and clipboard-restored live, per phrase off the quiet timer.
+        // The tail handles what's left: a real Enter for the LAST phrase when its quiet-timer Enter
+        // never fired (`phraseDirty`, set only for a final that GREW the document — so the drain's
+        // re-sent flush `final` can't resurrect it into a double Enter), plus a FINAL clipboard
+        // restore that also clears the snapshot.
+        // `phraseDirty` alone arms the tail: this runs outside the queue with no resolved target,
+        // so enqueueAutoEnter resolves and drops the Enter if the window doesn't want one. Arming
+        // optimistically costs a brief "injecting" flash; the reverse would miss an Enter, which
+        // loses a submit.
         const enterTail = phraseDirty;
         phraseDirty = false;
         // The final clipboard action is decided once the inject queue has DRAINED (finalClip, run
@@ -3345,8 +3099,6 @@ async function ensureListeners(): Promise<void> {
         }
         setDictation({ status: "injecting" });
         if (enterTail) enqueueAutoEnter();
-        // Restore/discard once the queue drains (finalClip): restore only if we still owe one, else
-        // keep a final clipboard-only transcript on the clipboard (and drop the snapshot).
         // Chained directly (like the boundary / phrase-end restores): the flood cap must never drop
         // the session's final restore. The token guards a cancel-then-restart, whose cancelLive
         // chains its own endInjection.
@@ -3431,13 +3183,11 @@ async function ensureListeners(): Promise<void> {
               accumulateByLang(one.byLang);
             }
           }
-          // Unconditionally, not only after a translate: the status was set to "translating"
-          // above whenever the Profile had targets, and an EMPTY settle-time pick (a real
-          // answer: insert the original only) nulls `sessionTranslation` — so the block above
-          // is skipped and, with the move inside it, nothing ever said "injecting". Then
-          // `settleToIdleAfterInjection` (which requires "injecting") never settled: the chip
-          // wedged on "translating…", the outcome was never stamped, history never recorded
-          // the session and the warm lease renewed forever.
+          // Unconditionally, not only after a translate: the status was set to "translating" above
+          // whenever the Profile had targets, and an EMPTY settle-time pick (insert the original
+          // only) nulls `sessionTranslation`, skipping the block above — and
+          // `settleToIdleAfterInjection` requires "injecting", so the chip would wedge on
+          // "translating…" and the session never settle.
           setDictation({ status: "injecting" });
           const t = await resolveTarget(cfg);
           // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
@@ -3459,20 +3209,16 @@ async function ensureListeners(): Promise<void> {
           } catch (e) {
             // The whole-session insert IS the product of the dictation. A failure here (portal
             // denied, VK + portal both fail, …) would otherwise drop the entire transcript silently
-            // and resolve the chip to a benign-looking "nothing landed" idle. Surface it, and keep
-            // the transcript on the clipboard so it's recoverable: paste leaves it there on failure
-            // (the Rust skip-restore-on-failed-paste), clipboard-only already put it there, so only
-            // direct typing (which never touches the clipboard) needs an explicit copy.
+            // and resolve the chip to a benign-looking "nothing landed" idle. Surface it, and put
+            // the transcript on the clipboard so it's recoverable.
             console.error("end-of-session insert failed:", e);
             // A cancel (insertCfg→null) or a fresh session (insertCfg→a new object) that landed during
             // the awaited injectText must not recover this discarded session's transcript to the
             // clipboard nor flash its error onto the idled/next session (mirrors the success guard below).
             if (insertCfg !== cfg) return;
             // Did the transcript actually end up on the clipboard? Ask on EVERY method, not just
-            // direct. The clipboard branch used to be asserted on the premise that a
-            // clipboard-method `inject_text` always returns `landed: true`; it now reports a real
-            // write failure, so the assertion promised a recovery that may not exist. Asking costs
-            // one extra clipboard write on a path that has already failed, and cannot duplicate
+            // direct: a clipboard-method `inject_text` can report a real write failure too. Asking
+            // costs one extra clipboard write on a path that already failed, and cannot duplicate
             // text (nothing was inserted).
             const onClipboard = await recoverToClipboard(outText, t, "failed insert");
             // The recovery copy is another await — re-check, or a cancel / fresh session landing
@@ -3493,33 +3239,23 @@ async function ensureListeners(): Promise<void> {
           // the awaited injectText must not stamp this finished session's outcome onto the idled/next
           // session's globals — mirrors the live per-phrase tasks' post-inject guard.
           if (insertCfg !== cfg) return;
-          // Single end-of-session insert — record the outcome for the done marker (no separate
-          // per-phrase pulse; this IS the whole session). Same `landed` term as the per-phrase
-          // path, and it matters more here: this ONE call carries the entire transcript, so a sink
-          // skip booked as success stamped a "typed" done marker on a dictation that went nowhere
-          // — while every other failure mode on this path deliberately copies the text to the
-          // clipboard and says so.
+          // Single end-of-session insert: this IS the whole session, so its outcome feeds the done
+          // marker directly. Same `landed` term as the per-phrase path, and it matters more here:
+          // a sink skip booked as success would stamp a "typed" marker on the entire transcript.
           if (!t.isSelf && landed) {
-            // A divert means the transcript went to the clipboard rather than into the window,
-            // so record THAT outcome — `endOutcome()` reports it and the done marker shows the
-            // clipboard result instead of a green "typed" over text that was never typed. No
-            // flashError: it would paint a red error chip over a delivery that worked, and void a
-            // queued hold-start (flashError → voidPendingHoldStart) in the very scenario where the
-            // user is still holding the chord. (The error path itself still settles —
-            // `settleToIdleAfterInjection` runs settleIdle(true) on "error".)
+            // A divert put the transcript on the clipboard, so record THAT outcome (the done marker
+            // shows the clipboard result, not a green "typed"). No flashError: it would paint a red
+            // chip over a delivery that worked and void a queued hold-start while the user may still
+            // be holding the chord.
             if (t.method === "clipboard" || diverted) sessionClipboard = true;
             else sessionTyped = true;
           } else if (!t.isSelf && !landed) {
-            // Nothing was written: our own window took focus mid-insert (the sink skip returns
-            // before any write), or a clipboard write failed — the clipboard method's own, or the
-            // write a paste / direct insert diverted to the clipboard (focus moved to another app,
-            // stuck modifiers) — which Rust reports the same way. Recover through `recover_to_clipboard`, not
-            // `inject_text` with the clipboard method: the latter's own-window entry guard writes
-            // nothing while our window still holds focus — this skip's main cause. Still believe
-            // the ANSWER rather than the attempt: false = the clipboard write itself failed, and
-            // claiming a recovery then would be a false confirmation. `outText`, not `text`: the
-            // translated transcript is what was being inserted, and history has already booked it
-            // as the delivered translation.
+            // Nothing was written: our own window took focus mid-insert, or a clipboard write failed
+            // (the clipboard method's own, or a paste / direct insert's divert). recoverUnguarded,
+            // not inject_text with the clipboard method: that one's own-window guard writes nothing
+            // while our window holds focus — this skip's main cause. Trust its answer: false = the
+            // copy failed, so claiming a recovery would be false. `outText`: history already booked
+            // the translated transcript as delivered.
             const onClipboard = await recoverUnguarded(outText, "a sink-skipped insert");
             // Same post-await re-check as the failed-insert recovery above.
             if (insertCfg !== cfg) return;
@@ -3552,25 +3288,17 @@ async function ensureListeners(): Promise<void> {
     // armed by the last `final` would fire a stray Enter into the user's now-refocused window), and
     // stop the server's side of any in-flight translate — the session is over.
     abandonSessionWork();
-    // clearPhraseEnd (in abandonSessionWork) cancelled the pending per-phrase clipboard restore, so a pasted phrase would
-    // leave the clipboard holding the transcript (and the un-consumed snapshot would leak into the
-    // next session, whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
-    // swap ONLY, no keystroke, so nothing lands in the now-refocused window (unlike a stray Enter).
-    // Capture the queue (with any in-flight paste) and restore UNCONDITIONALLY once it drains — we
-    // must NOT re-read beganInjection here: it's set only INSIDE the queued paste task (a sync read
-    // misses a paste in flight), AND a fast error-recovery re-trigger runs startLive, which resets
-    // beganInjection to false before this drains (which would wrongly skip the restore + leak the
-    // snapshot). end_injection is idempotent — it take()s the snapshot, a no-op when none was taken —
-    // so the unconditional call restores exactly the sessions that snapshotted, no double-restore.
+    // abandonSessionWork cancelled the pending per-phrase clipboard restore, so restore the user's
+    // clipboard here (a swap only, no keystroke into the refocused window) or a pasted phrase leaves
+    // the transcript there and the snapshot leaks into the next session. Restore UNCONDITIONALLY once
+    // the queue drains: beganInjection is set only inside the queued paste task, and a fast re-trigger's
+    // startLive resets it before this drains. end_injection is idempotent (take()s the snapshot).
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on error failed:", err));
-    // Stop-timing streaming injects the WHOLE transcript only from the `closed` tail — which never runs
-    // after an error (closed bails on status "error", and we retire the epoch below). So an error mid-
-    // session would silently lose the fully-assembled transcript with no recovery, unlike every other
-    // failure path. Copy it to the clipboard (swap only, no keystroke into the refocused window) so it
-    // stays recoverable. Read synchronously before the async copy (committedDoc/bankedDoc are left
-    // intact by the error path, reset only by the next startLive). Live mode injected per-phrase → "".
-    // endInjection above is a no-op in stop mode (beganInjection false → nothing snapshotted), so no race.
+    // Stop-timing streaming injects the whole transcript only from the `closed` tail, which never runs
+    // after an error — so copy it to the clipboard (swap only) or it is lost. Read synchronously:
+    // committedDoc/bankedDoc survive the error path and reset only on the next startLive. Live mode
+    // injected per-phrase → "". endInjection above is a no-op in stop mode (nothing snapshotted).
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
     // No `closed` settles this session, so book its usage outcome here. Claim it before the teardown:
     // a cancel during the error linger would otherwise book first. With stop-mode text to recover the
@@ -3619,9 +3347,6 @@ async function ensureListeners(): Promise<void> {
     void retireSessionEpoch().catch((err) => console.error("retire epoch on error failed:", err));
   });
 
-  // The server refused one or more decode overrides because the field is
-  // admin-locked (reported in the stream `ready` frame). Non-blocking FYI;
-  // cleared at the start of the next dictation.
   // The pinned mic isn't connected (at start, or unplugged mid-session): Rust records from the
   // default input instead and says which. Same stale-session guard as below.
   await reg<MicFallback>("stream://mic-fallback", (e) => {
@@ -3629,22 +3354,19 @@ async function ensureListeners(): Promise<void> {
     setDictation({ micFallback: e.payload });
   });
   await reg<string[]>("stream://overrides-ignored", (e) => {
-    // Same un-advanced-epoch path as `final`: ignore a cancelled/errored session's late drain
-    // emit so a stale overrides-ignored notice can't appear after the session was dropped. The
-    // legitimate emit rides the `ready` frame (status already "listening") or the batch drain
-    // (transcribing), so real notices pass.
+    // The server refused admin-locked decode overrides (reported in the `ready` frame): a
+    // non-blocking FYI, cleared at the next dictation start. Same un-advanced-epoch guard as
+    // `final`: a cancelled/errored session's late drain must not surface a stale notice; the real
+    // emit rides the `ready` frame (status "listening") or the batch drain (transcribing).
     if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
-  // The drain after Stop ended before the server's last final (its idle window ran out, the server
-  // restarted or hit a keepalive timeout, or the connection dropped): the session ended SHORT,
-  // not failed. A WARNING only — everything committed before it is good, and the `closed` that
-  // follows must still run the normal tail (stop-mode insert, the pending phrase-end Enter, the
-  // clipboard restore). So none of the stream://error teardown here: no flashError, no
-  // abandonSessionWork, no insertCfg reset, no epoch retire. Just say the last phrase may be gone.
-  // The doorway alone is invisible while dictating into another app (the main window sits in
-  // the tray), so the session is also MARKED: settleIdle — the end of that tail — turns the mark
-  // into a chip note, or into a chip error when nothing of the dictation survived.
+  // The drain after Stop ended before the server's last final (idle window ran out, server restart,
+  // keepalive timeout, dropped connection): the session ended SHORT, not failed. A warning only —
+  // the `closed` that follows must still run the normal tail (stop-mode insert, pending Enter,
+  // clipboard restore), so none of the stream://error teardown here. The doorway alone is invisible
+  // while dictating into another app, so the session is also MARKED: settleIdle turns the mark into
+  // a chip note, or a chip error when nothing of the dictation survived.
   await reg<string>("stream://incomplete", (e) => {
     if (!inSession()) return; // a cancelled session's late drain — same guard as the siblings
     console.warn("[dictation] stream incomplete:", e.payload);
@@ -3664,22 +3386,16 @@ async function ensureListeners(): Promise<void> {
     }
     throw e;
   }
-  // Set the once-only flag ONLY after every registration succeeded: a rejected import/listen otherwise
-  // leaves `wired` true forever, so every later startLive short-circuits here and opens a session with
-  // NO stream://* handlers (mic + system-mute open, chip stuck, no transcript, until restart). Deferring
-  // it lets the next start retry. Safe: the sole caller (startLiveInner) is serialized by startLive's
-  // startingSession guard, so this await window admits no concurrent ensureListeners (no double-register).
+  // Set only after every registration succeeded: set earlier, a rejected import/listen would leave
+  // `wired` true forever and every later session would open with NO stream://* handlers. Safe: the
+  // sole caller is serialized by startLive's startingSession guard (no double-register).
   wired = true;
 }
 
-/** Merge a Backend's decode defaults with a Profile's overrides (profile wins per
- *  field). Only true-inherit (undefined/null) is dropped, so a field reaches the server
- *  when explicitly set. NB: an empty string "" is a SET value, not inherit — the text
- *  fields (hotwords, suppress_tokens, prepend/append_punctuations) expose an explicit
- *  "clear" (DecodeFields' Eraser button) that sends "" to suppress the inherited value,
- *  exactly like the prompt 3-state; dropping "" here silently lost that clear (and let a
- *  backend value win over a profile's clear). Numbers/bools never produce "" (the number
- *  input maps ""→undefined), so keeping "" only affects the text fields. Returns undefined
+/** Merge a Backend's decode defaults with a Profile's overrides (profile wins per field). Only
+ *  true-inherit (undefined/null) is dropped. An empty string "" is a SET value: the text fields'
+ *  explicit clear (DecodeFields' Eraser) sends "" to suppress the inherited value, like the prompt
+ *  3-state. Numbers/bools never produce "", so this only affects text fields. Returns undefined
  *  when nothing is set — the wire then carries no decode_overrides at all. */
 function mergeDecodeOverrides(
   base?: DecodeOverrides,
@@ -3718,13 +3434,11 @@ function teardownAfterFatalInject(): void {
   // The failed phrase (or one queued behind it) may still have a translate in
   // flight; nothing will consume it now, so this stops the server's work too.
   abandonSessionWork();
-  // Null insertCfg (like cancelLive) so any inject task still QUEUED behind the failed one bails on
-  // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
-  // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
-  // re-reading insertCfg, and the late drain `closed` bails on status "error"/"idle" before it would
-  // read insertCfg at the tail. discardInjectionSnapshot is chained on `owed` below, so the snapshot
-  // is dropped (not restored) once any in-flight paste finishes — the failed phrase's transcript
-  // stays on the clipboard as the error promises.
+  // Null insertCfg (like cancelLive) so an inject task still QUEUED behind the failed one bails on
+  // its `insertCfg !== cfg` guard instead of typing a phrase and pulsing green onto the red chip.
+  // Safe: the failing task returns without re-reading insertCfg, and the late `closed` bails on
+  // status "error"/"idle" first. The snapshot is dropped (not restored) on `owed` below, so the
+  // failed phrase's transcript stays on the clipboard as the error promises.
   insertCfg = null;
   const owed = injectChain;
   void owed
@@ -3751,21 +3465,16 @@ export function sinkSkipMessage(): string {
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
-  // Every call site is terminal for the session (a failed start, a failed insert, a lost
-  // connection), and `settleIdle` — the normal releaser — only runs for a session that reached
-  // "injecting". Release the preload lease here, or a session that died on this path kept
-  // POSTing the warm hint every RENEW_MS until the next successful start. Idempotent.
+  // Every call site is terminal for the session, and `settleIdle` (the normal releaser) only runs
+  // for a session that reached "injecting" — so release the preload lease here, or the warm hint
+  // keeps POSTing every RENEW_MS until the next successful start. Idempotent.
   releaseWarmLease();
   voidPendingHoldStart(); // don't chain a queued start onto a failed session (in-flight check included)
-  // Clear the live preview too (like level:0 freezes the meter): the error supersedes it, and
-  // otherwise the stale `partial` lingers in the store — when the error auto-clears to idle the
-  // Home transcript card (which lingers longer than the error) would flip from the red message to
-  // the leftover preview text labelled "done". cancelLive/startLive clear it on their paths; the
-  // error auto-clear didn't. Clear `warming` for the same reason: a start-failure lands here with
-  // warming:true AND the warm-timer backstop already cancelled (start-reject catch), so without this
-  // the chip would stay stuck on "warming up…" (read ungated) and expanded until the next session.
-  // Fifth writer of `partial`: drop any pending tick so it cannot repaint a preview over the
-  // error the user is being shown.
+  // Clear the live preview: otherwise the stale `partial` lingers and, when the error auto-clears,
+  // the Home transcript card (which outlives the error) flips to the leftover preview labelled
+  // "done". Clear `warming` too: a start failure lands here with warming:true and the warm-timer
+  // backstop already cancelled, so the chip would stay stuck on "warming up…". resetPartialPreview
+  // also drops any pending tick so it cannot repaint a preview over the error.
   resetPartialPreview();
   // Same call as the status move (see settleIdle): the error supersedes whatever
   // the cold-translate phase was reporting.
@@ -3783,14 +3492,10 @@ function flashError(message: string): void {
   }, ERROR_LINGER_MS);
 }
 
-// Synchronous in-flight guard for startLive. dictate()'s isBusy() gate reads `status`,
-// but startLiveInner doesn't flip status to "listening" until AFTER its awaits
-// (ensureListeners + getFocusedApp). Without this, two triggers landing inside that window
-// both pass the gate and launch overlapping sessions — and because stream and record are
-// independent Rust states, a stream+batch double-fire leaves one session's capture thread +
-// system-mute guard leaked when the later stop routes to only the other endpoint. Ignoring
-// the second concurrent start closes that window; the finally guarantees the flag resets
-// even if a pre-status await (ensureListeners/getFocusedApp) rejects.
+// Synchronous in-flight guard for startLive. dictate()'s isBusy() gate reads `status`, which
+// startLiveInner flips to "listening" only after its awaits, so two triggers in that window would
+// both pass and launch overlapping sessions — a stream+batch double-fire leaks one capture thread
+// + system-mute guard, since stream and record are independent Rust states.
 let startingSession = false;
 // A stop/cancel trigger that arrives DURING the start prologue (before startLiveInner flips status
 // to "listening") finds status still "idle", so dictate()'s stopOrCancel no-ops it. For HOLD/PTT a
@@ -3798,14 +3503,11 @@ let startingSession = false;
 // session left wedged "listening" forever (the chord is already released, nothing re-triggers a
 // stop). This records that a stop is owed; startLiveInner honors it the moment the session is up.
 let stopRequestedDuringStart = false;
-// The start INVOKE (startRecord/startStream) is in flight: status is already "listening" and
-// `capturing` true, so a stop or cancel gesture reaches stopLive/cancelLive, but Rust has not
-// stored the session yet — start_* reads the keyring before taking the state lock, and a locked
-// keyring can park it behind an unlock prompt for seconds. A stop or cancel then found no session
-// and the start stored it afterwards, leaving the mic open behind a "finalizing…" or idle chip.
-// stopLive defers to the post-invoke stopRequestedDuringStart check; cancelLive marks
-// cancelDuringStartInvoke (with the cancel's keepRecording), and startLiveInner cancels the
-// session the start stored after it.
+// The start INVOKE (startRecord/startStream) is in flight: status is already "listening", so a stop
+// or cancel reaches stopLive/cancelLive, but Rust has not stored the session yet (start_* reads the
+// keyring first, and a locked keyring can park it for seconds) — the stop/cancel would find nothing
+// and the mic stay open. stopLive defers to the post-invoke stopRequestedDuringStart check;
+// cancelLive marks cancelDuringStartInvoke, and startLiveInner cancels the stored session after.
 let startInvokeInFlight = false;
 let cancelDuringStartInvoke: { keepRecording: boolean } | null = null;
 
@@ -3819,14 +3521,11 @@ export function requestStopIfStarting(): boolean {
 }
 
 /** The inverse, for key chatter: a worn switch can bounce a held chord (phantom release +
- *  re-press, ms apart), which lands here as "stop" then "start" during the start prologue.
- *  The stop sets stopRequestedDuringStart and the re-press start is swallowed by the busy
- *  gate — so the bounce always killed the session with 0 audio while the chord was still
- *  physically held. dictate()'s start path calls this when a start for the ALREADY-STARTING
- *  profile arrives mid-prologue: the re-press proves the chord is still down, so the newest
- *  press wins and the owed stop is dropped. The startingSession check also keeps it a no-op
- *  against the stale-flag window after a rejected prologue (flag survives, startingSession
- *  false). Returns whether a pending stop was cleared. */
+ *  re-press, ms apart), arriving as "stop" then "start" during the prologue — the stop would kill
+ *  the session with 0 audio while the chord is still held. dictate()'s start path calls this when a
+ *  start for the ALREADY-STARTING profile arrives mid-prologue: the re-press proves the chord is
+ *  down, so the owed stop is dropped. The startingSession check keeps it a no-op against a stale
+ *  flag after a rejected prologue. Returns whether a pending stop was cleared. */
 export function cancelStopIfStarting(): boolean {
   if (!startingSession || !stopRequestedDuringStart) return false;
   stopRequestedDuringStart = false;
@@ -3960,8 +3659,7 @@ async function startLiveInner(
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
   // A profile that set its prompt (incl. an explicit "" clear) wins; else the backend's
-  // own tri-state — `backendPrompt` reads it, so a backend CLEARED to "" sends "" and
-  // only an un-set one is omitted (a bare `backend.prompt !== ""` collapsed both).
+  // own tri-state via `backendPrompt` (a backend CLEARED to "" sends "").
   const prompt = pov?.prompt !== undefined ? pov.prompt : backendPrompt(backend);
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's (shared with sessionShape).
@@ -4071,15 +3769,14 @@ async function startLiveInner(
     }
   }
 
-  // Per-app rule (P16): the focused app at start decides block/method/paste-shortcut. Resolved
+  // Per-app rule: the focused app at start decides block/method/paste-shortcut. Resolved
   // once here — you dictate into the app you triggered from — via the shared resolveInjectionTarget
   // (same policy resolveTarget re-runs per phrase, so the frozen start value can't diverge).
   // A caller that had to take focus first (the picker) already read this — using its
   // value keeps the session aimed at the app the user was actually in.
   const targetApp = preresolvedTarget !== undefined ? preresolvedTarget : await getFocusedApp();
-  // The own-window short-circuit now lives INSIDE resolveInjectionTarget, so this and the
-  // per-phrase path share it by construction rather than by two hand-copied literals — which
-  // is what diverged once already, and what a Profile layer would have silently bypassed.
+  // The own-window short-circuit lives INSIDE resolveInjectionTarget, so this and the
+  // per-phrase path share it by construction (two hand-copied literals once diverged).
   // The Profile's own overrides, frozen for the session. `resolveTarget` re-reads the
   // app-rule layer per phrase but never this one — a profile does not change mid-session,
   // and the poll can outlive `activeProfile`.
@@ -4099,11 +3796,8 @@ async function startLiveInner(
     blocked: rule?.block ?? false,
     notEditable,
     activation,
-    // Hold/PTT holds the chord the whole time → live TYPING collides with the held modifier,
-    // so paste/direct fall back to the single insert-on-release ("stop"). Clipboard-only types
-    // nothing, so it can run live in any activation — it just refreshes the clipboard per segment.
-    // The user's ask now comes from the PROFILE, not a global three-way. The other two
-    // terms are unchanged — see liveAllowed for why the activation must be the runtime one.
+    // See liveAllowed for the three terms (clipboard-only may run live under a held chord; the
+    // activation must be the runtime one).
     // Profile override wins; absent = inherit the Dictation-tab default. Without the
     // fallback the editor's "Inherit" would silently mean "off".
     // `insertTiming === "off"` still reaches here via sync apply (a pre-migration peer
@@ -4165,8 +3859,8 @@ async function startLiveInner(
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
   resetServerWork(); // …and anything the previous session's server was reported doing
 
-  // P16/D: surface the injection target + why (if at all) it's coerced to clipboard, for the
-  // chip's "→ app" readout. blocked (per-app rule) takes precedence over the deep-detect guard.
+  // Surface the injection target + why (if at all) it's coerced to clipboard, for the chip's
+  // "→ app" readout. blocked (per-app rule) takes precedence over the deep-detect guard.
   const targetSkip = insertCfg.blocked ? "blocked" : insertCfg.notEditable ? "notEditable" : null;
   setDictation({
     status: "listening",
@@ -4213,10 +3907,9 @@ async function startLiveInner(
   // here, with the upgrade above applied, because the clip param goes out with the start.
   sessionPerUtterance = insertCfg?.live === true && insertCfg.activation === "handsfree";
 
-  // The clipboard snapshot for "restore after" is taken PER PHRASE now, just before each paste
-  // (see the live `final` handler) — not once here — so it tracks what you actually had on the
-  // clipboard at each phrase, and a session that starts in a non-paste window still restores once
-  // it pastes. beginInjection is no longer called at session start.
+  // No clipboard snapshot here: "restore after" snapshots PER PHRASE, just before each paste (see
+  // the live `final` handler), so it tracks the clipboard at each phrase and a session that starts
+  // in a non-paste window still restores once it pastes.
 
   // Per-device address override ("use this URL on this device") wins over the
   // synced canonical serverUrl for the actual connection.
@@ -4249,12 +3942,9 @@ async function startLiveInner(
         prompt,
         decodeOverrides,
         overrideProfile,
-        // Tell the server a translation is coming on a separate request, so
-        // it holds each utterance's log receipt open and merges the two
-        // halves into one block instead of logging a receipt and then orphan
-        // [translate] lines with nothing linking them. sessionTranslation was
-        // frozen a few lines above, so this is the same intent the session
-        // will actually act on — not a second, drifting source of truth.
+        // Tell the server a translation is coming on a separate request, so it holds each
+        // utterance's log receipt open and merges both halves into one block instead of orphan
+        // [translate] lines. Built from the frozen sessionTranslation, the intent the session acts on.
         translateExpect: sessionTranslation
           ? {
               targets: [...sessionTranslation.targets],
@@ -4281,11 +3971,7 @@ async function startLiveInner(
     // A Cancel landed during the invoke: cancelLive already tore the TS side down and left the
     // Rust half to here. The session exists now, so this cancel finds it live and aborts it —
     // never the previous session's drain/transcription (that one is reached only with no live
-    // session). A recovery cancel keeps its usual meaning: Rust finishes the session instead of
-    // discarding it (a stream drains, a batch clip is transcribed, and the recording is written)
-    // — only while "Keep recordings" is on; with it off the session is aborted like a Cancel (a
-    // stream is dropped without a drain; a batch's live clip is not uploaded, and a device-loss
-    // salvage is stopped unless its upload had already started, then only its result is dropped).
+    // session). A recovery cancel keeps its CancelOpts.keepRecording meaning.
     // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
     const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
     if (owedCancel) {
@@ -4407,11 +4093,8 @@ function applyReclassify(profile: Profile): void {
     // the live path never re-reads bankedDoc, so flipping `live` would drop it at stop
     // — keep the session in its started insert mode in that rare case.
     if (bankedDoc === "") {
-      // Through the SAME helper as startLiveInner, which is the point of extracting it: this
-      // site used to open-code the expression and had already drifted — it dropped the
-      // hold/clipboard term while its comment above claimed it recomputed "exactly as
-      // startLiveInner does". Equal only because activation is "handsfree" by now; any term
-      // added to the derivation would silently not have applied to an upgraded session.
+      // Through the SAME helper as startLiveInner, so a term added to the derivation also applies
+      // to an upgraded session (an open-coded copy here had already drifted).
       // The `timing !== "off"` term mirrors startLiveInner's `live` too (timing is the frozen
       // g.insertTiming): an "off" session that went live here would type every phrase, since
       // the closed handler's off-drop only runs when `live` is false.
@@ -4473,18 +4156,11 @@ export async function stopLive(): Promise<void> {
     if (activeEndpoint === "batch") await stopRecord();
     else await stopStream();
   } catch (e) {
-    // A rejected stop would otherwise wedge the chip at "finalizing…" — batch has no stuck-
-    // watchdog (it's stream-only), so surface the error to return the UI to a clear state.
-    // Also tear down the focus-poll + endpoint here, mirroring startLiveInner's reject path: a
-    // rejected stop means no stream is left to emit `closed`, so nothing else stops the 700ms
-    // targetPollTimer (it would republish a stale target forever) or resets activeEndpoint, and
-    // the stuck-watchdog can't recover it (flashError flips status to "error", which gates off its
-    // status==="transcribing" cancelLive).
-    // A rejected stop leaves no `closed` behind to clean anything up, so abandonSessionWork also
-    // stops the stop-timing one-shot's translate (which can be waiting out a 60 s cold model load —
-    // the server would stay busy for text this path is about to recover to the clipboard instead),
-    // and cancels the ~1.2s quiet timer so a pending live-mode phrase can't fire a stray auto-Enter
-    // into the now-refocused window (mirrors the stream://error handler).
+    // A rejected stop leaves no stream to emit `closed`, so nothing else returns the UI to a clear
+    // state: batch has no stuck-watchdog, and the stream one is gated off once flashError flips status
+    // to "error". Tear down here as stream://error does — abandonSessionWork (focus poll, quiet timer,
+    // stop-timing translate, …) plus the endpoint — so no 700ms poll republishes a stale target and
+    // no stray auto-Enter lands in the refocused window.
     abandonSessionWork();
     activeEndpoint = null;
     capturing = false;
@@ -4507,11 +4183,10 @@ export async function stopLive(): Promise<void> {
     // stream://error handler does) and book the copy's answer, or what already landed.
     const settleOutcome = deferSessionOutcome();
     if (!pending) bookFailedEnd(settleOutcome);
-    // Null insertCfg (AFTER reading it for `pending`) so a LIVE phrase still queued behind the rejected
-    // stop can't type/paste into the now-refocused window and pulse a green/amber "inserted" onto the
-    // red error chip — the 4th sibling of stream://error / teardownAfterFatalInject / cancelLive, which
-    // all null it (this catch mirrored every OTHER teardown step but missed this one). endInjection is
-    // chained on `owed` above, so any snapshot still restores; the recovery below doesn't read insertCfg.
+    // Null insertCfg (AFTER reading it for `pending`), as stream://error, teardownAfterFatalInject and
+    // cancelLive do, so a LIVE phrase still queued behind the rejected stop can't type/paste into the
+    // now-refocused window and pulse "inserted" onto the red error chip. endInjection is chained on
+    // `owed` above, so any snapshot still restores; the recovery below doesn't read insertCfg.
     insertCfg = null;
     // Flash BEFORE the recovery await, as the stream://error handler does: the chip sits on
     // "transcribing" until the flash, so a stop gesture landing in that window cancels this session
@@ -4557,8 +4232,8 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   restartOwed = null; // …or restart
   // A translate may be in flight for a phrase this cancel just discarded; abandonSessionWork tells
   // the server to stop — dropping our end leaves it generating tokens for text nobody will read
-  // (Rust waits an hour on that request). Every cancel entry point in the app — dictation.ts's five
-  // call sites, Home's stop button, App.tsx's resume handler and the chip's ✕ — routes through THIS
+  // (Rust waits an hour on that request). Every cancel entry point — dictation.ts (the chip's ✕
+  // among them), the Dashboard stop button and App.tsx's resume handler — routes through THIS
   // function, so this one call covers them all; don't add duplicates at those sites.
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); book what
@@ -4584,26 +4259,18 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   seenDoc = "";
   bankedDoc = "";
   resetPartialPreview();
-  // If we snapshotted the clipboard for live paste, give the user's original back and clear the
-  // snapshot so it can't leak into the next session (end_injection restores + consumes it).
-  // Chain it on the existing queue so it runs AFTER any in-flight paste — calling it directly
-  // would race a still-running paste (the restore could win and the paste reads the wrong
-  // clipboard). Then reset the queue for the next session.
-  // Chain endInjection() unconditionally on the in-flight queue, NOT gated on `beganInjection`:
-  // that flag is set true INSIDE the queued paste task, AFTER beginInjection() already snapshotted
-  // the clipboard. A cancel that lands while a phrase's paste is in flight (snapshot taken, flag not
-  // yet set) would otherwise skip the restore and strand the user's clipboard with our transcript.
-  // end_injection is idempotent (g.take() restores+consumes when a snapshot exists, no-op otherwise),
-  // so the unconditional call restores exactly the sessions that snapshotted, with no double-restore.
+  // Restore the user's clipboard if a live paste snapshotted it, so the snapshot can't leak into the
+  // next session. Chained on the queue so it runs AFTER any in-flight paste (a direct call races it),
+  // and NOT gated on `beganInjection`: the paste task sets that flag only after beginInjection()
+  // snapshotted, so a cancel in between would strand our transcript on the clipboard. end_injection
+  // is idempotent (restores + consumes a snapshot, no-op otherwise), so no double-restore.
   const pending = injectChain;
   void pending.then(() => endInjection()).catch((e) => console.error("end injection failed:", e));
   beganInjection = false;
-  // Reset the per-phrase insert-feedback flags too (startLiveInner does, on the next start). Without
-  // this, the cancelled session's detached drain emits a late stream://status:"closed" on the
-  // un-advanced epoch; the closed handler's insertCfg===null branch then re-stamps sessionOutcome via
-  // endOutcome(), which would read the STALE typed/clipboard flags and flip the cancel's intended
-  // "none" to a false "typed"/"clipboard" — firing a bogus "Inserted"/"Copied" chip pulse on a
-  // CANCELLED session. Reset here so endOutcome() returns "none" and the late re-stamp is a no-op.
+  // Reset the per-phrase insert-feedback flags too: the cancelled session's detached drain can emit
+  // a late `closed` on the un-advanced epoch, whose insertCfg===null branch re-stamps sessionOutcome
+  // via endOutcome() — stale typed/clipboard flags would flip the cancel's "none" to a bogus
+  // "Inserted"/"Copied" pulse.
   sessionTyped = false;
   sessionClipboard = false;
   sessionUtteranceSeen = false;
@@ -4635,7 +4302,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
     // guard right away. A recovery cancel (keepRecording) keeps the audio instead (see CancelOpts).
     // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
     // right now — in stop-timing mode the session is already gone by then, and the flag is
-    // the only thing that distinguishes this from the closed-handler's release below.
+    // the only thing that distinguishes this from the closed handler's release.
     if (owedToStart) {
       // startLiveInner's post-invoke cancel
     } else if (endpoint === "batch") await cancelRecord(true, !opts?.keepRecording);
