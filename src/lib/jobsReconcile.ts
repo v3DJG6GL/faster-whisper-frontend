@@ -5,16 +5,15 @@
 // `running`, or already `done` with the result — while the app remembers nothing but
 // the ledger. This module closes that gap once per launch:
 //
-//   running  → the newest such row takes the rail back (reattachRun) and is polled
-//              once a second through GET /v1/jobs/{id}; any older running row is
-//              watched headless (every 5 s) and lands in History when it finishes.
+//   running  → the newest such row takes the rail back (reattachRun) when the workbench
+//              is idle and is polled once a second through GET /v1/jobs/{id}; every
+//              other running row is watched headless (every 5 s) and lands in History
+//              when it finishes.
 //   done     → the result is fetched and ingested exactly like the POST path.
 //   failed / cancelled / unknown → a failed record with the reason.
 //   server unreachable → try again every 30 s for ten minutes, then leave the rows
-//              for the next launch (nothing is lost — the server holds a running job
-//              for max(its jobs TTL, 24 h) from its start — caps.jobs.ttl_s, 72 h by
-//              default — and a finished one for a TTL from its finish; see
-//              jobsLedger.maxAgeMs).
+//              for the next launch (nothing is lost — the server still holds the job;
+//              its horizon is jobsLedger.maxAgeMs).
 //
 // Every ingest is idempotent: the record id IS the job id, so a second pass upserts
 // the same record; the row is forgotten only after the record was written.
