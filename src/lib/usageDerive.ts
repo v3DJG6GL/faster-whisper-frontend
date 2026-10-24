@@ -1030,6 +1030,9 @@ export interface FacetRow {
   colorVar?: string;
 }
 
+/** A facet's trailing dim "Unreported" row, present only when some sessions did not say. */
+export const unreportedRow = (n = 0) => (n > 0 ? [{ label: "Unreported", value: n, dim: true }] : []);
+
 /** Rows scaled to the largest value; zero rows kept (they read as "none") unless `dropZero`.
  *  `scaleTo` = "lit" scales to the largest NON-dim row instead, so the "Translated into"
  *  facet keeps its languages readable next to a much larger dim "Not asked" (a dim row
@@ -1077,7 +1080,7 @@ export function translationRows(d: {
       { label: "Kept original", value: tr.kept_original, dim: true },
       { label: "Not asked", value: tr.not_asked, dim: true },
       ...(tr.aborted > 0 ? [{ label: "Aborted", value: tr.aborted, dim: true }] : []),
-      ...(tr.unreported > 0 ? [{ label: "Unreported", value: tr.unreported, dim: true }] : []),
+      ...unreportedRow(tr.unreported),
     ],
     false,
     "lit",

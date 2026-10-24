@@ -46,6 +46,7 @@ import {
   densifyKinds,
   facetRows,
   translationRows,
+  unreportedRow,
   findStage,
   fmtTimeSaved,
   isDay,
@@ -240,7 +241,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
           rows={facetRows([
             { label: "Push-to-talk", value: act.hold },
             { label: "Hands-free", value: act.handsfree },
-            ...((act.unreported ?? 0) > 0 ? [{ label: "Unreported", value: act.unreported ?? 0, dim: true }] : []),
+            ...unreportedRow(act.unreported),
           ])}
         />
         <HBars
@@ -249,7 +250,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
             { label: "Typed", value: del.typed },
             { label: "Clipboard", value: del.clipboard },
             { label: "Nothing", value: del.none, dim: true },
-            ...(del.unreported > 0 ? [{ label: "Unreported", value: del.unreported, dim: true }] : []),
+            ...unreportedRow(del.unreported),
           ])}
         />
         <HBars
