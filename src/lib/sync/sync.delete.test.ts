@@ -184,14 +184,8 @@ describe("a push superseded while composing", () => {
 describe("a sync composed with a degraded keyring", () => {
   /** Seed a version-1 base from a clean push, then lock the wallet and add a backend here. */
   async function seed(): Promise<{ base: SyncBlob; before: boolean }> {
-    await resetSyncState();
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+    const base = await seedBase();
     const b1 = backend({ hasApiKey: true });
-    useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
-    api.keys = { b1: "sk-secret" };
-    await pushNow(true);
-    const base = structuredClone(api.pushed) as SyncBlob;
     expect(base.backends?.secrets).toEqual({ b1: "sk-secret" });
     api.keys = {};
     const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
@@ -346,14 +340,8 @@ describe("a sync composed with a degraded keyring", () => {
   it("approving a review after the keyring locked keeps this device's list", async () => {
     for (const renameB1 of [false, true]) {
       try {
-        await resetSyncState();
-        const settings = structuredClone(DEFAULT_SETTINGS);
-        settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+        const base = await seedBase();
         const b1 = backend({ hasApiKey: true });
-        useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
-        api.keys = { b1: "sk-secret" };
-        await pushNow(true);
-        const base = structuredClone(api.pushed) as SyncBlob;
         const before = useApp.getState().settings.general.typeAsISpeak;
         const remote = peer(base, before, renameB1);
         remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
@@ -581,13 +569,7 @@ describe("a stale API-key flag the keyring reports absent", () => {
 describe("a 409 against a deleted server copy", () => {
   it("re-seeds from version 0 and pushes the full blob", async () => {
     try {
-      await resetSyncState();
-      const settings = structuredClone(DEFAULT_SETTINGS);
-      settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
-      useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-      api.keys = { b1: "sk-secret" };
-      await pushNow(true);
-      const full = structuredClone(api.pushed) as SyncBlob;
+      const full = await seedBase();
       const s = useApp.getState().settings;
       useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: !s.general.startMinimized } } });
       api.conflicts = [{ version: 0, updated_ts: null, device: null, blob: null }];
@@ -613,15 +595,9 @@ describe("a 409 against a deleted server copy", () => {
 // silently: the dialog's button came back and nothing was applied.
 describe("approving a review while a pull re-raises it", () => {
   it("still applies", async () => {
-    await resetSyncState();
-    const settings = structuredClone(DEFAULT_SETTINGS);
-    settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
-    useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-    api.keys = { b1: "sk-secret" };
     let release: () => void = () => {};
     try {
-      await pushNow(true);
-      const remote = structuredClone(api.pushed) as SyncBlob;
+      const remote = await seedBase();
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
