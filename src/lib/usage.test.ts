@@ -31,9 +31,14 @@ vi.mock("./windowVisibility", () => ({
 import { useApp } from "./store";
 import { initUsageController, openStatisticsPage, sameViewSource, TREND_DAYS } from "./usage";
 import { forgetCredential } from "./capabilities";
+import type { UsagePageQuery } from "./usageDerive";
 
 const B1 = { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never;
 const B2 = { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never;
+/** The suite's page query. Not the 30-day default: its query would look exactly like the fixed
+ *  document's, and `calls()` could not tell the page's own fetch from it. A fresh object each
+ *  call, because the store notices a query change by reference. */
+const suiteQuery = (): UsagePageQuery => ({ range: "90", with: [] });
 
 const setHidden = (h: boolean) => {
   vis.hidden = h;
@@ -83,9 +88,7 @@ describe("usage poll gates", () => {
     vi.useFakeTimers();
     useApp.setState({
       backends: [B1],
-      // Not the 30-day default: its query would look exactly like the fixed document's, and
-      // `calls()` could not tell the page's own fetch from it.
-      usageViewQuery: { range: "90", with: [] },
+      usageViewQuery: suiteQuery(),
     });
     initUsageController();
     await settle(); // the launch pass
@@ -611,7 +614,7 @@ describe("usage poll gates", () => {
       await settle();
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
     }
     await restoreSingleBackend();
   });
@@ -630,7 +633,7 @@ describe("usage poll gates", () => {
       const view = useApp.getState().usageView!;
       expect(view.stats && !view.failed).toBeTruthy();
       getUsageStats.mockClear();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
       expect(calls().page).toBe(1); // the view only: the polled 1 year view is the year
       expect(useApp.getState().usageYear).toEqual({ sig: view.sig, stats: view.stats });
@@ -648,7 +651,7 @@ describe("usage poll gates", () => {
     } finally {
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
     }
   });
 
@@ -663,13 +666,13 @@ describe("usage poll gates", () => {
       close = openStatisticsPage(); // the reopen's view fetch never lands
       await settle();
       getUsageStats.mockClear();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
       expect(calls().page).toBe(2); // the view AND the year: the kept 1 year view was not confirmed
     } finally {
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
     }
   });
 
@@ -684,14 +687,14 @@ describe("usage poll gates", () => {
       getUsageStats.mockImplementation(async (a) => (!isTrend(a) ? (null as never) : ok(a)));
       await tick(30_000); // the next poll misses: the view may now be old
       getUsageStats.mockClear();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
       expect(calls().page).toBe(2); // the view AND the year: the missed 1 year view was not seeded
       expect(useApp.getState().usageYear?.failed).toBe(true);
     } finally {
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
     }
   });
 
@@ -709,7 +712,7 @@ describe("usage poll gates", () => {
       // The sidebar reopens on the default query; the server hangs, then misses.
       const pending: ((v: null) => void)[] = [];
       getUsageStats.mockImplementation((a) => (!isTrend(a) ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       close = openStatisticsPage();
       await settle();
       getUsageStats.mockClear();
@@ -723,7 +726,7 @@ describe("usage poll gates", () => {
     } finally {
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
     }
   });
@@ -741,7 +744,7 @@ describe("usage poll gates", () => {
       expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
       // The sidebar reopens on the default query: the view answers, the 365-day fetch hangs.
       getUsageStats.mockImplementation((a) => (a.query.days === 365 ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       close = openStatisticsPage();
       await settle();
       getUsageStats.mockClear();
@@ -755,7 +758,7 @@ describe("usage poll gates", () => {
       pending.splice(0).forEach((r) => r(null));
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
     }
   });
@@ -779,7 +782,7 @@ describe("usage poll gates", () => {
     } finally {
       getUsageStats.mockImplementation(ok);
       close();
-      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      useApp.setState({ usageViewQuery: suiteQuery() });
       await settle();
     }
   });
