@@ -429,7 +429,6 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         }
     }
 
-    // The quick-add window shortcut (not a Profile) — same plugin registration path.
     if !quick_add_hotkey.is_empty() {
         match crate::config::codes_to_accelerator(quick_add_hotkey) {
             // Same defang: `quickAddHotkey` is a synced code list with the same passthrough.
