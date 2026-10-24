@@ -38,11 +38,9 @@ const deps = (translate: TranslateDeps["translate"]) => ({
 });
 
 describe("pricedMs", () => {
-  // Regression guard for the bug this module existed to hide: the old formula
-  // was `1500 + phraseChars * 25`, priced for ONE pass over the phrase alone,
-  // while the server translates every submitted segment for every target. A
-  // 4-word phrase with 2 targets got 1.95 s for 2.4 s of real work and lost
-  // the race deterministically — the shorter the phrase, the surer the loss.
+  // The server translates every submitted segment for every target; pricing one
+  // pass over the phrase alone gave a 4-word phrase with 2 targets 1.95 s for
+  // 2.4 s of real work, so short phrases lost the race deterministically.
   it("scales with the target count, not just the text", () => {
     expect(pricedMs(100, 1)).toBe(900);
     expect(pricedMs(100, 2)).toBe(1_800);
@@ -85,7 +83,7 @@ describe("translateCeilingMs", () => {
 
   it("queued === 1 already counts as a backlog", () => {
     // The depth is read BEFORE this phrase's own increment, so 1 means one
-    // task ahead of us. The old `queued > 1` made the branch unreachable.
+    // task ahead of us.
     expect(translateCeilingMs(4_000, 2, { oneShot: false, queued: 1 })).toBeLessThan(
       translateCeilingMs(4_000, 2, { oneShot: false, queued: 0 }),
     );
@@ -98,8 +96,8 @@ describe("translateCeilingMs", () => {
 
 describe("translateStallMs", () => {
   it("tolerates a long silence until the session has seen a translation land", () => {
-    // A cold GGUF load produces no measurable progress for tens of seconds;
-    // treating that as a hang is the mistake the old budget made.
+    // A cold GGUF load produces no measurable progress for tens of seconds,
+    // which is not a hang.
     expect(translateStallMs(null)).toBe(STALL_COLD_MS);
     expect(translateStallMs(false)).toBe(STALL_COLD_MS);
   });
@@ -288,8 +286,8 @@ describe("runDictationTranslate", () => {
 
     it("a server that keeps REPORTING PROGRESS outlives the priced budget", async () => {
       // The whole point of the stall detector: this run takes 40 s, far past
-      // anything the old length formula would have allowed, but the progress
-      // entry advances every poll so it is never abandoned.
+      // the priced budget, but the progress entry advances every poll so it is
+      // never abandoned.
       let pct = 0;
       const d = {
         ...deps(
