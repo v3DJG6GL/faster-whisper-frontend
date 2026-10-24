@@ -1137,8 +1137,8 @@ pub fn set_clipboard_persistent_unless(
     r
 }
 
-/// The body of `set_clipboard_persistent`, minus the pending-restore take — for `paste`, which
-/// has already taken (and possibly adopted) it.
+/// The body of `set_clipboard_persistent`, minus the pending-restore take — for `paste` and the
+/// Wayland paste (through `set_clipboard`), which have already taken (and possibly adopted) it.
 ///
 /// `note_injected` gets the LF text (`is_own_injected` normalizes); the clipboard gets CRLF on
 /// Windows (`clipboard_newlines`). The serving thread first waits out a stuck clipboard read
@@ -1466,7 +1466,8 @@ fn paste(
     // which is what makes the remote's fetch observable — and, in enforce mode, orderable.
     #[cfg(windows)]
     let mut offer_id: Option<u64> = None;
-    // Did the write already go through a live owner (so the divert/failure arms need no re-set)?
+    // Did the write go through an owner that outlives this function? Read by the divert/failure
+    // arms (`divert_rewrite`, `after_chord`).
     let persisted = if remote_target {
         #[cfg(windows)]
         {
@@ -1697,8 +1698,8 @@ fn paste_chord_keys(chord: &[String]) -> (Vec<Key>, Key) {
         }
     }
     // Fall back to a WHOLE Ctrl/Cmd+V if the chord didn't map to a usable main key. Its
-    // modifiers go too: keeping them (Shift + an unmapped Insert) sent Shift+V — a literal
-    // 'V' typed while reporting a paste. Same fallback as the Wayland `chord_to_keycodes`.
+    // modifiers go too: keeping them (Shift + an unmapped Insert) would send Shift+V, typing
+    // a literal 'V' while reporting a paste. Same fallback as the Wayland `chord_to_keycodes`.
     let main = match main {
         Some(k) => k,
         None => {
