@@ -68,7 +68,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { applySpeakerRenameInput, chipStyle, playRejectionBreaks, renameToCommit, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
+import { applySpeakerRenameInput, chipStyle, playRejectionBreaks, renameToCommit, rowText, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 const trDoneTimers = new Map<string, number>();
@@ -1632,10 +1632,10 @@ export function TranscriptViewer({
   );
   const onCommitEdit = useCallback(
     (i: number, text: string) => {
-      const t = stripControlChars(text).trim();
+      const t = rowText(text);
       // Same cleaning as the typed text, or a line with bidi marks (imported RTL
       // subtitles) never compares equal and a bare focus/blur stores a phantom edit.
-      const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
+      const orig = rowText(result.segments?.[i]?.text ?? "");
       // A correction is one logical line, as every export writes it (clean()): a
       // pasted line break would show in Read but become a space in the files.
       // Flattened like the subtitle import (see cjkWraps) and compared flattened, so a

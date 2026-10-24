@@ -6,7 +6,7 @@ import { langText } from "@/lib/languages";
 import { cn } from "@/lib/cn";
 import { ownProp } from "@/lib/own";
 import type { TranscriptWord } from "@/lib/types";
-import { chipStyle, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, rowText, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** One transcript row, memoized: during playback only the row entering and the
@@ -214,7 +214,7 @@ export const SegmentRow = memo(function SegmentRow({
               // text), not the raw server text: the blur commit compares to the
               // original and would delete an earlier saved correction. Cleaned
               // like the span's children below.
-              e.currentTarget.textContent = stripControlChars(seg.text).trim();
+              e.currentTarget.textContent = rowText(seg.text);
               e.currentTarget.blur();
             }
           }}
@@ -224,7 +224,7 @@ export const SegmentRow = memo(function SegmentRow({
           {/* Same cleaning (and order) as onCommitEdit's original, so a bare blur
               compares equal and keeps the span; raw bidi marks here would show the
               line in a different visual order than Read and the stored text. */}
-          {stripControlChars(seg.text).trim()}
+          {rowText(seg.text)}
         </span>
       ) : karaoke ? (
         <span className="block min-w-0 whitespace-pre-wrap" style={lineColor}>
@@ -262,7 +262,7 @@ export const SegmentRow = memo(function SegmentRow({
           onClick={canSeek ? () => seekTo(seg.start) : undefined}
         >
           {visLangs.length > 0 && <LangTag code={origLang} orig />}
-          {stripControlChars(seg.text).trim()}
+          {rowText(seg.text)}
           {seg.edited && (
             <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
           )}

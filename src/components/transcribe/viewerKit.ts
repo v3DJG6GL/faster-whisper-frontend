@@ -12,6 +12,10 @@ export function chipStyle(color: string) {
  *  Export→Read re-centre and "Edit its segment" look rows up by it. */
 export const segRowId = (i: number) => `seg-row-${i}`;
 
+/** A segment's text as its row shows it: control/format characters stripped, then trimmed. The
+ *  edit commit compares and stores in this form, so a bare blur matches the row it came from. */
+export const rowText = (s: string) => stripControlChars(s).trim();
+
 export type EffSegment = {
   start: number;
   end: number;
