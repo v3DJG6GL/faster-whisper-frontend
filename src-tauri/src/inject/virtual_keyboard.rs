@@ -1,5 +1,5 @@
-//! Layout- & Caps-independent text typing on Linux Wayland via the wlroots/KWin
-//! `zwp_virtual_keyboard_v1` protocol (the `wtype`/`wvkbd` approach).
+//! Layout- & Caps-independent text typing on Linux Wayland via the
+//! `zwp_virtual_keyboard_v1` protocol (wlroots: sway/Hyprland; the `wtype`/`wvkbd` approach).
 //!
 //! The portal keycode path (`wayland.rs`) injects raw evdev codes that KWin
 //! resolves under the LIVE seat state — so a locked Caps Lock inverts letter case,
@@ -10,9 +10,9 @@
 //! Lock, the active layout, or even a physically-held Shift. No portal consent dialog
 //! either.
 //!
-//! GNOME does not implement this protocol; `type_text` returns Err there (and on any
-//! failure); `inject_text` falls back to the portal path only when no key was transmitted
-//! yet (`VkError::after_typing == false`).
+//! GNOME does not implement this protocol and KWin does not offer it to us; `type_text`
+//! returns Err there (and on any failure); `inject_text` falls back to the portal path only
+//! when no key was transmitted yet (`VkError::after_typing == false`).
 //!
 //! wayland-client is synchronous and its `EventQueue` isn't `Send` across awaits, so
 //! the connection lives on a dedicated OS thread served over a channel — mirroring
@@ -38,12 +38,9 @@ pub struct VkJob {
     reply: oneshot::Sender<Result<crate::inject::Landed, VkError>>,
     /// See `crate::inject::injection_epoch` — lets the per-key loop abandon a superseded job.
     epoch: u64,
-    /// "Is one of our own windows focused right now?" — passed in rather than read from an
-    /// `AppHandle` because this job is served by a bare `std::thread` that owns the (sync,
-    /// !Send-across-await) Wayland connection and has no handle. Same predicate and same
-    /// cross-thread safety argument as `inject::OwnWindowFocused`: Tauri's `is_focused` posts to
-    /// the event loop and waits on a channel, so the toolkit call runs on the main thread
-    /// whichever thread asks.
+    /// "Is one of our own windows focused right now?" — passed in because this job is served by
+    /// the bare `std::thread` that owns the Wayland connection and has no `AppHandle`. Same
+    /// predicate and cross-thread safety argument as `inject::OwnWindowFocused`.
     own_window_focused: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
@@ -197,11 +194,9 @@ mod imp {
             if failed {
                 // A type_text error means a roundtrip/flush failed — the wl connection is likely dead.
                 // Break so rx drops; ensure_started sees the closed channel (tx.is_closed) and respawns
-                // a fresh connection on the next call (mirrors wayland::session_loop's self-heal).
-                // Otherwise the worker keeps looping on a dead connection and every direct-typing
-                // injection silently falls back to the portal for the rest of the run, losing the VK
-                // fast-path and its Caps-Lock/layout immunity. Breaking on a rare non-fatal error is
-                // harmless — the next injection simply reconnects.
+                // a fresh connection on the next call (mirrors wayland::session_loop's self-heal),
+                // instead of every later injection silently falling back to the portal. A rare
+                // non-fatal error just costs one reconnect.
                 break;
             }
         }
@@ -262,11 +257,8 @@ mod imp {
             // Bound the input BEFORE the per-character allocation below. `order` is one heap
             // `String` per input character, ~50-60 bytes each against 1 byte of ASCII input — so
             // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the per-keymap
-            // distinct-symbol batching further down does not bound it.
-            // The portal path holds the same text as one `String`, so this amplification is
-            // specific to this backend, not inherent to the input. `before(...)` carries
-            // `after_typing: false`, so this cleanly falls back to the portal path, which types
-            // the same text with no amplification. 1 MiB is ~2 hours of typing at this loop's
+            // batching further down does not bound it. Too large falls back to the portal path,
+            // which holds the text as one `String`. 1 MiB is ~2 hours of typing at this loop's
             // 8ms/key — no real dictation approaches it.
             const MAX_VK_TEXT_BYTES: usize = 1 << 20;
             if text.len() > MAX_VK_TEXT_BYTES {
@@ -309,9 +301,9 @@ mod imp {
             let last = order.len() - 1;
             // xkb keycodes top out at 255 (8 + 247), so one keymap holds at most 248 distinct
             // symbols. That cap is per keymap UPLOAD, not per job: a long CJK dictation easily has
-            // more, and rejecting it outright sent it to the portal, which skips every character
-            // the layout cannot produce (or is unavailable on wlroots). So the job is typed in
-            // consecutive batches, each with its own keymap.
+            // more, and the portal would skip every character the layout cannot produce (or is
+            // unavailable on wlroots). So the job is typed in consecutive batches, each with its
+            // own keymap.
             for batch in split_batches(&order, MAX_KEYMAP_SYMBOLS) {
                 // A keymap failure is only "nothing typed yet" for the first batch; after that, a
                 // prefix has landed and the portal must not re-type the whole text.
@@ -343,8 +335,8 @@ mod imp {
                 drop(mfd);
 
                 // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
-                // Caps the seat adopted from us; on KWin the seat keeps the physical Caps, so
-                // the real Caps-immunity comes from the keymap's Lock-consuming key type.
+                // Caps the seat adopted from us; the real Caps-immunity (a seat that keeps the
+                // physical Caps) comes from the keymap's Lock-consuming key type.
                 self.vk.modifiers(0, 0, 0, 0);
 
                 for (i, name) in order.iter().enumerate().take(batch.end).skip(batch.start) {
@@ -362,27 +354,23 @@ mod imp {
                     let probe_here = probes_focus_before(i, name) || (auto_enter && i == last);
                     if probe_here && own_window_focused() {
                         tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
-                        // The prefix already on screen stays — re-sending it would duplicate text
-                        // (hazard P16) — so the tail is dropped and this reports as landed, the
-                        // same trade Q32 settled for the mid-typing cancel below. With nothing
-                        // emitted yet the truthful answer is `NothingWritten`, which makes a
-                        // re-send safe.
+                        // The prefix already on screen stays — re-sending it would duplicate text —
+                        // so the tail is dropped and this reports as landed, like the mid-typing
+                        // cancel below. With nothing emitted yet the truthful answer is
+                        // `NothingWritten`, which makes a re-send safe.
                         return Ok(if emitted {
                             crate::inject::Landed::Yes
                         } else {
                             crate::inject::Landed::NothingWritten
                         });
                     }
-                    // Same mid-typing cancellation as the portal path: this loop sleeps between
-                    // every key, so a long transcript otherwise keeps going long after the user
-                    // stopped. `Ok(Landed::Yes)` whether or not a key went out: Ok never reaches
-                    // the portal fallback in inject/text.rs (only an Err with `after_typing:
-                    // false` does), so the landed prefix is never re-typed; and a user cancel is
-                    // not a transport failure, so run_thread must not tear the connection down
-                    // for it (inject/mod.rs / wayland.rs report the same event the same way). The
-                    // keymap build, the memfd write and the compositor roundtrip sit between the
-                    // pre-loop check and here, so this also covers a bare auto-Enter job
-                    // (`order == ["Return"]`) cancelled in that gap — nothing is synthesized.
+                    // Same mid-typing cancellation as the portal path. `Ok(Landed::Yes)` whether
+                    // or not a key went out: only an Err with `after_typing: false` reaches the
+                    // portal fallback in inject/text.rs, so the landed prefix is never re-typed;
+                    // and a user cancel is not a transport failure, so run_thread must not tear
+                    // the connection down for it. Also covers a bare auto-Enter job
+                    // (`order == ["Return"]`) cancelled during the keymap upload since the
+                    // pre-loop check — nothing is synthesized.
                     if crate::inject::injection_cancelled(epoch) {
                         tracing::info!("[vkbd] cancelled mid-typing — stopping");
                         return Ok(crate::inject::Landed::Yes);
@@ -419,8 +407,8 @@ mod imp {
     /// Whether the typing loop asks who holds focus before key `i` (keysym `name`) of the job:
     /// every 64 keys (see the loop for the cadence), and before every Return whatever the count.
     /// Return is the one keystroke that ACTS rather than inserts, so firing it into our own window
-    /// presses whatever button holds focus there (Q31); a line break in the transcript types one
-    /// just like the auto-Enter does.
+    /// presses whatever button holds focus there; a line break in the transcript types one just
+    /// like the auto-Enter does.
     fn probes_focus_before(i: usize, name: &str) -> bool {
         i > 0 && (i.is_multiple_of(64) || name == "Return")
     }
@@ -464,9 +452,7 @@ mod imp {
 
     /// A minimal XKB keymap: each symbol on its own keycode at a single level, with a
     /// custom key type that CONSUMES Shift+Lock so the symbol is produced verbatim under
-    /// a held Shift or a locked Caps. (A bare single-symbol key would infer ONE_LEVEL,
-    /// which avoids level-shifting but does NOT consume Lock — libxkbcommon would still
-    /// upper-case letters while Caps is on; see the type comment below.)
+    /// a held Shift or a locked Caps (see the type comment below).
     fn build_keymap(unique: &[String]) -> String {
         let max_kc = 8 + unique.len() - 1; // unique is non-empty here
         let mut s = String::new();
@@ -482,7 +468,7 @@ mod imp {
         // Custom 1-level key type that CONSUMES Shift+Lock (every combo → Level1). A bare
         // single-symbol key infers ONE_LEVEL, whose modifier mask is empty, so Lock (Caps)
         // is never "consumed" — and libxkbcommon then upper-cases the keysym whenever the
-        // compositor reports Caps as effective-active. KWin keeps the seat's physical Caps
+        // compositor reports Caps as effective-active. A seat can keep the physical Caps
         // regardless of our modifiers(0,0,0,0), so without consuming Lock here, lowercase
         // letters would type as uppercase while Caps Lock is on.
         s.push_str("xkb_types \"(unnamed)\" {\n");
