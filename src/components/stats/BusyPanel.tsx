@@ -22,11 +22,11 @@ function phraseRule(rhythm: Rhythm, measure: string): string {
   return `the smallest group holding 60 %+ of the ${measure}`;
 }
 
-/** The busy panel (D40 R1 / D41 N1): one grid, three rhythms — weekday × hour, day of month ×
- *  hour (the backend's geometry, D42 A2), year × month — for the page's measure, with side
- *  bars against a flat distribution (D43 M1), a peak line (D44 P1) and per-kind tooltips
- *  that pair the measure with sessions (D45 C1). The rhythm is the panel's own state
- *  (`?rhythm=`): it changes this panel, the measure changes every panel. */
+/** The busy panel: one grid, three rhythms — weekday × hour, day of month × hour (the
+ *  backend's geometry), year × month — for the page's measure, with side bars against a flat
+ *  distribution, a peak line and per-kind tooltips that pair the measure with sessions. The
+ *  rhythm is the panel's own state (`?rhythm=`): it changes this panel, the measure changes
+ *  every panel. */
 export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from, to, bounded = true }: {
   stats: UsageStats;
   dense: readonly UsageSeriesPoint[];
