@@ -877,6 +877,7 @@ function ConnectStep({
     for (const t of inFlight.current) if (t.url === url && t.key === key) return;
     const typedUrl = url;
     const typedKey = key;
+    const stillTyped = () => liveTarget.current.url === typedUrl && liveTarget.current.key === typedKey;
     // Lenient `http:/host` is canonicalised as the editor does (the warning above already judges it so).
     const serverUrl = typedServerUrl(typedUrl);
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
@@ -901,7 +902,7 @@ function ConnectStep({
     setError(null);
     try {
       const info = await testConnection({ serverUrl, apiKey: typedKey || undefined });
-      if (liveTarget.current.url !== typedUrl || liveTarget.current.key !== typedKey) return;
+      if (!stillTyped()) return;
       if (!info.ok) {
         setError(info.error || "Couldn’t reach the server.");
         return;
@@ -911,7 +912,7 @@ function ConnectStep({
       // ask (mirrors onboarding). Standard servers are never probed.
       if (info.bootId) {
         const p = await syncPull({ serverUrl, apiKey: typedKey || null });
-        if (liveTarget.current.url !== typedUrl || liveTarget.current.key !== typedKey) return;
+        if (!stillTyped()) return;
         // Same gate as onboarding's offer: only a blob with something to restore opens it.
         if (p.ok && p.state?.blob && restorableCategories(p.state.blob).length > 0) {
           onDone({ draft, key: typedKey, info, remote: p.state });
@@ -922,9 +923,7 @@ function ConnectStep({
     } catch (e) {
       // Same guard as the resolved branches: a reject for an address the user has since retyped
       // must not be shown under the new one.
-      if (liveTarget.current.url === typedUrl && liveTarget.current.key === typedKey) {
-        setError(String(e));
-      }
+      if (stillTyped()) setError(String(e));
     } finally {
       inFlight.current.delete(run);
       setTesting((ts) => ts.filter((t) => t !== run));
