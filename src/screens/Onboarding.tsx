@@ -253,8 +253,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         return;
       }
       setLanded(true);
-      // Turn sync on for this device, against the restored backend that matches
-      // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
       const gateUrl = typedServerUrl(url);
       // Re-add the gate's own backend when the restore replaced the list without it, as the
