@@ -252,7 +252,7 @@ pub fn any_hold_active() -> bool {
 
 /// Emit "stop" for every plugin Hold chord still held, then clear the set. Called from the
 /// registration teardowns (unregister_all / register_from_config) so a session held across a
-/// rebind/suspend isn't left wedged "listening". No-op when nothing is held (the common case).
+/// rebind/suspend isn't left wedged "listening".
 ///
 /// The plugin twin of evdev/windows `manufactured_stop`: a stop manufactured for a chord with a
 /// shortcut modifier arms the chord-lost latch first. The plugin cannot query key state, so an
@@ -308,7 +308,6 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
                 (ActivationType::HandsFree, ShortcutState::Pressed) => "toggle",
                 _ => return,
             };
-            // Track a held PTT chord so a registration teardown can emit its "stop" (stop_held_sessions).
             if matches!(activation, ActivationType::Hold) {
                 let has_mod = shortcut.mods.intersects(
                     Modifiers::CONTROL
@@ -341,13 +340,11 @@ pub fn unregister_all(app: &AppHandle) {
     for sc in take_registrations(app).keys() {
         let _ = gs.unregister(*sc);
     }
-    // A PTT chord held across this teardown would never receive its "stop" (the registration is
-    // gone before the release) — emit it now so the session isn't left wedged "listening". The
-    // drain runs AFTER the registry is emptied and every `gs.unregister` has returned: the X11
+    // The drain runs AFTER the registry is emptied and every `gs.unregister` has returned: the X11
     // global-hotkey thread runs `handle_shortcut` and serves the unregister one after the other,
     // so a press dispatched before the unregister has already recorded its hold, and a later
-    // press sees the empty registry. Draining first left a window where a press landed between
-    // the drain and the ungrab and its release never arrived. The plugin twin of evdev's
+    // press sees the empty registry. Draining first would leave a window where a press lands
+    // between the drain and the ungrab and its release never arrives. The plugin twin of evdev's
     // drain-after-abort.
     stop_held_sessions(app);
 }
@@ -372,8 +369,6 @@ fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
 #[cfg_attr(windows, allow(dead_code))] // on Windows the plugin is never the registrar
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
-    // Tears down the old registrations and flushes any held PTT chord's "stop" (a rebind mid-hold
-    // would otherwise lose the release-stop and wedge "listening").
     unregister_all(app);
     let gs = app.global_shortcut();
 
