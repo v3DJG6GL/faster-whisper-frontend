@@ -434,7 +434,6 @@ pub async fn get_usage_stats(
     };
     // The strings and lists are bounded below because the store re-serializes this struct with
     // TWO JSON.stringify passes on the main thread every 30 s for every backend.
-    // Read at the usage-specific ceiling (not MAX_META_BODY): see USAGE_MAX_BODY.
     // A timeout collapses to None like any other failure, so the UI keeps its last values.
     let req = with_auth(client().get(url), api_key).timeout(USAGE_TIMEOUT);
     let mut u: UsageStats = match req.send().await {
