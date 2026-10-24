@@ -498,7 +498,8 @@ fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a 
 }
 
 /// Repair records whose stored audio path no longer exists but whose file
-/// lives under one of the audio-base subfolders (same basename). Heals
+/// lives under one of the audio-base subfolders (same basename), or that still name
+/// a leftover in a migrated old app folder (`migrated_counterpart`). Heals
 /// records a past move rewrote incompletely — earlier builds only rewrote
 /// `mediaPath`, stranding every dictation record's `sourcePath` when the
 /// layout migration moved the files into `<base>/dictations`. Idempotent, but
