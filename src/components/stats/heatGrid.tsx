@@ -38,15 +38,13 @@ export function CellTip({ tip, boundsRef, children }: { tip: CellTipState | null
 /** The legend's five labels for a grid's breaks, step counts and measure. `floor` is the smallest
  *  active value (the model's activeFloor); without it the first non-zero break stands in. */
 export function levelLegendLabels(breaks: [number, number, number], counts: readonly number[], metric: ChartMetric, floor?: number): string[] {
-  // Duration quartiles can sit under ten seconds (processing time per day); the axis
-  // formatter rounds those to "0s", which read as "1s–0s". Sub-ten-second bounds keep a
-  // decimal, and the first active step opens at 0.1 s instead of 1 s when its break is below it
-  // (an empty step's 0 break says nothing: legendRanges draws it as "—"). Below 0.1 s a bound
-  // keeps one significant digit and the floor drops to the break's own decade (0.03 s opens at
-  // 0.01 s): one decimal would print 0.03 s as "0s", so a later step would open below the one
-  // before it, and the top step would claim "0.1s+" for values the floor lifted it past. The
-  // floor follows the smallest VALUE, not the first break: that break is step 1's max, so a
-  // 0.3 s day under a 2 s break read "1s–2s", and a lone 0.03 s day (breaks 0,0,0) "0.1s+".
+  // Duration quartiles can sit under ten seconds, which the axis formatter rounds to "0s"
+  // ("1s–0s"): sub-ten-second bounds keep a decimal, and below 0.1 s one significant digit
+  // (one decimal prints 0.03 s as "0s", so a later step would open below the one before it).
+  // The first active step opens at 1 s, 0.1 s or the smallest value's own decade (0.03 s opens
+  // at 0.01 s); an empty step's 0 break says nothing (legendRanges draws it as "—"). The floor
+  // follows the smallest VALUE, not the first break: that break is step 1's max, so a 0.3 s day
+  // under a 2 s break would read "1s–2s", and a lone 0.03 s day (breaks 0,0,0) "0.1s+".
   const dur = isDurationMetric(metric);
   const fmt = (v: number) =>
     dur && v > 0 && v < 10 ? `${v < 0.1 ? Number(v.toPrecision(1)) : Math.round(v * 10) / 10}s` : metricTick(metric, v);
