@@ -22,7 +22,7 @@ import type { UsageOutcome } from "./types";
 export interface QueuedOutcome {
   backendId: string;
   /** The address the session actually talked to (per-device override applied). Only the
-   *  batching key now: a post goes to the backend's CURRENT address (flushPass). */
+   *  batching key: a post goes to the backend's CURRENT address (flushPass). */
   serverUrl: string;
   outcome: UsageOutcome;
   queuedAt: number;
@@ -45,7 +45,7 @@ export const BATCH_MAX = 100;
 export const MAX_AGE_MS = 7 * 86_400_000;
 const BASE_BACKOFF_MS = 30_000;
 const MAX_BACKOFF_MS = 6 * 3_600_000;
-/** Bound on queued items — 64 KiB on disk, and a stuck server must not grow it forever. */
+/** Bound on queued items: a stuck server must not grow the file forever (Rust refuses one over 256 KiB). */
 const MAX_ITEMS = 200;
 
 /** Exponential backoff: 30 s, 1 m, 2 m, … capped at 6 h. */
@@ -105,12 +105,10 @@ export function nextBatch(
 export type PostVerdict = "sent" | "retry" | "drop";
 
 /** What a post result means for the batch: a 2xx is delivered (`duplicate` included — the
- *  server already has it); unreachable (0), 5xx, 408, 429, and auth errors (401/403) are
- *  transient → retry with backoff (auth failures are a property of auth STATE — a locked
- *  keyring, a rotated key — not of the request itself, and dropping the batch permanently
- *  deletes outcomes persisted across restarts); any other 4xx is a request the server will
- *  refuse every time → drop. The queue already bounds retries via MAX_AGE_MS and capped
- *  backoff, so treating 401/403 as retryable costs nothing. */
+ *  server already has it); unreachable (0), 5xx, 408, 429 and 401/403 retry with backoff —
+ *  auth failures come from auth STATE (a locked keyring, a rotated key), not the request, and
+ *  a drop would delete persisted outcomes for good while MAX_AGE_MS already bounds retries;
+ *  any other 4xx is a request the server will refuse every time → drop. */
 export function verdictFor(r: { ok: boolean; status: number }): PostVerdict {
   if (r.ok) return "sent";
   const s = r.status;
@@ -190,7 +188,7 @@ export function parseQueue(raw: unknown): OutcomeQueue {
   return { version: 1, items: newest(items) };
 }
 
-/* ── runtime (main window only) ─────────────────────────────────────────── */
+// Runtime (main window only).
 
 let queue: OutcomeQueue = EMPTY_QUEUE;
 let loaded = false;
