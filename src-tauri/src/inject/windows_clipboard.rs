@@ -125,8 +125,7 @@ pub enum Requester {
     /// The window our chord went to, or any known remote-desktop client.
     Target,
     Other,
-    /// `GetOpenClipboardWindow` was NULL: a reader that opened the clipboard without a window,
-    /// which includes every arboard read of our own.
+    /// `GetOpenClipboardWindow` was NULL: a reader that opened the clipboard without a window.
     Unknown,
 }
 
@@ -771,7 +770,7 @@ mod imp {
     }
 
     /// Put a DWORD 0 under `fmt` (the documented "do not include" value for the two registered
-    /// history/cloud formats). Frees the allocation on every failure path.
+    /// history/cloud formats).
     fn set_dword_zero(fmt: u32) -> bool {
         unsafe {
             let h = GlobalAlloc(GMEM_MOVEABLE, 4);
