@@ -50,7 +50,7 @@ pub async fn start_mic_test(app: AppHandle, device_id: Option<String>) -> Result
         // Stop any previous capture FIRST — dropping the handle joins its thread, so its cpal
         // callback can't still be appending the old device's samples while the new capture clears +
         // re-stamps the shared clip (which would interleave two devices' audio under one rate stamp,
-        // garbling the replay). Mirrors start_stream/start_record's stop-old-before-start-new order.
+        // garbling the replay).
         *guard = None;
         let clip = app.state::<MicTestClip>().0.clone();
         let handle = audio::capture::start_level_meter(app.clone(), device_id, clip)?;
@@ -118,9 +118,8 @@ pub fn play_mic_test(
             tracing::warn!("[audio] mic-test replay failed: {e}");
         }
         // Finished draining, OR no output device was available — either way nothing of ours is
-        // sounding now, so signal "ended" if we're still current. Without the failure path emitting
-        // here, a device-acquire failure left the button stuck on "Stop" with no audio until the
-        // frontend's duration fallback fired.
+        // sounding now, so signal "ended" if we're still current (on a device-acquire failure too,
+        // or the button sits on "Stop" until the frontend's duration fallback fires).
         if counter.load(Ordering::SeqCst) == generation {
             let _ = app.emit("audio://test-play-ended", ());
         }
