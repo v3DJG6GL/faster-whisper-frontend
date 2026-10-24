@@ -23,8 +23,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// Ceiling on an app-supplied AT-SPI application name. Real ones are short ("firefox",
-/// "org.gnome.Nautilus"); this is loose enough that no existing app rule stops matching.
+/// Ceiling on an app id (the app-supplied AT-SPI application name, the Windows exe basename).
+/// Real ones are short ("firefox", "org.gnome.Nautilus"); this is loose enough that no existing
+/// app rule stops matching.
 const APP_ID_MAX: usize = 200;
 
 /// Ceiling on a selection read, from every source (the AT-SPI Text read, the PRIMARY fallback,
