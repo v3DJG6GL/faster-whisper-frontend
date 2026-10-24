@@ -283,8 +283,8 @@ mod imp {
             Ok(g) => g,
             Err(_) => return,
         };
-        // Drop + abort any previous readers, under the lock. A new generation: whatever the old
-        // readers' post-loops report after this is not a lost keyboard of THIS start.
+        // A new generation: whatever the old readers' post-loops report after this is not a lost
+        // keyboard of THIS start.
         *g = None;
         let generation = retire_readers();
         // The abort skips their post-loop "stop" for a PTT chord held across this restart, so
@@ -304,7 +304,7 @@ mod imp {
         let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[evdev] no mappable chords; not starting");
-            return; // guard drops → lock released; *g stays None (no listener)
+            return;
         }
         let mut tasks = Vec::new();
         for (path, dev) in evdev::enumerate() {
@@ -664,11 +664,11 @@ mod imp {
         tracing::info!(
             "[evdev] keyboard stream ended (unplugged / read error); re-scanning once /dev/input settles"
         );
-        // The device stream ended (unplugged / read error). First commit every release still
-        // parked in the debouncer — those keys ARE released, and a hold whose release is parked
-        // would otherwise still read as active below and get a manufactured stop with the loss
-        // latch armed on a chord the user let go of (see the `windows` twin). Teardown mode:
-        // the Stop is claimed via take_hold, since stop_held_sessions may have emitted it.
+        // First commit every release still parked in the debouncer — those keys ARE released, and
+        // a hold whose release is parked would otherwise still read as active below and get a
+        // manufactured stop with the loss latch armed on a chord the user let go of (see the
+        // `windows` twin). Teardown mode: the Stop is claimed via take_hold, since
+        // stop_held_sessions may have emitted it.
         for key in deb.drain() {
             commit(
                 &app,
