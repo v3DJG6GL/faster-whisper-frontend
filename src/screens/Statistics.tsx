@@ -1,12 +1,9 @@
-// Dedicated Statistics page — the full usage document lifted off Dashboard so the
-// dashboard stays focused on dictation: one filter bar (range · kind · with-stages), the
-// per-kind tiles, the stacked columns by kind, the Stages / Dictation / Calendar / Busy
-// panels. Reached from the sidebar, the "View statistics →" link on Dashboard, or a
-// Dashboard small multiple (`?kind=file` preselects that kind). The filters live in the URL
-// (`?kind=&with=&range=&from=&to=`) so a reload or a deep link lands on the same view, and
-// in the store (`usageViewQuery`) so the controller fetches the matching document. The kind
-// and the measure (`?kind=`, `?metric=`) are client-side: they change what the page shows of
-// the document it already has, never the fetch.
+// The Statistics page — the full usage document, kept off Dashboard so the dashboard stays
+// focused on dictation. The filters live in the URL so a reload or a deep link (a Dashboard
+// small multiple's `?kind=file`) lands on the same view, and in the store (`usageViewQuery`)
+// so the controller fetches the matching document. The kind, measure and rhythm (`?kind=`,
+// `?metric=`, `?rhythm=`) are client-side: they change what the page shows of the document
+// it already has, never the fetch.
 
 import { BarChart3 } from "lucide-react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
