@@ -159,7 +159,7 @@ export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
 /** Fetch the calendar's year document beside the page's, under the same rules. `force`
  *  refetches a year it already has (the page reopening after the poll left it alone);
  *  `reopened` marks a kept same-query year failed on a miss, as refreshView's does. A year not
- *  confirmed this visit is treated both ways whoever asks: the kept one may be the last visit's. */
+ *  confirmed this visit gets both, whoever asks: the kept one may be the last visit's. */
 async function refreshYear(force = false, reopened = false): Promise<void> {
   const s = useApp.getState();
   const backend = viewStatsBackend(s);
@@ -260,8 +260,7 @@ async function refreshOne(backend: Backend): Promise<void> {
     // this server has no usage, so numbers kept from before would read as current forever on
     // Home and the chip — and keep the backend viewable on Statistics, which fetches live. Clear
     // them once: an entry already null is left alone, or every poll would churn a cross-window
-    // dictation://update. Own-property test, not `in`: `in` is true for `constructor`/`toString`/…
-    // via the prototype.
+    // dictation://update.
     if (!hasOwn(usage, backend.id) || usage[backend.id] !== null) setUsage(backend.id, null);
     return;
   }
@@ -393,7 +392,7 @@ export function initUsageController(): void {
   // flushes the outcomes and then waits on every backend's trend fetch (30 s each, bounded).
   // That pass then skips its own page step when they landed and its flush delivered no outcome.
   onWindowHiddenChange((hidden) => {
-    if (hidden) pendingDirect = undefined; // the documents it fetched may be old by the next show
+    if (hidden) pendingDirect = undefined;
     const mounted = mountDirect; // taken or dropped on every flip, like pendingDirect on a hide
     mountDirect = undefined;
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
