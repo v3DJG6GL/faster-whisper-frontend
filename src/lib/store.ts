@@ -40,8 +40,8 @@ const speakMemo = newSpeakMemo();
 const MAX_QUICK_LAUNCH = 100;
 
 /**
- * Frontend store. Holds seeded defaults in memory; the persistence layer wires
- * load/save through Tauri commands (config persisted as JSON in the app config
+ * Frontend store. Boots on default settings with no backends/profiles; the persistence
+ * layer wires load/save through Tauri commands (config persisted as JSON in the app config
  * dir, API keys in the OS keyring). Keep mutations here so persistence can
  * subscribe in one place.
  *
@@ -174,7 +174,7 @@ function wellFormedProfiles(v: unknown): Profile[] {
     // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
     // already does this for every config it parses, so this only covers the paths that skip
     // Rust — the browser dev path and a hand-edited config.json. Worth doing anyway: the
-    // value indexes `GLYPH[p.activation]` in Home, which is rendered AS A COMPONENT, so an
+    // value indexes `GLYPH[p.activation]` in Dashboard, which is rendered AS A COMPONENT, so an
     // unmatched key is `React.createElement(undefined)` and unmounts the main window.
     .map((p) => {
       const activation = canonicalActivation(p.activation)!;
@@ -622,9 +622,9 @@ function sigNames(sig: string, id: string): boolean {
   return viewSigBackend(sig) === id;
 }
 
-// The signature carries no caller identity, so a key rotation would otherwise let the old
-// caller's Statistics documents read as fresh — drop the ones naming this backend too
-// (others keep their reference, so nothing re-renders for them).
+// Drops a backend's cached connection, usage and caps, plus the Statistics documents naming it: a
+// usage-view signature carries no caller identity, so after a key rotation the old caller's
+// documents would read as fresh (others keep their reference, so nothing re-renders for them).
 function evictBackendCaches(s: AppState, id: string) {
   const connections = { ...s.connections };
   delete connections[id];
@@ -716,8 +716,6 @@ export const useApp = create<AppState>((set) => ({
       const urlOverrides = { ...sync.urlOverrides };
       if (next) urlOverrides[backendId] = next;
       else delete urlOverrides[backendId];
-      // The effective connect target changed: drop the cached connection +
-      // usage + caps so status/classification re-test against the new address.
       return {
         settings: { ...s.settings, sync: { ...sync, urlOverrides } },
         ...evictBackendCaches(s, backendId),
@@ -832,11 +830,9 @@ export const useApp = create<AppState>((set) => ({
 
   upsertAppRule: (r) =>
     set((s) => {
-      // Per-app rules are MATCHED by appId (resolveInjectionTarget uses find() = first wins),
-      // so two rules sharing an appId silently shadow each other — a newly-added or re-captured
-      // rule for an already-ruled app would never apply (the older one keeps winning). Upsert by
-      // appId (and the id being edited): replace any rule for this appId in place, so the rule the
-      // user just saved is the one that takes effect.
+      // Rules are MATCHED by appId and resolveInjectionTarget takes the first match, so a second
+      // rule for an already-ruled app would never apply: replace any rule for this appId (or the
+      // edited id) in place, so the rule just saved is the one that takes effect.
       const key = appRuleKey(r.appId);
       const matches = (x: AppRule) => x.id === r.id || appRuleKey(x.appId) === key;
       const pos = s.appRules.findIndex(matches);
@@ -850,13 +846,12 @@ export const useApp = create<AppState>((set) => ({
 
   setUsage: (backendId, stats) =>
     set((s) => {
-      // The 30s usage poll hands us a fresh object every tick even when the numbers are identical.
-      // Skip the write when nothing changed so the `usage` reference is stable — otherwise every
-      // poll churns a cross-window overlay re-emit + a UsageStats SVG re-render for no reason. The
-      // shape is small + fixed (today/total + a ≤90-point series), so stringify-compare is trivial;
-      // JSON.stringify(null) === "null" also subsumes the already-null path.
+      // The 30 s usage poll hands over a fresh object even when the numbers are identical: keep the
+      // `usage` reference stable, or every poll re-emits the overlay payload and re-renders the
+      // UsageStats chart. The document is small (today/total + a ≤30-point series), so
+      // stringify-compare is cheap; JSON.stringify(null) === "null" covers the null path.
       // hasOwn, not `in`: an id like `constructor` is inherited-present, and skipping the write
-      // for it would leave the prototype member in place for every reader below.
+      // for it would leave the prototype member in place for every reader.
       if (hasOwn(s.usage, backendId) && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
       return { usage: { ...s.usage, [backendId]: stats } };
     }),
@@ -915,13 +910,11 @@ export const useApp = create<AppState>((set) => ({
 
   setDictation: (patch) =>
     set((s) => {
-      // Keep the shared `speaking` flag current whenever the level moves or the status actually
-      // changes. Stepping the singleton speakMemo only on a genuine move — NOT on a same-value
-      // "listening" re-assert (the partial handler re-sends {status:"listening"} several times a
-      // second) — steps it once per level sample. The chip reads this flag from its payload rather
-      // than running its own detector. Computing it here (not per-component) also means
-      // subscribers re-render only on a transition, not on every RMS tick — important for the tiny
-      // always-mounted sidebar dot.
+      // Step the singleton speakMemo only on a level move or a genuine status change — NOT on a
+      // same-value "listening" re-assert (the partial handler re-sends it several times a second) —
+      // so it steps once per level sample. One shared flag (the chip reads it from its payload)
+      // means subscribers re-render only on a transition, not on every RMS tick — important for
+      // the always-mounted sidebar dot.
       const statusMoved = "status" in patch && patch.status !== s.status;
       if (!("level" in patch) && !statusMoved) return patch;
       const status = patch.status ?? s.status;
