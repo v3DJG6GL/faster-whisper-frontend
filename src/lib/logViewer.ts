@@ -111,7 +111,7 @@ export function markLogsViewed() {
 }
 
 /** The failure banner routes here before navigating, so the Logs screen
- *  opens pre-filtered (consumed once on mount). */
+ *  opens pre-filtered (consumed once, also when Logs is already open). */
 export function openLogsPrefiltered(t: LevelThreshold) {
   useLogs.setState({ prefilter: t });
 }
