@@ -1,4 +1,4 @@
-// Language names and the pure logic behind the language pickers (D87). Every rule a picker
+// Language names and the pure logic behind the language pickers. Every rule a picker
 // follows — what a search matches, which groups show in which order, what a pick does to the
 // decode overrides — lives here as a plain function, so it is tested without a DOM.
 
@@ -92,16 +92,14 @@ export function translateSourceCode(lang: string | null | undefined): string | n
   return l && /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/i.test(l) ? l : null;
 }
 
-/** A language code as chips, tabs and summaries show it: bounded, then in caps ("DE", "PT-BR").
- *  ZWNJ/ZWJ go too: the display filter keeps them (they shape scripts and emoji in prose), but no
- *  language code carries one, and a joiner-only code must read empty — not as a blank pill, a
- *  blank "Translated into" row or a blank route source instead of "??". */
+/** A language code as chips, tabs and summaries show it: langText in caps ("DE", "PT-BR"). */
 export function langCode(code: string, max = 16): string {
   return langText(code, max).toUpperCase();
 }
 
-/** A language code as the display filter renders it, minus the ZWNJ/ZWJ it keeps — so a
- *  joiner-only code reads empty and a gate on it skips the part. */
+/** A language code as the display filter renders it, minus the ZWNJ/ZWJ it keeps (they shape
+ *  scripts and emoji in prose; no language code carries one) — so a joiner-only code reads empty
+ *  and a gate on it skips the part or shows "??", never a blank pill or row. */
 export function langText(code: string, max = 16): string {
   return safeDisplayText(dropJoiners(code), max);
 }
