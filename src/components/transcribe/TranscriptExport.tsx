@@ -1,7 +1,7 @@
 // The transcript viewer's export panel: format, tracks, media, the "in this
-// file" contract, the live preview and Save. Moved out of TranscriptViewer;
-// it stays mounted with the viewer (hidden while closed), so its picks and a
-// running media export survive closing the panel.
+// file" contract, the live preview and Save. It stays mounted with the viewer
+// (hidden while closed), so its picks and a running media export survive
+// closing the panel.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
@@ -87,11 +87,11 @@ export function TranscriptExport({
   record?: TranscriptRecord;
   initialExport?: { media: MediaChoice };
   /** Every track ("orig", its machine translations, the site's own tracks) in track
-   *  order (D92) — the viewer's, so lanes, chips and files keep one order. */
+   *  order — the viewer's, so lanes, chips and files keep one order. */
   order: string[];
   /** The viewer's visible tracks — the export's default pick. */
   visibleTracks: string[];
-  /** The transcript's track order and names (D92/D89) — shared with Read's chips. */
+  /** The transcript's track order and names — shared with Read's chips. */
   trackPrefs: TrackPrefs;
   onTrackPrefs: (patch: TrackPrefs) => void;
   fileRenames: Record<string, string>;
@@ -129,7 +129,7 @@ export function TranscriptExport({
   const owner = rec?.id ?? path;
   /** The latest render's result, tagged with its record. Its `owner` is the record on screen
    *  now — an export's late UI writes (its outcome, "Saved") land only while its own record
-   *  still shows, and only while the panel is mounted (exportOutcomeShowsHere). */
+   *  still shows, and only while the panel is mounted and open (exportOutcomeShowsHere). */
   const latestResult = useRef({ owner, editedResult });
   latestResult.current = { owner, editedResult };
   /** The panel is mounted: an export outlives the viewer (a route change, a closed record),
@@ -175,8 +175,6 @@ export function TranscriptExport({
   const [audioSavedAs, setAudioSavedAs] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
-  // ── Media section facts ──────────────────────────────────────────────────
-  // The record behind this transcript (its local copies + server ids).
   // A link's export stem leads with when and where it was fetched.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
   const stem = exportStem(rec?.title, path, { createdAt: rec?.createdAt, extractor });
@@ -237,7 +235,7 @@ export function TranscriptExport({
       : mediaChoice === "video" && videoWhy
         ? "none"
         : mediaChoice;
-  /** D69 A: with Video on, only subtitle formats stay live — a TXT/LRC/JSON pick exports
+  /** With Video on, only subtitle formats stay live — a TXT/LRC/JSON pick exports
    *  as SRT and the footer says so (`switchNote`, beside `writtenFormat` below). Derived,
    *  never persisted, like `effMedia`: the pick is global, and writing the coercion back
    *  lost it for every record without a video. */
@@ -337,13 +335,13 @@ export function TranscriptExport({
     colors: () => setColorize(!colorize),
     words: () => setWordTs(!wordTs),
   };
-  /** The tracks a video carries, inside or beside it: with Video on (and the panel open — a
-   *  closed one plans nothing) only those with a cue, so the plan names the sidecars exactly as
-   *  sidecarFiles writes them (a language's empty first track never takes its plain name). */
   /** Every track picked for a video, cue or not: a Save re-filters them when it writes
    *  (tracksAtWrite), so a translation still running at the click is written once it lands.
    *  In "both" mode the sidecars take the streams' own decision (sidecarSource). */
   const pickedVideoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
+  /** The tracks a video carries, inside or beside it: with Video on (and the panel open — a
+   *  closed one plans nothing) only those with a cue, so the plan names the sidecars exactly as
+   *  sidecarFiles writes them (a language's empty first track never takes its plain name). */
   const videoTracks = useMemo(() => {
     if (!open || effMedia !== "video") return pickedVideoTracks;
     const kept = cueTracks(editedResult, exportOptions, pickedVideoTracks);
@@ -395,7 +393,7 @@ export function TranscriptExport({
    *  to show real content past a VTT STYLE block, still cheap per toggle. */
   const PREVIEW_CUES = 12;
 
-  /** The preview's tabs (D91): every file the Save writes — the text files,
+  /** The preview's tabs: every file the Save writes — the text files,
    *  or with a video one per track (its sidecar, else the track inside). */
   const previewFiles = useMemo((): {
     key: string; tracks?: string[]; format: ExportFormat; name: ((stem: string) => string) | null;
@@ -675,10 +673,8 @@ export function TranscriptExport({
       if (mine()) setMediaError({ kind: "cancelled", msg: "Export cancelled." });
       return false;
     }
-    // An uploaded file's server copy is reusable for a while: remember it — after a
-    // failed package too — so "Save as MKV" or a second export skips the upload. A link
-    // record keeps it as its server VIDEO (its `sourceMediaId` is the audio); a file
-    // record as its retained source (rememberUpload).
+    // An uploaded file's server copy is reusable for a while: remember it (rememberUpload)
+    // — after a failed package too — so "Save as MKV" or a second export skips the upload.
     if (fromFile && outcome.mediaId && outcome.kind !== "expired" && outcome.kind !== "cancelled") {
       rememberUpload(outcome.mediaId, outcome.expiresAt ?? uploadedExpiry ?? undefined);
     }
@@ -824,7 +820,6 @@ export function TranscriptExport({
     /** What the video's subtitle streams were built from (null = none were). */
     let embeddedFrom: EmbeddedDecision | null = null;
     try {
-      // The media file first (the plan puts it first; the text files follow it).
       for (const f of plan.files) {
         if (f.kind === "text") continue;
         const dest = dir + f.name(pickedStem);
@@ -877,7 +872,6 @@ export function TranscriptExport({
     // menu's switch may have changed meanwhile.
     if (revealAfterSaveOn(useApp.getState().settings.transcribe)) void revealSaved(written);
   };
-  // Clear a still-pending confirmation timer if the panel unmounts mid-window.
   useEffect(() => () => window.clearTimeout(saveTimer.current), []);
 
   // The panel's width bands (two columns from 860 px, Tracks beside Media
@@ -917,10 +911,10 @@ export function TranscriptExport({
     stacked: textNames.length === 1,
     filePerTrack,
     fileCount: textNames.length,
+    split: !!cueOpts,
     // The shared file's subtitles, as it writes them (the original's file when it is exported,
     // a lone track's own file); no count when two or more tracks each have a file (or a video
     // stream) of their own.
-    split: !!cueOpts,
     ...sharedCount,
     segCount: editedResult.segments?.length ?? 0,
     showTs,
@@ -1069,7 +1063,7 @@ export function TranscriptExport({
     </PanelBox>
   );
 
-  // Track names (D89): what each track is called inside the video, its
+  // Track names: what each track is called inside the video, its
   // sidecar's name and its flags. Only with a video.
   // planTracks already read the name own-only and cleaned it (blank = the default), so a
   // title off its default IS a rename.
@@ -1155,7 +1149,6 @@ export function TranscriptExport({
       <div className={cn("grid items-start", twoCol ? "grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4" : "gap-3.5")}>
         <div className="flex min-w-0 flex-col gap-3.5">
           <PanelBox title="Format">
-            {/* Format cards — radio semantics, always visible. */}
             <div role="radiogroup" aria-label="Export format" className="flex gap-2">
               {FORMAT_CARDS.map((f) => {
                 const on = writtenFormat === f.value;
