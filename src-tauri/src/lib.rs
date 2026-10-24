@@ -334,7 +334,6 @@ pub fn run() {
             // Never veto a Windows shutdown/logoff, and really exit when the session ends.
             #[cfg(windows)]
             win_session_end::install(app.handle());
-            // Keep the OS autostart entry in sync with the saved preference.
             commands::sync_autostart(app.handle(), cfg.settings.general.open_at_login);
             // KDE-Wayland: write the chip's KWin placement rule now, ahead of the first
             // show — a first-ever run otherwise maps the chip centred (unruled) and it
@@ -391,13 +390,13 @@ pub fn run() {
             commands::test_connection,
             commands::transcribe_file,
             commands::list_override_profiles,
-            commands::get_capabilities,    // P11: GET /v1/me capabilities
+            commands::get_capabilities,    // GET /v1/me capabilities
             commands::preload_models,      // POST /v1/models/preload (best-effort warm hint)
             commands::get_decode_defaults, // GET /v1/request-default-settings
-            commands::get_pipeline_rules,  // P17: GET /v1/pipeline-rules
-            commands::save_pipeline_rules, // P17: PATCH /v1/pipeline-rules
-            commands::get_recent_words,    // P18: GET /v1/recent-words (key suggestions)
-            commands::get_usage_stats,     // P28: GET /v1/usage (per-user usage document)
+            commands::get_pipeline_rules,  // GET /v1/pipeline-rules
+            commands::save_pipeline_rules, // PATCH /v1/pipeline-rules
+            commands::get_recent_words,    // GET /v1/recent-words (key suggestions)
+            commands::get_usage_stats,     // GET /v1/usage (per-user usage document)
             commands::post_usage_outcomes, // POST /v1/usage/outcome (end-of-dictation facets)
             commands::load_usage_outcomes, // on-disk outcome queue (survives restarts)
             commands::save_usage_outcomes,
@@ -406,14 +405,14 @@ pub fn run() {
             commands::get_job,         // GET /v1/jobs/{id} (re-attach poll)
             commands::get_job_result,  // GET /v1/jobs/{id}/result (late ingest)
             commands::delete_job,      // DELETE /v1/jobs/{id}
-            commands::sync_pull,       // P30: GET /v1/synced-client-settings
-            commands::sync_push,       // P30: PUT /v1/synced-client-settings
-            commands::sync_delete,     // P30: DELETE /v1/synced-client-settings
-            commands::load_sync_state, // P30: local sync bookkeeping
+            commands::sync_pull,       // GET /v1/synced-client-settings
+            commands::sync_push,       // PUT /v1/synced-client-settings
+            commands::sync_delete,     // DELETE /v1/synced-client-settings
+            commands::load_sync_state, // local sync bookkeeping
             commands::save_sync_state,
             commands::sync_device_info,
-            commands::read_backend_keys, // P30: bulk keyring read (export/sync)
-            commands::export_settings_file, // P30: settings export to file
+            commands::read_backend_keys, // bulk keyring read (export/sync)
+            commands::export_settings_file, // settings export to file
             commands::save_text_file,    // transcript exports (Transcribe screen)
             commands::read_text_file,    // subtitle/text sources for translate-only runs
             commands::reveal_in_folder,  // show a saved export in the file manager
@@ -445,7 +444,7 @@ pub fn run() {
             commands::cancel_media_export,
             commands::get_media_streams,
             commands::copy_media_to, // plain copy of a record's media to a picked path
-            commands::import_settings_file, // P30: settings import (parse+validate)
+            commands::import_settings_file, // settings import (parse+validate)
             commands::list_audio_devices,
             commands::resolve_legacy_mic,
             commands::start_mic_test,
@@ -460,8 +459,8 @@ pub fn run() {
             commands::cancel_record,
             commands::retire_session_epoch,
             commands::quit_ready,
-            commands::audio_dir_path,  // audio base folder (display path)
-            commands::open_audio_dir,  // open the audio base folder
+            commands::audio_dir_path, // audio base folder (display path)
+            commands::open_audio_dir,
             commands::move_audio_base, // relocate the whole audio store
             commands::reregister_shortcuts,
             commands::reregister_shortcuts_unless_capturing,
@@ -506,9 +505,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             // Restore the system-audio mute guard (and tear down any live dictation) on every
-            // in-process exit, not just the tray "Quit". `app.exit()` / window-close exits skip
+            // in-process exit, not just `quit::request_quit`. `app.exit()` / window-close exits skip
             // managed-state destructors, which would otherwise strand the system muted. Idempotent
-            // with the tray's explicit cleanup (the session is taken once, then a no-op).
+            // with quit.rs's explicit cleanup (the session is taken once, then a no-op).
             if matches!(
                 event,
                 tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
