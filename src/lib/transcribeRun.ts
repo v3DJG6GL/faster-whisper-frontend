@@ -517,6 +517,9 @@ export function planTimeline(s: {
   return out;
 }
 
+/** Clear space a label keeps before the next label on its row. */
+const AXIS_LABEL_GAP_PX = 16;
+
 /** Greedy left-to-right layout for the axis labels under the strip. A label
  *  keeps the top row when it fits inside its own segment and nothing before
  *  it overflows into its spot; otherwise it drops to the stagger row on a
@@ -538,14 +541,15 @@ export function axisLayout(
     const clamped = xl < x - 0.5;
     const fitsOwn = (labelPx[i] <= w - 2 || i === px.length - 1) && !clamped;
     const maxStart = Math.max(totalW - labelPx[i], 0);
+    const endAt = (x0: number) => x0 + labelPx[i] + AXIS_LABEL_GAP_PX;
     let row: 0 | 1;
     let xUse = xl;
     if (fitsOwn && xl >= topEnd) {
       row = 0;
-      topEnd = xl + labelPx[i] + 16;
+      topEnd = endAt(xl);
     } else if (xl >= dropEnd) {
       row = 1;
-      dropEnd = xl + labelPx[i] + 16;
+      dropEnd = endAt(xl);
     } else {
       // Neither row is clear at xl: take the row that frees up first and
       // start where it ends, so the label is pushed right instead of printed
@@ -553,8 +557,8 @@ export function axisLayout(
       const useTop = topEnd <= dropEnd;
       row = useTop ? 0 : 1;
       xUse = Math.min(Math.max(xl, useTop ? topEnd : dropEnd), maxStart);
-      if (useTop) topEnd = xUse + labelPx[i] + 16;
-      else dropEnd = xUse + labelPx[i] + 16;
+      if (useTop) topEnd = endAt(xUse);
+      else dropEnd = endAt(xUse);
     }
     out.push({ row, offset: xUse - x });
     x += w + 2;
