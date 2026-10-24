@@ -41,6 +41,19 @@ const deps = (translate: TranslateDeps["translate"]) => ({
 const answerAfter = (ms: number, langs?: string[]): TranslateDeps["translate"] => (a) =>
   new Promise<TextTranslationResult>((res) => setTimeout(() => res(answer(a.texts, langs)), ms));
 
+/** The args runDictationTranslate handed the transport for `req(over)` (undefined if it never called it). */
+const sentArgs = async (over: Partial<DictationTranslateRequest>) => {
+  let seen: Parameters<TranslateDeps["translate"]>[0] | undefined;
+  await runDictationTranslate(
+    req(over),
+    deps((a) => {
+      seen = a;
+      return Promise.resolve(answer(a.texts));
+    }),
+  );
+  return seen;
+};
+
 describe("pricedMs", () => {
   // The server translates every submitted segment for every target; pricing one
   // pass over the phrase alone would make short multi-target phrases lose the
@@ -207,40 +220,19 @@ describe("runDictationTranslate", () => {
   it("sends only a language code as the source, the shared rule every T2T sender uses", async () => {
     // The text route 422s a word: a synced "english" or an invisible value would fail every
     // phrase's translation, so they go out as null (auto-detect); a padded code is trimmed.
-    const sourceFor = async (source: string) => {
-      let seen: unknown = "unset";
-      const d = deps((a) => {
-        seen = a.source;
-        return Promise.resolve(answer(a.texts));
-      });
-      await runDictationTranslate(req({ source }), d);
-      return seen;
-    };
-    expect(await sourceFor("english")).toBeNull();
-    expect(await sourceFor("\u200b")).toBeNull();
-    expect(await sourceFor(" de ")).toBe("de");
+    expect((await sentArgs({ source: "english" }))?.source).toBeNull();
+    expect((await sentArgs({ source: "\u200b" }))?.source).toBeNull();
+    expect((await sentArgs({ source: " de " }))?.source).toBe("de");
   });
 
   it("forwards the capture id so the server can complete its held receipt", async () => {
-    let seen: unknown;
-    const d = deps((a) => {
-      seen = (a as { capturedId?: string | null }).capturedId;
-      return Promise.resolve(answer(a.texts));
-    });
-    await runDictationTranslate(req({ capturedId: "caac29d3" }), d);
-    expect(seen).toBe("caac29d3");
+    expect((await sentArgs({ capturedId: "caac29d3" }))?.capturedId).toBe("caac29d3");
   });
 
   it("sends null when there is no held receipt", async () => {
     // Every non-dictation caller, and any dictation against a backend too old
     // to send the id. The server treats it as "nothing held", not an error.
-    let seen: unknown = "unset";
-    const d = deps((a) => {
-      seen = (a as { capturedId?: string | null }).capturedId;
-      return Promise.resolve(answer(a.texts));
-    });
-    await runDictationTranslate(req({}), d);
-    expect(seen).toBeNull();
+    expect((await sentArgs({}))?.capturedId).toBeNull();
   });
 
   it("joins every target with a blank line, original first when asked", async () => {
