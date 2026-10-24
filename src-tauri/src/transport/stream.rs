@@ -166,7 +166,7 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 ///
 /// The result goes through the parser reqwest uses (the WHATWG `url` crate) for the same reason:
 /// tungstenite's `http::Uri` takes ASCII only, so an IDN host (`bücher.example`) or a space in the
-/// path passed Test connection — reqwest punycodes / percent-encodes them — and then failed every
+/// path would pass Test connection — reqwest punycodes / percent-encodes them — and then fail every
 /// live dictation with "invalid uri character". ws/wss are special schemes, so the url crate
 /// applies the same IDNA and percent-encoding the HTTP routes get. Unparseable → the string as
 /// built, so the connect error still names it.
@@ -402,11 +402,11 @@ pub async fn run<F>(
 
     // Connect with a bounded timeout. A Stop may arrive before we've connected — most
     // commonly a quick push-to-talk tap, which fires the stop before even a fast handshake
-    // completes; bailing then gave a false "unreachable" error on every quick tap. So we
+    // completes; bailing then would report a false "unreachable" on every quick tap. So we
     // remember the stop and let the in-flight connection finish: if it connects we fall
-    // straight through to draining (send the capture queued meanwhile, then flush + stop);
-    // only a genuine connect failure / timeout surfaces the error. The timeout bounds an
-    // unreachable host, whose handshake would otherwise hang on SYN retries for a minute+.
+    // straight through to draining; only a genuine connect failure / timeout surfaces the
+    // error. The timeout bounds an unreachable host, whose handshake would otherwise hang on
+    // SYN retries for a minute+.
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     let mut stop_requested = false;
     // Bound one inbound message. tungstenite's default `max_message_size` is 64 MiB, which a hostile
@@ -600,8 +600,8 @@ pub async fn run<F>(
                         .map_or((1005, ""), |f| (u16::from(f.code), f.reason.as_str()));
                     tracing::info!("[stream] ws reader: close {code}");
                     // A refused handshake (key, disabled, busy, origin, idle) arrives as an
-                    // application close code with NO `error` frame first; a bare `Closed` reads
-                    // as a clean end, so the dictation dropped to idle with no word of why.
+                    // application close code with NO `error` frame first; a bare `Closed` would
+                    // read as a clean end and drop the dictation to idle with no word of why.
                     if let Some(message) =
                         close_frame_error(code, reason, error_seen.load(Ordering::Relaxed))
                     {
@@ -994,7 +994,6 @@ pub async fn run<F>(
                 // Label the .wav with the session transcript IN RUST (ungated), so a superseded
                 // recording still gets its sibling .txt (a Cancel after stop discards it above,
                 // matching the batch path).
-                // The last document goes through bank_doc, under the Boundary arm's budget.
                 bank_doc(&mut transcript_docs, &transcript_cur);
                 let transcript = transcript_docs.join("\n");
                 if !transcript.is_empty() {
@@ -1052,7 +1051,7 @@ fn save_chunk(
 
 /// Whether the drain's ungated resampler flush tail joins the saved recording. Under silence-trim
 /// only behind speech the gate already kept: the flush tail is almost never empty, so a silent tap
-/// otherwise wrote a ~21 ms `.wav` no history record names.
+/// would otherwise write a ~21 ms `.wav` no history record names.
 fn drain_keeps_tail(saving: bool, trim: bool, saved: &[u8]) -> bool {
     saving && (!trim || !saved.is_empty())
 }
@@ -1548,8 +1547,7 @@ mod display_url_tests {
 
     #[test]
     fn strips_userinfo_including_a_slash_in_the_password() {
-        // A `/` in the password moved the authority split left, so the strip found no `@` and the
-        // credentials were printed verbatim into the message AND the log.
+        // Userinfo must never reach the message — it is copied into the log too.
         assert_eq!(display_url("wss://user:secret@host/v1/x"), "wss://host");
         assert_eq!(display_url("wss://a@b@host/v1"), "wss://host");
         // Ambiguous: the `/` moved the authority boundary into the password, so refuse entirely
@@ -1613,10 +1611,10 @@ mod http_to_ws_tests {
 
 /// The TLS connector for wss://. tokio-tungstenite's own default (`connector: None`) trusts the
 /// Mozilla bundle ONLY, while reqwest's `rustls-no-provider` verifies with the OS trust store — so
-/// a backend with an mkcert / Caddy-internal / step-ca / enterprise-CA certificate passed Test
-/// connection, batch and file runs and then failed every live dictation with UnknownIssuer. This
+/// a backend with an mkcert / Caddy-internal / step-ca / enterprise-CA certificate would pass Test
+/// connection, batch and file runs and then fail every live dictation with UnknownIssuer. This
 /// mirrors reqwest's platform verifier so both halves of the transport trust the same CAs. Built
-/// once; if the platform verifier cannot be built, `None` keeps the old webpki-roots behaviour.
+/// once; if the platform verifier cannot be built, `None` falls back to the bundled webpki roots.
 fn ws_tls_connector() -> Option<tokio_tungstenite::Connector> {
     static CONFIG: std::sync::OnceLock<Option<Arc<rustls::ClientConfig>>> =
         std::sync::OnceLock::new();
