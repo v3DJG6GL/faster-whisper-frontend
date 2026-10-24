@@ -58,7 +58,7 @@ describe("conflicts — collapseSides", () => {
   });
 
   // The inbound-blob sanitizer collapses sides only off Windows without a live evdev backend
-  // and turns the later member of every collision OFF. Both flag values are pinned here so the
+  // and turns one member of every collision OFF. Both flag values are pinned here so the
   // side-distinct registrars (Windows low-level hook, evdev) cannot regress into a silent
   // mass-disable on every pull.
   it("LCtrl+Space vs RCtrl+Space: a duplicate only where sides collapse", () => {
