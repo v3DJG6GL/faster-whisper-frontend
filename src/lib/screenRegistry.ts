@@ -78,10 +78,9 @@ export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: L
     e.kind === "screen"
       ? SCREENS.find((s) => s.id === e.target)
       : OVERLAY_ACTIONS.find((a) => a.id === e.target);
-  // The registry label is a bounded static string. No raw-target fallback: the registry
-  // lookup matches the RAW target, so a zero-width-padded target like "settings\u200b"
-  // resolves to nothing; falling back to the raw target would render an inert button
-  // impersonating a real one. "Unknown action" is safe for React children.
+  // No raw-target fallback: the lookup matches the RAW target, so a zero-width-padded target
+  // like "settings\u200b" resolves to nothing, and showing the raw target would render an
+  // inert button impersonating a real one.
   return {
     label: reg?.label ?? "Unknown action",
     icon: reg?.icon ?? SCREENS[0].icon,
