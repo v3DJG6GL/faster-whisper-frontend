@@ -135,8 +135,7 @@ interface ChipState {
   configLoaded?: boolean;
 }
 
-// Maps a dictationVisual() tone token → the chip's dot fill class. The chip layers
-// its own edge-tuck (peeked) / standby-dock presentation on top — see dotColorClass.
+// The chip layers its own edge-tuck (peeked) / standby-dock presentation on top — see dotColorClass.
 const TONE_BG: Record<DictationTone, string> = {
   faint: "bg-faint",
   armed: "bg-armed",
@@ -165,7 +164,7 @@ const TONE_GLOW: Record<DictationTone, string> = {
 
 // After speech stops, the pill stays expanded this long before collapsing back to
 // the dot — so the last words you spoke remain readable instead of vanishing the
-// instant you pause. Stacks on top of SILENCE_HOLD_MS.
+// instant you pause. Stacks on top of the store detector's SILENCE_HOLD_MS (lib/dictation/speaking).
 const COLLAPSE_LINGER_MS = 2000;
 
 // The chip morph: one element fluidly grows from a calm dot into the full pill
@@ -659,8 +658,8 @@ export default function Overlay() {
   // Report the chip's on-screen bounds to Rust, which shapes the overlay window's
   // input region to just that rectangle — so only the chip captures the cursor and
   // the rest of the transparent strip stays click-through. Measured in CSS px from
-  // the window's top-left (= the webview viewport), which maps to GDK's logical
-  // coordinate space. No-op outside Tauri.
+  // the window's top-left (= the webview viewport); Rust scales them by the "Chip size"
+  // zoom into GDK's logical coordinates. No-op outside Tauri.
   const chipRef = useRef<HTMLDivElement>(null);
   const dotRef = useRef<HTMLSpanElement>(null);
   const reportBounds = useCallback(() => {
@@ -1270,12 +1269,10 @@ export default function Overlay() {
           )}
           title={targetWarn ? skipLabel : undefined}
         >
-          {/* `targetName` uses `safeIdentityText`, not the plain display filter: this IDENTITY tells the
-              user where the transcript is about to be typed, beside the blocked / not-a-text-field trust
-              signal. The display filter truncates with no marker and does not collapse whitespace, while
-              this `truncate` span (`white-space: nowrap`) still COLLAPSES runs — so
-              `"kate" + 190 spaces + "evil-term"` would cut inside the padding and render as exactly
-              `kate`. `AppRules` renders this same class of string the defanged way. */}
+          {/* `safeIdentityText`, not the display filter: this name says where the words will be typed,
+              beside the blocked / not-a-text-field signal. The display filter truncates unmarked and keeps
+              whitespace runs, which this `nowrap` span collapses — `"kate" + 190 spaces + "evil-term"`
+              would cut inside the padding and render as just `kate`. `AppRules` defangs it the same way. */}
           {targetName}
         </span>
         {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
