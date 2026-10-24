@@ -114,8 +114,8 @@ const isFileStoreRecord = (r: TranscriptRecord) => r.kind !== "dictation";
 
 // The folder-move and store-wipe guards live at module scope, not in the screen: Settings is a
 // plain route that unmounts on navigation while the IPC keeps running (a move can take
-// minutes), and per-mount flags came back false on return — re-enabling Change…/Reset over
-// a move still in flight. The flags outlive the screen exactly as long as the IPC does.
+// minutes), and per-mount flags would come back false on return — re-enabling Change…/Reset
+// over a move still in flight. The flags outlive the screen exactly as long as the IPC does.
 const busy = { dir: false, store: false };
 const busySubs = new Set<() => void>();
 function setBusy(k: "dir" | "store", v: boolean) {
@@ -133,9 +133,9 @@ const subscribeBusy = (f: () => void) => {
   };
 };
 // A failed move parks its message here for the same reason: the screen (or the tab) that
-// started it may be gone when it settles, and a per-mount message was dropped or wiped by the
-// tab reset — a failed or partial move of the whole store went unreported. The live mount shows
-// it once the Recording & history tab is open, then clears it.
+// started it may be gone when it settles, and a per-mount message would be dropped or wiped by
+// the tab reset, leaving a failed or partial move of the whole store unreported. The live mount
+// shows it once the Recording & history tab is open, then clears it.
 let moveError: string | null = null;
 function reportMoveError(e: unknown) {
   console.error("audio folder move failed:", e);
@@ -185,9 +185,9 @@ export default function Settings() {
   }, [basePref]);
   const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
   // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
-  // second click re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
-  // Its rendered mirror disables the folder buttons while a wipe runs (a move would walk the
-  // folder the wipe is deleting from).
+  // second click would re-run the wipe — that call finds nothing, settles last and reports
+  // "Removed 0". Its rendered mirror disables the folder buttons while a wipe runs (a move would
+  // walk the folder the wipe is deleting from).
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
   // Read with the flag: runningStore is set before and cleared before setBusy("store", …) notifies.
   const deletingKind = useSyncExternalStore(subscribeBusy, () => runningStore);
@@ -200,16 +200,16 @@ export default function Settings() {
   // (a wipe or a failed move leaves basePref unchanged, so nothing else would re-run it). It is
   // also the one re-read after a successful move: basePref flips while busy, so the edge reads
   // the new base. A mount with no stats yet reads even while busy (else a screen opened during
-  // a move or wipe showed zero counts until it ended); storeStats stays out of the deps — every
-  // read sets a new object, so the effect would loop.
+  // a move or wipe would show zero counts until it ended); storeStats stays out of the deps —
+  // every read sets a new object, so the effect would loop.
   useEffect(() => {
     if (tab === "Recording & history" && ((!dirBusy && !storeBusy) || !haveStatsRef.current))
       refreshStoreStats();
   }, [tab, refreshStoreStats, dirBusy, storeBusy]);
   // A retention sweep (a config save that turns saved dictations off or shortens their clock)
   // prunes records on a background thread while the tab stays mounted; nothing above re-runs
-  // for it, so the dictation count and the "Delete N dictations" confirm went stale. The event
-  // goes out before the media sweeps, so the audio counts may still lag one sweep.
+  // for it, so the dictation count and the "Delete N dictations" confirm would go stale. The
+  // event goes out before the media sweeps, so the audio counts may still lag one sweep.
   useEffect(() => {
     if (tab !== "Recording & history") return;
     let cancelled = false;
@@ -240,8 +240,8 @@ export default function Settings() {
   // Arming re-reads the counts the confirm names: a dictation saved or a run finished while the
   // tab sat open (or hidden in the tray) sends no event this screen hears, so the last read could
   // promise "Delete 5 dictations" for a wipe that removes 50. The confirm reads "Counting…" and
-  // stays disabled until that read (or a later one) settles — else a quick second click ran the
-  // wipe under the old count while the folder walk was still going.
+  // stays disabled until that read (or a later one) settles — else a quick second click would run
+  // the wipe under the old count while the folder walk was still going.
   const [armSeq, setArmSeq] = useState(0);
   const armStoreAction = (kind: StoreKind) => {
     setStoreMsg(null);
@@ -277,7 +277,7 @@ export default function Settings() {
       return;
     }
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
-    // debounce or a chunk merge otherwise re-created a JSON file Rust just removed. Only the
+    // debounce or a chunk merge would otherwise re-create a JSON file Rust just removed. Only the
     // kinds that delete record JSONs drop writes, each only for the records it wipes;
     // "files"/"links" empty a media folder and must not drop an unrelated edit debounce.
     // "dict" FLUSHES first instead (like the Save-dictations toggle): a wipe that fails (an
@@ -389,7 +389,7 @@ export default function Settings() {
     dictDaysA === 0 ? dictDaysB : dictDaysB === 0 ? dictDaysA : Math.min(dictDaysA, dictDaysB);
   const dictOff = s.transcribe?.keepDictationHistory === false && !s.recording.saveRecordings;
   // "Delete all dictations" also removes every dictation-* audio file, which outlives its
-  // record when history is off but audio is kept — name both, or the confirm said "0".
+  // record when history is off but audio is kept — name both, or the confirm would say "0".
   const dictN = storeStats?.dictationCount ?? 0;
   // Audio only: recordingsFiles also counts each .wav's .txt sidecar.
   const dictAudioN = storeStats?.recordingsAudioFiles ?? 0;
@@ -472,7 +472,7 @@ export default function Settings() {
       .finally(() => setOpeningDir(false));
   };
   // `dirBusy` gates every folder button while a move runs: the move walks every audio
-  // file and can take minutes, and a second click (Reset during a Change) started a
+  // file and can take minutes, and a second click (Reset during a Change) would start a
   // concurrent move over the same folders with the same stale `current`. A store wipe in flight
   // (`busy.store`) refuses a move too: it deletes from the very folder the move would walk.
   const changeRecDir = () =>
@@ -758,7 +758,6 @@ export default function Settings() {
           <Card className="px-6 pb-2">
             {/* Grouped by subject, one retention clock per subject. */}
             <SectionLabel className="mb-1 mt-4">Audio storage</SectionLabel>
-            {/* The ONE home for all stored audio, with a fixed subfolder per type. */}
             <div className="border-b border-line py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
