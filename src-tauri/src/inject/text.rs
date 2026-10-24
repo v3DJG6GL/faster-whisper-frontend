@@ -883,8 +883,9 @@ pub(crate) async fn inject_text(
 
 /// `inject_text`'s final answer from the sink's `Landed` (and whether the error-abort recovery
 /// block put the transcript on the clipboard). Every `diverted: true` it reports tells the
-/// frontend the transcript is on the clipboard to paste — the chord-time own-window divert in
-/// `inject::paste` (`Landed::OnClipboard`) and a recovered abort alike — so it arms
+/// frontend the transcript is on the clipboard to paste — a sink's own divert
+/// (`Landed::OnClipboard`, e.g. `inject::paste`'s chord-time own-window check or the Wayland
+/// portal's unreachable-layout divert) and a recovered abort alike — so it arms
 /// `DELIVERED_ON_CLIPBOARD` here, after the sink's last `note_paste_target` (which clears it),
 /// or the session-end restore would serve the snapshot over that transcript — unless a user
 /// cancel superseded the job started at `epoch`, which owes that restore instead.
@@ -948,7 +949,7 @@ fn clipboard_form(text: &str, clipboard_text: Option<String>) -> String {
 }
 
 /// The mid-function divert's answer (the caller asked to type or paste and we did neither).
-/// Reported only when a transcript was written. A withheld bare Enter (empty text) wrote nothing
+/// Reported only when a transcript was written. A diverted bare Enter (empty text) wrote nothing
 /// and pressed no Return, so it is `landed: false` like every other sink that skips one: a caller
 /// clearing its owed phrase gap on a landed Enter must not see one.
 fn divert_outcome(text: &str) -> InjectOutcome {
