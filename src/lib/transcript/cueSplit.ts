@@ -1086,7 +1086,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
 /** Wrap one cue's text onto as few lines of `cpl` chars as it needs (the cue
  *  splitter keeps a cue within its line cap, so `_lines` only documents the
  *  caller's limit), bottom-heavy (the second line may be longer), preferring
- *  breaks after punctuation and never after an article. Text that cannot fit
+ *  breaks after punctuation and avoiding one after an article. Text that cannot fit
  *  gets extra lines rather than losing words. `firstReserve` = chars a prefix
  *  ("Name: ", "[DE] ") takes on the first line. `q` = the quotes of the cue's segment
  *  around `text` (Cue.q), so a quote pairs with its partner in the next cue. `lang` = the
@@ -1416,7 +1416,8 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     }
     const opened = quoted === k;
     if (nb || held) toks[k] += nb + w;
-    // A word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews") is one word.
+    // Joins the token before it: a closer or stop, what an opener or opening quote opens, and a
+    // word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews"), which is one word.
     else if (
       k >= 0 && !gap
       && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
@@ -1443,8 +1444,8 @@ function wrapTokens(
   const cum = [0];
   toks.forEach((w, i) => cum.push(cum[i] + (gaps[i] ? 1 : 0) + w.length));
   const T = toks.length;
-  /** Length of the space-free run at toks[i]'s first (runL) and last (runR) character (mixed
-   *  tokenization only). A no-break space inside a token ends a run too: the word of « 東京 » is
+  /** Length of the space-free run at toks[i]'s first (runL) and last (runR) character.
+   *  A no-break space inside a token ends a run too: the word of « 東京 » is
    *  東京, a short one, as with a plain space. */
   const runL: number[] = [];
   const runR: number[] = [];
