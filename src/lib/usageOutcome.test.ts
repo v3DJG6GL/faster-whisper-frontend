@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The runtime flush posts through these; the pure state machine below never touches them.
 const post = vi.hoisted(() => ({
@@ -171,56 +171,40 @@ describe("flushOutcomes posts to the backend's current address", () => {
   const settle = async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   };
-  const reset = () => {
+  beforeEach(() => {
+    post.calls.length = 0;
+  });
+  afterEach(async () => {
+    while (post.release.length) post.release.shift()!();
+    await flushOutcomes();
     store.state.configLoaded = true;
     store.state.backends = [{ id: "b", serverUrl: "u" }];
     store.state.settings.sync.urlOverrides = {};
-  };
+  });
 
   it("an outcome recorded at the old address is posted to the repointed one", async () => {
     store.state.backends = [{ id: "b", serverUrl: "https://new.example" }];
-    try {
-      post.calls.length = 0;
-      enqueueOutcome("b", "http://old.example:8000", oc(hex(10)));
-      await settle();
-      expect(post.calls).toEqual([{ serverUrl: "https://new.example", backendId: "b" }]);
-    } finally {
-      while (post.release.length) post.release.shift()!();
-      await flushOutcomes();
-      reset();
-    }
+    enqueueOutcome("b", "http://old.example:8000", oc(hex(10)));
+    await settle();
+    expect(post.calls).toEqual([{ serverUrl: "https://new.example", backendId: "b" }]);
   });
 
   it("this device's address override wins", async () => {
     store.state.backends = [{ id: "b", serverUrl: "https://new.example" }];
     store.state.settings.sync.urlOverrides = { b: "http://lan:9000" };
-    try {
-      post.calls.length = 0;
-      enqueueOutcome("b", "http://old.example:8000", oc(hex(11)));
-      await settle();
-      expect(post.calls).toEqual([{ serverUrl: "http://lan:9000", backendId: "b" }]);
-    } finally {
-      while (post.release.length) post.release.shift()!();
-      await flushOutcomes();
-      reset();
-    }
+    enqueueOutcome("b", "http://old.example:8000", oc(hex(11)));
+    await settle();
+    expect(post.calls).toEqual([{ serverUrl: "http://lan:9000", backendId: "b" }]);
   });
 
   it("before the config loads nothing is posted and the outcome stays queued", async () => {
     store.state.configLoaded = false;
-    try {
-      post.calls.length = 0;
-      enqueueOutcome("b", "http://old.example:8000", oc(hex(12)));
-      await settle();
-      expect(post.calls).toEqual([]);
-      store.state.configLoaded = true;
-      await Promise.race([flushOutcomes(), settle()]);
-      expect(post.calls).toEqual([{ serverUrl: "u", backendId: "b" }]);
-    } finally {
-      while (post.release.length) post.release.shift()!();
-      await flushOutcomes();
-      reset();
-    }
+    enqueueOutcome("b", "http://old.example:8000", oc(hex(12)));
+    await settle();
+    expect(post.calls).toEqual([]);
+    store.state.configLoaded = true;
+    await Promise.race([flushOutcomes(), settle()]);
+    expect(post.calls).toEqual([{ serverUrl: "u", backendId: "b" }]);
   });
 });
 
