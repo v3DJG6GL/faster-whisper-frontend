@@ -143,7 +143,6 @@ export const MT_WORD = "Machine translation";
  *  ("YouTube, auto-generated"), a file name ("YouTube-auto"). */
 export type SourceWordStyle = "word" | "title" | "file";
 
-/** A site track's site as text: its display name, bounded; an unknown site reads "Site". */
 const siteOf = (t: { site?: string }) => safeDisplayText(t.site ?? "", 40) || "Site";
 
 /** A site track's source word: "YouTube", "YouTube auto" (auto-generated), "YouTube SDH"
