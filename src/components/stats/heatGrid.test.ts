@@ -1,5 +1,6 @@
-// The calendar / busy-grid level legend never prints an impossible range: sub-second duration
-// breaks under the 0.1 s floor, and a top step that ties leave empty.
+// The calendar / busy-grid level legend never prints an impossible range: not for sub-second
+// duration breaks under the 0.1 s floor, not for a top step that ties leave empty, and never
+// a first step that opens above the smallest value it shades.
 import { describe, expect, it } from "vitest";
 import { activeFloor, levelOf, quantileBreaks } from "@/lib/usageDerive";
 import { levelLegendLabels } from "./heatGrid";
