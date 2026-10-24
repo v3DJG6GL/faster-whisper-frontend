@@ -271,8 +271,6 @@ function RuleCard({
     mapCollapseAfter,
     MAX_SHOWN_MAP_ROWS,
   );
-  // Even "show all" stays bounded: `mapCollapseAfter` is server-chosen, so it cannot be the only
-  // ceiling. Expanding shows at most MAX_SHOWN_MAP_ROWS regardless of what the payload asked for.
   const mapShown =
     mapHidden > 0 && !mapShowAll
       ? mapPairs.slice(0, Math.min(mapCollapseAfter, MAX_SHOWN_MAP_ROWS))
@@ -1350,10 +1348,8 @@ function SaveBanner({
     .slice(0, 50)
     .filter((e) => !!e && typeof e === "object")
     .map((e) => ({
-      // `errors` is forwarded from the server as an opaque Value — unlike its `detail` sibling,
-      // which `transport/pipeline.rs` runs through `bounded_server_text`. A length slice alone
-      // still lets C1/bidi/U+2028 through into a banner that persists while the user edits, so
-      // these two get the same defanging every other server string on this screen has.
+      // Unlike `detail` (`bounded_server_text` in `transport/pipeline.rs`), `errors` arrives raw, and
+      // a length slice alone still lets C1/bidi/U+2028 into a banner that persists while the user edits.
       loc: safeDisplayText(e.loc, 300),
       msg: safeDisplayText(e.msg, 300),
     }));
