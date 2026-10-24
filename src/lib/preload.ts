@@ -33,8 +33,7 @@ export interface WarmLease {
 }
 
 /** Renew cadence, inside the server's plan lease (MODEL_PRELOAD_WARM_TTL_S, default 180s) with
- *  a minute of slack; a lost renew only lets the plan lapse until the next tick, and the
- *  cadence is far enough apart that we are not chatting every few seconds. */
+ *  a minute of slack; a lost renew only lets the plan lapse until the next tick. */
 export const RENEW_MS = 120_000;
 
 
