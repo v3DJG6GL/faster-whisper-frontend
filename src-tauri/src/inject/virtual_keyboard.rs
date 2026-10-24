@@ -264,8 +264,7 @@ mod imp {
                     "transcript too large for the virtual keyboard".into(),
                 ));
             }
-            // Each character → its keysym name; skip non-printing control chars (Enter
-            // and Tab map to their named keysyms, matching the portal path).
+            // Control chars dropped, Enter/Tab named: the same mapping as the portal path.
             let mut order: Vec<String> = text.chars().filter_map(keysym_name).collect();
             if auto_enter {
                 order.push("Return".to_string());
@@ -298,11 +297,10 @@ mod imp {
             // must NOT re-type the whole text (it would duplicate it). Track that with `emitted`.
             let mut emitted = false;
             let last = order.len() - 1;
-            // xkb keycodes top out at 255 (8 + 247), so one keymap holds at most 248 distinct
-            // symbols. That cap is per keymap UPLOAD, not per job: a long CJK dictation easily has
-            // more, and the portal would skip every character the layout cannot produce (or is
-            // unavailable on wlroots). So the job is typed in consecutive batches, each with its
-            // own keymap.
+            // The keymap cap is per UPLOAD, not per job: a long CJK dictation easily has more
+            // distinct symbols, and the portal would skip every character the layout cannot
+            // produce (or is unavailable on wlroots). So the job is typed in consecutive batches,
+            // each with its own keymap.
             for batch in split_batches(&order, MAX_KEYMAP_SYMBOLS) {
                 // A keymap failure is only "nothing typed yet" for the first batch; after that, a
                 // prefix has landed and the portal must not re-type the whole text.
