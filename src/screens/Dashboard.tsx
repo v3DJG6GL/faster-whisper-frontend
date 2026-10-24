@@ -88,10 +88,9 @@ function profileRouteShort(p: Profile | undefined, backend: Backend | undefined)
 const DECK_COLS = "grid-cols-[auto_auto_auto_auto_auto_max-content]";
 const ROW_COLS = "col-span-full grid-cols-subgrid";
 
-/** One profile as a row of the dictate card: name and activation, hotkey, model,
- *  endpoint, language, then edit + enable. Clicking an enabled row makes it the profile the
- *  button dictates with; the chosen row is tinted, the one running a session carries the
- *  state word. A disabled row is dimmed and not selectable — enable it first. */
+/** One profile as a row of the dictate card. Clicking an enabled row makes it the profile the
+ *  button dictates with; the one running a session carries the state word. A disabled row is
+ *  not selectable — enable it first. */
 function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile; chosen: boolean; running: boolean; runningLabel: string; onChoose: () => void }) {
   const backends = useApp((s) => s.backends);
   const updateProfile = useApp((s) => s.updateProfile);
@@ -283,16 +282,14 @@ export default function Dashboard() {
   // While a session is live, the "running" row marks the RUNNING profile — like the chip + usage
   // do — not the home-button target, which can drift if the profile set changes mid-session
   // (disabling the active profile, reordering); start logic + the tinted row keep using
-  // `target`. Falls back to the target when idle (activeProfile is null) or when the running
-  // profile was deleted.
+  // `target`.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
 
   // While busy the hero button is a stop/cancel: a graceful stop while the mic is open, a hard
   // reset for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the stream
   // died on suspend) is recoverable with the same button instead of dead.
   const busy = isActiveDictation(status);
-  // Same state→colour mapping as the chip + sidebar. Off reads as a recessed neutral button
-  // (press to start); amber only once a session is armed, green while you speak.
+  // Same state→colour mapping as the chip + sidebar.
   const vis = dictationVisual(status, speaking, warming, serverWork);
   const heroFill =
     vis.state === "speaking"
