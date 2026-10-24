@@ -178,6 +178,9 @@ export interface SiteChange {
   targets: string[];
 }
 
+/** No change: the very same state (derive tells a refused click by its identity) and a copy of the targets. */
+const unchanged = (input: SiteSubsInput, st: SiteSubsState): SiteChange => ({ state: st, targets: [...input.targets] });
+
 /** Write a target map back: wanted codes keep the targets' order (new ones appended). */
 function fromMap(input: SiteSubsInput, state: SiteSubsState, tg: Record<string, boolean>): SiteChange {
   const on = Object.keys(tg).filter((c) => tg[c]);
@@ -582,7 +585,7 @@ export function flipChipPart(input: SiteSubsInput, st: SiteSubsState, key: strin
   if (!on.includes(key)) return flipWith(input, st, m, key);
   // One at a time, each on the state the last wrote: the last one off is where machine
   // translation takes over (or the language drops), exactly as for a single track.
-  let ch: SiteChange = { state: st, targets: [...input.targets] };
+  let ch: SiteChange = unchanged(input, st);
   for (const k of on) ch = flip({ ...input, targets: ch.targets }, ch.state, k);
   return ch;
 }
@@ -595,9 +598,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // greyed again by the same cap, so the click would only flip a preset to Custom with nothing
   // visible changed. Free a slot first.
   const tid = keyTrack(key);
-  if ((tid && m.capped.has(tid)) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) {
-    return { state: st, targets: [...input.targets] };
-  }
+  if ((tid && m.capped.has(tid)) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) return unchanged(input, st);
   // Already Custom: the pick under the 8-track cap or the translation limit is the one before
   // it (preCap) — a click elsewhere, such as switching a track off to free a slot, must not save
   // a cap's grey and fill-in. Entering Custom from a preset (pickPolicy) snapshots what is on screen instead.
@@ -619,22 +620,16 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // fetched stays allowed) caps one: itself, greyed again, or a fetched track the cap ranks
   // below it, whose language silently falls back to machine translation. Refuse it; free a slot first.
   const run = m.view.run;
-  if (tid && next[key] && run && run.fetch.length >= MAX_SITE_FETCH && !run.fetch.includes(tid)) {
-    return { state: st, targets: [...input.targets] };
-  }
+  if (tid && next[key] && run && run.fetch.length >= MAX_SITE_FETCH && !run.fetch.includes(tid)) return unchanged(input, st);
   // Below a full download, ask the cap with the change (and the twin) in place.
   if (tid && next[key]) {
     const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(tid)) {
-      return { state: st, targets: [...input.targets] };
-    }
+    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(tid)) return unchanged(input, st);
   }
   // Machine translation switched on past a full translation limit would be greyed by it (or
   // grey another language's only source): the click would only flip to Custom and leave the
   // language wanted with nothing translating it. Free a slot first, as above.
-  if (own && next[key] && key.startsWith("mt:") && strands(input, st, m, next, tg, own)) {
-    return { state: st, targets: [...input.targets] };
-  }
+  if (own && next[key] && key.startsWith("mt:") && strands(input, st, m, next, tg, own)) return unchanged(input, st);
   if (c && ownProp(tg, c) && !next[key]) {
     // A capped track, or machine translation over the limit, kept on in the pick is no source
     // this run: its cap greys it again.
@@ -686,7 +681,7 @@ export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: Site
   }
   // Custom clicked again: a re-snapshot would bake the caps' grey and fill-in into the pick
   // (flipWith keeps them temporary through preCap) and drop picks of badges not shown now.
-  if (st.policy === "custom") return { state: st, targets: [...input.targets] };
+  if (st.policy === "custom") return unchanged(input, st);
   const m = model(input, st);
   return promote(input, m, fromMap(input, { ...st, policy, sel: { ...m.snap } }, allTargets(m)));
 }
@@ -763,7 +758,7 @@ export function removeLanguage(input: SiteSubsInput, st: SiteSubsState, code: st
  *  hide in translateTo and surface once the panel lets go of the chips. */
 export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readonly string[]): SiteChange {
   const chips = model(input, st).view.chips.map((c) => c.code);
-  let ch: SiteChange = { state: st, targets: [...input.targets] };
+  let ch: SiteChange = unchanged(input, st);
   const step = (c: SiteChange) => {
     ch = c;
     input = { ...input, targets: c.targets };
