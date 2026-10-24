@@ -640,9 +640,8 @@ function unbookClipByLang(byLang: Record<string, string> | undefined): void {
 function sessionTracks(): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   for (const [lang, parts] of Object.entries(sessionByLang)) {
-    // A blank line per phrase, mirroring how the phrases were injected: each
-    // one is its own block, so a track reads as paragraphs rather than as one
-    // run-on sentence stream.
+    // A blank line per phrase, so a track reads as paragraphs (one block per
+    // phrase) rather than as one run-on sentence stream.
     const joined = parts.join("\n\n").trim();
     if (joined) out[lang] = joined;
   }
