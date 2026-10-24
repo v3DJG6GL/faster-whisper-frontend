@@ -7,12 +7,8 @@
 // One module so the surfaces cannot drift apart on labels or option order: labels come from
 // the settings manifest, so a rename reaches every surface by construction.
 //
-// Two structural rules:
-//  1. The cells are plain FUNCTIONS called inline, never nested components. Rendering them
-//     as <Cell/> gives a fresh element type each keystroke, remounting the focused control.
-//  2. This yields BARE Select/Toggle elements and lets each surface wrap them. SettingRow
-//     and Labeled auto-clone an accessible name onto a DIRECT Select/Toggle child; a
-//     fragment or wrapper here would silently strip the name on both screens at once.
+// The cells are plain FUNCTIONS called inline, never nested components: rendering them as
+// <Cell/> gives a fresh element type each keystroke, remounting the focused control.
 
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { inheritLabel, onOff } from "@/lib/inherit";
@@ -48,8 +44,7 @@ export interface DictationFieldsProps {
 export function dictationControls({ value, onChange, disabled, inherited }: DictationFieldsProps) {
   // A cleared control writes `undefined` and the key is PRUNED: "inherit" is the ABSENCE of a
   // value, which is what makes a later change to the layer below propagate. (App Rules map the
-  // absence onto its stored `null` on the way out — that layer's own concern.) The prune also
-  // drops a `null` that arrives inside `value` from App Rule state.
+  // absence onto its stored `null` on the way out — that layer's own concern.)
   const set = (patch: Partial<InsertionOverrides>) => {
     const next = { ...value, ...patch } as InsertionOverrides;
     for (const k of Object.keys(next) as (keyof InsertionOverrides)[]) {
