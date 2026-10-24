@@ -30,8 +30,8 @@ pub struct Job {
     /// chord.
     withhold: bool,
     /// Injection generation this job belongs to; the typing loop abandons the rest of `text` once
-    /// `crate::inject::injection_cancelled` reports it superseded. Without it a long transcript
-    /// kept typing into whatever held focus long after the user cancelled.
+    /// `crate::inject::injection_cancelled` reports it superseded, so a long transcript stops
+    /// typing into whatever holds focus when the user cancels.
     epoch: u64,
     paste: bool, // true → synthesize the paste chord instead of typing `text`
     // The paste chord as KeyboardEvent.code strings (modifiers first, main key last) — NOT pre-resolved
@@ -44,8 +44,7 @@ pub struct Job {
 }
 
 /// Sender to the persistent RemoteDesktop typer task (started lazily on the first
-/// direct-typing injection). Reusing one portal session across utterances is what
-/// stops KDE from re-prompting for "Control input devices" on every segment.
+/// direct-typing injection); see the module doc for why one session is reused.
 #[derive(Default)]
 #[cfg_attr(windows, allow(dead_code))] // only the Linux portal path reads the sender; managed state on all platforms
 pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
@@ -318,7 +317,7 @@ mod imp {
     /// under the LIVE active group, so `build_charmap` must look glyphs up in THIS group, not always
     /// group 0. Queried via X11 `XkbGetState` (KWin keeps XWayland's XKB state in sync with the
     /// Wayland layout). Defensive and best-effort: returns 0 on no X display / no XKB / any failure,
-    /// so a single-layout machine — and every failure path — behaves exactly as before (group 0).
+    /// so a single-layout machine and every failure path use group 0.
     /// libX11 is loaded with `dlopen`, so it's an OPTIONAL runtime dep, never a build/link requirement.
     fn active_xkb_group() -> u32 {
         use libc::{c_char, c_int, c_uint, c_void};
@@ -384,10 +383,6 @@ mod imp {
     /// dead-key pass: they only add accented chars no key types directly.
     fn build_charmap(composes: bool) -> Option<(HashMap<char, KeySpec>, bool)> {
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        // Look glyphs up in the ACTIVE layout group, not always group 0: with a multi-layout config
-        // (us,de,…) the portal injects raw keycodes KWin resolves under the live group, so a group-0
-        // charmap mistypes (y↔z, missing AltGr glyphs) whenever a non-first layout is active. 0 on a
-        // single layout / any query failure ⇒ identical to the previous group-0-only behavior.
         let group = active_xkb_group();
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let (keymap, source) = compile_keymap(&ctx, live_keymap_text(), query_layout)?;
@@ -437,7 +432,7 @@ mod imp {
     /// The compose table the focused app most likely resolves dead keys with: the one for the
     /// locale's character type (LC_ALL, then LC_CTYPE, then LANG — the precedence toolkits use),
     /// or the `C` table when none is set. `None` when no table compiles: the dead-key pass is then
-    /// skipped and dead-key letters stay unreachable, as before.
+    /// skipped and dead-key letters stay unreachable.
     ///
     /// Compiled on a context of its own at `Critical` log level: the charmap is rebuilt per job,
     /// and a locale with no UTF-8 table (a Latin-1 `LANG=de_CH`, an uninstalled locale) would
@@ -630,7 +625,7 @@ mod imp {
                     // char inherits its spec), and Caps acts on that key: keep only a composed char
                     // that pairs like its base (é/e, έ/ε). İ (lowercases to two chars), ǰ ẗ (uppercase to
                     // two) or ᾳ would come out as another glyph or a cancelled compose under
-                    // Caps Lock — they stay unreachable, as before.
+                    // Caps Lock — they stay unreachable.
                     if ch.is_control() || case_pairs(ch) != case_pairs(base) {
                         continue;
                     }
@@ -731,7 +726,7 @@ mod imp {
     /// into the job: every 32 characters (see the loop for the cadence), and before every inline
     /// line break whatever the count. A line break types as Return, the one keystroke that ACTS
     /// rather than inserts, so a Return fired into our own window presses whatever button holds
-    /// focus there (Q31), the reason the trailing auto-Enter carries its own probe.
+    /// focus there, the reason the trailing auto-Enter carries its own probe.
     fn probes_focus_before(typed: usize, c: char) -> bool {
         typed > 0 && (typed.is_multiple_of(32) || matches!(c, '\n' | '\r'))
     }
@@ -803,11 +798,11 @@ mod imp {
     }
 
     /// The transcript as the portal typing loop walks it: NFC. Each char is looked up on its own,
-    /// so a decomposed transcript (NFD "café" = e + U+0301, which the server does not normalize)
-    /// sent each combining mark as a char of its own — no key on most layouts, so it was skipped
-    /// silently and the bare letter typed ("cafe", й as и), and `letter_walk` never counted the
-    /// loss (a mark is not alphabetic). Composed, the letter reaches its own key, its dead key or
-    /// `key_sequence`'s base-plus-marks split. Canonically equivalent, so always the same text.
+    /// so in a decomposed transcript (NFD "café" = e + U+0301, which the server does not normalize)
+    /// each combining mark would be a char with no key on most layouts — skipped silently, the bare
+    /// letter typed ("cafe", й as и), and uncounted by `letter_walk` (a mark is not alphabetic).
+    /// Composed, the letter reaches its own key, its dead key or `key_sequence`'s base-plus-marks
+    /// split. Canonically equivalent, so always the same text.
     fn typing_form(text: &str) -> String {
         text.nfc().collect()
     }
@@ -1074,9 +1069,8 @@ mod imp {
             "MetaRight" | "OSRight" => 126,
             "KeyV" => KEY_V,
             "Insert" => 110,
-            // Any other letter (KeyA..KeyZ) so a custom paste shortcut whose main key isn't V/Insert
-            // is honored on Wayland too — the X11 path (inject/mod.rs code_to_enigo) already maps all
-            // letters, so without this the configured key was silently dropped to a Ctrl+V fallback.
+            // Any other letter (KeyA..KeyZ): a custom paste shortcut's main key, which the X11 path
+            // (inject/mod.rs code_to_enigo) maps too.
             _ => return letter_keycode(code),
         })
     }
@@ -1127,7 +1121,7 @@ mod imp {
                 return Some(spec.keycode);
             }
         }
-        code_to_keycode(code) // fixed-table fallback (Insert, or the physical letter position)
+        code_to_keycode(code)
     }
 
     /// Map a KeyboardEvent.code chord (e.g. ["ControlLeft","ShiftLeft","KeyV"]) to evdev keycodes,
@@ -1195,13 +1189,10 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        // The epoch is captured by the CALLER, at the top of `inject_text`, not here. Queuing
-        // happens after up to ~1.2s of pre-work (the held-modifier wait, two focus IPCs, a
-        // bounded clipboard read, the settle, and on the fallback path a failed VK attempt), and
-        // a cancel landing in that window would otherwise bump the counter BEFORE this read — so
-        // the job adopted the post-cancel generation and `injection_cancelled` was false for its
-        // whole life. Capturing at entry closes that window; the counter is still monotonic, so a
-        // cancel still cannot leak into the NEXT injection.
+        // `epoch` is captured by the CALLER at the top of `inject_text`, not here: queuing follows up
+        // to ~1.2s of pre-work (the held-modifier wait, focus IPCs, a bounded clipboard read, the
+        // settle, on the fallback path a failed VK attempt), and a cancel landing there must still
+        // cancel this job. The counter is monotonic, so a cancel cannot leak into the NEXT injection.
         tx.send(Job {
             text,
             clip_text,
@@ -1227,7 +1218,7 @@ mod imp {
 
     /// Own one RemoteDesktop session for the task's lifetime and serve typing jobs
     /// on it. Returns (ending the task) when the channel closes or the session
-    /// dies — `type_text` then restarts it on the next request.
+    /// dies — `submit` then restarts it on the next request.
     async fn session_loop(app: &AppHandle, mut rx: mpsc::Receiver<Job>) -> Result<(), String> {
         let token = load_token(app);
 
@@ -1265,18 +1256,14 @@ mod imp {
                 let _ = job.reply.send(Ok(crate::inject::Landed::Yes));
                 continue;
             }
-            // Rebuild the charmap PER JOB, not once per session: a KDE keyboard-layout switch
-            // mid-run (e.g. us→de) would otherwise leave a stale snapshot and garble direct-typed
-            // text (y↔z, symbols) until an app restart. build_charmap is a cheap xkbcomp dump +
-            // libxkbcommon compile (ms) next to a multi-second utterance, and the persistent portal
-            // session stays open, so this adds no consent re-prompt. It resolves the ACTIVE XKB
-            // group per job (active_xkb_group), so a multi-layout `us,de` with group 1 active types
-            // correctly too — the group snapshot is re-read here every job alongside the rebuild.
-            // A bare auto-Enter job (no text, no chord) presses only the constant KEY_ENTER and never
-            // reads the map, so it skips the rebuild — and with it a keymap failure that would
-            // otherwise fail an Enter that needs no keymap. Built on the blocking pool: xkbcomp,
-            // XOpenDisplay and the xkb compile must not stall a runtime worker. A paste job reads
-            // only the chord's letter key, so it skips the compose table and the dead-key pass.
+            // Rebuild the charmap PER JOB, not once per session: a layout switch (us→de) or a change of
+            // the active XKB group (`active_xkb_group`) mid-run would otherwise garble typed text (y↔z,
+            // symbols) until an app restart. The build costs ms next to a multi-second utterance, and the
+            // portal session stays open, so there is no consent re-prompt. A bare auto-Enter job (no text,
+            // no chord) presses only KEY_ENTER, so it skips the build — and a keymap failure that would
+            // fail an Enter needing no keymap. On the blocking pool: xkbcomp, XOpenDisplay and the xkb
+            // compile must not stall a runtime worker. A paste job reads only the chord's letter key, so
+            // it skips the compose table and the dead-key pass.
             let charmap = if !job.paste && job.text.is_empty() {
                 Some((HashMap::new(), true))
             } else {
@@ -1331,31 +1318,21 @@ mod imp {
                     }};
                 }
 
-                // Before the job, not just between characters: the paste branch below returns without
-                // ever reaching the per-character check, and a bare auto-Enter job has no characters
-                // to iterate — so without this a cancel that lands while the job waits still fires
-                // Ctrl+V, or still presses Enter, with nothing to abandon mid-loop. Re-checked here
-                // after the keymap build: the queue check above misses a cancel that lands during it.
-                // Read AFTER the own-window probe below (`sink_gate`): the paste chord has no later
-                // check, so a cancel landing during that round trip otherwise still pastes.
+                // Before the job, not just between characters: the paste branch and a bare auto-Enter job
+                // never reach the per-character check, so a cancel landing while the job waited (or during
+                // the keymap build, after the queue check) would still fire Ctrl+V or Enter. `sink_gate`
+                // reads it AFTER the own-window probe: the paste chord has no later check, so a cancel
+                // landing during that round trip would otherwise still paste.
                 //
-                // Own-window re-check at the SINK, not only at `inject_text`'s entry. This is the
-                // last Wayland arm without one: the paste branch got its guards at the clipboard
-                // write and at the chord, and the X11/Windows twin got one per typed chunk — but
-                // a typing job reaching HERE crossed a wide gap. Between `inject_text`'s last
-                // own-window check (after the held-modifier wait) and this point sit the latch
-                // consume, the `focused_app_now` snapshot read, on the fallback path a failed
-                // virtual-keyboard attempt, `submit`'s task spawn + portal session (and possibly
-                // the KDE "Control input devices" consent modal), and the queue wait behind any
-                // job already typing. A focus change anywhere in there
-                // otherwise types the server's transcript into our own settings, API-key or
-                // dictionary fields — where `sanitize_injected` deliberately preserves `\n`, so
-                // it commits them.
+                // Own-window re-check at the SINK too: since `inject_text`'s last check sit the latch
+                // consume, the `focused_app_now` snapshot, on the fallback path a failed virtual-keyboard
+                // attempt, `submit`'s task spawn + portal session (maybe the KDE consent modal) and the queue
+                // wait. A focus change there would type the transcript into our own settings, API-key or
+                // dictionary fields — where `sanitize_injected` deliberately preserves `\n`, so it commits them.
                 //
-                // `NothingWritten` is the truthful answer and makes the caller's re-send safe:
-                // no key has been synthesized yet. For a PASTE job the caller has already written
-                // the transcript to the clipboard, so `text.rs` turns this answer into an
-                // on-clipboard divert rather than a landed paste.
+                // `NothingWritten`: no key has been synthesized, so the caller's re-send is safe. For a PASTE
+                // job the transcript is already on the clipboard, so `text.rs` turns this into an
+                // on-clipboard divert.
                 match sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch)) {
                     SinkGate::Cancelled => {
                         tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
@@ -1367,26 +1344,17 @@ mod imp {
                     }
                     SinkGate::Proceed => {}
                 }
-                // A transcript whose LETTERS the active layout mostly cannot produce (Chinese on a
-                // US layout, digits or not) used to skip them in the loop below, press auto-Enter
-                // on what was left and report `Landed::Yes`: the text was lost with nothing on the
-                // clipboard. Hand it over on the clipboard instead, before any key is synthesized —
-                // an on-clipboard divert, not an error, so a live session keeps running. A letter
-                // of a non-Latin script (Han, Kana, Hangul, Arabic, Hebrew, Thai, Cyrillic,
-                // Greek...) always diverts, even inside a mostly Latin line: it is part of a foreign
-                // word, not a stray accent. The rule is symmetric: on a layout that types no basic
-                // Latin (Russian, Greek), an unreachable Latin letter ("iPhone" in a Russian line)
-                // diverts too. Symbols (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a
-                // few stray accented Latin letters in an otherwise typeable line on a Latin layout
-                // are still skipped per character below.
+                // A transcript the active layout cannot carry (see `divert_unreachable`: Chinese on a US
+                // layout, a foreign-script word in a Latin line, an untypeable digit) goes on the clipboard
+                // before any key is synthesized — typed, its letters would be skipped and the text lost. An
+                // on-clipboard divert, not an error, so a live session keeps running. Symbols (a "♪" or "…"
+                // phrase, curly quotes, an em dash, emoji) and a few stray accented Latin letters on a Latin
+                // layout are still skipped per character below.
                 //
-                // KWin interprets each injected keycode under the LIVE Caps Lock, and our
-                // charmap only models Shift/AltGr (not Lock) — so with Caps ON, alphabetic
-                // keys come out inverted-case. Compensate by flipping Shift for Lock-
-                // affected (alphabetic) keys while Caps is on. (zwp_virtual_keyboard would
-                // sidestep this, but KWin doesn't advertise it, so we're on this path.) Read
-                // BEFORE the divert check: a letter the typing loop drops for this Caps state
-                // must count as unreachable there too (see `typeable_keys`).
+                // KWin resolves each injected keycode under the LIVE Caps Lock, which our charmap does not
+                // model, so each key gets a Caps plan (`caps_plan`). (zwp_virtual_keyboard would sidestep
+                // this, but KWin doesn't advertise it.) Read BEFORE the divert check: a letter the typing loop
+                // drops for this Caps state must count as unreachable there too (see `typeable_keys`).
                 let caps = LiveCaps {
                     on: !job.paste && caps_lock_on(),
                     usable: caps_usable,
@@ -1432,9 +1400,8 @@ mod imp {
                     }
                 }
                 if job.paste {
-                    // Resolve the chord to keycodes HERE (the charmap is built) so the MAIN key maps by
-                    // keysym against the active layout (e.g. 'v' for Ctrl+V) instead of a fixed physical
-                    // position — matching the X11 path. Press in order, release in reverse.
+                    // Resolved here, once the charmap is built, so the main key maps by keysym on the active
+                    // layout (see `main_key_keycode`). Press in order, release in reverse.
                     let chord = chord_to_keycodes(&job.chord_codes, &charmap);
                     let n = chord.len();
                     for (i, &code) in chord.iter().enumerate() {
@@ -1445,22 +1412,12 @@ mod imp {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         release!(code);
                     }
-                    // The enigo sibling has `if auto_enter && !injection_cancelled(epoch)`
-                    // (inject/mod.rs) — N1 gave that path a pre-job check, a per-chunk check AND a
-                    // check before the auto-Enter. This path got the first two (K12 turned the
-                    // in-loop `break` into a `return`) but never the third, so a cancel landing
-                    // during the paste chord still submitted the transcript.
-                    //
-                    // The CANCEL check alone is not the same question as "is it still safe to
-                    // press this". The chord above is ~80ms of real portal round trips (more for
-                    // a custom 3-key chord), and Return is the one synthesized key that ACTS
-                    // rather than inserts: in our own settings, API-key or dictionary UI it
-                    // presses whatever button holds focus. Its three siblings each carry an
-                    // own-window probe at this exact point — `inject/mod.rs` (X11/Windows), the
-                    // portal typing arm above, and `virtual_keyboard.rs`'s `i == last` — and this
-                    // arm was the one left with a cancel-only condition. `Landed::Yes` stays
-                    // correct on the skip: the chord already landed the text, so reporting
-                    // anything else would make the caller re-send and duplicate it.
+                    // Re-check before the auto-Enter, as the X11/Windows, portal-typing and virtual-keyboard
+                    // siblings do: the chord is ~80ms of portal round trips (more for a 3-key chord), and Return
+                    // ACTS rather than inserts — after a cancel it submits the dropped transcript, and in our own
+                    // settings, API-key or dictionary UI it presses whatever button holds focus. `Landed::Yes`
+                    // stays correct on a skip: the chord already landed the text, so any other answer would make
+                    // the caller re-send and duplicate it.
                     if job.auto_enter {
                         match sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch)) {
                             SinkGate::Proceed => {
@@ -1481,35 +1438,26 @@ mod imp {
                 // probe. See the probe below for why it is periodic rather than per character.
                 let mut typed: usize = 0;
                 for c in text.chars() {
-                    // The cancel is read between characters, not just before the job: this loop
-                    // runs at roughly a hundred characters a second and follows the user's focus
-                    // as they move. On a probed character it is read AFTER the probe below
-                    // (`typing_gate`): a cancel landing during the probe's main-thread round trip
-                    // otherwise still typed that character, a line break's Return included.
+                    // The cancel is read between characters: this loop runs for SECONDS on a long transcript.
+                    // On a probed character it is read AFTER the probe (`typing_gate`): a cancel landing during
+                    // the probe's main-thread round trip would otherwise still type that character, a line
+                    // break's Return included.
                     //
-                    // Follow focus the same way, for the same reason: this loop runs for SECONDS
-                    // on a long transcript, and a click into one of our own windows part-way
-                    // through otherwise lands every remaining character there. The X11/Windows
-                    // twin re-asks once per 512-char chunk (Q32); at ~10ms per character here,
-                    // every 32 characters is the same ~third-of-a-second cadence. Periodic rather
-                    // than per character on purpose — each probe is a round trip to the UI thread,
-                    // and the notes record that coupling as the accepted cost of this mechanism.
+                    // Focus is followed too, or a click into one of our own windows part-way through lands every
+                    // remaining character there. The X11/Windows twin re-asks once per 512-char chunk; at ~10ms
+                    // per character here, every 32 characters is the same ~third-of-a-second cadence. Periodic
+                    // rather than per character on purpose: each probe is a round trip to the UI thread.
                     //
-                    // The already-typed prefix stays: re-sending it would duplicate text on screen
-                    // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
-                    // same trade Q32 settled for the mid-typing cancel.
+                    // The already-typed prefix stays — re-sending it would duplicate text on screen — so the
+                    // untyped tail is dropped and this reports `Yes`.
                     //
-                    // Below the `typeable_keys` lookup, not above it: an unreachable character
-                    // `continue`s without advancing `typed`, so a probe placed above re-fired on
-                    // every character of an unreachable run (curly quotes, an em dash, emoji) —
-                    // back to back, with no sleep between them — instead of once per 32 typed.
-                    // Each key with its Caps plan up front: a char one of whose keys would need a
-                    // Caps Lock tap on a keymap that remapped KEY_CAPSLOCK is skipped whole, never
-                    // left half typed (see `caps_plan`).
-                    // An unreachable character types nothing, so its cancel is read at the next
-                    // character that does.
+                    // Below the `typeable_keys` lookup, not above it: an unreachable character `continue`s
+                    // without advancing `typed`, so a probe above it re-fires, back to back, on every character
+                    // of an unreachable run (curly quotes, an em dash, emoji); its cancel is read at the next
+                    // character that types. A char one of whose keys needs a Caps Lock tap the keymap cannot
+                    // give is skipped whole, never left half typed (see `caps_plan`).
                     let Some(keys) = typeable_keys(c, &charmap, caps) else {
-                        continue; // char not reachable on this layout — skip
+                        continue;
                     };
                     match typing_gate(
                         probes_focus_before(typed, c),
@@ -1518,10 +1466,6 @@ mod imp {
                     ) {
                         SinkGate::Cancelled => {
                             tracing::info!("[wayland-inject] cancelled mid-typing — stopping");
-                            // RETURN, not break: `break` fell through to the unconditional
-                            // auto-Enter below, so a cancelled transcript was truncated
-                            // mid-sentence and then SUBMITTED. The virtual-keyboard path already
-                            // returns here.
                             return Ok(crate::inject::Landed::Yes);
                         }
                         SinkGate::OwnWindow => {
@@ -1532,16 +1476,10 @@ mod imp {
                         }
                         SinkGate::Proceed => {}
                     }
-                    // Counted HERE, the moment this character is committed to being typed — not at
-                    // the bottom of the body. The `spec.lock` case below (a capital reachable only
-                    // via a Caps Lock bracket: Swiss-German Ü/Ä/Ö, French È/É/À) once had its own
-                    // branch ending in a `continue`, which jumped past a bottom-of-body increment —
-                    // so those characters cost ~38ms each, MORE than a normal one, while counting
-                    // zero. The transcript is remote and untrusted, so that is attacker-controllable
-                    // rather than a cadence wobble: an all-lock-capital transcript held the counter
-                    // at 0, the `typed > 0` term never became true, and the focus probe below never
-                    // fired once for the whole job — leaving exactly the sink this guard was added
-                    // to close.
+                    // Counted HERE, the moment this character is committed to being typed — not at the bottom of
+                    // the body, where a `continue` would skip it. The transcript is remote and untrusted: a run
+                    // of such skipped characters (lock-only capitals) would hold `typed` at 0 and the focus
+                    // probe would never fire for the whole job.
                     typed += 1;
 
                     // One char can take several keys: a dead-key prefix (`spec.dead`), or a base
@@ -1576,26 +1514,14 @@ mod imp {
                             }
                             tokio::time::sleep(Duration::from_millis(6)).await;
                         }
-                        // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
-                        // base key with Caps Lock effectively ON so KWin capitalizes the lowercase
-                        // keysym. If Caps is currently OFF, bracket the press with a Caps Lock tap to
-                        // flip it on and back (leaving the user's Caps state unchanged); if it's already
-                        // ON, the press alone yields the capital. Shift/AltGr still apply (È = Lock+Shift).
-                        //
-                        // Otherwise: a live Caps Lock capitalizes alphabetic output. On a normal
-                        // case-pair key the XOR below cancels it by pressing Shift; on a non-caps-safe
-                        // FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) pressing Shift would
-                        // select the WRONG glyph, so flip Caps OFF for the press and use the glyph's own
-                        // modifiers, then flip it back — symmetric to the lock case (which flips it ON
-                        // for a capital). Gate on whether Caps actually case-FOLDS this char to a
-                        // different single char — not merely is_alphabetic(), which is also true for
-                        // caseless-script letters and for lowercase letters whose uppercase is
-                        // multi-char (German 'ß' → "SS"). Caps doesn't change those glyphs, so the
-                        // XOR-Shift below would wrongly select their shift-level keysym (e.g. German
-                        // Shift+ß = '?', turning "Straße" into "Stra?e").
-                        //
-                        // Both cases press the same sequence and differ only in this pair, which
-                        // `caps_plan` computed above.
+                        // `caps_plan` computed the (flip_caps, needs_shift) pair this sequence presses:
+                        // - a capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À) is pressed with Caps
+                        //   effectively ON so KWin capitalizes the lowercase keysym — bracketed by Caps taps when Caps
+                        //   is off, leaving the user's state unchanged; Shift/AltGr still apply (È = Lock+Shift).
+                        // - otherwise a live Caps capitalizes the output: a case-pair key cancels it with Shift; a
+                        //   non-caps-safe FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) flips Caps OFF around
+                        //   its own modifiers instead. A glyph whose own press survives Caps (`caps_keeps`: caseless
+                        //   letters, ß) gets neither — Shift would select its shift level (de Shift+ß = '?').
                         if flip_caps {
                             press!(KEY_CAPSLOCK);
                             // Caps Lock toggles on the PRESS, so mark it flipped here — before the
@@ -1637,17 +1563,10 @@ mod imp {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                     }
                 }
-                // Same missing third check as the paste branch above. For a bare auto-Enter
-                // job `job.text` is empty, so the per-character cancel check in the loop above
-                // ran zero times and the pre-job check was the only earlier one — the charmap
-                // build plus the portal keycode round trips sit in the gap it cannot cover, so
-                // a cancel arriving there still pressed Return. (`virtual_keyboard.rs` closes the
-                // same gap with the per-key `injection_cancelled` check inside its typing loop.)
-                // The focus term is the sibling of the cancel term: the loop above probes every 32
-                // characters (and before each line break it types), so up to 32 characters plus
-                // this Enter can still follow a focus change — and an Enter is the one keystroke that ACTS rather than inserts, firing
-                // whatever button holds focus in our own window (Q31's finding, on the arm that
-                // reaches it after typing rather than bare).
+                // Re-check cancel and focus before the auto-Enter: since the loop's last probe (every 32
+                // characters and before each line break) up to 32 more characters may have been typed, and
+                // Return ACTS rather than inserts — it would submit a cancelled transcript or fire whatever
+                // button holds focus in our own window.
                 if job.auto_enter
                     && sink_gate(|| own_window_focused(app), || crate::inject::injection_cancelled(job.epoch))
                         == SinkGate::Proceed
@@ -1983,9 +1902,9 @@ mod imp {
 
         #[test]
         fn a_cased_non_latin_word_diverts_even_in_a_mostly_latin_line() {
-            // Cyrillic and Greek letters are cased, so a caseless test let them through: 19
-            // typeable vs 7 unreachable (the capital I — us_letters has no capitals — and the 6
-            // Cyrillic letters), and "Привет" was skipped letter by letter.
+            // Cased scripts (Cyrillic, Greek) are foreign words too: 19 typeable vs 7 unreachable
+            // (the capital I — us_letters has no capitals — and the 6 Cyrillic letters) is no
+            // majority, yet "Привет" must not be skipped letter by letter.
             assert!(divert_unreachable(
                 "Ich habe gestern \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} gesagt",
                 &us_letters(),
@@ -2041,9 +1960,9 @@ mod imp {
             map
         }
 
-        /// Compile a real layout and its dead-key composes the way `build_charmap` does (group 0,
-        /// the en_US.UTF-8 compose table). `None` — the test then skips — when this machine has no
-        /// XKB data or compose table for it.
+        /// Compile a real layout and its dead-key composes in group 0 with the en_US.UTF-8 compose
+        /// table (fixed, unlike `build_charmap`'s live group and locale table). `None` — the test
+        /// then skips — when this machine has no XKB data or compose table for it.
         fn real_charmap(layout: &str) -> Option<HashMap<char, KeySpec>> {
             real_charmap_with(layout, "", None)
         }
@@ -2129,7 +2048,7 @@ mod imp {
         }
 
         /// `caps:ctrl_modifier` keeps the Caps_Lock keysym but makes the key a Ctrl: a tap locks
-        /// nothing, so the lock-only capitals bracketed by one typed lowercase ("über" for "Über").
+        /// nothing, so a Caps-bracketed lock-only capital would type lowercase ("über" for "Über").
         #[test]
         fn caps_lock_capitals_are_dropped_when_the_caps_key_acts_as_ctrl() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -2608,8 +2527,8 @@ mod imp {
             assert_eq!(seq, ['\u{fc}', '\u{304}']);
         }
 
-        /// A decomposed transcript lost its accents on the portal path: each combining mark was
-        /// looked up as a char of its own, missed, and was skipped — "cafe" for NFD "café".
+        /// A decomposed transcript keeps its accents on the portal path: looked up as a char of its
+        /// own, a combining mark would miss and be skipped — "cafe" for NFD "café".
         #[test]
         fn a_decomposed_transcript_types_its_accented_letters() {
             type Press = (i32, bool, bool, Option<(i32, bool, bool)>);
