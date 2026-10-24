@@ -377,7 +377,7 @@ export function filterStepperText(raw: string, min: number, decimals: number): s
   return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
 }
 
-/** A −/+ numeric field for granular timeout-style settings. The value is typeable (clamped to
+/** A −/+ numeric field. The value is typeable (clamped to
  *  [min,max] on blur/Enter, and Esc reverts uncommitted typing; decimals allowed when `decimals`
  *  > 0) and steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
  *  shows a word in place of 0 (e.g. "Never" / "Instant").
