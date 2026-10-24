@@ -13,8 +13,6 @@ import type { UsageStageKey } from "@/lib/types";
 import { BUCKET_WORD, fmtDateRange, fmtSpanDate } from "@/components/stats/chartKit";
 import { Eyebrow, Pill } from "@/components/stats/primitives";
 
-/* ── the filter bar ──────────────────────────────────────────────────────── */
-
 const STAGE_DOT: Record<UsageStageKey, string> = {
   translating: "var(--c-translate)",
   diarizing: "var(--c-diarize)",
@@ -123,8 +121,8 @@ function RailChip({ label, accent, onClick, children }: { label: string; accent?
 
 /** The page's one filter bar: Range · Kind + With · Measure on three rows, pinned to the
  *  top of the scroll container. Once pinned it condenses to a one-line rail of the current
- *  values (D30 B); Edit or any chip reopens the full bar as an overlay beneath the rail, so
- *  the page does not reflow; Escape or a click outside closes it. */
+ *  values; Show or any chip reopens the full bar as an overlay beneath the rail, so the page
+ *  does not reflow; Escape or a click outside closes it. */
 export function FilterBar({
   scope,
   onScope,
@@ -151,8 +149,7 @@ export function FilterBar({
   /** The fetch for this query failed: the older document stays up, and the rail says so. */
   failed: boolean;
 }) {
-  // The Custom popover's draft dates (null = closed). Held here so a pin / un-pin — which
-  // remounts the full bar the popover lives in — keeps what was typed.
+  // The Custom popover's draft dates (null = closed); held here to survive the pin remount.
   const [draft, setDraft] = useState<{ f: string; t: string } | null>(null);
   const custom = draft !== null;
   const [sentinelRef, stuck] = useStuck();
@@ -307,9 +304,8 @@ export function FilterBar({
       )}
       <RailChip label="Measure" accent onClick={toggleBar}>{METRIC_LABEL[metric]}</RailChip>
       {failed ? <Pill>couldn’t load · older data</Pill> : stale && <Pill>updating…</Pill>}
-      {/* Top-right: the resolved span (the full bar's Range row shows it while open, so the
-          rail drops it then) and the one button that opens / closes the full bar. Clear
-          lives in the full bar only. */}
+      {/* Top-right: the resolved span (the pinned full bar's Range row leaves it to the rail)
+          and the one button that opens / closes the full bar. */}
       <span className="ml-auto flex items-center gap-2">
         {/* Clear only while the full bar is open under the rail (its own Clear steps aside
             then), left of Hide: the collapsed rail is a readout, not a place to reset from. */}
