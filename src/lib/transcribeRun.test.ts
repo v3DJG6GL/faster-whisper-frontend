@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The only Tauri command these tests care about is the history write: a record the
-// workbench must NOT re-save has to be observable. The rest of api.ts is no-op outside
-// Tauri (each command guards on `isTauri`), so the original module is kept.
+// The history write is always mocked: a record the workbench must NOT re-save has to be
+// observable. The rest of api.ts is no-op outside Tauri (each command guards on `isTauri`),
+// so the original module is kept and each mock below answers only once a test sets it.
 const saveTranscriptRecord = vi.fn(
   (_id: string, _json: string, _dictation: boolean): Promise<import("./api").RepointedMedia | null> => Promise.resolve(null),
 );
@@ -599,7 +599,6 @@ describe("planTimeline (the proportional strip)", () => {
     });
     expect(tl[1].lanes?.map((l) => l.target)).toEqual(["en", "fr"]);
     expect(tl[1].lanes?.map((l) => l.fill)).toEqual([1, 0.5]);
-    // unit-weighted: 160 done of 330 → ~0.48 + half of 170
     expect(tl[1].fill).toBeCloseTo((160 + 85) / 330, 5);
   });
 
@@ -1324,7 +1323,7 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
       expect(railStages(s1.runOptions ?? s1.lastOptions)).not.toContain("translating");
       expect(s1.lastOptions?.translateTo).toEqual(["de"]);
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
-      // Back on a translating server: file 3's retry still translates.
+      // Back on a translating server: the next retry still translates.
       retryFile("/b.mp3", { serverUrl: "http://x", backendId: "b", standard: false, translationAvailable: true } as never);
       const s2 = useTranscribeRun.getState();
       expect(railStages(s2.runOptions ?? s2.lastOptions)).toContain("translating");
@@ -2311,7 +2310,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
   };
   const flush = () => new Promise((r) => setTimeout(r, 0));
   let tick: (() => void) | null = null;
-  // downloading, then the entry is gone.
   let polls = 0;
   beforeEach(async () => {
     tick = null;
@@ -2789,7 +2787,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {
-    // undefined = no caps for b1: the app's ceiling applies.
     const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
