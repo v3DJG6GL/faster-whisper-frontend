@@ -58,9 +58,8 @@ function Editor({
   onCancel: () => void;
 }) {
   const setConnection = useApp((s) => s.setConnection);
-  // Model suggestions: a fresh in-editor test wins; else the session cache
-  // (fed by the list card's tests and the Transcribe screen's probes). No
-  // background probe here — the editor's URL may be mid-edit.
+  // Model suggestions come from `conn` below: no background model probe here — the editor's URL
+  // may be mid-edit.
   const storedConn = useApp((s) => ownProp(s.connections, initial.id));
   const syncEnabled = useApp((s) => s.settings.sync?.enabled ?? false);
   // Same guard as `effectiveServerUrl`: an inherited value here would put a FUNCTION into a controlled input's `value`.
@@ -109,9 +108,9 @@ function Editor({
   const testing = testingTargets.some((t) => t.url === effUrl && t.key === key && t.gen === curGen);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Bumped by each successful test that still matches the typed target: the hooks below key their
-  // fetches on the target and on a rise to "full", so a Test of an unchanged, already-full server
-  // (after changing its default model or decode defaults) refreshed the info panel but left the
-  // inherited labels, model chip and Multiple-languages offer on the old values until a reopen.
+  // fetches on the target and on a rise to "full", so without it a Test of an unchanged, already-full
+  // server (after changing its default model or decode defaults) would leave the inherited labels,
+  // model chip and Multiple-languages offer on the old values until a reopen.
   const [testGen, setTestGen] = useState(0);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
   // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
@@ -156,14 +155,14 @@ function Editor({
   // The freshest verdict for the top card and the model list: this editor's test, else the
   // session cache (the list card's tests, the Transcribe screen's probes) — but the cache only
   // while the editor still points at the target it describes. An unsaved edit of Server URL or
-  // API key drops `result` above but not the store entry, which kept "Connected", the old
+  // API key drops `result` above but not the store entry, which would keep "Connected", the old
   // version chips and the old server's models beside the new address.
   const storedTarget = useRef({ url: effUrl, key });
   const storedFresh = storedTarget.current.url === effUrl && storedTarget.current.key === key;
   const stored = storedFresh ? storedConn : undefined;
   // A blank-key verdict is only still true while the stored key's generation is unchanged (see
   // `resultTarget.gen`): a sync pull that rotates the key moves neither address nor key field, so
-  // the reset effect above never fires and the old caller's "Connected", chips and models stayed.
+  // the reset effect above never fires and the old caller's "Connected", chips and models would stay.
   // Nor may the stored key have come or gone since (`resultTarget.hadKey`).
   const resultLive =
     result && (key || (resultTarget.current.gen === credentialGeneration(b.id) && resultTarget.current.hadKey === keyStoredNow))
@@ -176,9 +175,9 @@ function Editor({
   const detected = classifyConnection(conn);
   const kind = effectiveServerKind(b, conn);
   // The hooks below fetch for the DEBOUNCED target, so they get the kind last seen while that
-  // target was settled: `kind` follows the live field at once, and a typo-then-revert flipped it
-  // full → unknown → full, which counted as a rise and refetched an unchanged target (and a
-  // paste + Test inside the debounce refetched the old address). Holding it until the debounce
+  // target was settled: `kind` follows the live field at once, and a typo-then-revert would flip it
+  // full → unknown → full, which counts as a rise and refetches an unchanged target (and a
+  // paste + Test inside the debounce would refetch the old address). Holding it until the debounce
   // lands moves the kind change and the new address into the same render — one fetch.
   const hookKindRef = useRef(kind);
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
@@ -248,14 +247,12 @@ function Editor({
   const multiInherited = server.values.multilingual === true;
   const promptLocked = server.prompt?.locked === true;
 
-  // The Server URL / API-key fields stay editable during an in-flight test (only the Test button
-  // is disabled), so a result that resolves after the user edits them describes a server they've
-  // already moved off. Track the live target and only commit a test whose URL+key still match
-  // (mirrors Transcribe's runId guard); else effectiveServerKind / the status dot / the decode gate
-  // would cache the old server's classification under this backend id.
+  // The Server URL / API-key fields stay editable during an in-flight test, so a result that
+  // resolves after the user edits them describes a server they've already moved off: track the
+  // live target and only commit a test whose URL+key still match.
   // The EFFECTIVE url on both sides: this screen shows the effective address, so a verdict earned
-  // by testing `b.serverUrl` while an override points somewhere else described a different host
-  // than the one displayed next to it.
+  // by testing `b.serverUrl` while an override points somewhere else would describe a different
+  // host than the one displayed next to it.
   const liveTarget = useRef({ url: effUrl, key });
   liveTarget.current = { url: effUrl, key };
 
@@ -293,9 +290,9 @@ function Editor({
         apiKey: testedKey || null,
       });
       // Local only — the store gets this verdict in `doSave`, once the target it describes is the
-      // one persisted. Writing it here cached a DRAFT's verdict under the backend id: edit X, retype
-      // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
-      // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
+      // one persisted. Writing it here would cache a DRAFT's verdict under the backend id: edit X,
+      // retype the URL, Test, Cancel → `connections[X]` holds the other host's answer while X still
+      // routes to the old one (and a tested-then-cancelled connect-first draft leaves an orphan entry).
       if (stillLive()) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen, hadKey };
         setResult(info);
@@ -312,7 +309,7 @@ function Editor({
           stored &&
           !testedKey &&
           // Both sides in stored form first: a lenient `http:/host` override normalises to "" raw,
-          // while `effectiveServerUrl` resolves it to `http://host`, so the commit never happened.
+          // while `effectiveServerUrl` resolves it to `http://host`, so a raw compare never matches.
           typedServerUrl(testedUrl) === typedServerUrl(effectiveServerUrl(stored, live.settings))
         ) {
           setConnection(b.id, info);
@@ -1127,10 +1124,8 @@ export default function Backends() {
   }, [backends, connections, caps]);
   // Subscribed, not read imperatively, so the card re-renders when an override changes.
   const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
-  /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, which the Test
-   *  button on the same row already uses. */
-  // Type-check the lookup, as `effectiveServerUrl` does: `?.` does not guard a
-  // prototype-inherited value.
+  /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, including its
+   *  type check on the lookup: `?.` does not guard a prototype-inherited value. */
   const effectiveUrl = (b: Backend) => {
     const raw = urlOverrides?.[b.id];
     return (typeof raw === "string" ? storedTypedUrl(raw) : "") || b.serverUrl;
@@ -1315,13 +1310,14 @@ export default function Backends() {
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that
-                            sanitizes to blank (or to joiners only) is still sent verbatim, so it reads "??", not "server lang".
-                            It labels the coded value that is sent (effectiveLanguage), so a synced
-                            "english" / " de " reads English / German as the picker does.
-                            Multiple languages is "auto" + the multilingual flag: the badge folds the
-                            backend's OWN flag back (else it reads "Auto-detect"). Unlike the editor's
-                            Defaults summary it has no server caps, so it neither drops a flag the
-                            model cannot honour nor shows an inherited server default. */}
+                            sanitizes to blank (or to joiners only) is still sent verbatim, so it
+                            reads "??", not "server lang". It labels the coded value that is sent
+                            (effectiveLanguage), so a synced "english" / " de " reads English /
+                            German as the picker does. Multiple languages is "auto" + the
+                            multilingual flag: the badge folds the backend's OWN flag back (else it
+                            reads "Auto-detect"). Unlike the editor's Defaults summary it has no
+                            server caps, so it neither drops a flag the model cannot honour nor
+                            shows an inherited server default. */}
                         <Badge>
                           {b.language
                             ? spokenText(
