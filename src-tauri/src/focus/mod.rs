@@ -1,8 +1,7 @@
 //! Focused-app + field-editability detection via AT-SPI (the accessibility bus).
 //!
-//! Replaces the privileged `org_kde_plasma_window_management` (blacklisted for normal
-//! clients on KWin) with one event-driven module that answers BOTH questions a safe
-//! insertion needs, from a single cached snapshot:
+//! One event-driven module that answers BOTH questions a safe insertion needs, from a single
+//! cached snapshot (not `org_kde_plasma_window_management`: KWin blacklists it for normal clients):
 //!   * **which app has focus** (`app_id`) — for per-app rules + the chip's target readout.
 //!   * **whether the focused element is editable** — for the opt-in field guard, so we
 //!     don't type into a button / list / the desktop.
@@ -139,13 +138,10 @@ fn is_self(app_id: &str) -> bool {
 
 /// Apps that must never be treated as a dictation target, so their focus events don't clobber
 /// the real one (`last_other`): our own window, the compositor / session-manager (kwin,
-/// ksmserver), AND plasmashell / plasma-desktop. plasmashell is the desktop SHELL — its panels,
-/// taskbar, system tray and widgets emit focus events CONSTANTLY (hovering/clicking a panel,
-/// notifications, etc.), which would otherwise show as "→ plasmashell" while you actually have a
-/// real window focused. We lose its Kickoff launcher search as a target by this, but the
-/// spurious-detection noise far outweighs that — and KRunner covers launcher dictation.
-/// NOTE: `krunner` is deliberately NOT noise — it's a separate, on-demand search popup, focused
-/// only when you actively open it, so it's a legitimate (and quiet) dictation target.
+/// ksmserver), and plasmashell / plasma-desktop, whose panels, tray and widgets emit focus
+/// events constantly while a real window holds focus. That costs Kickoff's search as a target;
+/// KRunner covers launcher dictation. `krunner` is deliberately NOT noise: an on-demand popup,
+/// focused only when you open it.
 fn is_noise(app_id: &str) -> bool {
     if is_self(app_id) {
         return true;
@@ -204,8 +200,7 @@ pub fn set_deep(g: &AtspiGuard, enabled: bool) {
 
 /// The focused app (its id + title + editability), or `None` when nothing is known yet
 /// (cold listener / no a11y). Reports the most recent NON-self focused app.
-/// Synchronous — it's a cached-snapshot read, no a11y round-trip — so SYNC commands
-/// (the clipboard-restore gating) can use it too; `focused_app` is the async wrapper.
+/// Synchronous: a cached-snapshot read, no a11y round-trip; `focused_app` is the async wrapper.
 pub fn focused_app_now(g: &AtspiGuard) -> Option<FocusedApp> {
     start(g);
     let snap = g.snapshot.lock();
