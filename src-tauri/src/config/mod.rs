@@ -894,6 +894,10 @@ fn config_path(dir: &Path) -> PathBuf {
     dir.join("config.json")
 }
 
+/// Extension of the reset backup (`config.json.bak`): what `bak_target` writes and
+/// `reset_unconfirmed` looks for.
+const BAK_EXT: &str = "json.bak";
+
 // Pre-v2 configs stored `profiles: ModelProfile[]` (= today's Backend) and
 // `modes: ModeBinding[]` with a fused `mode: "hold"|"handsfree"`. The fields are
 // the ONLY signal of intent, so we parse them explicitly (a plain serde default
@@ -1032,7 +1036,7 @@ pub fn reset_this_session() -> bool {
 /// defaults' window must not delete history the backed-up settings said to keep.
 pub fn reset_unconfirmed(dir: &Path) -> bool {
     let path = config_path(dir);
-    !path.exists() && path.with_extension("json.bak").exists()
+    !path.exists() && path.with_extension(BAK_EXT).exists()
 }
 
 /// Retention sweeps and log pruning must not run on a reset nobody has saved over (this
@@ -1049,7 +1053,7 @@ pub fn retention_held(dir: &Path) -> bool {
 /// `backup_unreadable` could only copy stays in place, and every later load this session (and
 /// every launch) would otherwise move yet another identical copy aside.
 fn bak_target(path: &Path) -> PathBuf {
-    let bak = path.with_extension("json.bak");
+    let bak = path.with_extension(BAK_EXT);
     if !bak.exists() {
         return bak;
     }
@@ -1062,10 +1066,10 @@ fn bak_target(path: &Path) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let mut aside = path.with_extension(format!("json.bak.{secs}"));
+    let mut aside = path.with_extension(format!("{BAK_EXT}.{secs}"));
     let mut n = 1;
     while aside.exists() {
-        aside = path.with_extension(format!("json.bak.{secs}-{n}"));
+        aside = path.with_extension(format!("{BAK_EXT}.{secs}-{n}"));
         n += 1;
     }
     match std::fs::rename(&bak, &aside) {
