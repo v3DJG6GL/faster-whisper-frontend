@@ -272,7 +272,7 @@ pub(crate) async fn inject_text(
     //
     // That teardown is not a bystander: it emits a mid-hold stop for a push-to-talk profile, which
     // MANUFACTURES this injection at the exact moment the chord is provably still down. So the wipe
-    // arms a chord-precise, self-expiring latch, and here we consume it.
+    // arms a chord-precise, self-expiring latch for this injection to consume.
     //
     // Deliberately consumed AFTER the loop, not merged into it: this is a "the chord was down when
     // we lost sight of it" fact, not a live reading, so there is nothing to wait for. Straight to
