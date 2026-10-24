@@ -193,7 +193,7 @@ export function safeIdentityText(s: unknown, max = 80): string {
     })
     .join("");
   // No lookbehind (older WebKitGTK builds lack it), and no `\s*` around the run: that form
-  // restarted at every blank offset and backtracked when no joiner followed, quadratic on a long
+  // restarts at every blank offset and backtracks when no joiner follows, quadratic on a long
   // blank run. The run's neighbours are read by offset instead, so the pass is linear, and any run
   // touching whitespace folds — also one right after a space the previous run already took.
   const collapsed = defanged
@@ -299,7 +299,7 @@ export function capCodePoints(s: string, max: number): string {
 
 /** An edit `prev` → `next` held to `max` code points the way a native maxLength holds it: only
  *  the inserted run is cut, so typing or pasting into a full field keeps the existing text
- *  (capCodePoints on the whole string dropped the field's TAIL instead). An edit that doesn't
+ *  (capCodePoints on the whole string would drop the field's TAIL instead). An edit that doesn't
  *  grow lands as-is, so a value stored over the cap can still shorten. */
 export function capEdit(prev: string, next: string, max: number): string {
   if (next.length <= max) return next;
