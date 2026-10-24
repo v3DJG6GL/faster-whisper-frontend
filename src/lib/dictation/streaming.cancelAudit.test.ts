@@ -1,4 +1,6 @@
-// Drift guard for the "tell the SERVER to stop" rule.
+// Drift guards for streaming.ts / transcribeRun.ts / dictation.ts / Overlay.tsx rules no unit
+// test can reach without Tauri: first the "tell the SERVER to stop" rule, then the
+// typed-baseline, insertion and ordering invariants below.
 //
 // Both classes of long-running server work here — a dictation translate and a
 // batch transcription — outlive our end of the request: dropping the HTTP call
@@ -8,7 +10,8 @@
 // wire — which is exactly the kind of omission a test has to catch.
 //
 // It reads the SOURCE (vite `?raw`, so no Tauri is needed), slices each
-// function body by brace depth, and asserts the call appears in it.
+// function body by brace depth, and asserts which calls it makes and in what
+// order, or runs the slice as plain JS.
 import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
