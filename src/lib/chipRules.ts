@@ -1,14 +1,10 @@
-// The overlay chip's expand / tuck / cancel-affordance decisions, as pure
-// functions.
+// The overlay chip's expand / tuck / cancel-affordance decisions, as pure functions:
+// the chip is a webview component in a repo with no jsdom and no component test, so
+// anything left inline in Overlay.tsx (which keeps the effects/timers) is untestable,
+// and these several-term booleans regress silently.
 //
-// WHY they live here and not in Overlay.tsx: the chip is a webview component in a
-// repo with no jsdom and no component test, so anything left inline is untestable —
-// and these three rules are exactly the kind that regress silently (each is a
-// several-term boolean whose terms were added months apart for different bugs).
-// Overlay.tsx keeps the effects/timers; the DECISIONS are here.
-//
-// Every rule re-checks `phase.kind === status` before trusting the phase. The two
-// travel to the chip in ONE payload but are written by different store transitions,
+// Every rule that reads the phase re-checks `phase.kind === status` (currentPhase). The
+// two travel to the chip in ONE payload but are written by different store transitions,
 // so they can disagree for a frame — and a stale phase is precisely what would pop
 // the pill open (or hold the ✕ up) after the stage it described has ended.
 
@@ -17,9 +13,7 @@ import type { DictationPhase, DictationStatus, ServerWork } from "./types";
 
 /** How long a processing stage must persist before it earns the pill. Below this a
  *  state is over before the eye resolves it, and the expand+collapse reads as a
- *  glitch (a tucked dot sliding out, an empty pill falling back to "listening") —
- *  the anti-glitch rule the chip has always had, now with an escape hatch for the
- *  stages that DON'T end in a blink. */
+ *  glitch (a tucked dot sliding out, an empty pill falling back to "listening"). */
 export const PHASE_PERSIST_MS = 1000;
 
 /** The cancel affordance (the ✕) is a RECOVERY control for a slow/stuck stage, not
@@ -114,10 +108,9 @@ export function chipTuckHold(a: {
 
 /** Must a collapsed chip OPEN to paint an end-of-session label (the untranslated reason, "not
  *  inserted", "last phrase may be missing")? The label lives in the expanded body and nothing
- *  expands the chip at idle (chipExpansion), so a pill that had collapsed before the settle (the
- *  user went quiet first) showed only a pulsing dot for the whole hold. Yes while the hold the
- *  note / pulse timers stamped (`holdUntil`) is still up — not for a chip tucked at the edge,
- *  whose body never mounts and which the tuck rules keep from sliding out to flash an end state. */
+ *  expands the chip at idle (chipExpansion). Yes while the note / pulse hold (`holdUntil`) is
+ *  up — not for a chip tucked at the edge, whose body never mounts and which the tuck rules keep
+ *  from sliding out to flash an end state. */
 export function chipLabelHoldOpens(a: { holdUntil: number; peeked: boolean; now: number }): boolean {
   return !a.peeked && a.holdUntil > a.now;
 }
