@@ -1,10 +1,6 @@
 // The Intersex-Inclusive Progress Pride flag (Vecchietti 2021; building on Baker, Helms,
-// Quasar & Carpenter), used verbatim across the app's small solidarity touches: the
-// hover-revealed flag in the dictation waveform (canvas, via an <img> → CanvasPattern)
-// and the sidebar footer mark. Kept here so both surfaces share one source of truth.
-//
-// width/height are set (not just viewBox) so the SVG has an intrinsic size when loaded
-// as an Image for canvas drawImage.
+// Quasar & Carpenter), used verbatim for the sidebar footer mark. The dictation waveform's
+// hover reveal uses the plain rainbow stops below instead.
 
 export const PRIDE_FLAG_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="762" viewBox="0 0 1200 762">' +
@@ -23,7 +19,7 @@ export const PRIDE_FLAG_SVG =
   '<circle cx="111" cy="381" r="80" fill="none" stroke="#66338b" stroke-width="19"/>' +
   "</svg>";
 
-/** data: URI for use as an <img> src or a canvas Image. */
+/** data: URI for use as an <img> src. */
 export const PRIDE_FLAG_URI = `data:image/svg+xml,${encodeURIComponent(PRIDE_FLAG_SVG)}`;
 
 /** Plain 6-stripe rainbow Pride flag, top→bottom (Gay_Pride_Flag.svg). Used for the
