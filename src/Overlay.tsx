@@ -527,7 +527,7 @@ export default function Overlay() {
     // Hover-intent dwell: wait the configured delay before revealing — so a fly-over
     // doesn't expand the chip, and the reveal (detail + quick-launch) happens in ONE step.
     // Firing is NOT proof the cursor stayed: WebKitGTK can drop the pointerleave of a quick
-    // graze (the hit region reshapes mid-exit — see reportBounds), which used to leave this
+    // graze (the hit region reshapes mid-exit — see reportBounds), which would leave this
     // timer armed and reveal the chip into empty air, stuck at the hover-restore anchor
     // flush against the screen edge. So confirm with the windowing system (immune to the
     // lost DOM event) that the cursor is still here; if it isn't, run the leave path instead.
@@ -694,10 +694,10 @@ export default function Overlay() {
     }
     // Tucked: only the status dot's outer half is visible, but the pill element still spans
     // its full ~38×42px box (padding + height) — reporting THAT (plus the 10px forgiveness
-    // pad Rust adds) left an invisible ~58×31px block around the half-dot swallowing clicks
-    // meant for the app beneath (e.g. a browser's menu bar right under the top edge). Report
-    // just the dot's rect instead: the padded region stays a comfortable hover target for
-    // un-tucking while clicks a few px away pass through again.
+    // pad Rust adds) would leave an invisible ~58×31px block around the half-dot swallowing
+    // clicks meant for the app beneath (e.g. a browser's menu bar right under the top edge).
+    // Report just the dot's rect instead: the padded region stays a comfortable hover target
+    // for un-tucking while clicks a few px away pass through.
     const el = (peeked ? dotRef.current : null) ?? chipRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -718,9 +718,9 @@ export default function Overlay() {
   // `state.status` MUST be a dependency: show_overlay re-applies set_ignore_cursor_events(true) on
   // every (re)show — including the standby→session re-center in chipController.ts — which WIPES the input
   // shape and makes the whole window click-through again. With the dock on, neither `interactive`
-  // nor `peeked` changes on session start, so without `status` the shape was never re-applied and
-  // the chip stayed unhoverable for the entire session. The late 1500ms retry guarantees the final
-  // re-report lands AFTER show_overlay's click-through reset (the early retries can race it).
+  // nor `peeked` changes on session start, so without `status` the shape would never be re-applied
+  // and the chip would stay unhoverable for the entire session. The late 1500ms retry guarantees the
+  // final re-report lands AFTER show_overlay's click-through reset (the early retries can race it).
   useEffect(() => {
     if (!interactive) return;
     const ids = [0, 160, 420, 850, 1500].map((ms) => setTimeout(reportBounds, ms));
@@ -1039,7 +1039,7 @@ export default function Overlay() {
   // The stage row, when there is one — it takes the label slot (and, while translating,
   // takes it AHEAD of the live words: those are the ORIGINAL, already captured and stale
   // by the time translation starts, so leaving them up would show a moving preview of the
-  // wrong text while the user waits on the right one). `null` = the slot renders as before.
+  // wrong text while the user waits on the right one). `null` = the slot keeps its usual content.
   const partialShown = !!state.partial && (!state.previewOnHover || hoverReveal);
   const phaseRow =
     phase && (phase.kind === "translating" || !partialShown) ? (
@@ -1072,11 +1072,8 @@ export default function Overlay() {
       </div>
     ) : null;
 
-  // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
-  // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
-  // race: measuring scrollWidth on fast-updating text on WebKitGTK ran short and clipped the
-  // newest words, while the flexbox is timing-independent. This effect only drives the cosmetic
-  // left-fade: show it when the span is wider than the clip.
+  // This effect only drives the cosmetic left-fade (shown when the span is wider than the clip);
+  // the newest words stay pinned right by layout alone — see the transcript markup below.
   // Mirrors the JSX gate on the transcript SLOT only (phase row, then pulse/note, then words) —
   // not the full mount condition: the body wrapper's `!peeked` gate and the error branch sit
   // above it, and are tracked as their own deps below.
@@ -1180,8 +1177,7 @@ export default function Overlay() {
   ]);
 
   // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
-  // peeked, speaking, finishing, or in error). Screen entries focus + navigate the main
-  // window; action entries run a dictation action (routed through the main window).
+  // peeked, speaking, finishing, or in error).
   const hasQuickLaunch = state.quickLaunch.length > 0;
   // Gate quick-launch on the SAME delayed hover-intent as the language/mode detail (not raw
   // `hovering`), so the chip reveals everything in one step after the dwell — never expanding
@@ -1215,8 +1211,9 @@ export default function Overlay() {
   if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
-        {/* `chipTagFor` drops only an authored tag's invisible head and `sanitizeProfiles` never
-            checks `tag`, so the body of an authored tag reaches here unfiltered. */}
+        {/* `chipTagFor` only trims an authored tag's invisible head and caps it, and
+            `sanitizeProfiles` only type-checks `tag`, so the body of an authored tag reaches here
+            unfiltered. */}
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
@@ -1359,10 +1356,9 @@ export default function Overlay() {
               : "border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
           )}
         >
-          {/* The persistent status dot — the seed the pill grows out of, and the SOLE insert-feedback
-              element: a colour-coded pulse — green when text was typed/pasted, amber when copied to
-              the clipboard — both per phrase and as the end-of-session confirmation. No distinct
-              icons. The rest of the time it shows the steady status fill / breathing. */}
+          {/* The persistent status dot — the seed the pill grows out of, and the only typed/copied
+              feedback, per phrase and at session end: a colour-coded pulse, no distinct icons. The
+              rest of the time it shows the steady status fill / breathing. */}
           <span
             ref={dotRef}
             style={{ boxShadow: dotGlow, width: 10 * dotK, height: 10 * dotK }}
@@ -1524,8 +1520,7 @@ export default function Overlay() {
                             >
                               <span className="shrink-0 whitespace-nowrap font-mono text-[12.5px]">
                                 {/* Tail only: the chip is right-pinned and ~800px wide, so this is
-                                    what was visible anyway — but the string is server-streamed and
-                                    unbounded, and it re-lays-out several times a second. */}
+                                    what was visible anyway. */}
                                 {/* `transport::stream` bounds the transcript with `bounded`, NOT
                                     `bounded_server_text`, deliberately — a transcript legitimately
                                     contains newlines. So Cf/bidi survive to the frontend by design,
