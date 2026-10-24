@@ -192,10 +192,11 @@ pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
 }
 
 /// The focused application's id + title + (when deep detection is on) whether its focused
-/// element is editable. Via AT-SPI; `None` when nothing is known yet (no a11y bridge / cold
-/// listener). Used to resolve per-app rules, the chip readout, and the field guard. When one
-/// of OUR OWN windows holds focus, returns a synthetic `is_self` "this app" target so the chip
-/// reads "→ this app" rather than the stale previously-focused app AT-SPI would report.
+/// element is editable, from the focus tracker (AT-SPI on Linux); `None` when nothing is known
+/// yet (no a11y bridge / cold listener). Used to resolve per-app rules, the chip readout, and the
+/// field guard. When one of OUR OWN windows holds focus, returns a synthetic `is_self` "this app"
+/// target so the chip reads "→ this app" rather than the stale previously-focused app the tracker
+/// would report.
 #[tauri::command]
 pub async fn get_focused_app(
     app: AppHandle,
@@ -203,7 +204,7 @@ pub async fn get_focused_app(
 ) -> Result<Option<crate::focus::FocusedApp>, String> {
     // Authoritative own-window check (same as inject_text's guard): a Wayland client always
     // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
-    // truthfully instead of letting AT-SPI report whatever was focused before us.
+    // truthfully instead of letting the tracker report whatever was focused before us.
     if own_window_focused(&app) {
         // Through the same change-only dedup as the line below, so a return to the app focused
         // before this window (Konsole → this app → Konsole) still logs that it left and came back.
@@ -476,15 +477,8 @@ pub async fn inject_text(
     // Sanitized exactly like `text`, in `inject::text`.
     clipboard_text: Option<String>,
     // `withholdOnDivert` over IPC: nothing worth recovering (the hard-break separator), so `text`
-    // never becomes the clipboard's persistent owner on any divert or recovery arm. A cancel
-    // before any write (user or error abort) stops it with `landed: true, diverted: false` and
-    // nothing written. Where a divert or recovery would write it before anything has been written
-    // (the mid-function divert, the Wayland write guard, the Wayland portal's
-    // letters-not-on-the-layout divert, the error-abort recovery after a sink that wrote nothing)
-    // it writes NOTHING and reports `landed: false, diverted: false`. Once the paste write has put
-    // it on the clipboard (the chord-time own-window divert, an error abort cancelling the paste)
-    // it gets the restore a pasted one gets and reports `landed: true, diverted: false`; a failed
-    // paste returns the error. See `withhold_on_divert` in `inject::text`. Omitted = false.
+    // never becomes the clipboard's persistent owner on any divert or recovery arm. What each arm
+    // then writes and reports: see `withhold_on_divert` in `inject::text`. Omitted = false.
     withhold_on_divert: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(
