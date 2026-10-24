@@ -11,9 +11,7 @@ pub async fn list_audio_devices(
     include_paths: Option<bool>,
 ) -> Result<audio::device::MicInventory, String> {
     let include_paths = include_paths.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || audio::device::list_input_devices(include_paths))
-        .await
-        .map_err(|e| e.to_string())?
+    super::blocking(move || audio::device::list_input_devices(include_paths)).await
 }
 
 /// One-time migration of a microphone saved by display name (before pins were device ids):
@@ -22,11 +20,10 @@ pub async fn list_audio_devices(
 /// card's ALSA path, and the migration retries next launch).
 #[tauri::command]
 pub async fn resolve_legacy_mic(name: String) -> Result<Option<LegacyMic>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        audio::device::resolve_legacy(&name, true).map(|(id, label)| LegacyMic { id, label })
+    super::blocking(move || {
+        Ok(audio::device::resolve_legacy(&name, true).map(|(id, label)| LegacyMic { id, label }))
     })
     .await
-    .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -41,7 +38,7 @@ pub struct LegacyMic {
 /// State<'_> can't cross into spawn_blocking); the AudioState mutex serializes start/stop.
 #[tauri::command]
 pub async fn start_mic_test(app: AppHandle, device_id: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         // Starting a fresh test silences any lingering replay (the bump makes the
         // playback thread see a newer generation and stop).
         app.state::<MicPlayback>().0.fetch_add(1, Ordering::SeqCst);
@@ -58,7 +55,6 @@ pub async fn start_mic_test(app: AppHandle, device_id: Option<String>) -> Result
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Stop the mic test and return the number of seconds captured (so the UI can
@@ -68,7 +64,7 @@ pub async fn start_mic_test(app: AppHandle, device_id: Option<String>) -> Result
 /// on the device open queues on the AudioState mutex off the UI thread.
 #[tauri::command]
 pub async fn stop_mic_test(app: AppHandle) -> Result<f32, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         *app.state::<AudioState>()
             .0
             .lock()
@@ -83,7 +79,6 @@ pub async fn stop_mic_test(app: AppHandle) -> Result<f32, String> {
         Ok(secs)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Replay the most recent mic-test capture on the default output device. Returns

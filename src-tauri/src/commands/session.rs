@@ -39,7 +39,7 @@ pub async fn start_stream(
     per_utterance_clips: bool,
     mute_system: bool,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let key = resolve_key(api_key, backend_id);
         let save_dir = if save {
             resolve_recordings_dir(&app, recordings_dir)
@@ -74,12 +74,11 @@ pub async fn start_stream(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let state = app.state::<StreamState>();
         let sess = {
             let mut guard = lock_state(&state.0, "stream state poisoned")?;
@@ -96,7 +95,6 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Hard-ABORT the stream session: take it out and let `Drop` run (stops capture, aborts the WS task
@@ -115,7 +113,7 @@ pub async fn cancel_stream(
     user_initiated: bool,
     discard_recording: bool,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let state = app.state::<StreamState>();
         let sess = {
             let mut guard = lock_state(&state.0, "stream state poisoned")?;
@@ -150,7 +148,6 @@ pub async fn cancel_stream(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -173,7 +170,7 @@ pub async fn start_record(
     mute_system: bool,
     standard: bool,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let key = resolve_key(api_key, backend_id);
         let save_dir = if save {
             resolve_recordings_dir(&app, recordings_dir)
@@ -204,12 +201,11 @@ pub async fn start_record(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub async fn stop_record(app: AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let state = app.state::<RecordState>();
         // Claim the detached epoch UNDER the lock. This is the stop's only publication (the
         // capture thread's device-loss salvage arm in `session::start_record` publishes the same
@@ -232,7 +228,6 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Hard-ABORT the record session: take it out and stop capture WITHOUT transcribing (releases the
@@ -257,7 +252,7 @@ pub async fn cancel_record(
     user_initiated: bool,
     discard_recording: bool,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let state = app.state::<RecordState>();
         // The take AND the no-live-session decision happen under ONE lock. Reading the state and
         // then disowning outside it is the other half of the race `claim_detached` closes: this
@@ -311,7 +306,6 @@ pub async fn cancel_record(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Lock a session state slot; a poisoned lock rejects the command with `poisoned`.
