@@ -167,8 +167,8 @@ export function Combobox({
         if (listOwnsKey(e.key, showPopover)) { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
         break;
       case "Enter":
-        // Only act when an option is highlighted — otherwise leave the typed key
-        // intact (Enter doesn't submit anything in this editor).
+        // Only act when an option is highlighted — otherwise leave Enter un-prevented: ModelPicker
+        // and QuickAdd commit the typed text on a plain Enter (they check defaultPrevented).
         if (showPopover && active >= 0) { e.preventDefault(); choose(candidates[active]); }
         break;
       case "Escape":
