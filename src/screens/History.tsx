@@ -731,8 +731,7 @@ export default function History() {
             >
               {/* No "injected / not injected" claim: `translationInjected` is derived
                   from the same value as `translatedText` (streaming.ts), so it carries
-                  nothing about whether the text reached the field — a label that could
-                  only ever read "injected" is a claim, not a record. */}
+                  nothing about whether the text reached the field. */}
               {targetsText(rec.translationTarget, 24) || "translated"}
             </span>
             <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
