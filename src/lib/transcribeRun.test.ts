@@ -94,6 +94,8 @@ import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/t
 
 // One macrotask: lets a poll's promise chain settle.
 const flush = () => new Promise((r) => setTimeout(r, 0));
+// The minimal run context: a full (non-standard) backend "b1" at http://x.
+const RUN_CTX = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
 
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
@@ -1136,7 +1138,6 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
 });
 
 describe("a run's late audio copy respects the OPEN record", () => {
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   // Runs /late.mp3 to done with its audio copy held open; returns the copy's resolver.
   async function runHeldCopy() {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
@@ -1146,7 +1147,7 @@ describe("a run's late audio copy respects the OPEN record", () => {
     transcribeFile.mockImplementation((async () => ({ text: "new", segments: [{ start: 0, end: 1, text: "new" }] })) as never);
     vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
     useTranscribeRun.setState({ files: ["/late.mp3"], queue: [], running: false, stageMeta: {}, stageTimes: {} });
-    startRun(undefined, {}, ctx);
+    startRun(undefined, {}, RUN_CTX);
     await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
     await vi.waitFor(() => expect(saveTranscriptMedia).toHaveBeenCalled());
     const fresh = useTranscriptHistory.getState().records.find((r) => r.sourcePath === "/late.mp3")!;
@@ -1357,7 +1358,7 @@ describe("startRun releases the open record", () => {
       files: ["/next.mp3"], queue: [], running: false, stageMeta: {}, stageTimes: {},
       selectedPath: "/open.mp3", openRecordId: "A",
     });
-    startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    startRun(undefined, {}, RUN_CTX);
     expect(useTranscribeRun.getState().selectedPath).toBeNull();
     expect(useTranscribeRun.getState().openRecordId).toBeNull();
     await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
@@ -1621,7 +1622,7 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
     const epoch = reattachRun({
       v: 1, jobId: "c".repeat(32), backendId: "b1", serverUrl: "http://x", path: "https://youtu.be/q",
       kind: "url", title: "Talk", options: { separateBgm: true },
-      ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
+      ctx: RUN_CTX,
       urlMeta: { title: "Talk", extractor: "Youtube" }, startedAt: 123_000,
     }, () => "http://x");
     const s = useTranscribeRun.getState();
@@ -1645,7 +1646,7 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
     reattachRun({
       v: 1, jobId: "d".repeat(32), backendId: "b1", serverUrl: "http://x", path: "https://youtu.be/f",
       kind: "url", title: "Talk", options: {},
-      ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
+      ctx: RUN_CTX,
       urlMeta: { title: "Talk", siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } }, startedAt: 1,
     }, () => "http://x");
     expect(useTranscribeRun.getState().queue[0].siteFallback).toBe(true);
@@ -1669,7 +1670,7 @@ describe("a link whose site transcript track cannot be fetched", () => {
         files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {},
         urlMeta: { [url]: { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } } },
       });
-      startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      startRun(undefined, {}, RUN_CTX);
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
       expect(atPost?.status).toBe("running");
       expect(atPost?.siteFallback).toBe(true);
@@ -1703,7 +1704,7 @@ describe("a link card's spoken pick and an unoffered Multiple languages", () => 
         urlMeta: { [url]: meta },
       });
       startRun(undefined, { vad_filter: false }, {
-        backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false,
+        ...RUN_CTX,
         decodeOverrides: { vad_filter: false },
         ...(offered === undefined ? {} : { multilingualOffered: offered }),
         ...extra,
@@ -1772,7 +1773,7 @@ describe("a link transcribed from the site's own subtitles keeps its audio's exp
         files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {},
         urlMeta: { [url]: { siteSubs: site, ...meta } },
       });
-      startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      startRun(undefined, {}, RUN_CTX);
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
       return useTranscribeRun.getState().queue.find((it) => it.path === url)?.result;
     } finally {
@@ -1866,7 +1867,7 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
       // The settled panel is the link the run ran last.
       useTranscribeRun.setState({ lastRunPath: url,
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
-      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      retryRunVideo(url, RUN_CTX);
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
       // Outside Tauri the request rejects at once; the row must show it, not only the log.
       await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
@@ -1882,7 +1883,6 @@ describe("an on-demand video that finishes is pulled once", () => {
   // The server closes an on-demand fetch's progress entry the moment the video is done, so
   // the poll reads "unknown" with no video: the request's own answer must pull the file.
   const url = "https://youtu.be/ondemand";
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   const dl = { mediaId: "v1", expiresAt: 123, height: 720, container: "mp4", bytes: 1000 };
   let tick: (() => void) | null = null;
   let cleared = 0;
@@ -1914,7 +1914,7 @@ describe("an on-demand video that finishes is pulled once", () => {
       Promise.resolve({ stage: "unknown" } as import("./types").BatchProgress));
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     // Before the handler claims the id (or after it closes it) there is no entry: an open
     // request keeps the poll alive instead of giving up.
     tick!(); await flush();
@@ -1930,7 +1930,7 @@ describe("an on-demand video that finishes is pulled once", () => {
   it("a request that answers before any poll names the video's format on the row", async () => {
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     answer(dl);
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
@@ -1945,7 +1945,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     } } } });
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     answer(dl);
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
@@ -1960,7 +1960,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     } } } });
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     answer(dl);
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
@@ -1975,7 +1975,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     } as import("./types").BatchProgress));
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     tick!(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
     const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
@@ -2000,7 +2000,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     } as import("./types").BatchProgress));
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     tick!(); await flush();
     expect(fetchUrlVideo).toHaveBeenCalledTimes(1);
     answer(dl);
@@ -2013,7 +2013,6 @@ describe("an on-demand video whose request fails stays failed", () => {
   // The request's catch paints the row failed; a poll still out (or a later one while the
   // server keeps downloading) must not fold "downloading" back over it and hide Try again.
   const url = "https://youtu.be/ondemand-fail";
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   let tick: (() => void) | null = null;
   let cleared = 0;
   beforeEach(() => {
@@ -2044,7 +2043,7 @@ describe("an on-demand video whose request fails stays failed", () => {
     getTranscribeProgress.mockImplementation(() => new Promise((r) => { poll = r; }));
     let fail: (e: unknown) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((_r, j) => { fail = j; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     tick!();
     expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
     fail(new Error("boom"));
@@ -2062,7 +2061,7 @@ describe("an on-demand video whose request fails stays failed", () => {
       stage: "downloading", video: { state: "downloading", progress: 0.4 },
     } as import("./types").BatchProgress));
     fetchUrlVideoOnDemand.mockImplementation(() => Promise.reject(new Error("boom")));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     await flush(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed");
     expect(cleared).toBe(1);
@@ -2072,7 +2071,7 @@ describe("an on-demand video whose request fails stays failed", () => {
     // Try again: the row is queued afresh and its own poll paints it.
     let answer: (d: import("./api").UrlMediaDownload) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
     tick!(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
@@ -2094,9 +2093,9 @@ describe("an on-demand video whose request fails stays failed", () => {
     });
     const fails: ((e: unknown) => void)[] = [];
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((_r, j) => { fails.push(j); }));
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     // Try again while the first request is still out: a new attempt.
-    retryRunVideo(url, ctx);
+    retryRunVideo(url, RUN_CTX);
     expect(fails).toHaveLength(2);
     fails[0](new Error("stale"));
     await flush(); await flush();
@@ -2124,7 +2123,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       });
       useTranscribeRun.setState({ lastRunPath: url,
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
-      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      retryRunVideo(url, RUN_CTX);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       // On screen: one GET per tick.
       await run(3);
@@ -2166,7 +2165,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       });
       useTranscribeRun.setState({ lastRunPath: url,
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
-      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      retryRunVideo(url, RUN_CTX);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       await run(2);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(2);
@@ -2211,7 +2210,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       });
       useTranscribeRun.setState({ lastRunPath: url,
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
-      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      retryRunVideo(url, RUN_CTX);
       expect(hiddenListeners.size).toBe(before + 1);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       // A hidden poll sets the slow cadence; the show clears it: the very next tick polls.
@@ -2261,7 +2260,6 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
     // The first watcher's on-demand request is still out (a failed one ends its poll).
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/retry";
-    const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
     try {
       openHistoryRecord({
         schemaVersion: 1, kind: "url", id: "rec-retry", createdAt: "2026-10-05T12:00:00Z",
@@ -2269,7 +2267,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
       });
       useTranscribeRun.setState({ lastRunPath: url,
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
-      retryRunVideo(url, ctx);
+      retryRunVideo(url, RUN_CTX);
       const watcher = ticks[0];
       // The retry queued the row; clear it, then the watcher paints.
       await flush();
@@ -2279,7 +2277,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
       // The same link is retried under the same epoch (outside Tauri it fails at once).
       useTranscribeRun.setState({ queue: [{ path: url, status: "failed", kind: "url" }] as QueueItem[], running: false });
-      retryFile(url, ctx);
+      retryFile(url, RUN_CTX);
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
       expect(useTranscribeRun.getState().lastRunPath).toBe(url);
       useTranscribeRun.setState({ stageMeta: {} });
@@ -2299,10 +2297,9 @@ describe("a run's pending video whose progress entry closed between two polls", 
   // milliseconds after "done": a 1 s poll reads "unknown" with no video. The job row has it.
   const url = "https://youtu.be/entry-gone";
   const jobId = "e".repeat(32);
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   const row = {
     v: 1 as const, jobId, backendId: "b1", serverUrl: "http://x", path: url, kind: "url" as const,
-    title: "Talk", options: {}, ctx, urlMeta: { title: "Talk" }, startedAt: 1_000,
+    title: "Talk", options: {}, ctx: RUN_CTX, urlMeta: { title: "Talk" }, startedAt: 1_000,
   };
   let tick: (() => void) | null = null;
   let polls = 0;
@@ -2456,9 +2453,7 @@ describe("a jobs-off server's run whose video entry closed between two polls", (
     fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/no-jobs.mp4"));
     transcribeUrl.mockImplementation((() => Promise.resolve({ text: "hi", sourceVideoPending: true })) as never);
     useTranscribeRun.setState({ files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {}, urlMeta: {} });
-    startRun(undefined, {}, {
-      backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false, jobsEnabled: false,
-    });
+    startRun(undefined, {}, { ...RUN_CTX, jobsEnabled: false });
     await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
     // The video poll is the last interval the run started.
     tick!();
@@ -2474,15 +2469,15 @@ describe("withSiteTracks", () => {
   it("a site-track download that fails becomes a warning on the result, never an error", async () => {
     const res = { text: "x", warnings: ["w1"] };
     const meta = { siteSubs: { fetch: ["de"], transcriptTrackId: null, mtTargets: [] } };
-    const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    const out = await withSiteTracks(res, "https://youtu.be/q", meta, RUN_CTX);
     expect(out.timedTracks).toBeUndefined();
     expect(out.warnings).toEqual(["w1", "The site's subtitles could not be downloaded: Subtitle download requires the desktop app."]);
-    expect(await withSiteTracks(res, "https://youtu.be/q", undefined, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false })).toBe(res);
+    expect(await withSiteTracks(res, "https://youtu.be/q", undefined, RUN_CTX)).toBe(res);
   });
   it("a link ledgered with a site transcript is the audio fallback: it keeps that warning and gains no extra track", async () => {
     const res = { text: "x" };
     const meta = { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } };
-    const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    const out = await withSiteTracks(res, "https://youtu.be/q", meta, RUN_CTX);
     expect(out.timedTracks).toBeUndefined();
     expect(out.warnings).toContain(SITE_TRANSCRIPT_FALLBACK);
     expect(out.warnings?.filter((w) => w === SITE_TRANSCRIPT_FALLBACK)).toHaveLength(1);
@@ -2495,7 +2490,7 @@ describe("withSiteTracks", () => {
     try {
       const res = { text: "x" };
       const meta = { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } };
-      const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      const out = await withSiteTracks(res, "https://youtu.be/q", meta, RUN_CTX);
       expect(fetchUrlSubtitles).toHaveBeenCalledTimes(1);
       expect(out.timedTracks).toBeUndefined();
       expect(out.warnings?.filter((w) => w === SITE_TRANSCRIPT_FALLBACK)).toHaveLength(1);
@@ -2545,7 +2540,7 @@ describe("SKIPPED_EXPLANATIONS", () => {
 });
 
 describe("a ledgered file whose request lost contact", () => {
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false, jobsEnabled: true };
+  const ctx = { ...RUN_CTX, jobsEnabled: true };
   async function run(error: string) {
     const { ledgerRows, _resetLedgerForTests } = await import("./jobsLedger");
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
@@ -2640,13 +2635,12 @@ describe("lostContact (which failures leave a job the server may still finish)",
 });
 
 describe("translateParsed joins a text source like the TXT export", () => {
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   afterEach(() => translateText.mockReset());
 
   it("no seam space inside CJK, one space between Latin cues", async () => {
-    const ja = await translateParsed({ segments: [{ text: "こんにちは。" }, { text: " 元気ですか。" }] }, {}, ctx);
+    const ja = await translateParsed({ segments: [{ text: "こんにちは。" }, { text: " 元気ですか。" }] }, {}, RUN_CTX);
     expect(ja.text).toBe("こんにちは。元気ですか。");
-    const en = await translateParsed({ segments: [{ text: "Hello." }, { text: "How are you?" }] }, {}, ctx);
+    const en = await translateParsed({ segments: [{ text: "Hello." }, { text: "How are you?" }] }, {}, RUN_CTX);
     expect(en.text).toBe("Hello. How are you?");
   });
 
@@ -2655,7 +2649,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     // point a later chunk's warning at a cue in the first chunk.
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = Array.from({ length: 401 }, (_, i) => ({ text: `cue ${i}` }));
-    await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
     const [first, second] = translateText.mock.calls.map(([a]) => a);
     expect(translateText.mock.calls).toHaveLength(2);
     expect(first.ids).toEqual(Array.from({ length: 400 }, (_, i) => i));
@@ -2667,7 +2661,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     // 413s anything over 200,000.
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = Array.from({ length: 400 }, () => ({ text: "x".repeat(800) }));
-    const r = await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
     const calls = translateText.mock.calls.map(([a]) => a);
     expect(calls.length).toBeGreaterThan(1);
     for (const c of calls) expect(c.texts.join("").length).toBeLessThanOrEqual(180_000);
@@ -2683,7 +2677,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("a lone segment over the character budget still goes out, alone", async () => {
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = [{ text: "a" }, { text: "x".repeat(190_000) }, { text: "b" }];
-    await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
     expect(translateText.mock.calls.map(([a]) => a.ids)).toEqual([[0], [1], [2]]);
   });
 
@@ -2692,7 +2686,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
       Promise.resolve({ results: [{ ja: "やあ。", de: "Hallo." }, { ja: "元気？", de: "Wie geht's?" }] }),
     );
     const r = await translateParsed(
-      { segments: [{ text: "Hi." }, { text: "How are you?" }] }, { translateTo: ["ja", "de"] }, ctx,
+      { segments: [{ text: "Hi." }, { text: "How are you?" }] }, { translateTo: ["ja", "de"] }, RUN_CTX,
     );
     expect(r.translations).toEqual({ ja: "やあ。元気？", de: "Hallo. Wie geht's?" });
   });
@@ -2708,7 +2702,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     try {
       translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
       const r = await translateParsed(
-        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, ctx,
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, RUN_CTX,
       );
       expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
       expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
@@ -2736,7 +2730,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     try {
       translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
       const r = await translateParsed(
-        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es"] }, ctx,
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es"] }, RUN_CTX,
       );
       expect(refreshCaps).toHaveBeenCalledTimes(1);
       expect(refreshCaps).toHaveBeenCalledWith(expect.objectContaining({ id: "b1" }), { force: true });
@@ -2756,7 +2750,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     });
     try {
       translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
-      const r = await translateParsed({ segments: [{ text: "Hi." }] }, { translateTo: ["de_CH", "fr"] }, ctx);
+      const r = await translateParsed({ segments: [{ text: "Hi." }] }, { translateTo: ["de_CH", "fr"] }, RUN_CTX);
       // Within the limit of one once the refused code is gone: no dropped-targets warning.
       expect(translateText.mock.calls[0][0].targets).toEqual(["fr"]);
       expect(Object.keys(r.translations ?? {})).toEqual(["fr"]);
@@ -2769,13 +2763,13 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("a language named as a word is not sent as the source (the route 422s it); a code is", async () => {
     // An OpenAI verbose_json import says `"language": "english"`.
     translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
-    const word = await translateParsed({ language: "english", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, ctx);
+    const word = await translateParsed({ language: "english", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, RUN_CTX);
     expect(translateText.mock.calls[0][0].source).toBeNull();
     expect(word.translation?.source).toBeUndefined();
     // The display language stays what the file said.
     expect(word.language).toBe("english");
     translateText.mockClear();
-    const code = await translateParsed({ language: "de", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, ctx);
+    const code = await translateParsed({ language: "de", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, RUN_CTX);
     expect(translateText.mock.calls[0][0].source).toBe("de");
     expect(code.translation?.source).toBe("de");
   });
@@ -2795,7 +2789,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
         });
         translateText.mockClear();
         const r = await translateParsed(
-          { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, ctx,
+          { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, RUN_CTX,
         );
         expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
         expect(r.warnings ?? []).toEqual([]);
@@ -2809,7 +2803,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
 describe("a text source translated in several requests reads as one run", () => {
   // Every chunk is its own one-stage plan on the server under the run's one progress id: its
   // polls and its receipt describe that chunk alone.
-  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   const queue: QueueItem[] = [{ path: "/film.srt", status: "running", kind: "text" }];
   afterEach(() => {
     translateText.mockReset();
@@ -2881,7 +2874,7 @@ describe("a text source translated in several requests reads as one run", () => 
       });
     });
     const segments = Array.from({ length: 1000 }, (_, i) => ({ text: `cue ${i}` }));
-    const r = await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
     expect(frames).toEqual([
       { done: 0, len: 400, total: 1000 },
       { done: 400, len: 400, total: 1000 },
