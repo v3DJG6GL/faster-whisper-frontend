@@ -118,7 +118,7 @@ fn fold_foreground() {
     }
     use std::sync::atomic::Ordering::Relaxed;
     if LAST_HWND.load(Relaxed) == hwnd as isize {
-        return; // same window as last time — nothing to re-resolve
+        return;
     }
     let Some(app_id) = (unsafe { foreground_app_id(hwnd) }) else {
         // Shell foreground, or a process not readable YET (a UWP frame whose CoreWindow child
