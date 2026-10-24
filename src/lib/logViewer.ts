@@ -22,7 +22,7 @@ export const LOG_BUFFER_CAP = 10_000;
 
 let buf: LogLine[] = [];
 let nextSeq = 0;
-/** "Clear view" hides everything at or below this seq — view/buffer only,
+/** "Clear view" hides every line below this seq — view/buffer only,
  *  never the ring or the file on disk. */
 let clearFloorSeq = 0;
 let visibleCache: { version: number; lines: LogLine[] } | null = null;
