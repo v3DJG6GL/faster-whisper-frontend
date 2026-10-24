@@ -1,4 +1,4 @@
-/** Keyboard contract of the transcript seek slider: arrows step (Shift = coarse),
+/** Keyboard contract of the playback seek sliders: arrows step (Shift = coarse),
  *  Page keys jump, Home/End clamp, Space toggles playback. Pure so it is testable
  *  without a DOM; returns the clamped target time, "toggle", or null (not ours).
  *  A non-positive audioLen means the length is unknown (e.g. a WebM whose
