@@ -12,7 +12,7 @@
 //     as <Cell/> gives a fresh element type each keystroke, remounting the focused control.
 //  2. This yields BARE Select/Toggle elements and lets each surface wrap them. SettingRow
 //     and Labeled auto-clone an accessible name onto a DIRECT Select/Toggle child; a
-//     fragment or wrapper here would silently strip the name on all three screens at once.
+//     fragment or wrapper here would silently strip the name on both screens at once.
 
 import { PASTE_PRESETS, pasteKey, pasteCodes, pasteLabel } from "@/lib/paste";
 import { inheritLabel, onOff } from "@/lib/inherit";
@@ -111,9 +111,7 @@ export function dictationControls({ value, onChange, disabled, inherited }: Dict
         ]}
       />
     ),
-    // No Enter to send when nothing is typed; no clipboard to restore unless pasting. Same
-    // reasoning as the chord above: an explicit method on this layer disables them; a mere
-    // inherit does not (mirrors Settings → Dictation's gates).
+    // No Enter to send when nothing is typed; no clipboard to restore unless pasting.
     autoEnter: boolControl("autoEnter", value.insertMethod === "clipboard"),
     restoreClipboard: boolControl(
       "restoreClipboard",
