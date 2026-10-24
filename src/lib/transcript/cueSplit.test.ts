@@ -554,7 +554,7 @@ describe("wrapLines", () => {
     const asked = wrapLines(ask, 12, 2, 0, undefined, "fr");
     expect(asked.some((l) => l.includes("viens ?")), JSON.stringify(asked)).toBe(true);
     expect(asked.join(" ")).toBe(ask);
-    // A no-break run longer than a line still wraps at its spaces, losing none of them.
+    // A no-break run longer than a line still wraps at its spaces, losing none of its characters.
     const run = "un deux trois quatre cinq six sept";
     expect(wrapLines(run, 13, 2).join(" ").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
   });
