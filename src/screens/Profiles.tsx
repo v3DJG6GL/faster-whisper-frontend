@@ -126,8 +126,8 @@ function Editor({
   // contexts elsewhere keep showing the canonical serverUrl).
   const serverUrl = backend ? effectiveServerUrl(backend, useApp.getState().settings) : "";
   const { caps } = useOverrideContext({ serverUrl, backendId: backend?.id ?? null, serverKind });
-  // What the server gives this profile's requests (its model + override profile), with the
-  // backend's defaults over it — in live dictation's terms when the profile streams.
+  // What the server gives this profile's requests (its model + override profile); `server`
+  // below lays the backend's defaults over it, in live dictation's terms when the profile streams.
   const decodeDefaults = useDecodeDefaults({
     serverUrl,
     backendId: backend?.id ?? null,
