@@ -88,7 +88,7 @@ export interface Backend {
   responseFormat: ResponseFormat;
   decodeOverrides?: DecodeOverrides;
   translationOverrides?: TranslationOverrides; // T2T defaults (absent key = inherit server)
-  kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
+  kind?: BackendKind;
   // Server override-profile (full backend only): a profile name to reference,
   // NO_OVERRIDE_PROFILE = force no profile (plain defaults), undefined = server
   // default (a server-bound profile may still apply).
@@ -122,7 +122,7 @@ export interface Profile {
   activation: ActivationKind;
   enabled: boolean;
   hotkey: string[]; // ordered KeyboardEvent.code list, e.g. ["ControlLeft","KeyB"]
-  backendId: string | null; // references a Backend
+  backendId: string | null;
   tag?: string; // short label for the overlay chip; empty/undefined = derive from name
   endpoint?: EndpointKind; // override Backend.endpoint (stream vs batch transport); undefined = inherit
   model?: string; // override Backend.model; empty/undefined = inherit
@@ -318,7 +318,7 @@ export interface RecordingSettings {
   showRouteOnHover: boolean; // when on, reveal the route only while hovering the chip (else always)
   showStatsOnOverlay: boolean; // show a tiny usage readout on the chip (on by default)
   overlayStatsOnHover: boolean; // when shown, reveal it only while hovering the chip (else always)
-  overlayStatsMetric: OverlayStatsMetric; // which usage figure the chip shows
+  overlayStatsMetric: OverlayStatsMetric;
   showTargetOnOverlay: boolean; // show the injection target (→ app) + a warn hint when not typable
   showTargetOnHover: boolean; // when on, reveal the target only while hovering the chip (else always)
   showTargetOnlySpeaking: boolean; // only show the target while actively dictating (chip expanded)
@@ -555,8 +555,8 @@ export type DictationStatus =
  *   • "loading"  — cold-loading the model (its `loading` keepalive, until `ready`);
  *   • "open"     — holding an utterance it has not decoded yet (`utterance`/open);
  *   • "decoding" — running that utterance's final decode (`utterance`/decoding).
- *  null = nothing in flight: "listening" really does mean ready. See utterancePending.ts for
- *  how long an "open" is believed. */
+ *  null = nothing in flight: "listening" really does mean ready. See dictation/utterancePending.ts
+ *  for how long an "open" is believed. */
 export type ServerWork = "loading" | "open" | "decoding" | null;
 
 /** Narrow an untrusted value (the chip's cross-window payload) to a ServerWork. */
@@ -971,7 +971,7 @@ export interface UsageCalendarDay extends UsageKindWords {
 
 /** One hour slot: a weekday × hour slot (`dow` 0 = Monday, in `hours`) or a day-of-month ×
  *  hour slot (`dom` 1..31, in `dom_hours`). Words per kind sit flat; the other five
- *  measures are nested per-kind splits a server from 2 Sep 2026 on sends (absent before). */
+ *  measures are nested per-kind splits, absent on an older server. */
 export interface UsageHourCell extends UsageKindWords {
   dow?: number;
   dom?: number;
