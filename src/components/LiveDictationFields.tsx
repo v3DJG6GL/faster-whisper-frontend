@@ -95,7 +95,9 @@ export function LiveDictationFields({
   // server"), and its inherited value is already the server's.
   const eff = (k: DecodeKey) => (locked?.has(k) ? undefined : value[k]);
   const inh = (k: DecodeKey) => inherited?.[k];
-  const noteOf = (k: DecodeKey) => (sources?.[k] === "Backend default" ? "backend" : "server");
+  /** The inherited value is the Backend's (serverInherited's `belowSource`), not the server's. */
+  const fromBackend = (k: DecodeKey) => sources?.[k] === "Backend default";
+  const noteOf = (k: DecodeKey) => (fromBackend(k) ? "backend" : "server");
 
   // The four knobs as the preview reads them: own value (unless locked), else inherited, else the
   // server's documented default (a server that hasn't answered yet).
@@ -109,7 +111,7 @@ export function LiveDictationFields({
   // Which pauses the server rewrites as a pair (serverTimings): only client-sent ones — this
   // row's own value or the backend's under it — and never a locked one.
   const sent = (k: DecodeKey) =>
-    !disabledReason && !locked?.has(k) && (value[k] !== undefined || sources?.[k] === "Backend default");
+    !disabledReason && !locked?.has(k) && (value[k] !== undefined || fromBackend(k));
   const outerKey: DecodeKey = "streaming_vad_outer_silence_ms";
   const pairFacts: PairFacts = {
     client: {
@@ -121,7 +123,7 @@ export function LiveDictationFields({
     hardLocked: !!locked?.has("streaming_hard_break_silence_ms"),
     serverOuterMs:
       num(serverValues?.[outerKey]) ??
-      (sources?.[outerKey] !== "Backend default" ? num(inh(outerKey)) : undefined) ??
+      (!fromBackend(outerKey) ? num(inh(outerKey)) : undefined) ??
       LIVE_FALLBACK.outerMs,
   };
 
