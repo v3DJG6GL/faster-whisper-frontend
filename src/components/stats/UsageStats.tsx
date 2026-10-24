@@ -277,11 +277,10 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
   );
 }
 
-/** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
- *  defaulting to the home-target backend), the fixed 30-day series, and a
- *  setter. Shared by the Home strip + the Statistics page so they stay in sync. The chip
- *  readout is independent — it follows activeStatsBackend (lib/usage.ts): the dictating
- *  Profile's backend, else the home target's. */
+/** The VIEWED backend (the user's pick, else the home target's) and its fixed 30-day series,
+ *  shared by the Home strip + the Statistics page so they stay in sync. The chip readout is
+ *  independent — it follows activeStatsBackend (lib/usage.ts): the dictating Profile's
+ *  backend, else the home target's. */
 function useUsageView() {
   const backends = useApp((s) => s.backends);
   const usage = useApp((s) => s.usage);
@@ -425,7 +424,7 @@ export function StatisticsView({
   // server's numbers would read as this one's under its chip); else the backend's own poll document.
   const stats = fresh ? view!.stats : ((sameViewSource(view?.sig, sig) ? view!.stats : null) ?? base);
   const win = useMemo(() => {
-    // An older server without the v2 range echo deserialises a zeroed window (day 0 = 1970);
+    // An older server without the range echo deserialises a zeroed window (day 0 = 1970);
     // a real echo always spans at least one day, so anything else resolves locally.
     const r = stats?.range;
     // An out-of-range day would throw in the date formatters, so the echo must be whole.
