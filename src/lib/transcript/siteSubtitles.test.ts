@@ -376,8 +376,8 @@ describe("tracks and switches", () => {
   });
   it("Custom without machine translation: a row the cap cuts no longer reads 'from the site'", () => {
     // No translation on the server: the input's targets stay empty, so no row is a target. Turning
-    // on auto-generated subtitles pushes pl over the cap; its row kept "from the site" beside the
-    // greyed badge of a track the run never downloads.
+    // on auto-generated subtitles pushes pl over the cap; its row must not keep "from the site"
+    // beside the greyed badge of a track the run never downloads.
     const langs = ["de", "en", "fr", "it", "es", "pt", "nl", "pl", "sv"];
     const inp = input({ tracks: [tr("auto-de", "de", { kind: "auto" }), ...langs.map((l) => tr(l, l))], targets: [], site: "YouTube" });
     const { state } = pickPolicy(inp, initialSiteState([]), "custom");
@@ -411,8 +411,8 @@ describe("tracks and switches", () => {
     expect(v.chips.map((c) => c.code)).not.toContain("fi");
   });
   it("the download cap keeps the tracks of the languages you translate into ahead of the site's others", () => {
-    // Ten site languages, one asked for — and it is the last: site order alone filled the cap
-    // with eight nobody asked for and machine-translated Japanese despite its human track.
+    // Ten site languages, one asked for — and it is the last: site order alone would fill the cap
+    // with eight nobody asked for and machine-translate Japanese despite its human track.
     const langs = ["ar", "bg", "cs", "da", "de", "el", "es", "fi", "fr", "ja"];
     const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: ["ja"] });
     const v = derive(inp, initialSiteState(inp.targets));
@@ -564,9 +564,9 @@ describe("tracks and switches", () => {
     expect(derive({ ...i2, maxTargets: undefined }, st2).run!.mtTargets).toHaveLength(13);
   });
   it("back under a preset, the site languages entering Custom wrote into the targets rank as the site's again", () => {
-    // Entering Custom (the segment or a badge click) wrote every site language into the targets.
-    // Under Generate they kept outranking the site's others at the translation limit as if you
-    // had picked them, and the ones past it stayed chips with no source at all.
+    // Entering Custom (the segment or a badge click) writes every site language into the targets.
+    // Kept there under Generate, they would outrank the site's others at the translation limit as
+    // if you had picked them, and the ones past it would stay chips with no source at all.
     const langs = ["en", "fr", "it", "es", "pt", "nl", "pl"];
     const inp = input({ tracks: [tr("de", "de"), ...langs.map((l) => tr(l, l))], targets: ["ja"], maxTargets: 3 });
     const s0 = initialSiteState(inp.targets);
@@ -621,7 +621,7 @@ describe("tracks and switches", () => {
   });
   it("a language Custom promoted is yours once the site subtitles are switched off: a later preset keeps it", () => {
     // With the switch off the plain picker owns the chips, and a promoted fr there is an ordinary
-    // target the run machine-translates; a preset after switching back on took it out of the list.
+    // target the run machine-translates; a preset after switching back on must not take it out.
     const inp = input({ tracks: [tr("en", "en"), tr("fr", "fr")], spoken: "en", targets: ["de"], maxTargets: 1 });
     let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
     expect(i.targets).toEqual(["de", "fr"]);
@@ -634,8 +634,8 @@ describe("tracks and switches", () => {
     expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["de", "fr"]));
   });
   it("a language Custom promoted is yours once the Translation switch writes the targets again: a later preset keeps it", () => {
-    // Off, then on with the seed bringing en back: still counted as promoted, a preset cut it
-    // from the saved list and the switch (targets.length > 0) turned itself off.
+    // Off, then on with the seed bringing en back: still counted as promoted, a preset would cut
+    // it from the saved list and the switch (targets.length > 0) would turn itself off.
     const inp = input({ tracks: [tr("de", "de"), tr("en", "en")], spoken: "de", targets: ["ja"], maxTargets: 3 });
     let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
     expect(i.targets).toEqual(["ja", "en"]);
@@ -646,7 +646,7 @@ describe("tracks and switches", () => {
     expect(i.targets).toEqual(["en"]);
   });
   it("a new preview starts over without the languages Custom only promoted: a later preset no longer keeps them", () => {
-    // Reloaded with the saved targets as they were, es counted as your own pick and stayed.
+    // Reloaded with the saved targets as they were, es would count as your own pick and stay.
     const inp = input({ tracks: [tr("de", "de"), tr("en", "en"), tr("es", "es")], spoken: "de", targets: ["en"], maxTargets: 3 });
     let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
     expect(i.targets).toEqual(["en", "es"]);
@@ -753,9 +753,9 @@ describe("tracks and switches", () => {
     expect(freeAdds(i2, s2)).not.toContain("es");
   });
   it("freeAdds trials each row as the chips' picker adds it, on a link with a long auto track list", () => {
-    // freeAdds ran setTargets per row, and toggleTarget built a whole model to switch a language
-    // on: three model passes per row, which a link with ~160 auto tracks at the translation
-    // limit paid on every render. Each shortcut gives what the long way gives.
+    // The long way — setTargets per row, with toggleTarget building a whole model to switch a
+    // language on — costs three model passes per row, paid on every render by a link with ~160
+    // auto tracks at the translation limit. Each shortcut must give what the long way gives.
     const codes = Array.from({ length: 200 }, (_, n) => String.fromCharCode(97 + Math.floor(n / 26), 97 + (n % 26)))
       .filter((c) => !["de", "en", "es", "fr"].includes(c));
     const tracks = [...codes.slice(0, 160).map((l) => tr("a-" + l, l, { kind: "auto" })), ...codes.slice(150, 170).map((l) => tr("m-" + l, l))];
