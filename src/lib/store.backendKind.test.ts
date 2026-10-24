@@ -4,18 +4,9 @@
 
 import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, useApp } from "./store";
-import type { Backend } from "./types";
+import { backend } from "./sync/syncTestFixtures";
 
-const base = {
-  id: "b1",
-  name: "B",
-  serverUrl: "http://a",
-  hasApiKey: false,
-  model: "large-v3",
-  endpoint: "batch",
-  language: "auto",
-  prompt: "",
-} as unknown as Backend;
+const base = backend({ name: "B", serverUrl: "http://a" });
 
 describe("upsertBackend on a Server type change", () => {
   it("drops the backend's caps but keeps its connection and usage", () => {

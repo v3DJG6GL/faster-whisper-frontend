@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, useApp } from "./store";
+import { backend as backendFixture } from "./sync/syncTestFixtures";
 import type { Backend } from "./types";
 
 const sig = (backendId: string, target: string, w: string) => JSON.stringify([backendId, target, { range: "365", with: w }]);
@@ -55,8 +56,7 @@ describe("forgetting a backend's caches", () => {
 
 describe("hydrate replacing the backend list", () => {
   const good = { today: {}, total: {}, series: [] } as never;
-  const backend = (id: string, hasApiKey: boolean) =>
-    ({ id, name: id, serverUrl: `http://${id}`, hasApiKey, model: "large-v3", endpoint: "batch", language: "auto", prompt: "" }) as unknown as Backend;
+  const backend = (id: string, hasApiKey: boolean) => backendFixture({ id, name: id, serverUrl: `http://${id}`, hasApiKey });
   const hydrate = (backends: Backend[]) =>
     useApp.getState().hydrate({ settings: useApp.getState().settings, backends, profiles: [], appRules: [], version: CONFIG_VERSION });
 
