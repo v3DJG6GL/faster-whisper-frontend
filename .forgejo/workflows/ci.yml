@@ -2,7 +2,7 @@
 #
 #   * Actions are referenced unqualified (owner/repo@ref): the instance sets
 #     DEFAULT_ACTIONS_URL to itself, so refs resolve against local pull
-#     mirrors (orgs: actions, pnpm, dtolnay, Swatinem) — no GitHub dependency
+#     mirrors (orgs: actions, dtolnay, Swatinem) — no GitHub dependency
 #     at job start. REQUIRES app.ini [actions] DEFAULT_ACTIONS_URL =
 #     https://forgejo.informethic.ch (+ server restart): without it,
 #     unqualified refs fall back to code.forgejo.org, which lacks
@@ -24,7 +24,7 @@ on:
 
 # The release bump push ("release: v…", see the `check` job's `if`) gets a group of its own:
 # sharing the per-ref group would cancel the in-progress run of the very commit being released,
-# so that commit's test suites would never run (release.yml runs only fmt + clippy).
+# so that commit's test suites would never run (release.yml runs none).
 concurrency:
   group: "ci-${{ github.ref }}-${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: v') && 'bump' || 'check' }}"
   cancel-in-progress: true
