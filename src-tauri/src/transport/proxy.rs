@@ -33,6 +33,13 @@ impl Proxy {
     }
 }
 
+/// A URI host without its IPv6-literal brackets (`[::1]` → `::1`); anything else as given.
+fn unbracketed(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 /// A this-host address: `localhost` / `*.localhost`, 127.0.0.0/8, `::1`, the unspecified `::` and
 /// 0.0.0.0/8 (the bind-all address uvicorn prints, which `isLocalAddress` in backends.ts also counts
 /// as this host), and an IPv4-mapped `::ffff:` form of any of those (bracketed or not). Both the
@@ -40,10 +47,7 @@ impl Proxy {
 /// they would dial the proxy's own host.
 pub(super) fn is_loopback_host(host: &str) -> bool {
     use std::net::IpAddr;
-    let host = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
+    let host = unbracketed(host);
     if let Ok(ip) = host.parse::<IpAddr>() {
         let ip = match ip {
             IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
@@ -113,11 +117,7 @@ impl BypassRules {
 /// Whether `host` goes direct under `rules` (see [`BypassRules`]).
 fn bypass(host: &str, rules: &BypassRules) -> bool {
     use std::net::IpAddr;
-    let host = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host)
-        .to_ascii_lowercase();
+    let host = unbracketed(host).to_ascii_lowercase();
     let host = host.strip_suffix('.').unwrap_or(&host);
     let ip = host.parse::<IpAddr>().ok();
     if rules.simple_hostnames && ip.is_none() && !host.is_empty() && !host.contains('.') {
@@ -480,11 +480,7 @@ enum Tunnel {
 /// does.
 async fn tunnel(proxy: &Proxy) -> Result<TcpStream, Tunnel> {
     let shown = proxy.display();
-    let host = proxy.uri.host().unwrap_or_default();
-    let host = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
+    let host = unbracketed(proxy.uri.host().unwrap_or_default());
     let port = proxy.uri.port_u16().unwrap_or(80);
     let mut stream = TcpStream::connect((host, port))
         .await
