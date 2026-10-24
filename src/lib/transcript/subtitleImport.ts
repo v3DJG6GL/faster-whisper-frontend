@@ -511,6 +511,11 @@ function parseVtt(body: string): ImportedText {
   }));
 }
 
+/** An enhanced-LRC inline word tag (<mm:ss.xx>). */
+const LRC_WORD_TAG = /<\d+:\d+(?:\.\d+)?>/g;
+/** A word tag right after whitespace: the line carries its own seam spaces. */
+const SPACED_LRC_WORD_TAG = new RegExp(String.raw`\s` + LRC_WORD_TAG.source);
+
 function parseLrc(body: string): ImportedText {
   const segments: ImportedText["segments"] = [];
   const tagRe = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
@@ -541,10 +546,10 @@ function parseLrc(body: string): ImportedText {
     // Judged after the first word tag: a space after the line stamp or a "Name: " prefix is
     // not a seam space.
     const body = trimmed.slice(lastTagEnd);
-    const firstTag = body.search(/<\d+:\d+(?:\.\d+)?>/);
-    const ownSpaces = firstTag >= 0 && /\s<\d+:\d+(?:\.\d+)?>/.test(body.slice(firstTag + 1));
+    const firstTag = body.search(LRC_WORD_TAG);
+    const ownSpaces = firstTag >= 0 && SPACED_LRC_WORD_TAG.test(body.slice(firstTag + 1));
     const { text, speaker } = cueText(
-      body.replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
+      body.replace(LRC_WORD_TAG, (m: string, off: number, s: string) =>
         ownSpaces || (unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
         unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false))) ? "" : " "),
     );
