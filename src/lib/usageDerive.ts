@@ -606,6 +606,8 @@ export function companionMetric(m: ChartMetric): ChartMetric {
 export const DOW_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 const MONTH_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+/** `10:00–11:00`: the hour slot starting at `h`. */
+const hourSpan = (h: number) => `${hh(h)}–${hh(h + 1)}`;
 export const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 const ymdOf = (day: number): [number, number, number] => {
   const d = dayDate(day);
@@ -725,10 +727,10 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number, loose = false): 
     return {
       rows: 24, cols, y0: fy, colOcc,
       rowLabel: (r) => (r % 2 === 0 ? String(r).padStart(2, "0") : ""),
-      rowLong: (r) => `${hh(r)}–${hh(r + 1)}`,
+      rowLong: hourSpan,
       colLabel: (c) => String(c + 1),
       colLong: (c) => (oneMonth ? `${c + 1} ${MONTH_LONG[fm]}` : `the ${ordinal(c + 1)} of each month`),
-      cellName: (i) => `${dayName(i % cols)} ${hh(Math.floor(i / cols))}–${hh(Math.floor(i / cols) + 1)}`,
+      cellName: (i) => `${dayName(i % cols)} ${hourSpan(Math.floor(i / cols))}`,
       colUnit: "day of month", colUnits: "days of the month", rowUnit: "hour of day", slotWord: "day-of-month hour", flatWord: "month",
     };
   }
@@ -749,8 +751,8 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number, loose = false): 
     rowLabel: (r) => DOW_SHORT[r],
     rowLong: (r) => `${DOW_LONG[r]}s`,
     colLabel: (c) => String(c).padStart(2, "0"),
-    colLong: (c) => `${hh(c)}–${hh(c + 1)}`,
-    cellName: (i) => `${DOW_SHORT[Math.floor(i / 24)]} ${hh(i % 24)}–${hh(i % 24 + 1)}`,
+    colLong: hourSpan,
+    cellName: (i) => `${DOW_SHORT[Math.floor(i / 24)]} ${hourSpan(i % 24)}`,
     colUnit: "hour of day", colUnits: "hours of the day", rowUnit: "weekday", slotWord: "weekday hour", flatWord: "week",
   };
 }
