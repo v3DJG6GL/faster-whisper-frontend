@@ -289,8 +289,9 @@ export function migrateInsertTiming(
 export const CONFIG_VERSION = 3;
 
 /**
- * Normalize a loaded config to the current shape. The Rust `load()` already migrates,
- * but this guards the no-Rust `pnpm dev` path and any version skew during dev.
+ * Normalize a config to the current shape on every path into the store (startup load, sync
+ * pull, file import). Rust's `load()` already migrates legacy v1, so that branch only guards
+ * the no-Rust `pnpm dev` path; the v3 `insertTiming` migration and the shape floor run only here.
  */
 function migrateConfig(raw: unknown): Config {
   const c = raw as Record<string, unknown> | null;
@@ -491,7 +492,7 @@ interface AppState {
   updateGeneral: (patch: Partial<AppSettings["general"]>) => void;
   updateRecording: (patch: Partial<AppSettings["recording"]>) => void;
   updateLogging: (patch: Partial<NonNullable<AppSettings["logging"]>>) => void;
-  /** Patch settings.sync (deep-merges categories/urlOverrides at the caller). */
+  /** Shallow-patch settings.sync: a nested map (`sub`) must arrive already merged by the caller. */
   updateSync: (patch: Partial<SyncSettings>) => void;
   /** Set (or clear, with null/empty) this device's address override for a
    *  backend. Evicts the backend's caches (connection, usage, caps, Statistics
@@ -499,8 +500,8 @@ interface AppState {
   setUrlOverride: (backendId: string, url: string | null) => void;
 
   upsertBackend: (b: Backend) => void;
-  /** Drop a backend's cached connection + usage + caps (what upsertBackend evicts on a URL or
-   *  key-presence change) — for a key rotation the store can't see. */
+  /** Drop a backend's cached connection, usage, caps and Statistics documents (what upsertBackend
+   *  evicts on a URL or key-presence change) — for a key rotation the store can't see. */
   forgetBackendCaches: (id: string) => void;
   removeBackend: (id: string) => void;
   duplicateBackend: (id: string) => void;
