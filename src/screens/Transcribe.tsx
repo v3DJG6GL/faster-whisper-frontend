@@ -653,8 +653,12 @@ export default function Transcribe() {
     }
   };
   /** The card writing the targets itself (the Translation switch, Whisper's translate, the plain
-   *  picker): none stays one Custom only promoted, for a later preset to cut (writeTargets). */
-  const ownTargets = (next: string[]) => setSiteState((s) => s && writeTargets(s, next).state);
+   *  picker): the chips, and the panel told so none stays one Custom only promoted, for a later
+   *  preset to cut (writeTargets). */
+  const ownTargets = (next: string[]) => {
+    setTranslateTo(next);
+    setSiteState((s) => s && writeTargets(s, next).state);
+  };
   const siteMtUsed = siteView ? mtUsed(siteView) : 0;
   const siteMtLimit = maxTranslationTargets(caps);
   // Asked only at the limit (one trial model per site language).
@@ -1019,7 +1023,6 @@ export default function Transcribe() {
   const onWhisperTranslate = (v: boolean) => {
     setTranslate(v);
     if (v && translateTo.length) {
-      setTranslateTo([]);
       ownTargets([]);
       if (!isStandard) setTranslateExclNotice("t2t");
       persistOptions({ translate: v, translateTo: [] });
@@ -1900,7 +1903,6 @@ export default function Transcribe() {
                             sectionLabels
                             targets={siteChips?.targets ?? translateTo}
                             onTargetsChange={siteChips?.onTargetsChange ?? ((next) => {
-                              setTranslateTo(next);
                               ownTargets(next);
                               persistOptions({ translateTo: next });
                             })}
@@ -1968,7 +1970,6 @@ export default function Transcribe() {
                             source: chipSource(!!siteChips, siteInput?.spoken, knownSource),
                             max: maxTranslationTargets(caps),
                           });
-                          setTranslateTo(next);
                           ownTargets(next);
                           if (translate) {
                             setTranslate(false);
@@ -1979,7 +1980,6 @@ export default function Transcribe() {
                             persistOptions({ translateTo: next });
                           }
                         } else {
-                          setTranslateTo([]);
                           ownTargets([]);
                           setTranslateExclNotice(null);
                           persistOptions({ translateTo: [] });
