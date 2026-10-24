@@ -35,8 +35,8 @@ export function AudioTab() {
   const advanced = advancedChoice ?? pinIsPath;
   const withPaths = advanced || isAlsaPin(microphoneId);
   // Whether the listing on screen was fetched WITH the paths: the flip sets `advanced` at once,
-  // but until the paths reply lands every path list is empty and the picker said "No other
-  // audio paths found." — the path rows show only once the listing carries them.
+  // but until the paths reply lands every path list is empty and the picker would wrongly say
+  // "No other audio paths found."
   const [invHasPaths, setInvHasPaths] = useState(false);
   const showPaths = advanced && invHasPaths;
 
@@ -80,9 +80,7 @@ export function AudioTab() {
 
   // Keep the list current while this tab is on screen: plugging a mic in or out, or changing the
   // system default, shows up within a few seconds. Listing never opens a mic (a Bluetooth headset
-  // would switch profile). Paused while the window is hidden — closed to the tray (Rust's
-  // show/hide; WebView2 never fires visibilitychange for a hidden window) or minimized/unmapped
-  // (the document signal); gone with the tab.
+  // would switch profile). Paused while the window is hidden; gone with the tab.
   useEffect(() => {
     void refresh();
     const stop = everyWhileVisible(3000, () => void refresh());
@@ -115,14 +113,12 @@ export function AudioTab() {
     let endedEarly = false;
     let unlisten: (() => void) | undefined;
     let unlistenEnded: (() => void) | undefined;
-    // Show "warming up…" until real audio flows (a cold/Bluetooth mic is silent for
-    // ~1–2s first), with a safety timeout so it never hangs on a silent device.
+    // Show "warming up…" until real audio flows, with a safety timeout so it never hangs on a
+    // silent device.
     setMicWarming(true);
     const warmTimer = window.setTimeout(() => setMicWarming(false), 5000);
-    // Auto-stop so the test can't run (and hold the mic) forever.
     const maxTimer = window.setTimeout(() => {
-      // Auto-stop: take the SAME path as pressing Stop, so the captured clip is offered for replay
-      // too (the bare setTesting(false) skipped the capture, leaving no Replay button after timeout).
+      // Take the SAME path as pressing Stop, so the captured clip is offered for replay too.
       if (active) void stopAndReplayRef.current();
     }, MIC_TEST_MAX_MS);
     void (async () => {
@@ -250,9 +246,9 @@ export function AudioTab() {
     }
   }, []);
 
-  // Stop the test and, if it captured something, enable + play the replay. Shared by the manual
-  // Stop button AND the 15s auto-stop, so both offer replay. try/finally: always flip testing off
-  // even if the stop invoke rejects, so the button can't stick on "Stop".
+  // Stop the test and, if it captured something, enable + play the replay. Shared by Stop, the
+  // auto-stop and a test that ends itself, so all of them offer replay. try/finally: always flip
+  // testing off even if the stop invoke rejects, so the button can't stick on "Stop".
   const stopAndReplay = useCallback(async () => {
     if (stoppingRef.current) return;
     stoppingRef.current = true;
@@ -337,9 +333,8 @@ export function AudioTab() {
               });
             }}
             className="w-56"
-            // Locked during a test: switching the device mid-test re-runs the capture effect,
-            // racing the old fire-and-forget stop against the new start (the late stop could tear
-            // down the freshly-opened device → dead meter). Stop the test to change the mic.
+            // Locked during a test: switching the device would silently restart the capture on
+            // the new mic. Stop the test to change the mic.
             disabled={testing}
           />
           <Button variant="ghost" size="sm" title="Refresh devices" onClick={() => void refresh()}>
