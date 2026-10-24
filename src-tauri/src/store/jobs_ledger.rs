@@ -1,12 +1,12 @@
 //! The in-flight jobs ledger: `<app_data_dir>/jobs-ledger.json`.
 //!
 //! One row per batch run the app has posted to a server that keeps a job resource
-//! (`GET /v1/jobs*`), written BEFORE the request leaves and removed once the result was
-//! ingested — so a run survives the app being quit mid-flight: on the next launch the
-//! ledger says which job ids to ask the server about. Rust treats the document as opaque
-//! JSON; the row shape, caps and the reconcile logic live in TS (`lib/jobsLedger.ts`,
-//! `lib/jobsReconcile.ts`). Per-device bookkeeping like the usage-outcome queue, so it
-//! stays out of config.json (which sync ships around).
+//! (`GET /v1/jobs*`), written BEFORE the request leaves and removed once the run settled
+//! (result ingested, or failed/cancelled) — so a run survives the app being quit
+//! mid-flight: on the next launch the ledger says which job ids to ask the server about.
+//! Rust treats the document as opaque JSON; the row shape, caps and the reconcile logic
+//! live in TS (`lib/jobsLedger.ts`, `lib/jobsReconcile.ts`). Per-device bookkeeping like
+//! the usage-outcome queue, so it stays out of config.json (which sync ships around).
 
 use std::path::{Path, PathBuf};
 
