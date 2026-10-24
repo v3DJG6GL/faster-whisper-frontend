@@ -33,7 +33,7 @@ import { toUsageQuery, type UsagePageQuery, viewSigSource } from "./usageDerive"
 import type { Backend } from "./types";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 
-const POLL_MS = 30_000; // steady refresh cadence
+const POLL_MS = 30_000;
 const HIDDEN_EVERY = 10; // while the main window is hidden: one pass per 5 minutes
 const AFTER_SESSION_MS = 1_500; // the server records usage in its post-request finally
 const EVICT_DEBOUNCE_MS = 1_000; // a dropped usage key (key rotation / URL override typed per keystroke)
@@ -254,13 +254,12 @@ async function refreshOne(backend: Backend): Promise<void> {
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
   if (effectiveServerKind(backend, ownProp(connections, backend.id)) === "standard") {
-    // "standard" is a positive answer (an explicit Server type, or a probe that found no boot_id;
-    // an untested or failed probe is "unknown" and fetches below): this server has no usage, so
-    // numbers kept from before would read as current forever on Home and the chip — and keep
-    // the backend viewable on Statistics, which fetches live. Clear them, once: an entry already
-    // null is left alone, or every poll would spread a fresh `usage` object and churn a
-    // cross-window dictation://update. Own-property test: `in` is true for
-    // `constructor`/`toString`/… via the prototype, so that write would never run.
+    // "standard" is a positive answer (an explicit Server type, or a probe that found no boot_id):
+    // this server has no usage, so numbers kept from before would read as current forever on
+    // Home and the chip — and keep the backend viewable on Statistics, which fetches live. Clear
+    // them once: an entry already null is left alone, or every poll would churn a cross-window
+    // dictation://update. Own-property test: `in` is true for `constructor`/`toString`/… via
+    // the prototype, so that write would never run.
     if (!hasOwn(usage, backend.id) || usage[backend.id] !== null) setUsage(backend.id, null);
     return;
   }
@@ -294,10 +293,9 @@ async function refreshOne(backend: Backend): Promise<void> {
   if (stats?.series && stats.series.length > TREND_DAYS) {
     stats.series = stats.series.slice(-TREND_DAYS);
   }
-  // Keep the last-known value on a transient miss — only commit null the first
-  // time. Key-presence (not truthiness) so an already-null backend isn't re-set to
-  // null every poll (which would spread a fresh `usage` object and churn the
-  // cross-window update); a real value still overwrites since stats!==null falls through.
+  // Keep the last-known value on a transient miss — only commit null the first time.
+  // Key-presence (not truthiness) so an already-null backend isn't re-set to null every
+  // poll (which would spread a fresh `usage` object and churn the cross-window update).
   if (stats === null && hasOwn(usage, backend.id)) return;
   setUsage(backend.id, stats);
 }
@@ -443,8 +441,8 @@ export function initUsageController(): void {
       // pass while one is pending OR a live backend's usage is still missing — the latter
       // covers a keystroke landing while the debounced pass's fetch to the half-typed address
       // is still in flight (no timer then, and that fetch bails on the moved target without
-      // re-adding the key). It runs 1 s after the LAST change. This fires only on an override
-      // change and refreshAll folds overlapping passes, so it cannot loop.
+      // re-adding the key). It cannot loop: a pass only re-adds usage entries, and refreshAll
+      // folds overlapping passes.
       clearTimeout(evictTimer);
       evictTimer = setTimeout(() => {
         evictTimer = undefined;
