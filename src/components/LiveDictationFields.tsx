@@ -38,8 +38,8 @@ const PAUSE_COLOR: Record<PauseKind, string> = {
   par: "var(--c-para)",
 };
 
-/** How each live key is edited. The ranges are the editor's (the approved mockup's), inside the
- *  server's bounds in DECODE_KEYS, which the sync sanitizer and the server enforce. */
+/** How each live key is edited. The ranges are the editor's, inside the server's bounds in
+ *  DECODE_KEYS, which the sync sanitizer and the server enforce. */
 const CONTROL: Partial<Record<DecodeKey, { min: number; max: number; step: number; dot?: PauseKind }>> = {
   streaming_vad_inner_silence_ms: { min: 200, max: 3900, step: 100, dot: "ref" },
   streaming_vad_outer_silence_ms: { min: 400, max: 4000, step: 100, dot: "end" },
