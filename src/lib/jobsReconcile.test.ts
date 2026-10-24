@@ -71,6 +71,12 @@ const ok = <T,>(value: T): JobOutcome<T> => ({ kind: "ok", value });
 const RESULT: BatchResult = { text: "hallo welt", language: "de", duration: 1,
   segments: [{ start: 0, end: 1, text: "hallo welt" }] };
 
+/** The server holds the job finished, with its result published. */
+function serveDone(jobId = JOB_A, result: BatchResult = RESULT): void {
+  getJob.mockResolvedValue(ok({ jobId, state: "done", resultAvailable: true }));
+  getJobResult.mockResolvedValue(ok(result));
+}
+
 function records() {
   return useTranscriptHistory.getState().records;
 }
@@ -141,8 +147,7 @@ describe("reconcileJobs", () => {
 
   it("re-ingesting a job id upserts the same record, never a duplicate", async () => {
     await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     await reconcileJobs();
     await seed(row(JOB_A, T0));
     await reconcileJobs();
@@ -232,8 +237,7 @@ describe("reconcileJobs", () => {
     // current key to the old host and the record would land without playback.
     const old = row(JOB_A, T0, "url");
     await seed({ ...old, serverUrl: "http://old:8000", ctx: { ...old.ctx, serverUrl: "http://old:8000" } });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceMediaId: "m1" }));
+    serveDone(JOB_A, { ...RESULT, sourceMediaId: "m1" });
     await reconcileJobs();
     expect(records().map((r) => r.id)).toEqual([JOB_A]);
     expect(fetchUrlMedia).toHaveBeenCalledTimes(1);
@@ -404,8 +408,7 @@ describe("reconcileJobs", () => {
     expect(s.queue).toEqual([]);
     expect(s.running).toBe(false);
     // Done: the record lands in History; the workbench is left alone.
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(records().map((r) => r.id)).toEqual([JOB_A]);
@@ -846,8 +849,7 @@ describe("reconcileJobs", () => {
     // stopOrphan had no row to find yet.
     expect(deleteJob).not.toHaveBeenCalled();
     loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [r] }));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     saveJobsLedger.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
@@ -872,8 +874,7 @@ describe("reconcileJobs", () => {
 
   it("a headless done link whose video was still downloading polls for it under the job id", async () => {
     await seed(row(JOB_A, T0, "url"));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    serveDone(JOB_A, { ...RESULT, sourceVideoPending: true });
     await reconcileJobs();
     expect(records()[0].id).toBe(JOB_A);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -884,8 +885,7 @@ describe("reconcileJobs", () => {
 
   it("a headless video poll runs at the headless watcher's 5 s cadence, not once a second", async () => {
     await seed(row(JOB_A, T0, "url"));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    serveDone(JOB_A, { ...RESULT, sourceVideoPending: true });
     getTranscribeProgress.mockImplementation(() =>
       Promise.resolve({ stage: "done", video: { state: "downloading", downloaded: 1, total: 10 } }));
     try {
@@ -905,8 +905,7 @@ describe("reconcileJobs", () => {
 
   it("deleting a headless link whose video is still downloading stops its video poll", async () => {
     await seed(row(JOB_A, T0, "url"));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    serveDone(JOB_A, { ...RESULT, sourceVideoPending: true });
     getTranscribeProgress.mockImplementation(() =>
       Promise.resolve({ stage: "done", video: { state: "downloading", downloaded: 1, total: 10 } }));
     try {
@@ -924,8 +923,7 @@ describe("reconcileJobs", () => {
 
   it("a lost request's job is watched headless and its transcript lands under the job id", async () => {
     await persistRow(row(JOB_A, Date.now()));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     watchOrphan(JOB_A);
     watchOrphan(JOB_A);
     await vi.advanceTimersByTimeAsync(0);
@@ -940,8 +938,7 @@ describe("reconcileJobs", () => {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
     useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     watchOrphan(JOB_A);
     await vi.advanceTimersByTimeAsync(0);
     const it0 = useTranscribeRun.getState().queue[0];
@@ -964,8 +961,7 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().queue[0].orphanJobId).toBeUndefined();
     // The old job's watcher is gone: no more polls, its row is forgotten, and the
     // job can't land a record under the old id.
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -993,8 +989,7 @@ describe("reconcileJobs", () => {
       queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1005,8 +1000,7 @@ describe("reconcileJobs", () => {
     await watchEvicted();
     forgetRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1043,8 +1037,7 @@ describe("reconcileJobs", () => {
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1064,8 +1057,7 @@ describe("reconcileJobs", () => {
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1136,8 +1128,7 @@ describe("reconcileJobs", () => {
     deleteRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1159,8 +1150,7 @@ describe("reconcileJobs", () => {
   }
 
   async function expectNoReAdd() {
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
@@ -1188,8 +1178,7 @@ describe("reconcileJobs", () => {
     await watchLostFailed(true);
     forgetRecord(null);
     expect(deleteJob).not.toHaveBeenCalled();
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone();
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(records().map((x) => [x.id, x.status])).toEqual([[JOB_A, "done"]]);
@@ -1208,8 +1197,7 @@ describe("reconcileJobs", () => {
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_B }));
     expect(ledgerRows().some((x) => x.jobId === JOB_B)).toBe(false);
     // The 30 s retry pass no longer finds it: nothing is fetched or ingested.
-    getJob.mockResolvedValue(ok({ jobId: JOB_B, state: "done", resultAvailable: true }));
-    getJobResult.mockResolvedValue(ok(RESULT));
+    serveDone(JOB_B);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(getJobResult).not.toHaveBeenCalled();
     expect(records().some((x) => x.id === JOB_B)).toBe(false);
