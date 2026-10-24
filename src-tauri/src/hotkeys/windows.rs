@@ -448,8 +448,8 @@ mod imp {
                     profile_id: p.id.clone(),
                 },
             };
-            // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
-            // is defanged here rather than at the log line — same reason as `emit`'s.
+            // `what` is interpolated into `push`'s warnings, so the untrusted id is defanged
+            // here rather than at each log line — same reason as `emit`'s.
             push(
                 kind,
                 keys,
@@ -694,7 +694,7 @@ mod imp {
     /// covers the late install. The last burst tick drops back to WATCHDOG_MS.
     const TICK_MS: u32 = 250;
     const BURST_TICKS: u32 = 6; // per-tick re-arms for 1.5 s after a fg change
-    const WATCHDOG_MS: u32 = 3_000; // steady-state re-arm every 3 s
+    const WATCHDOG_MS: u32 = 3_000;
 
     thread_local! {
         /// The LL hook installed by THIS thread (0 = none). Thread-local, not a
@@ -707,8 +707,8 @@ mod imp {
         /// The re-arm timer's id (0 = SetTimer failed, so there is none to re-period).
         static TIMER: Cell<usize> = const { Cell::new(0) };
         /// Whether the last install attempt failed — the WARN is logged once per transition
-        /// into that state, not once per re-arm attempt (a persistent failure otherwise wrote
-        /// ~1200 lines an hour into the support log).
+        /// into that state, not once per re-arm attempt (a persistent failure would otherwise
+        /// write ~1200 lines an hour into the support log).
         static HOOK_FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
@@ -1235,8 +1235,9 @@ mod imp {
     /// `GetAsyncKeyState`'s high bit is the current keyboard state as the OS saw it after the
     /// low-level hook chain: it is independent of any message queue, so it can arbitrate a
     /// held-set our hook or raw-input feed missed — but it reflects only key events no
-    /// low-level hook swallowed (a key an RDP client's capture hook eats reads UP here). `aux_windows::quickadd::win_seed` already leans on the
-    /// same authority for the same reason before it injects.
+    /// low-level hook swallowed (a key an RDP client's capture hook eats reads UP here).
+    /// `aux_windows::quickadd::win_seed` already leans on the same authority for the same
+    /// reason before it injects.
     ///
     /// `id & 0xFF` strips the synthetic extended bit we fold into NumpadEnter: the OS knows
     /// only `VK_RETURN`, which covers both Enters — and "VK_RETURN is up" is true of each of
@@ -1271,22 +1272,18 @@ mod imp {
         vk_down(layout_vk as u16) || (id & 0x8000 == 0 && vk_down(id))
     }
 
-    /// Is focus on a remote-desktop / VDI client, by EITHER `inject::rdp_client` detector (see
-    /// `rdp_client::focus_is_remote_desktop`), or the app's own "Remote desktop" rule when one is
-    /// saved; without such a rule the app id is read only when the class misses.
-    /// The LIVE foreground's id: `focused_app_now` falls back to the app focused before ours
-    /// (and keeps it across the shell), so leaving a client for our window or the taskbar
-    /// would still read as remote and arm the latch / liveness rule off-RDP.
+    /// Is focus on a remote-desktop / VDI client (`rdp_client::focus_is_remote_desktop`)? Asked
+    /// with the LIVE foreground's id, not `focused_app_now`'s: its fallback to the app focused
+    /// before ours would make leaving a client for our window or the taskbar still read as
+    /// remote and arm the latch / liveness rule off-RDP.
     fn focus_is_remote(app: &AppHandle) -> bool {
         crate::inject::rdp_client::focus_is_remote_desktop(|| {
             crate::focus::focused_app_id_live(app.state::<crate::focus::AtspiGuard>().inner())
         })
     }
 
-    /// How often the worker re-asks the OS about the keys it believes are held. Only
-    /// *scheduled* while the held-set is non-empty — an idle worker blocks in `rx.recv()` with
-    /// no deadline and polls nothing; a wake-up past the deadline still calls it once with an
-    /// empty held-set to clear stale first strikes.
+    /// How often the worker re-asks the OS about the keys it believes are held. Scheduled only
+    /// while the held-set is non-empty, so an idle worker polls nothing.
     const RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
     /// While a remote-desktop client has focus, how long the WHOLE held-set must go without a
@@ -1397,10 +1394,9 @@ mod imp {
         // our successor's counts.
         let mut held: HashSet<u16> = HashSet::new();
         // Chatter filter: key-ups for held keys are deferred RELEASE_DEBOUNCE and
-        // erased if the key comes back down in the window (a worn-switch bounce fed
-        // straight through here fired Stop+Start and killed the session instantly —
-        // see `debounce`). Downs commit immediately; deferred ups commit via the
-        // recv_timeout deadline below.
+        // erased if the key comes back down in the window, so a worn-switch bounce can't
+        // fire Stop+Start and kill the session (see `debounce`). Downs commit immediately;
+        // deferred ups commit via the recv_timeout deadline below.
         let mut deb =
             crate::hotkeys::debounce::Debouncer::new(crate::hotkeys::debounce::RELEASE_DEBOUNCE);
         // First strikes for the held-set reconciler (see resync_held).
@@ -1477,12 +1473,10 @@ mod imp {
             }
         }
         // Channel closed (backend stopped or replaced). First commit every release still parked
-        // in the debouncer: those keys ARE released, and a hold whose release is parked here
-        // would otherwise read as active below and get a manufactured stop, arming the loss
-        // latch (next phrase to the clipboard) on a chord the user let go of. `commit` in
-        // teardown mode acts as if the debounce window had elapsed a moment earlier and CLAIMS
-        // the Stop via take_hold — stop_held_sessions runs before this listener is dropped on
-        // the rebind/sync-pull path and may already have emitted it.
+        // in the debouncer: those keys ARE released, so their holds end through the engine as
+        // real releases rather than reading as still active below. `commit` in teardown mode
+        // CLAIMS the Stop via take_hold — stop_held_sessions runs before this listener is
+        // dropped on the rebind/sync-pull path and may already have emitted it.
         for key in deb.drain() {
             commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
         }
