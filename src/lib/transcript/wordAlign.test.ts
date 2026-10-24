@@ -55,7 +55,6 @@ describe("alignSegmentWords", () => {
     expect(replaced.map((x) => x.word)).toEqual([" Velo", " Navi", " Test"]);
     expect(replaced[0].start).toBe(LINE[5].start);
     expect(replaced[2].end).toBeCloseTo(LINE[5].end, 6);
-    // Monotonic inside the span.
     expect(replaced[0].end).toBeLessThanOrEqual(replaced[1].start + 1e-9);
     expect(replaced[1].end).toBeLessThanOrEqual(replaced[2].start + 1e-9);
   });
@@ -216,8 +215,8 @@ describe("alignSegmentWords", () => {
   });
 
   it("drops the leading space mid-run after ー, CJK punctuation or an astral Han character", () => {
-    // ー 、 「 are Script=Common, and a per-UTF-16-unit look read 𠮷 as a lone surrogate:
-    // each kept Whisper's " 今日" inside the run.
+    // ー 、 「 are Script=Common and 𠮷 is astral (a surrogate pair to a per-UTF-16-unit look):
+    // none of them may leave Whisper's " 今日" spaced inside the run.
     const ja: TranscriptWord[] = [
       { word: " 今日", start: 0, end: 1 },
       { word: "は", start: 1, end: 1.2 },
