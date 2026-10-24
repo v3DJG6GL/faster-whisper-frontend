@@ -165,7 +165,7 @@ static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 /// A per-CALL unique tmp name. `cache_single_flight` already serialises the writers of one `out`
 /// in this process; the `<pid>-<seq>` tag keeps every tmp name unique anyway (defence in depth:
-/// a shared name let one rename take another write's tmp, failing the second rename with
+/// a shared name would let one rename take another write's tmp, failing the second rename with
 /// ENOENT) and lets `prune_cache_to` tell this process's in-flight tmp (skipped) from another
 /// process's orphan (swept, see `cache_tmp_pid`).
 fn cache_tmp_path(out: &std::path::Path) -> std::path::PathBuf {
