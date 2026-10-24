@@ -8,10 +8,11 @@ import { backend as backendFixture } from "./sync/syncTestFixtures";
 import type { Backend } from "./types";
 
 const sig = (backendId: string, target: string, w: string) => JSON.stringify([backendId, target, { range: "365", with: w }]);
+/** A good (fetched) usage document; its contents do not matter to these tests. */
+const good = { today: {}, total: {}, series: [] } as never;
 
 describe("the Statistics year document on a failed fetch", () => {
   it("keeps the last good year up and marks the new query failed", () => {
-    const good = { today: {}, total: {}, series: [] } as never;
     useApp.setState({ usageYear: null });
     useApp.getState().setUsageYear(sig("a", "http://a", "all"), good);
     useApp.getState().setUsageYear(sig("a", "http://a", "dictate"), null);
@@ -26,7 +27,6 @@ describe("the Statistics year document on a failed fetch", () => {
   });
 
   it("never carries another backend's or target's year over a failure", () => {
-    const good = { today: {}, total: {}, series: [] } as never;
     for (const next of [sig("b", "http://a", "all"), sig("a", "http://other", "all")]) {
       useApp.setState({ usageYear: null });
       useApp.getState().setUsageYear(sig("a", "http://a", "all"), good);
@@ -38,7 +38,6 @@ describe("the Statistics year document on a failed fetch", () => {
 
 describe("forgetting a backend's caches", () => {
   it("drops the Statistics documents that name it and keeps every other backend's", () => {
-    const good = { today: {}, total: {}, series: [] } as never;
     const viewA = { sig: sig("a", "http://a", "all"), stats: good };
     const yearB = { sig: sig("b", "http://b", "all"), stats: good };
     useApp.setState({ usageView: viewA, usageYear: yearB });
@@ -55,7 +54,6 @@ describe("forgetting a backend's caches", () => {
 });
 
 describe("hydrate replacing the backend list", () => {
-  const good = { today: {}, total: {}, series: [] } as never;
   const backend = (id: string, hasApiKey: boolean) => backendFixture({ id, name: id, serverUrl: `http://${id}`, hasApiKey });
   const hydrate = (backends: Backend[]) =>
     useApp.getState().hydrate({ settings: useApp.getState().settings, backends, profiles: [], appRules: [], version: CONFIG_VERSION });
