@@ -179,8 +179,8 @@ export function RangeField({
   disabled?: boolean;
 }) {
   const id = useId();
-  // ↺ unmounts itself on a reset, which dropped keyboard focus to <body>: refocus the slider after a
-  // keyboard press (a click with detail 0), as the Stepper's ↺ does.
+  // ↺ unmounts itself on a reset, which would drop keyboard focus to <body>: refocus the slider
+  // after a keyboard press (a click with detail 0), as the Stepper's ↺ does.
   const inputRef = useRef<HTMLInputElement>(null);
   const resetPressed = useRef(false);
   useLayoutEffect(() => {
@@ -291,8 +291,8 @@ const SELECT_SEARCH_MIN = 9;
 
 /** A single-choice dropdown: the app's ListPicker under a FieldTrigger face. Its list is at least
  *  as wide as the field and grows to the longest option (leftward under a right-aligned field),
- *  truncating only at the window's edge. Picking the current option again changes nothing (no onChange). A value that matches
- *  no option shows the first option, as a native select did. */
+ *  truncating only at the window's edge. Picking the current option again changes nothing (no
+ *  onChange). A value that matches no option shows the first option, as a native select does. */
 export function Select<T extends string>({
   value,
   onChange,
@@ -377,10 +377,9 @@ export function filterStepperText(raw: string, min: number, decimals: number): s
   return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
 }
 
-/** A −/+ numeric field for granular timeout-style settings. The value is typeable
- *  (clamped to [min,max] on blur/Enter, and Esc reverts uncommitted typing; decimals
- *  allowed when `decimals` > 0) and
- *  steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
+/** A −/+ numeric field for granular timeout-style settings. The value is typeable (clamped to
+ *  [min,max] on blur/Enter, and Esc reverts uncommitted typing; decimals allowed when `decimals`
+ *  > 0) and steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
  *  shows a word in place of 0 (e.g. "Never" / "Instant").
  *
  *  Inherit state (override editors): `value` undefined shows `inherited` greyed with
@@ -459,7 +458,7 @@ export function Stepper({
   // value isn't clamped first, and a value that moved under the focus isn't stepped from stale
   // text). stepBy and the buttons' disabled bounds share it so they can't disagree about where a
   // bound is. Retyping an inheriting field's value is no edit either, by commit()'s own rule:
-  // clamped as typed, an out-of-range inherited 500 retyped verbatim made ↑ pin 100 (max).
+  // clamped as typed, an out-of-range inherited 500 retyped verbatim would make ↑ pin 100 (max).
   const stepBase = (t: string, f: boolean, v: number) => {
     const n = parse(t);
     const same = inheriting && inherited !== undefined && (t === String(v) || round(n) === v);
@@ -511,11 +510,11 @@ export function Stepper({
   }, [value, focused]);
   useEffect(() => stopRepeat, []);
 
-  // ↺ unmounts itself (it shows only while a value is set), which dropped keyboard focus to <body>:
-  // after the reset re-renders, focus goes to the field instead — then its onFocus reads the reset
-  // value, not the one it replaced. A keyboard press only (a click with detail 0): after a mouse
-  // reset the focused field would show its focused look — full-colour value, no inherit note —
-  // instead of the inherited one, so the reset looked as if it did not take.
+  // ↺ unmounts itself (it shows only while a value is set), which would drop keyboard focus to
+  // <body>: after the reset re-renders, focus goes to the field instead — then its onFocus reads the
+  // reset value, not the one it replaced. A keyboard press only (a click with detail 0): after a
+  // mouse reset the focused field would show its focused look — full-colour value, no inherit note —
+  // instead of the inherited one, so the reset would look as if it did not take.
   const inputRef = useRef<HTMLInputElement>(null);
   const resetPressed = useRef(false);
   useLayoutEffect(() => {
@@ -630,8 +629,8 @@ export function Stepper({
             // so an editor's window Esc would read its dirty state without it and leave unguarded,
             // losing the number in silence. An untouched field lets Esc through (to leave), and so
             // does one whose typing a step (Arrow / −/+) already committed: the text then equals
-            // the value, nothing is left to drop, and swallowing that Esc made the user press it
-            // twice. Typing `min` over the placeholder of a field with no numeric inherited value
+            // the value, nothing is left to drop, and swallowing that Esc would make the user press
+            // it twice. Typing `min` over the placeholder of a field with no numeric inherited value
             // still counts as uncommitted — its blur would pin an override.
             const uncommitted =
               textRef.current !== String(value) || (inheriting && inherited === undefined);
