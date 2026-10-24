@@ -7,6 +7,9 @@ import {
 
 export interface CellTipState { i: number; x: number; y: number }
 
+/** The `data-i` grid cell an event landed in (or is inside). */
+export const cellOf = (target: EventTarget) => (target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+
 /** Delegated hover + focus for a grid of level cells. Cells carry `data-i`; the wrapper is
  *  `relative`. The panel resolves `i` against its model and renders the content. */
 export function useCellTip() {
@@ -16,13 +19,13 @@ export function useCellTip() {
     setTip({ i: Number(el.dataset.i), x: cx - box.left + host.scrollLeft, y: cy - box.top + host.scrollTop });
   };
   const onMove = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
-    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    const el = cellOf(e.target);
     if (!el?.dataset.i) { setTip(null); return; }
     at(e.currentTarget, el, e.clientX, e.clientY);
   }, []);
   const onLeave = useCallback(() => setTip(null), []);
   const onFocus = useCallback((e: ReactFocusEvent<HTMLDivElement>) => {
-    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    const el = cellOf(e.target);
     if (!el?.dataset.i) return;
     const r = el.getBoundingClientRect();
     at(e.currentTarget, el, r.left + r.width / 2, r.top + r.height / 2);
@@ -41,7 +44,7 @@ export function useRovingGrid(count: number, dx: number, dy: number) {
   const [focusIdx, setFocusIdx] = useState(0);
   useEffect(() => { if (focusIdx >= count) setFocusIdx(0); }, [count, focusIdx]);
   const onKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    const el = cellOf(e.target);
     if (!el?.dataset.i || count === 0) return;
     const i = Number(el.dataset.i);
     const step = e.key === "ArrowLeft" ? -dx : e.key === "ArrowRight" ? dx : e.key === "ArrowUp" ? -dy : e.key === "ArrowDown" ? dy : e.key === "Home" ? -i : e.key === "End" ? count - 1 - i : null;

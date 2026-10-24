@@ -12,7 +12,7 @@ import type { UsageSeriesPoint, UsageStats } from "@/lib/types";
 import { KindTip } from "@/components/stats/StackedChart";
 import { metricText } from "@/components/stats/chartKit";
 import { CellTip, LevelLegend } from "@/components/stats/heatGrid";
-import { CELL_HOT, CELL_HOVER, LEVEL_BG, useCellTip, useRovingGrid } from "@/components/stats/heatGridKit";
+import { CELL_HOT, CELL_HOVER, LEVEL_BG, cellOf, useCellTip, useRovingGrid } from "@/components/stats/heatGridKit";
 import { Panel } from "@/components/stats/primitives";
 
 /** The rule behind the busy phrase, per rhythm, as lib/usageDerive.ts rhythmPhrase applies it. */
@@ -91,7 +91,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
   }, [tip, model, L, N, metric, rhythm, from, to]);
   // Arrow keys move between cells only; the bars are plain tab stops.
   const keys = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
+    const el = cellOf(e.target);
     if (el && Number(el.dataset.i) >= N) return;
     onKeyDown(e);
   }, [N, onKeyDown]);
