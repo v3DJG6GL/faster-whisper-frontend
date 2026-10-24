@@ -1,12 +1,10 @@
 @import "tailwindcss";
 
-/* ──────────────────────────────────────────────────────────────────────────
-   "Signal" — a precision voice instrument.
+/* "Signal" — a precision voice instrument.
    Warm dark-first chrome · neutral warm grays · single electric-amber signal
    accent (VU-meter lineage, deliberately not purple/cyan) · coral reserved for
    the live recording pulse. Type: Hubot Sans (display) / Mona Sans (UI) /
-   Geist Mono (numerics & readouts) — all OFL.
-   ────────────────────────────────────────────────────────────────────────── */
+   Geist Mono (numerics & readouts) — all OFL. */
 
 @theme inline {
   --color-bg: var(--c-bg);
@@ -26,17 +24,15 @@
   --color-accent-soft: var(--c-accent-soft);
   --color-rec: var(--c-rec);
   --color-live: var(--c-live);
-  /* The armed ("ready to speak") state. It used to borrow the accent; since the Signal
-     colour can be anything — and can drift with time — state colours are fixed. */
+  /* The armed ("ready to speak") state. Fixed, like every state colour: the Signal colour
+     can be any hue and can drift with time. */
   --color-armed: var(--c-armed);
   --color-whisper: var(--c-whisper);
   --color-ok: var(--c-ok);
   --color-warn: var(--c-warn);
   --color-think: var(--c-think);
-  /* Both themes have defined --c-translate since the T2T suite landed, but five
-     surfaces reach it as `text-[color:var(--c-translate)]` because no Tailwind
-     alias existed. The overlay's tone→class maps need a class NAME, not an
-     inline style, so the alias stops being optional here. */
+  /* The overlay's tone→class maps need a class NAME, not an inline style, so
+     --c-translate needs this alias. */
   --color-translate: var(--c-translate);
   /* Chart/calendar colours have no Tailwind alias — every consumer reaches the raw
      custom property (var(--c-chart-dict) etc.) directly. */
@@ -78,19 +74,16 @@
   --c-accent-soft: rgba(255, 158, 44, 0.14);
   --c-rec: #ff5c46;
   --c-live: #36d07a; /* green: actively-speaking (≈9.6:1 on --c-bg) */
-  --c-armed: #ff9e2c; /* amber: armed but silent ("ready to speak"). Fixed — it no longer borrows the accent, which may be any hue and may drift */
+  --c-armed: #ff9e2c; /* amber: armed but silent ("ready to speak"). Fixed — the accent may be any hue and may drift */
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
   --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
   --c-translate: #4dd0c4; /* teal: the T2T translating stage — unclaimed by any other stage hue */
   --c-para: #4dd0c4; /* the live-dictation preview's hard break (new paragraph) */
   --c-whisper: #ff9e2c; /* identity: a Whisper-transcribed track (the default accent's amber, fixed — it never drifts with the Signal colour) */
-  /* Remaining pipeline-stage hues. These were bare hexes inside STAGE_COLORS
-     (components/transcribe/railTheme.ts), which meant they had NO light-theme value at all —
-     #c68fb4 is barely legible on a light background. They are also what the
-     backend's /logs receipt and the quick-config trace viewer colour their
-     stage rows with, so a stage should read the same wherever it appears;
-     one definition here is what makes that true rather than coincidental. */
+  /* Remaining pipeline-stage hues, as tokens so each has a light-theme value (#c68fb4 is
+     barely legible on a light background). The backend's /logs receipt and the quick-config
+     trace viewer colour their stage rows with them too, so a stage reads the same everywhere. */
   --c-separate: #6faed9; /* music source separation (shares the think blue) */
   --c-diarize: #c68fb4;  /* speaker diarization */
   --c-download: #d9a45b; /* fetching a URL's media */
@@ -260,7 +253,6 @@ html.accent-tick .transition-colors {
   color: var(--c-text);
 }
 
-/* Thin, unobtrusive scrollbars that match the warm chrome. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--c-line-strong) transparent;
@@ -280,26 +272,14 @@ html.accent-tick .transition-colors {
   background-clip: padding-box;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   Page width system.
-
-   Every screen used to hardcode its own max-width (820 / 880 / 900 / 1760),
-   which on a wide window left a third of the main area empty while setting
-   rows — a label, a description and a control on one line — wrapped their
-   descriptions to eight lines. Width is not one number: it depends on what the
-   content IS. Prose has a reading measure. A label-plus-control row has none;
-   it just wants the description to stop wrapping. A queue wants everything it
-   can get.
-
-   Screens set `.page` plus ONE width class. Padding scales with the window
-   instead of sitting at a fixed 40px at every size.
-   ────────────────────────────────────────────────────────────────────────── */
+/* Page width system. Width is not one number: it depends on what the content IS.
+   Prose has a reading measure; a label-plus-control row has none, it just wants its
+   description to stop wrapping; a queue wants everything it can get. Screens set
+   `.page` plus ONE width class; padding scales with the window. */
 :root {
   --page-pad: clamp(20px, 3vw, 48px);
-  /* 2026-09-02: the user runs the app wide (1280 px default window, often more) and
-     wants every screen to use it. Home / History / Dictionary now fill like the
-     studio; only the label + control forms keep 1180 px, where a wider row would
-     just stretch the gap between a label and its control. */
+  /* Every screen fills a wide window except the label + control forms, where a wider row
+     would just stretch the gap between a label and its control. */
   --w-prose: 1760px; /* History, Dictionary — lists and tables, they fill the window */
   --w-cards: 1760px; /* card layouts — Home */
   --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings */
@@ -337,7 +317,6 @@ html.accent-tick .transition-colors {
   .tracking-label {
     letter-spacing: 0.14em;
   }
-  /* focus ring used across interactive controls */
   .ring-signal:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px var(--c-bg), 0 0 0 4px var(--c-accent);
@@ -378,8 +357,7 @@ html.accent-tick .transition-colors {
   animation: chip-breathe 1.6s ease-in-out infinite;
 }
 
-/* Dictionary recent-word combobox popover: a quick, restrained entrance
-   (fade + tiny rise + scale) — refined, not flashy. */
+/* Combobox popover (components/Combobox.tsx): a quick, restrained entrance. */
 @keyframes combobox-pop {
   from {
     opacity: 0;
@@ -395,10 +373,9 @@ html.accent-tick .transition-colors {
   transform-origin: top;
 }
 
-/* P19: a phrase just landed in the focused field — one calm GREEN "inserted" pulse on the
-   status dot (green = text reached its destination; amber stays reserved for armed/idle).
-   A single, non-looping play: a quick swell + green halo that settles back. Degrades to
-   nothing under reduce-motion (below), where the dot's colour change still reads. */
+/* A phrase just landed in the focused field — one GREEN "inserted" pulse on the status dot
+   (green = text reached its destination; amber stays reserved for armed/idle). Nothing under
+   reduce-motion (below), where the dot's colour change still reads. */
 @keyframes insert-pulse {
   0% {
     transform: scale(1);
