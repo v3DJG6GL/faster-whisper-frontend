@@ -25,7 +25,7 @@ pub const RING_CAP: usize = 10_000;
 /// signal exists yet.
 const BATCH_CAP: usize = 500;
 const PUMP_INTERVAL_MS: u64 = 150;
-/// Status (badge counters) is checked every Nth pump tick ≈ ~1 s.
+/// Status (badge counters) is checked every Nth pump tick, ≈ 1 s.
 const STATUS_EVERY_TICKS: u32 = 7;
 
 #[derive(Clone, serde::Serialize)]
