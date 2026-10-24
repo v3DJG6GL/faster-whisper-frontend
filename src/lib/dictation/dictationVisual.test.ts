@@ -72,8 +72,8 @@ describe("dictationVisual", () => {
 
   describe("serverWork — what the server is doing behind a `listening` status", () => {
     it("shows the held / decoding phrase as working, not as amber `ready`", () => {
-      // The bug: a streaming session stays "listening", so the decode between end of speech
-      // and the server's `final` read as armed-amber while the backend was busy.
+      // A streaming session stays "listening", so without serverWork the decode between end
+      // of speech and the server's `final` would read as armed-amber while the backend is busy.
       for (const work of ["open", "decoding"] as const) {
         const v = dictationVisual("listening", false, false, work);
         expect(v.state, work).toBe("processing");
@@ -135,9 +135,8 @@ describe("status membership", () => {
 
 describe("isGracefulStop", () => {
   it("is a stop while the mic is open, whatever the status says", () => {
-    // The live per-phrase translate: a PROCESSING status with capture still running. Under
-    // the old `status === "listening"` test a PTT chord release here was dropped on the
-    // floor and the session wedged listening.
+    // The live per-phrase translate: a PROCESSING status with capture still running. A
+    // status-only test drops a PTT chord release here and the session wedges listening.
     expect(isGracefulStop("translating", true)).toBe(true);
     expect(isGracefulStop("listening", true)).toBe(true);
   });
