@@ -139,7 +139,7 @@ describe("loadHistory", () => {
     // Transcribe's recent strip takes the first three of this list.
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["noon", "noon-twin", "eleven", "offset", "damaged"]);
 
-    // Plain app-written Z stamps keep their order.
+    // Plain app-written Z stamps still sort newest first.
     listTranscriptRecords.mockResolvedValue([rec("a", "2026-10-12T08:00:00.000Z"), rec("c", "2026-10-14T08:00:00.000Z"), rec("b", "2026-10-13T08:00:00.000Z")]);
     await loadHistory(true);
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["c", "b", "a"]);
