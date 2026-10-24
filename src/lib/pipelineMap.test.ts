@@ -73,10 +73,6 @@ describe("mapBodyFromRows", () => {
   });
 });
 
-// A collapsed cb:map list makes two separate promises: `hidden` is what the
-// "show all" toggle can still reveal, `unshown` is what the render cap keeps
-// off screen forever. Conflating them told users the toggle would reveal rows
-// the screen never renders.
 describe("mapEntryProblem", () => {
   // The server's MapRule: key ^[\w \-.,!?ßẞÄÖÜäöü]{1,64}$ (Rust-regex Unicode \w), value ≤ 64.
   // One pair outside it 422s the whole-map PATCH, so Quick-Add must refuse it before sending.
