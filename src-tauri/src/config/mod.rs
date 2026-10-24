@@ -112,8 +112,7 @@ fn default_insert_timing() -> InsertTiming {
     InsertTiming::Live
 }
 
-/// Paste chord for the "clipboard paste" method (KeyboardEvent.code list). Ctrl+V by
-/// default; terminals (Konsole, kitty, …) need Ctrl+Shift+V.
+/// Ctrl+V; terminals (Konsole, kitty, …) need Ctrl+Shift+V, hence a configurable chord.
 fn default_paste_shortcut() -> Vec<String> {
     vec!["ControlLeft".into(), "KeyV".into()]
 }
@@ -1306,7 +1305,6 @@ pub mod keys {
         matches!(e, keyring::Error::PlatformFailure(_))
     }
 
-    /// The read loop's gate: retry only the FIRST attempt, and only a retryable error.
     pub(crate) fn should_retry(attempt: u8, e: &keyring::Error) -> bool {
         attempt == 0 && retryable(e)
     }
