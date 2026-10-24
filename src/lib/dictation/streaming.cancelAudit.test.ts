@@ -57,9 +57,9 @@ function mask(src: string): string {
     // (e.g. /[^"]/  or /x{2,}/) opens a bogus mask that blanks real source or
     // contributes unbalanced braces to the depth count in bodyAfter().
     if (c === "/" && i > 0 && /[=(!,:;?[{&|~^%*/+\-<>]/.test(src[i - 1])) {
-      blank(i++); // opening /
+      blank(i++);
       while (i < src.length && src[i] !== "/") {
-        if (src[i] === "\\") blank(i++); // escape in regex
+        if (src[i] === "\\") blank(i++);
         if (src[i] === "[") { // character class — scan to ]
           blank(i++);
           while (i < src.length && src[i] !== "]") {
@@ -69,8 +69,8 @@ function mask(src: string): string {
         }
         if (i < src.length) blank(i++);
       }
-      if (i < src.length) blank(i++); // closing /
-      while (i < src.length && /[gimsuy]/.test(src[i])) blank(i++); // flags
+      if (i < src.length) blank(i++);
+      while (i < src.length && /[gimsuy]/.test(src[i])) blank(i++);
       continue;
     }
     i++;
@@ -1428,8 +1428,8 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {
-    // An inline copy can drift from the clear-before-await ordering (it already did once): the
-    // helper body must be the only call site; the other occurrence is the import.
+    // An inline copy can drift from the clear-before-await ordering: the helper body must be the
+    // only call site (the import names it without a call).
     const calls = mask(streamingSrc).split("restoreClipboardSnapshot(").length - 1;
     expect(calls, "call restoreClipboardSnapshot only from giveClipboardBack").toBe(1);
   });
