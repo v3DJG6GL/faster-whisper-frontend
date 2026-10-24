@@ -38,7 +38,7 @@ import {
   activeRailIndex, addFiles, axisLayout, cancelRun, chunkedProgress, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
-  type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
+  type QueueItem, type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
 import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
@@ -181,6 +181,11 @@ function axisTextWidth(text: string): number {
 function savedBackendOf(t: TranscribeSettings | undefined, backends: readonly Backend[]): string | undefined {
   const id = t?.backendId;
   return id && backends.some((b) => b.id === id) ? id : undefined;
+}
+
+/** A run is in flight: an item running, or one queued behind it. */
+function queueBusy(queue: readonly QueueItem[]): boolean {
+  return queue.some((it) => it.status === "running" || it.status === "queued");
 }
 
 /** The screen's persisted options as it seeds them from `settings.transcribe` — ONE set of rules
@@ -368,9 +373,7 @@ export default function Transcribe() {
           } else if (event.payload.type === "drop") {
             setDragOver(false);
             const paths = event.payload.paths.filter(isAcceptedSourcePath);
-            const running = useTranscribeRun
-              .getState()
-              .queue.some((it) => it.status === "running" || it.status === "queued");
+            const running = queueBusy(useTranscribeRun.getState().queue);
             if (paths.length && !running) addFiles(paths);
           } else {
             setDragOver(false);
@@ -431,7 +434,7 @@ export default function Transcribe() {
       // Guard: don't abandon an in-flight run when a sync push replaces the backends list.
       // The user gestures behind `applyBackendPick` are already `disabled={busy}`, but this
       // effect fires on store changes (applyBlob, conflict resolution) with no such gate.
-      const isRunning = queue.some((it) => it.status === "running" || it.status === "queued");
+      const isRunning = queueBusy(queue);
       if (isRunning) return;
       // Every persisted option re-seeds from the STORE, not from this closure: on the hydration
       // the screen's state is still the empty boot store's ([] targets, default switches).
@@ -675,7 +678,7 @@ export default function Transcribe() {
       }
     : null;
 
-  const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+  const busy = queueBusy(queue);
   // Add waits for a running spoken-language check: the run reuses its download and picks the
   // site track by its result, and Add (a new preview) would cancel it half-way.
   const linkChecking = linkLang.check.state === "running";
@@ -997,9 +1000,7 @@ export default function Transcribe() {
     if (!paths.length) return;
     // Re-read the live queue: on Linux the open dialog has no parent window, so a run can
     // start while it is open, and addFiles would abandon it — the picks wait for the next run.
-    const running = useTranscribeRun
-      .getState()
-      .queue.some((it) => it.status === "running" || it.status === "queued");
+    const running = queueBusy(useTranscribeRun.getState().queue);
     if (running) stageFiles(paths);
     else addFiles(paths);
   };
