@@ -6,8 +6,9 @@
 #     at job start. REQUIRES app.ini [actions] DEFAULT_ACTIONS_URL =
 #     https://forgejo.informethic.ch (+ server restart): without it,
 #     unqualified refs fall back to code.forgejo.org, which lacks
-#     dtolnay/rust-toolchain — this job then dies at the toolchain step. Before bumping any @version, confirm the mirror has
-#     synced that tag (8h interval, or "Synchronize now" in repo settings).
+#     dtolnay/rust-toolchain — this job then dies at the toolchain step.
+#     Before bumping any @version, confirm the mirror has synced that tag
+#     (8h interval, or "Synchronize now" in repo settings).
 #   * windows-latest runs on the self-hosted Windows VM runner (host mode,
 #     label windows-latest:host — see the local windows-runner-setup guide).
 #     Its job is the MSVC compile check: the Windows-only crates are
@@ -22,8 +23,8 @@ on:
   pull_request:
 
 # The release bump push ("release: v…", see the `check` job's `if`) gets a group of its own:
-# sharing the per-ref group, it cancelled the in-progress run of the very commit being released,
-# so that commit's test suites never ran (release.yml runs only fmt + clippy).
+# sharing the per-ref group would cancel the in-progress run of the very commit being released,
+# so that commit's test suites would never run (release.yml runs only fmt + clippy).
 concurrency:
   group: "ci-${{ github.ref }}-${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: v') && 'bump' || 'check' }}"
   cancel-in-progress: true
@@ -129,9 +130,9 @@ jobs:
       # that was in cargo/bin when the job started — cargo, rustc and the other
       # rustup proxies included; on a throwaway runner that merely keeps them out
       # of the tarball — and the registry sources its own build did not use. So
-      # whichever job finished first took `cargo` away from the other ("cargo:
-      # command not found" mid-run, the moment the neighbour's post step ran). RUNNER_TEMP is
-      # container-local; rustup-init and rust-cache both honour CARGO_HOME
+      # whichever job finishes first takes `cargo` away from the other ("cargo:
+      # command not found" mid-run, the moment the neighbour's post step runs).
+      # RUNNER_TEMP is container-local; rustup-init and rust-cache both honour CARGO_HOME
       # (dtolnay/rust-toolchain re-exports it and puts $CARGO_HOME/bin on PATH),
       # so bin + registry come out of the cache tarball as designed and nothing
       # this job does can reach another job's cargo. RUSTUP_HOME stays shared —
@@ -170,7 +171,7 @@ jobs:
       - run: pnpm build
 
       # The frontend unit suite (vitest) — platform-neutral and a few seconds,
-      # so both legs run it; without this step a red suite merged silently.
+      # so both legs run it.
       - run: pnpm test
 
       # clippy runs everything `cargo check` did plus the lints; any warning — compiler or
