@@ -1,7 +1,8 @@
-// Target-language chips for the T2T translation stage — the selected targets
-// as removable pills (in output order) plus a "+ language" picker over the
-// remaining candidates. Reused by the Processing card, the Backend/Profile
-// "Translation defaults" editors, and retro-translate popovers.
+// Controls for the T2T translation stage: the target-language chips (the selected
+// targets as removable pills in output order, plus a "+ language" picker over the
+// remaining candidates), the per-run options fields, and the Backend/Profile
+// "Translation defaults" editor. The chips are reused by the Processing card, the
+// defaults editors, and retro-translate popovers.
 import type { ReactNode } from "react";
 import { OverrideHeader, OverrideText } from "./OverrideField";
 import { OVERRIDE_CONTROL_W } from "./styles";
@@ -215,8 +216,8 @@ export interface TranslationInherited {
   includeOriginal?: boolean;
 }
 
-/** The Backend/Profile "Translation defaults" body — targets, model, context
- *  depth, glossary, and mode, each absent = inherit the previous layer
+/** The Backend/Profile "Translation defaults" body — targets, model, mode, context
+ *  depth, glossary and include-original, each absent = inherit the previous layer
  *  (Backend inherits the server; a Profile inherits its Backend). */
 export function TranslationDefaultsEditor({
   value,
@@ -249,8 +250,6 @@ export function TranslationDefaultsEditor({
   const patch = (p: Partial<TranslationOverrides>) =>
     onChange(pruneTranslationOverrides({ ...v, ...p }));
 
-  // Live translation forces Faithful (translateModeFor): the Mode row is inert and says why in
-  // its tooltip, with the stored value it returns to when this profile inserts on stop.
   const liveModeWhy = liveInsert
     ? `Always Faithful while “Type as I speak” is on — a live phrase is translated on its own, and Fluent merges sentences across it, which can drop the opening clause. ${v.mode ? `Set to ${v.mode}; applies` : "Applies"} when this profile inserts on stop.`
     : undefined;
