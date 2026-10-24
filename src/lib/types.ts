@@ -86,7 +86,7 @@ export interface Backend {
    *  which is the harmless direction. Only meaningful while `prompt` is empty. */
   promptCleared?: boolean;
   responseFormat: ResponseFormat;
-  decodeOverrides?: DecodeOverrides; // Phase-B: per-Backend decode defaults
+  decodeOverrides?: DecodeOverrides; // per-Backend decode defaults
   translationOverrides?: TranslationOverrides; // T2T defaults (absent key = inherit server)
   kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
   // Server override-profile (full backend only): a profile name to reference,
@@ -128,7 +128,7 @@ export interface Profile {
   model?: string; // override Backend.model; empty/undefined = inherit
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
-  decodeOverrides?: DecodeOverrides; // Phase-B: per-Profile decode overrides
+  decodeOverrides?: DecodeOverrides; // per-Profile decode overrides
   translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, ALL translateTo targets are injected (blank-line separated)
   /** Insert each phrase as you speak, instead of the whole transcript when the session ends.
    *
@@ -309,7 +309,7 @@ export interface RecordingSettings {
   recordingsDir: string | null; // LEGACY custom folder for saved .wav files; acts as audioBaseDir fallback
   audioBaseDir: string | null; // one base folder for ALL stored audio (dictations/, files/, links/, video/); null = default app-data location
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
-  recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
+  recordingsRetentionDays: number; // delete saved recordings older than N days (0 = no limit from this key; the sweep uses the stricter non-zero of this and transcribe.dictationRetentionDays)
   muteSystemAudio: boolean;
   handsFreeAutoStopMin: number; // auto-stop a hands-free session after N min of silence (0 = never)
   reportTargetApp: boolean; // send the dictated-into app id (never the window title) with each session's usage outcome
@@ -779,9 +779,9 @@ export interface DecodeDefaults {
   };
 }
 
-// --- P17: pipeline ("Dictionary") rules — LIVE server state, not persisted ---
-// Fetched per-Backend from GET /v1/pipeline-rules, edited, PATCHed back. Wire
-// shape is snake_case (passes through Rust as opaque JSON, typed only here).
+// Pipeline ("Dictionary") rules: LIVE server state, not persisted. Fetched per-Backend
+// from GET /v1/pipeline-rules, edited, PATCHed back. Wire shape is snake_case (passes
+// through Rust as opaque JSON, typed only here).
 
 export type RuleType =
   | "regex-list"
@@ -881,7 +881,7 @@ export interface RecentWords {
   max?: number;
 }
 
-// P28: per-user usage stats (GET /v1/usage). snake_case mirrors the backend
+// Per-user usage stats (GET /v1/usage). snake_case mirrors the backend
 // JSON 1:1 — it passes straight through the Rust IPC boundary unchanged
 // (`transport::UsageStats`, which also bounds every list and string).
 
@@ -933,7 +933,8 @@ export interface UsageDictation {
   words: number;
   audio_s: number;
   wpm: number;
-  /** `unreported` = sessions the server sweep closed without an outcome; absent on older servers. */
+  /** `unreported` = sessions the server sweep closed without an outcome; an older server omits
+   *  it and the Rust mirror then reports 0. */
   activation: { hold: number; handsfree: number; unreported?: number };
   delivery: { typed: number; clipboard: number; none: number; unreported: number };
   translation: {
@@ -1071,8 +1072,8 @@ export interface Config {
   settings: AppSettings;
   backends: Backend[];
   profiles: Profile[];
-  appRules?: AppRule[]; // per-application injection rules (P16)
-  version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ CONFIG_VERSION in store.ts, 3)
+  appRules?: AppRule[]; // per-application injection rules
+  version?: number; // schema version (absent/legacy ⇒ 1; current ⇒ CONFIG_VERSION in store.ts)
 }
 
 /** A single segment from verbose_json with its timestamps. */
@@ -1201,7 +1202,7 @@ export interface PlanStage {
 /** Live progress of an in-flight file transcription. */
 export interface BatchProgress {
   /** waiting | resolving | downloading | separating | analyzing |
-   *  transcribing | diarizing | unknown */
+   *  transcribing | diarizing | loading | translating | unknown */
   stage?: string;
   /** 0..1 during a measured stage; absent/null elsewhere. */
   progress?: number | null;
