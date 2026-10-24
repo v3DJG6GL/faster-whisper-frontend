@@ -32,7 +32,7 @@ import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, eff
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps, requestCredentialGen } from "@/lib/capabilities";
+import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps, requestCredentialGen, stillRoutesTo } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
@@ -1181,16 +1181,10 @@ export default function Backends() {
       // if the backend still exists with the same target, else we'd re-cache the OLD server's
       // classification under this id (effectiveServerKind / status dot / decode gate) or re-add a
       // dangling connection for a removed backend — and nothing re-tests on its own.
-      const cur = useApp.getState().backends.find((x) => x.id === b.id);
-      const curUrl = cur ? effectiveServerUrl(cur, useApp.getState().settings) : null;
-      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl && credentialGeneration(b.id) === gen) {
-        setConnection(b.id, info);
-      }
+      if (stillRoutesTo(b, testedUrl, gen)) setConnection(b.id, info);
     } catch (e) {
       console.error("test_connection failed", e);
-      const cur2 = useApp.getState().backends.find((x) => x.id === b.id);
-      const curUrl2 = cur2 ? effectiveServerUrl(cur2, useApp.getState().settings) : null;
-      if (cur2 && cur2.serverUrl === b.serverUrl && cur2.hasApiKey === b.hasApiKey && curUrl2 === testedUrl && credentialGeneration(b.id) === gen) {
+      if (stillRoutesTo(b, testedUrl, gen)) {
         setConnection(b.id, { ok: false, openMode: false, models: [], error: String(e) } as ConnectionInfo);
       }
     } finally {

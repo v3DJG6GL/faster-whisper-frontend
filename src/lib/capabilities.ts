@@ -67,6 +67,22 @@ export function requestCredentialGen(backendId: string | null | undefined, apiKe
   return backendId && !apiKey ? credentialGeneration(backendId) : 0;
 }
 
+/** Whether an answer to a request made for `backend` at `target` under credential generation
+ *  `gen` may still land: the backend still exists with the same address and key presence, its
+ *  effective address (the per-device override included) is still `target`, and its stored key
+ *  has not been rotated (forgetCaps). */
+export function stillRoutesTo(backend: Backend, target: string, gen: number): boolean {
+  const st = useApp.getState();
+  const cur = st.backends.find((x) => x.id === backend.id);
+  return (
+    !!cur &&
+    cur.serverUrl === backend.serverUrl &&
+    cur.hasApiKey === backend.hasApiKey &&
+    effectiveServerUrl(cur, st.settings) === target &&
+    credentialGeneration(backend.id) === gen
+  );
+}
+
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a server
  *  known to be standard stores null ("fetched and unsupported"); any other null answer
  *  (an older server without /v1/me, a transient error) leaves the cache entry absent so
@@ -110,20 +126,12 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
     const fetched = await getCapabilities({ serverUrl: target, backendId: backend.id }).catch(
       () => null,
     );
-    // Asked with a key that has since been rotated (forgetCaps): same address, same key
-    // presence, so the guards below cannot tell — the generation can.
-    if ((generation.get(backend.id) ?? 0) !== gen) return;
-    // A slow fetch against the OLD server can resolve AFTER the user edited this
-    // backend's URL/key (the store dropped the stale caps) or removed it. Bail unless
-    // the backend still exists with the same target — else we'd re-install the previous
+    // A slow fetch against the OLD server can resolve AFTER the user edited this backend's
+    // URL/key/override (the store dropped the stale caps), removed it, or a pull rotated its
+    // stored key. Bail unless it still routes here — else we'd re-install the previous
     // server's capabilities under a backend that now points somewhere else.
-    const st = useApp.getState();
-    const cur = st.backends.find((x) => x.id === backend.id);
-    if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
-    // …and the URL OVERRIDE, which is where this request actually went — the third
-    // trigger `setUrlOverride` invalidates on.
-    if (effectiveServerUrl(cur, st.settings) !== target) return;
-    if (fetched !== null) st.setCaps(backend.id, fetched);
+    if (!stillRoutesTo(backend, target, gen)) return;
+    if (fetched !== null) useApp.getState().setCaps(backend.id, fetched);
   })();
   inFlight.set(backend.id, { run, target, hasKey: backend.hasApiKey, gen });
   try {
