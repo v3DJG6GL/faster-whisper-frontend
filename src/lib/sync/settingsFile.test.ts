@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import { CONFIG_VERSION, useApp } from "../store";
 import { applyBlob, categorySelection, migrateBlob, restoreSnapshotSecretsForTests } from "./sync";
 import { applyImport, buildEnvelope, exportToFile, stripMachineFolders } from "./settingsFile";
-import type { SyncCategory } from "../types";
+import type { Backend, SyncCategory } from "../types";
 import type { ImportResult, SyncBlob } from "./syncTypes";
 
 vi.mock("../api", async (importOriginal) => {
@@ -78,77 +78,70 @@ describe("buildEnvelope", () => {
 // export must report that instead of a plain "Exported" for a backup the user
 // asked to carry the keys.
 describe("exportToFile", () => {
+  let prev: Backend[];
+  beforeEach(() => {
+    prev = useApp.getState().backends;
+  });
+  afterEach(() => {
+    useApp.setState({ backends: prev });
+  });
+  /** This device's first backend re-keyed as `id` and flagged as holding an API key. */
+  const keyed = (id: string) => ({ ...(prev[0] ?? {}), id, hasApiKey: true }) as Backend;
+
   it("reports keysMissing when the keys were asked for but could not be read", async () => {
-    const prev = useApp.getState().backends;
-    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
+    const b0 = keyed("b1");
     useApp.setState({ backends: [b0] });
-    try {
-      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
-      const env = lastEnvelope();
-      expect(env.categories.backends?.secrets).toBeUndefined();
+    vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
+    const env = lastEnvelope();
+    expect(env.categories.backends?.secrets).toBeUndefined();
 
-      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({ b1: "sk-1" });
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+    vi.mocked(api.readBackendKeys).mockResolvedValueOnce({ b1: "sk-1" });
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
 
-      // Keys not asked for: nothing is missing.
-      await expect(exportToFile("/tmp/x.json", false)).resolves.toEqual({ keysMissing: false });
-    } finally {
-      useApp.setState({ backends: prev });
-    }
+    // Keys not asked for: nothing is missing.
+    await expect(exportToFile("/tmp/x.json", false)).resolves.toEqual({ keysMissing: false });
   });
 
   // The verdict follows the list the file was built from, not the store after the write: a sync
   // pull landing during the export can add or drop a key in between.
   it("judges keysMissing on the exported list, not on a store a pull changed meanwhile", async () => {
-    const prev = useApp.getState().backends;
-    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
-    try {
-      // Keyed list, keyring read failed, and the key is gone by the time the file is written.
-      useApp.setState({ backends: [b0] });
-      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
-      vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
-        useApp.setState({ backends: [{ ...b0, hasApiKey: false }] });
-      });
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
-
-      // Keyless list (nothing to carry), and a key arrives while the file is written.
+    const b0 = keyed("b1");
+    // Keyed list, keyring read failed, and the key is gone by the time the file is written.
+    useApp.setState({ backends: [b0] });
+    vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
+    vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
       useApp.setState({ backends: [{ ...b0, hasApiKey: false }] });
-      vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
-        useApp.setState({ backends: [b0] });
-      });
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
-    } finally {
-      useApp.setState({ backends: prev });
-    }
+    });
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
+
+    // Keyless list (nothing to carry), and a key arrives while the file is written.
+    useApp.setState({ backends: [{ ...b0, hasApiKey: false }] });
+    vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
+      useApp.setState({ backends: [b0] });
+    });
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
   });
 
   // A flag whose key the keyring reports ABSENT (config copied from another machine, wallet reset)
   // goes into the file as keyless, which it is: nothing failed to read, so nothing is missing.
   it("does not report keysMissing for a stale flag the keyring reports absent", async () => {
-    const prev = useApp.getState().backends;
-    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
+    const b0 = keyed("b1");
     useApp.setState({ backends: [b0] });
-    try {
-      vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: [] });
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
-      const env = lastEnvelope();
-      expect(env.categories.backends?.list.map((b) => b.hasApiKey)).toEqual([false]);
+    vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: [] });
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+    const env = lastEnvelope();
+    expect(env.categories.backends?.list.map((b) => b.hasApiKey)).toEqual([false]);
 
-      vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: ["b1"] });
-      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
-    } finally {
-      useApp.setState({ backends: prev });
-    }
+    vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: ["b1"] });
+    await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
   });
 
   // The sync stash latch (a launch read-back of the merge base's keys came back partial) is about
   // the sync base, which an export never consults: it must not keep a stale absent flag claiming a
   // key and so drop the readable keys from the backup.
   it("carries the readable keys and writes a stale absent flag keyless while the sync stash latch is set", async () => {
-    const prev = useApp.getState().backends;
-    const base = { ...(prev[0] ?? {}), hasApiKey: true } as (typeof prev)[number];
-    useApp.setState({ backends: [{ ...base, id: "a" }, { ...base, id: "b" }] });
+    useApp.setState({ backends: [keyed("a"), keyed("b")] });
     try {
       // The mocked keyring read gives nothing back for the stash: the latch is set.
       expect((await restoreSnapshotSecretsForTests(["a"])).blocked).toBe(true);
@@ -159,7 +152,6 @@ describe("exportToFile", () => {
       expect(env.categories.backends?.list.map((b) => [b.id, b.hasApiKey])).toEqual([["a", true], ["b", false]]);
     } finally {
       await restoreSnapshotSecretsForTests([]); // clears the latch
-      useApp.setState({ backends: prev });
     }
   });
 });
