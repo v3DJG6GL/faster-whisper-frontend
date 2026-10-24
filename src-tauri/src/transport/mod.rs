@@ -802,7 +802,7 @@ pub(crate) const MODEL_ID_MAX: usize = 200;
 /// string ([`bounded_server_text`]), and one that is blank ONCE FOLDED is dropped too — an id of
 /// invisible characters only folds to "" and names no model. The transcription form and T2T
 /// request fields (`model`, `translation_model`, `translation_mode`, `diarization_model`,
-/// `separation_model`) keep their own trim-and-omit-blank screen and are NOT capped by this rule.
+/// `separation_model`) are NOT capped by this rule.
 pub(crate) fn model_id_within(s: &str, max: usize) -> Option<String> {
     (s.chars().count() <= max)
         .then(|| bounded_server_text(s, max))
