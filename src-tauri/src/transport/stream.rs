@@ -367,7 +367,6 @@ pub async fn run<F>(
 ) where
     F: Fn(StreamEvent) + Send + 'static,
 {
-    // On any setup failure, surface the error AND a terminal Closed, then bail.
     macro_rules! fail {
         ($msg:expr) => {{
             // Bounded inside the macro so no future arm can regress: these are the only error
@@ -427,7 +426,7 @@ pub async fn run<F>(
     let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(MAX_WS_MESSAGE));
     let proxy = super::proxy::system_route(&params.ws_url);
-    // Empty when direct, so a direct failure reads exactly as it always has.
+    // Empty when direct, so a direct failure's message names no proxy.
     let via = proxy
         .as_ref()
         .map(|p| format!(" through the proxy {}", p.display()))
@@ -562,11 +561,10 @@ pub async fn run<F>(
         loop {
             match read.next().await {
                 Some(Ok(Message::Text(t))) => {
-                    // Forward each parsed event; stop on `closing`. The LAST `final` is not
-                    // the end: its `captured` receipt follows it, so give the socket a short
-                    // grace to deliver it (and a `closing` that may come right behind) before
-                    // stopping — bounded, so a server that never says `closing` does not park
-                    // the reader on the drain's idle window.
+                    // The LAST `final` is not the end: its `captured` receipt follows it, so
+                    // give the socket a short grace to deliver it (and a `closing` that may come
+                    // right behind) before stopping — bounded, so a server that never says
+                    // `closing` does not park the reader on the drain's idle window.
                     let forward = |e| {
                         if matches!(e, StreamEvent::Error(_)) {
                             error_seen.store(true, Ordering::Relaxed);
@@ -983,7 +981,7 @@ pub async fn run<F>(
         }
     } else if let Some(dir) = save_dir {
         // Skip empties (a quick tap that drained without audio, or a session the silence-trim
-        // reduced to nothing). Emit the saved path so the client can label it with the transcript.
+        // reduced to nothing). Emit the saved path so the client can link its history record to it.
         if !saved.is_empty() {
             // On the blocking pool: up to MAX_RECORD_PCM_BYTES plus an fsync and the sidecar, and
             // a recordings folder on a sleeping disk or an offline share must not park a runtime
@@ -1527,7 +1525,7 @@ fn str_field<'a>(v: &'a serde_json::Value, key: &str) -> &'a str {
 }
 
 /// A server-supplied string LIST, held to the same ceiling the batch path applies to this data:
-/// [`MAX_NOTICES`] entries of [`crate::transport::MAX_ERROR_TEXT`] chars, control chars folded.
+/// [`crate::transport::MAX_NOTICES`] entries of [`crate::transport::MAX_ERROR_TEXT`] chars, control chars folded.
 fn bounded_str_vec_field(v: &serde_json::Value, key: &str) -> Vec<String> {
     v.get(key)
         .and_then(|x| x.as_array())
