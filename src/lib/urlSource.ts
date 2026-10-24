@@ -64,7 +64,7 @@ export function stripMediaUrlNoise(raw: string): string {
 export function pastesSeveralLinks(raw: string): boolean {
   const t = trimMediaEdges(raw.replace(/[\n\r]/g, ""));
   return (
-    /^https?:\/\//i.test(t) &&
+    isSourceUrl(t) &&
     /[\t\v\f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\p{Cf}]https?:\/\//iu.test(t)
   );
 }
@@ -86,7 +86,7 @@ export function pastesSeveralLinks(raw: string): boolean {
 export function normalizeMediaUrl(raw: string): string | null {
   const t = stripMediaUrlNoise(raw);
   if (t.length === 0 || t.length > 2048) return null;
-  if (!/^https?:\/\//i.test(t)) return null;
+  if (!isSourceUrl(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.
   if (pastesSeveralLinks(raw)) return null;
   let url: URL;
