@@ -111,6 +111,11 @@ function scrollParentOf(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/** `top` bounded to what `el` can actually scroll to. */
+function clampScrollTop(el: HTMLElement, top: number): number {
+  return Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+}
+
 
 
 export function TranscriptViewer({
@@ -1393,12 +1398,9 @@ export function TranscriptViewer({
     const visBottom = Math.min(pageRect.bottom, window.innerHeight);
     // Hidden under the stuck toolbar, or under ~a box title from the bottom.
     if (top >= bar.getBoundingClientRect().bottom - 1 && top <= visBottom - 120) return;
-    page.scrollTop = Math.max(
-      0,
-      Math.min(
-        page.scrollTop + card.getBoundingClientRect().top - pageRect.top,
-        page.scrollHeight - page.clientHeight,
-      ),
+    page.scrollTop = clampScrollTop(
+      page,
+      page.scrollTop + card.getBoundingClientRect().top - pageRect.top,
     );
     // activeSegIdx is read at switch time only — the row to land on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1442,13 +1444,7 @@ export function TranscriptViewer({
         ? (visTop + visBottom) / 2
         : boxRect.top + box.clientHeight / 2; // box fully off-screen
     const rowCenter = rowRect.top + row.clientHeight / 2;
-    const target = Math.max(
-      0,
-      Math.min(
-        box.scrollTop + rowCenter - visCenter,
-        box.scrollHeight - box.clientHeight,
-      ),
-    );
+    const target = clampScrollTop(box, box.scrollTop + rowCenter - visCenter);
     const from = box.scrollTop;
     const dist = target - from;
     // What the clamped box scroll can't cover falls to the page scroller, but only
@@ -1469,12 +1465,7 @@ export function TranscriptViewer({
     const page =
       scrollParentOf(box) ?? ((document.scrollingElement as HTMLElement | null) ?? null);
     const pageFrom = page ? page.scrollTop : 0;
-    const pageTarget = page
-      ? Math.max(
-          0,
-          Math.min(pageFrom - pageShift, page.scrollHeight - page.clientHeight),
-        )
-      : 0;
+    const pageTarget = page ? clampScrollTop(page, pageFrom - pageShift) : 0;
     const pageDist = pageTarget - pageFrom;
     if (Math.abs(dist) < 1 && Math.abs(pageDist) < 1) return;
     if (followAnimRef.current) cancelAnimationFrame(followAnimRef.current);
