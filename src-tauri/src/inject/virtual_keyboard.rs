@@ -58,10 +58,9 @@ enum VkChannel {
 #[derive(Default)]
 pub struct VirtualKeyboard(Mutex<VkChannel>);
 
-/// Type `text` (then an optional Enter) via the virtual keyboard. Err means the protocol is
-/// unavailable or the job failed; check `VkError::after_typing` before falling back to the portal —
-/// when it's true, some keys already landed and re-typing would duplicate them. The setup/plumbing
-/// failures here are all "nothing typed yet" (after_typing: false).
+/// Type `text` (then an optional Enter) via the virtual keyboard. On Err, check
+/// `VkError::after_typing` before falling back to the portal; the setup/plumbing failures here
+/// are all "nothing typed yet".
 /// `epoch` is captured by the CALLER at the top of `inject_text`, not here: queuing happens
 /// after up to ~1.2s of pre-work, and a cancel landing in that window would otherwise be read
 /// as this job's own starting generation.
@@ -217,7 +216,7 @@ mod imp {
             let (globals, mut queue) = registry_queue_init::<St>(&conn)
                 .map_err(|e| format!("registry init failed: {e}"))?;
             let qh = queue.handle();
-            // The deciding bind: absent on GNOME → caller falls back to the portal.
+            // The deciding bind: absent on GNOME and KWin → caller falls back to the portal.
             let mgr: ZwpVirtualKeyboardManagerV1 = globals.bind(&qh, 1..=1, ()).map_err(|_| {
                 "zwp_virtual_keyboard_manager_v1 not advertised (compositor unsupported)"
                     .to_string()
