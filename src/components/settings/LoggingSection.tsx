@@ -15,12 +15,12 @@ export function LoggingSection() {
   const logging = useApp((s) => s.settings.logging);
   const updateLogging = useApp((s) => s.updateLogging);
   const navigate = useNavigate();
-  // As on the Logs screen: a failed open (dead share, read-only path) says so on the
-  // button. `openingFor` is only this mount's disabled look, for the folder it is opening: the
-  // one-call-per-folder gate lives in openLogFolder (api.ts), shared with the Logs screen, so a
-  // click after a tab switch joins the pending call instead of queueing a second file-manager
-  // window — and an open hung on an offline share leaves a folder chosen since clickable.
-  // undefined = nothing opening (null is the default folder).
+  // As on the Logs screen, a failed open (dead share, read-only path) says so on the button.
+  // `openingFor` is only this mount's disabled look for the folder being opened (undefined =
+  // nothing opening, null = the default folder); the one-call-per-folder gate lives in
+  // openLogFolder (api.ts), so a click after a tab switch joins the pending call instead of
+  // queueing a second file-manager window, and a folder chosen since an open hung on an
+  // offline share stays clickable.
   const [openingFor, setOpeningFor] = useState<string | null | undefined>(undefined);
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
