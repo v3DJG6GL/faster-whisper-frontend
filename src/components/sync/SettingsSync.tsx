@@ -1,6 +1,6 @@
 // Settings → Sync: file backup (export/import with per-category preview) and
 // cross-device sync through a faster-whisper-backend (enable + server picker +
-// per-device category toggles + status/manual controls + conflict dialog).
+// per-setting sync switches + status/manual controls + conflict dialog).
 // The engine lives in lib/sync/sync.ts; this screen only drives it.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -224,7 +224,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     [categories],
   );
   // Likewise the profiles: `sanitizeProfiles` dedupes ids and drops malformed entries, so the raw
-  // file length over-counted what replaces this device's profiles.
+  // file length would over-count what replaces this device's profiles.
   const installProfiles = useMemo(
     () => (categories.profiles ? sanitizeProfiles(categories.profiles.list) : []),
     [categories],
@@ -273,7 +273,6 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // server, that key goes there, whatever the file's own `hasApiKey` says (`backendKeyFates`).
   const keyFates = backendKeyFates(sel.backends ? installBackends : [], result.secrets, st.backends, st.settings);
 
-  // Same helper `RestoreFromServer` uses for its own replace warning — see the notice below.
   const replaced = replacedNames(sel, categories, st);
 
   const apply = async () => {
@@ -822,8 +821,8 @@ function ConflictDialog() {
       : s.remoteKey === pending.remoteKey
         ? Object.fromEntries(Object.entries(s.p).filter(([c]) => (pending.categories as string[]).includes(c)))
         : {};
-  // Keyed on the conflict's identity so a new conflict (or a restored one) remounts the body
-  // with busy cleared.
+  // Keyed on the conflict's identity so a new conflict remounts the body with busy cleared (a
+  // restored one shares the id but remounts anyway: the body unmounted while it was nulled).
   return (
     <ConflictDialogBody
       key={pending.id}
