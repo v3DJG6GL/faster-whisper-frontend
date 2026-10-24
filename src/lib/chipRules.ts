@@ -64,7 +64,7 @@ export function chipExpansion(a: {
   /** What the server reports doing behind a "listening" status (types.ServerWork). */
   serverWork?: ServerWork;
   speaking: boolean;
-  /** Is the pill open right now? (Processing sustains, never initiates.) */
+  /** Is the pill open right now? (Processing sustains it; only a long stage opens it.) */
   expanded: boolean;
   phase?: DictationPhase | null;
   now: number;
