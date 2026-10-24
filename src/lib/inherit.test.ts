@@ -15,7 +15,7 @@ describe("inheritLabel", () => {
     expect(inheritLabel(null)).toBe("Inherit");
   });
   it("draws a value made only of whitespace instead of dropping it", () => {
-    // Changed: "  " used to give the bare word, which reads as "value unknown".
+    // Not the bare word, which would read as "value unknown".
     expect(inheritLabel("  ", "Default")).toBe("Default · ␠␠");
     expect(inheritLabel(" ")).toBe("Inherit · ␠");
     expect(inheritLabel("\t", "Set by server")).toBe("Set by server · ⇥");
@@ -86,7 +86,7 @@ describe("server default names (W6–W8)", () => {
   it("a server language of only format characters reads \"??\", not blank", () => {
     expect(serverLanguageLabel(dd({ language: e("\u200f") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("\u200b\u2066") }))).toBe("??");
-    // A joiner-only code: the display filter keeps ZWNJ/ZWJ, so the label was an invisible "\u200d".
+    // A joiner-only code: the display filter keeps ZWNJ/ZWJ, so it would otherwise render invisible.
     expect(serverLanguageLabel(dd({ language: e("\u200d") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("\u200c\u200d") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("de") }))).toBe("German");
@@ -207,7 +207,7 @@ describe("serverInherited", () => {
       }),
     );
     expect(s.values.streaming_hard_break_separator).toBe("\n");
-    // A space is a value (inheritLabel draws it as ␠), no longer dropped as "blank".
+    // A space is a value (inheritLabel draws it as ␠), not a blank.
     expect(s.values.output_prefix).toBe(" ");
     expect(s.values.hallucination_silence_threshold).toBe("off");
     expect(s.values.suppress_chars).toBe("none");
