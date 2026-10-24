@@ -15,12 +15,11 @@ export function pruneTargets(targets: string[], source: string): string[] {
 
 /** A target list as the wire takes it — and the ONE list the chips show, count and remove from,
  *  and a run sends. Mirrors Rust's `is_lang_code` (src-tauri/src/transport/mod.rs): 2..=16
- *  ASCII letters, digits or `-`, so a code the wire would refuse is skipped whole rather than
- *  shortened (`ca-ES-valencia` clipped at 12 became a code nobody picked) and never shows a
- *  chip, holds a slot or reaches a send. `translationOverrides` is a SYNCED field neither
- *  sanitizer clamps element-wise, so strings only: a peer's `translateTo: [123]` reached
- *  `code.toUpperCase()` in the render body and — with no error boundary — unmounted the window
- *  on every launch. Trimmed, de-duplicated (the chips are keyed on the code), at most 32. */
+ *  ASCII letters, digits or `-`; a code the wire would refuse is skipped whole, never shortened
+ *  (a clipped `ca-ES-valencia` is a code nobody picked). `translationOverrides` is a SYNCED field
+ *  neither sanitizer clamps element-wise, so non-strings are dropped — a peer's `[123]` crashed
+ *  the render body, which has no error boundary. Trimmed, de-duplicated (chips are keyed on the
+ *  code), at most 32. */
 export const wireCodes = (v: unknown) =>
   cleanCodes(
     Array.isArray(v) ? v.filter((c) => typeof c === "string" && /^[A-Za-z0-9-]{2,16}$/.test(c.trim())) : v,
@@ -85,9 +84,9 @@ export function pruneTranslationOverrides(
   if (out.glossary === undefined) delete out.glossary;
   if (!out.mode) delete out.mode;
   // Tri-state: only `undefined` is "inherit". `false` is an explicit OFF and must be
-  // STORED — the effective value is a per-field spread merge (streaming.ts trOv), so a
-  // pruned `false` silently re-inherited a Backend default of `true` while the toggle
-  // sat visibly off.
+  // STORED — the effective value is a per-field spread merge (dictation/sessionShape.ts
+  // trOv), so a pruned `false` silently re-inherited a Backend default of `true` while the
+  // toggle sat visibly off.
   if (out.includeOriginal === undefined) delete out.includeOriginal;
   return Object.keys(out).length ? out : undefined;
 }
