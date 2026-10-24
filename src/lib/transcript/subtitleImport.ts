@@ -32,8 +32,7 @@ export function isAcceptedSourcePath(path: string): boolean {
   return !!m && ACCEPTED_EXTS.includes(m[1].toLowerCase());
 }
 
-/** Is this path a text/subtitle source (vs audio/video)? Extension test only —
- *  the pickers filter, this guards drops and retries. */
+/** Is this path a text/subtitle source (vs audio/video)? Extension test only. */
 export function isTextSourcePath(path: string): boolean {
   const m = /\.([A-Za-z0-9]+)$/.exec(path);
   return !!m && (TEXT_SOURCE_EXTS as readonly string[]).includes(m[1].toLowerCase());
@@ -223,15 +222,14 @@ export interface RawCue {
 
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
- *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
- *  a contiguous cue repeats from the cue before, and — only in a file where such a freeze
- *  cue bridges a roll — extend that cue when nothing new is left: an ordinary file may say
- *  "Thank you." twice back to back, and both lines stay. Broadcast roll-up captions have no
- *  freeze cue but open most multi-line cues with the line(s) before; such a file gets the
- *  leading-line strip too. Ordinary files keep their repeats — a word said at the end of one
- *  cue and the start of the next stays twice, and a short cue with text of its own (our own
- *  exports keep a zero-length segment, even one repeating its neighbour) is kept; only an
- *  empty cue goes, in every file. */
+ *  two or three times. In a file where such a freeze cue bridges a roll: drop each ≤100 ms
+ *  cue that only repeats a neighbour, strip the leading lines a contiguous cue repeats from
+ *  the cue before, and extend that cue when nothing new is left. Broadcast roll-up captions
+ *  have no freeze cue but open most multi-line cues with the line(s) before; such a file gets
+ *  the leading-line strip only. Ordinary files keep their repeats — "Thank you." twice back to
+ *  back, a word said at the end of one cue and the start of the next, and a short cue with
+ *  text of its own (our own exports keep a zero-length segment, even one repeating its
+ *  neighbour); only an empty cue goes, in every file. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
   // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
@@ -615,7 +613,6 @@ function parseJsonExport(body: string): ImportedText {
   }
   // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
   // from a locally parsed file and otherwise reached the meta line and track chips raw.
-  // Trimmed, blank = none — one rule for both shapes below.
   // A word ("english", what OpenAI's verbose_json writes) becomes its code when it names a
   // Whisper language, so the original groups, limits and titles like the code it stands for and
   // goes out as the translation source; a word no language goes by stays as the file said.
