@@ -464,8 +464,8 @@ pub(crate) fn migrated_counterpart(path: &Path) -> Option<PathBuf> {
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when the file could not be read, or
-/// a re-point it found could not land, on the first launch to hit that fault (REPOINT_PENDING is
-/// then left for the next launch; see `repoint_fault_stops`).
+/// a re-point it found could not land, and `repoint_fault_stops` stops this launch on that fault
+/// (REPOINT_PENDING is then left for the next launch).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
     // The loader's own read, so a brief AV or sync-client hold right after the move is ridden
