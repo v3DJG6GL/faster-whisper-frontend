@@ -134,9 +134,8 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     setDefsWithUndo(defs, (d) => DEFAULT_SETTING_SYNC[d.id as SettingId], label);
   }
 
-  // Tri-state like every GroupCard below: a boolean master read "Off" forever
-  // on a stock install (machine-specific rows default off), and one click from
-  // there overwrote the whole curated map with all-true — no confirm, no undo.
+  // Tri-state like every GroupCard below: a boolean master would read "Off" on a
+  // stock install (machine-specific rows default off).
   const onDefs = DEFS.filter((d) => gates[d.id as SettingId]);
   const master: boolean | "mixed" =
     onDefs.length === DEFS.length ? true : onDefs.length === 0 ? false : "mixed";
@@ -172,12 +171,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         />
       </div>
 
-      {/* The list always renders — the master toggle sets switches, it never
-          hides them; only Expand/Collapse and the filter control visibility. */}
       <div className="flex items-center pb-2">
-          {/* ONE view control — collapsed/expanded/exceptions are three
-              values of the same state, so two switches always left a dead
-              combination. Hand-toggled chevrons produce a mix no segment
+          {/* ONE view control: collapsed/expanded/exceptions are three values
+              of the same state. Hand-toggled chevrons produce a mix no segment
               matches ("custom"): none renders active until a segment snaps
               the whole list back. */}
           <Segmented
@@ -220,10 +216,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
             changed={changed}
             expanded={!!ui.expanded[group]}
             changedOnly={ui.changedOnly}
-            // A chevron in "Changed & default-off" mode was inert (that mode wins over
-            // `expanded`): make it leave the mode, so the click does what the arrow shows.
-            // Flip what the arrow SHOWS (`shownOpen`), not the hidden `expanded` flag —
-            // in that mode the two differ, and flipping `expanded` inverted the click.
+            // "Changed & default-off" mode wins over `expanded`, so a chevron click leaves
+            // the mode and flips what the arrow SHOWS (`shownOpen`) — in that mode it can
+            // differ from the hidden `expanded` flag.
             onToggleExpand={(shownOpen) =>
               patchUi({ changedOnly: false, expanded: { [group]: !shownOpen } })
             }
@@ -339,10 +334,6 @@ function GroupCard({
   const master: boolean | "mixed" =
     off.length === 0 ? true : on.length === 0 ? false : "mixed";
 
-  // Filter on → the group's exceptions (changed OR switch off), expansion
-  // ignored; filter off → all rows when expanded, none when collapsed (the
-  // header + summary IS the collapsed view). The header always renders so the
-  // group master stays reachable in every mode.
   const { visible, panelOpen, owns } = groupPanelState(defs, gates, changed, expanded, changedOnly);
 
   const summary =
@@ -351,10 +342,8 @@ function GroupCard({
       : `${on.length} synced · ${off.length} off${changedDefs.length ? ` · ${changedDefs.length} changed` : ""}`;
 
   const panelId = `sync-group-${group}`;
-  // What the toggle CLAIMS must match what is on screen: in "changed & default-off" mode the
-  // panel shows exceptions while `expanded` is false, and a collapsed group has no panel node
-  // for `aria-controls` to point at. In that mode the toggle does not drive the panel, so it
-  // owns none.
+  // `aria-controls` only when the toggle owns the panel: a collapsed group has no panel node,
+  // and in "changed & default-off" mode the toggle does not drive it.
   return (
     <div className="mb-2.5 rounded-xl border border-line bg-surface px-4">
       <div className="flex items-center gap-3 py-2.5">
@@ -450,8 +439,6 @@ function SettingSwitchRow({
         {def.desc && <div className="text-[11.5px] text-faint">{def.desc}</div>}
       </div>
       {isChanged && (
-        // The one reset control: permanently visible while the switch differs
-        // from its default (appears/disappears with the accent bar).
         <button
           type="button"
           title="Reset to default"
