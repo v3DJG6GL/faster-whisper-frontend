@@ -352,7 +352,7 @@ function extractRecording(
   const { recordingsDir, audioBaseDir, ...rest } = settings.recording;
   const out = omitFields(rest, CHIP_FIELD_SET) as SyncRecording;
   // The dictation-history flags live in settings.transcribe but belong to
-  // this category (the tab's "Dictation" group governs the same sessions).
+  // this category (the tab lists them under "Recording & history").
   Object.assign(
     out,
     pickFields((settings.transcribe ?? {}) as Record<string, unknown>, DICTATION_HISTORY_SET),
@@ -1205,11 +1205,12 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T)
  *  every later save_config rejected for the session. */
 const U32_KEYS = new Set(["hoverRevealMs", "recordingsRetentionDays", "keepDays"]);
 
-/** Per-field validation for the `transcription` category. `settings.transcribe`
- *  is OPAQUE to Rust (serde_json::Value), so nothing downstream rejects a bad
- *  type — this is the only gate. Wrong-typed values are dropped (keep local);
- *  numbers are clamped to their UI ranges. Unknown keys never reach here
- *  (pickFields allowlists first). */
+/** Per-field validation for every inbound key that lands in `settings.transcribe` (the
+ *  `transcription` and `fileTranscriptions` categories and the dictation-history flags riding
+ *  `recording`). `settings.transcribe` is OPAQUE to Rust (serde_json::Value), so nothing
+ *  downstream rejects a bad type — this is the only gate. Wrong-typed values are dropped (keep
+ *  local); numbers are clamped to their UI ranges. Unknown keys never reach here (pickFields
+ *  allowlists first). */
 function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSettings> {
   const out: Record<string, unknown> = {};
   const BOOLS = [
@@ -1275,8 +1276,8 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
     const str = ownProp(v, k);
     if (typeof str === "string" && str.length <= 256) out[k] = str;
   }
-  // T2T targets: the blob's only array-of-strings field — clamp shape hard
-  // (TRANSLATION_MAX_TARGETS short codes max) so a hostile peer can't balloon the settings blob.
+  // T2T targets: the only array field here — clamp shape hard (TRANSLATION_MAX_TARGETS
+  // short codes max) so a hostile peer can't balloon the settings blob.
   const tt = ownProp(v, "translateTo");
   if (Array.isArray(tt)) {
     out.translateTo = tt
@@ -1793,8 +1794,6 @@ export async function applyBlob(
             gates.audioFolder && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
               ? rec.recordingsDir
               : settings.recording.recordingsDir,
-          // Same machine-path rule for the audio base folder (one sub-toggle
-          // governs both paths).
           audioBaseDir:
             gates.audioFolder && (typeof rec.audioBaseDir === "string" || rec.audioBaseDir === null)
               ? rec.audioBaseDir
@@ -2488,7 +2487,7 @@ function backendsDegraded(composed: SyncBlob, cats: Record<SyncCategory, boolean
  *  then this device's list stays put and the next push re-sends the base's category, so nothing
  *  is lost. A remote that changed backends must not become the base (the next unlocked merge
  *  would read the peer's change as "local unchanged" and drop this device's edits), and holding
- *  it back forever under an "ok" status stalled every push behind a 409 — so say why. */
+ *  it back silently under an "ok" status would stall every push behind a 409 — so say why. */
 function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
   // A re-enabled backends category (`freshCats`) was never compared — the degraded compose passed
   // the remote's list through — so no base may say it was: the first unlocked pull asks.
@@ -3525,8 +3524,8 @@ function localForReview(local: SyncBlob): SyncBlob {
 
 /**
  * `securityChanges` over an incoming blob and the local one, both gated by the SAME
- * `settingGates()` snapshot — the three consent sites (409 merge, unattended pull, conflict
- * resolution) must never diverge in how they gate the two sides.
+ * `settingGates()` snapshot — the consent sites (409 merge, unattended pull, approval re-judge,
+ * conflict resolution) must never diverge in how they gate the two sides.
  */
 function gatedSecurityCheck(
   incoming: SyncBlob,
@@ -4168,8 +4167,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
  *  re-offers it rather than silently treating the rejected state as agreed. */
 export function rejectPendingReview(): void {
   setPendingReview(null);
-  // Also drops a pull-apply parked while dictation ran: with no base adopted the next pull
-  // re-offers it, so nothing lands behind a refusal.
+  // Also drops a pull-apply parked while dictation ran, so nothing lands behind a refusal.
   pullParked = false;
   // A conflict raised at the review's own version (a push 409ing next to it) still waits: keep
   // its notice rather than a blank status next to its dialog.
