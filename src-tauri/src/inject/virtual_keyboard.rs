@@ -344,9 +344,8 @@ mod imp {
                     // is a round trip to the UI thread and that coupling is the accepted cost of
                     // this mechanism.
                     //
-                    // Also probed immediately before every Return whatever the count, a line
-                    // break in the text and the FINAL key of an auto-Enter job alike (see
-                    // `probes_focus_before`).
+                    // Also probed before every Return whatever the count, the auto-Enter final
+                    // key included (see `probes_focus_before`).
                     let probe_here = probes_focus_before(i, name) || (auto_enter && i == last);
                     if probe_here && own_window_focused() {
                         tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
