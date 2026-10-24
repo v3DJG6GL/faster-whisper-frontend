@@ -118,6 +118,12 @@ const VK_OEM_NEC_EQUAL: u16 = 0x92;
 #[cfg_attr(not(windows), allow(dead_code))]
 const NUMPAD_EQUAL_SCAN: u16 = 0x59;
 
+/// Tag bit of a position-keyed id (`PHYSICAL_SCAN_TAG | scan`): a letter-VK key at a non-letter
+/// scan position (AZERTY's M). Encoded by `physical_key_id`, decoded by `physical_scan_of_id`
+/// and `imp::physically_down`.
+#[cfg_attr(not(windows), allow(dead_code))]
+const PHYSICAL_SCAN_TAG: u16 = 0x8000;
+
 /// Map a binding's `event.code` to a Windows virtual-key id (carrying left/right +
 /// AltGr, which arrives as `VK_RMENU`). None if the code isn't mappable. Must cover
 /// the same bindable set as `evdev::code_to_key` / keys.ts `codeToToken` —
@@ -256,12 +262,12 @@ fn letter_scan_from_vk(vk: u16) -> Option<u16> {
 }
 
 /// The scan position a PHYSICAL id stands for — letter ids (`physical_key_id`'s
-/// re-keyed VK_A..VK_Z), the numpad "=" and `0x8000 | scan` ids. None = the id is a
+/// re-keyed VK_A..VK_Z), the numpad "=" and `PHYSICAL_SCAN_TAG | scan` ids. None = the id is a
 /// plain VK the OS key state can be asked about directly.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn physical_scan_of_id(id: u16) -> Option<u16> {
-    if id & 0x8000 != 0 {
-        return Some(id & 0x7FFF);
+    if id & PHYSICAL_SCAN_TAG != 0 {
+        return Some(id & !PHYSICAL_SCAN_TAG);
     }
     if id == VK_OEM_NEC_EQUAL {
         return Some(NUMPAD_EQUAL_SCAN);
@@ -275,7 +281,7 @@ const VK_PACKET: u16 = 0xE7;
 /// The decoders' fallback arm for a VK with no special handling: re-key letters by
 /// physical position (see `letter_vk_from_scan`). A layout letter on a NON-letter
 /// position (AZERTY's M on the US Semicolon key) becomes an id no chord can contain
-/// (`0x8000 | scan`), so it can't fire a physical-letter chord either. Extended keys
+/// (`PHYSICAL_SCAN_TAG | scan`), so it can't fire a physical-letter chord either. Extended keys
 /// and scan 0 (VK-only third-party SendInput, which the capture UI's `key` fallback
 /// records layout-relative) keep the plain VK.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -296,7 +302,7 @@ fn physical_key_id(vk: u16, scan: u16, extended: bool) -> u16 {
         return letter;
     }
     if (0x41..=0x5A).contains(&vk) {
-        return 0x8000 | scan;
+        return PHYSICAL_SCAN_TAG | scan;
     }
     vk
 }
@@ -339,7 +345,7 @@ fn shift_masked_by_numpad(held: &std::collections::HashSet<u16>, numlock: bool) 
 mod imp {
     use super::{
         code_to_vk, physical_key_id, shift_masked_by_numpad, vk_to_evdev_mod, Running,
-        WinHookState, NUMPAD_ENTER, NUMPAD_EQUAL_SCAN,
+        WinHookState, NUMPAD_ENTER, NUMPAD_EQUAL_SCAN, PHYSICAL_SCAN_TAG,
     };
     use crate::config::{ActivationType, Profile};
     use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
@@ -1241,7 +1247,7 @@ mod imp {
     /// aliasing (an Enter-bound chord reading "down" because the OTHER Enter is held) never
     /// reaches an arm/don't-arm decision.
     ///
-    /// Physical ids (letters re-keyed by position, `0x8000 | scan`) are NOT layout VKs:
+    /// Physical ids (letters re-keyed by position, `PHYSICAL_SCAN_TAG | scan`) are NOT layout VKs:
     /// on QWERTZ the id VK_Y is the US-Y position, which the OS knows as VK_Z. They are
     /// mapped back through the foreground thread's layout (the one the key events were
     /// translated with) before the OS is asked. A letter id is ALSO down if its plain VK
@@ -1264,7 +1270,7 @@ mod imp {
         if layout_vk == 0 || layout_vk > 0xFF {
             return true;
         }
-        vk_down(layout_vk as u16) || (id & 0x8000 == 0 && vk_down(id))
+        vk_down(layout_vk as u16) || (id & PHYSICAL_SCAN_TAG == 0 && vk_down(id))
     }
 
     /// Is focus on a remote-desktop / VDI client (`rdp_client::focus_is_remote_desktop`)? Asked
