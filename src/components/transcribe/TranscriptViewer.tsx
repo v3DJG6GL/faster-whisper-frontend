@@ -1106,21 +1106,18 @@ export function TranscriptViewer({
     // Async completions that land after a record switch or unmount are discarded.
     const gen = audioGenRef.current;
     const stale = () => gen !== audioGenRef.current;
+    const fail = (why: "gone" | "codec" = "codec", detail?: string) => {
+      if (stale()) return;
+      setAudioBroken(true);
+      setBrokenWhy(why);
+      if (detail) setBrokenDetail(detail);
+    };
 
     if (blobTriedRef.current) {
       if (wavTriedRef.current) {
-        setAudioBroken(true);
-        setBrokenWhy("codec");
-        setBrokenDetail(`decoded WAV failed too — ${reason || "media element error"}`);
-        return;
+        return fail("codec", `decoded WAV failed too — ${reason || "media element error"}`);
       }
       wavTriedRef.current = true;
-      const fail = (why: "gone" | "codec" = "codec", detail?: string) => {
-        if (stale()) return;
-        setAudioBroken(true);
-        setBrokenWhy(why);
-        if (detail) setBrokenDetail(detail);
-      };
       // Decode lands in a cached WAV file played through the asset
       // protocol — streaming from disk like every dictation, instead of a
       // ~240 MB in-memory blob (which freezes the WebKitGTK web process).
@@ -1177,11 +1174,7 @@ export function TranscriptViewer({
     };
     if (urlSource) {
       // No local original to buffer — the fetched copy is the only source.
-      if (!mediaPath) {
-        setAudioBroken(true);
-        setBrokenWhy("gone");
-        return;
-      }
+      if (!mediaPath) return fail("gone");
       bufferPendingRef.current = true;
       readMediaFile(mediaPath)
         .then((buf) => asBlob(buf, mediaPath))
@@ -1191,9 +1184,7 @@ export function TranscriptViewer({
           // copy: re-enter with the blob stage marked tried so it plays from the
           // decoded WAV through the asset protocol instead.
           if (isTooLargeToBuffer(e)) return onAudioError(String(e));
-          setAudioBroken(true);
-          setBrokenWhy("gone");
-          setBrokenDetail(`could not read the stored copy: ${String(e)}`);
+          fail("gone", `could not read the stored copy: ${String(e)}`);
         })
         .finally(() => { if (!stale()) bufferPendingRef.current = false; });
       return;
@@ -1206,12 +1197,7 @@ export function TranscriptViewer({
         if (isTooLargeToBuffer(e)) return onAudioError(String(e));
         // Original unreadable (moved/deleted) — fall back to the app's copy.
         const copy = mediaPathRef.current;
-        if (!copy) {
-          setAudioBroken(true);
-          setBrokenWhy("gone");
-          setBrokenDetail(`could not read the file: ${String(e)}`);
-          return;
-        }
+        if (!copy) return fail("gone", `could not read the file: ${String(e)}`);
         return readMediaFile(copy)
           .then((buf) => {
             if (stale()) return;
@@ -1221,9 +1207,7 @@ export function TranscriptViewer({
           .catch((e2) => {
             if (stale()) return;
             if (isTooLargeToBuffer(e2)) return onAudioError(String(e2));
-            setAudioBroken(true);
-            setBrokenWhy("gone");
-            setBrokenDetail(`could not read the stored copy: ${String(e2)}`);
+            fail("gone", `could not read the stored copy: ${String(e2)}`);
           });
       })
       .finally(() => { if (!stale()) bufferPendingRef.current = false; });
