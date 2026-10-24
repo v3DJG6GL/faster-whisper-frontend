@@ -1044,7 +1044,7 @@ pub(crate) mod win_seed {
                 return now;
             }
             if Instant::now() >= deadline {
-                return None; // clipboard untouched — nothing to restore
+                return None; // no copy landed yet — nothing to restore
             }
         }
     }
