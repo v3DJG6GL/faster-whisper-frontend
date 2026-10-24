@@ -658,13 +658,11 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
-            // A remote-desktop client fetches the clipboard only AFTER the forwarded chord, so its
-            // write goes straight to the persistent owner, as the X11 twin's remote write does: a
+            // Both arms write through the live owner (`set_clipboard` is `persist_transcript`): a
             // plain write would be dropped when it returns (no data-control — GNOME through
-            // XWayland), leaving the remote nothing to fetch. A local `set_clipboard` is served by
-            // the live owner too, so the transcript sticks either way.
-            // (`set_clipboard_persistent`'s own pending-restore take is a no-op: `requeue` holds
-            // it.)
+            // XWayland), before the portal's Ctrl+V or a remote client's after-the-chord fetch
+            // reads it. (`set_clipboard_persistent`'s own pending-restore take is a no-op:
+            // `requeue` holds it.)
             let set_res = if remote_target {
                 persist_off_runtime(clip).await
             } else {
@@ -689,12 +687,9 @@ pub(crate) async fn inject_text(
                 60
             }))
             .await;
-            // And again after the settle, before the chord. The check above guards the clipboard
-            // WRITE; this one guards the KEYSTROKE, and 60ms (300ms remote) of wall clock separates
-            // them — the same gap `inject::paste` re-asks the epoch across on the other platform.
-            // `diverted: true`, not `landed: false`: the transcript IS on the clipboard by now, so
-            // that is the truthful answer, and the restore below must be skipped so it stays
-            // pasteable.
+            // And again after the settle, before the chord: the check above guards the clipboard
+            // WRITE, this one the KEYSTROKE — the same gap `inject::paste` re-asks the epoch across
+            // on the other platform.
             //
             // The epoch is asked FIRST, as the X11 twin does at its chord. A cancel in the settle
             // with our own window focused (the error teardown refocuses it) would otherwise take
