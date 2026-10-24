@@ -113,7 +113,7 @@ describe("usageDerive", () => {
   });
 
   it("quantileBreaks: quarters of the active values, upper-median rule; zero is its own step", () => {
-    // The user's report: one 26,850 day, one 12k, a long tail — every quarter fills.
+    // One 26,850 day, one 12k, a long tail — every quarter fills.
     const vals = [26850, 12040, 3800, 2100, 900, 640, 400, 210, 120, 60, 30, 10];
     const b = quantileBreaks(vals);
     expect(b).toEqual([60, 400, 2100]);
@@ -167,7 +167,7 @@ describe("usageDerive", () => {
     expect(m.breaks).toEqual([100, 450, 600]);
     expect(m.cells.map((c) => c.level)).toEqual([4, 3, 2, 1, 4]);
     expect(m.counts).toEqual([0, 1, 1, 1, 2]);
-    // The split rides on the cell (D33): the tooltip lists the kinds present.
+    // The split rides on the cell: the tooltip lists the kinds present.
     expect(m.cells[2].kinds.file.words).toBe(50);
     expect(presentKinds(m.cells[2].kinds, "words", "all")).toEqual([{ kind: "dictation", value: 400 }, { kind: "file", value: 50 }]);
     expect(presentKinds(m.cells[2].kinds, "words", "file")).toEqual([{ kind: "file", value: 50 }]);
@@ -265,7 +265,7 @@ describe("usageDerive", () => {
 
   it("rhythmModel hours: all time without a known first day hides no weekday", () => {
     // UsageStats falls back to today..today for "All time" until the server names its first
-    // day: six weekday rows were hatched out, while the all-time document fills every one.
+    // day; that stand-in span must not hatch out weekday rows the all-time document fills.
     const hours: UsageHourCell[] = [0, 1, 2, 3, 4, 5, 6].map((dow) => ({ dow, hour: 9, all: 10, dictation: 10, file: 0, url: 0, text: 0 }));
     const m = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_000, false);
     expect(m.cells.every((c) => c.inWindow)).toBe(true);
