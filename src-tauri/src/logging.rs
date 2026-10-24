@@ -313,14 +313,7 @@ fn level_directive(level: LogLevel) -> String {
 /// machines. This is NOT the pre-viewer `%LOCALAPPDATA%\faster-whisper-frontend\logs`;
 /// `prune_legacy_dir` clears that folder's pair out.
 pub fn log_dir(app: &AppHandle, config: &Config) -> Option<PathBuf> {
-    if let Some(dir) = config
-        .settings
-        .logging
-        .log_dir
-        .as_deref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(dir) = crate::commands::non_blank(config.settings.logging.log_dir.as_deref()) {
         return Some(PathBuf::from(dir));
     }
     app.path().app_local_data_dir().ok().map(|d| d.join("logs"))
@@ -585,20 +578,12 @@ pub fn get_log_status(ring: State<'_, LogRing>) -> LogTail {
     t
 }
 
-/// The live `logDir` preference as the config field: a blank or absent custom folder means
-/// the default, never "no opinion".
-fn live_log_dir(custom: Option<String>) -> Option<String> {
-    custom
-        .map(|c| c.trim().to_string())
-        .filter(|c| !c.is_empty())
-}
-
 /// Resolve the effective log directory from the LIVE custom preference, without
 /// loading (and potentially recovering/backing-up) config.json. `log_dir` only
 /// reads `settings.logging.log_dir`, so inlining its logic avoids the destructive
 /// recovery path that `config::load` triggers on an unreadable or corrupt config.
 fn resolve_log_dir(app: &AppHandle, custom: Option<String>) -> Option<std::path::PathBuf> {
-    if let Some(dir) = live_log_dir(custom) {
+    if let Some(dir) = crate::commands::non_blank(custom.as_deref()) {
         return Some(std::path::PathBuf::from(dir));
     }
     app.path().app_local_data_dir().ok().map(|d| d.join("logs"))

@@ -60,16 +60,18 @@ pub(crate) const AUDIO_SUBDIRS: [&str; 4] = ["dictations", "files", "links", "vi
 /// more re-heal everywhere.
 pub(crate) const HEAL_STAMP: &str = ".heal-v1";
 
+/// A custom folder preference, trimmed; blank or absent = unset (the default folder).
+pub(crate) fn non_blank(s: Option<&str>) -> Option<&str> {
+    s.map(str::trim).filter(|s| !s.is_empty())
+}
+
 /// The one base folder for all stored audio (the `AUDIO_SUBDIRS` live inside it). A non-empty
 /// `custom` (audioBaseDir, with the legacy recordingsDir as fallback — the caller passes the
 /// effective preference) wins; otherwise the default lives under the app data dir. None only if
 /// neither can be resolved.
 pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
-    if let Some(c) = custom {
-        let c = c.trim();
-        if !c.is_empty() {
-            return Some(PathBuf::from(c));
-        }
+    if let Some(c) = non_blank(custom.as_deref()) {
+        return Some(PathBuf::from(c));
     }
     app.path().app_data_dir().ok().map(|d| d.join("audio"))
 }
@@ -77,12 +79,7 @@ pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Opt
 /// The effective base-folder preference from settings: the new key, else the
 /// legacy custom recordings folder (so an existing setup keeps its location).
 pub(crate) fn audio_base_pref(settings: &crate::config::AppSettings) -> Option<String> {
-    let pick = |v: &Option<String>| {
-        v.as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    };
+    let pick = |v: &Option<String>| non_blank(v.as_deref()).map(str::to_owned);
     pick(&settings.recording.audio_base_dir).or_else(|| pick(&settings.recording.recordings_dir))
 }
 
