@@ -404,6 +404,8 @@ export default function History() {
     return top;
   }, [dictMatches, appFilter, records]);
 
+  // The app filter narrows only the Dictations segment.
+  const appFiltered = !!appFilter && segment === "dictation";
   const visible = useMemo(() => {
     let out =
       segment === "file" ? fileMatches
@@ -411,11 +413,11 @@ export default function History() {
           : segment === "text" ? textMatches
             : segment === "dictation" ? dictMatches
               : searched;
-    if (appFilter && segment === "dictation") {
+    if (appFiltered) {
       out = out.filter((r) => appKey(r) === appFilter);
     }
     return out;
-  }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter]);
+  }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter, appFiltered]);
 
   // Matches the active facets hide (never silently — NN/g scoped search). Derived from
   // `visible`, so the app chip counts too: the banner's two numbers always add up to
@@ -958,6 +960,7 @@ export default function History() {
       : segment === "url" ? "links"
         : segment === "text" ? "text translations"
           : "dictations";
+  const scopeNoun = `${segment === "all" ? "entries" : segLabel}${appFiltered ? " for this app" : ""}`;
 
   return (
     <div ref={rootRef} className="page page-prose">
@@ -1054,7 +1057,7 @@ export default function History() {
           <Search className="size-3.5 shrink-0 text-accent" />
           {/* The app chip counts too: the hidden matches may be dictations into other apps. */}
           <span className="flex-1">
-            {appFilter && segment === "dictation" ? (
+            {appFiltered ? (
               <>
                 {plural(visible.length, "match", "matches")} in dictations for this app —{" "}
                 {fmtFull(hiddenMatches)} more in other apps or types
@@ -1106,8 +1109,8 @@ export default function History() {
           {/* The app filter only narrows the Dictations segment — name it in both branches, or a
               search hidden by it reads "No dictations match" beside a segment count of 1. */}
           {query.trim()
-            ? `No ${segment === "all" ? "entries" : segLabel}${appFilter && segment === "dictation" ? " for this app" : ""} match "${safeDisplayText(query, 80)}".`
-            : `No ${segment === "all" ? "entries" : segLabel}${appFilter && segment === "dictation" ? " for this app" : ""} yet.`}
+            ? `No ${scopeNoun} match "${safeDisplayText(query, 80)}".`
+            : `No ${scopeNoun} yet.`}
           <div className="mt-3 flex items-center justify-center gap-2">
             {hiddenMatches > 0 && (
               <Button variant="default" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
