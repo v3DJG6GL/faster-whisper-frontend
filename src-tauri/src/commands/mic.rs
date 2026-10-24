@@ -87,10 +87,9 @@ pub async fn stop_mic_test(app: AppHandle) -> Result<f32, String> {
 }
 
 /// Replay the most recent mic-test capture on the default output device. Returns
-/// immediately; playback runs on a detached thread (like the sound cues). A no-op
-/// when nothing has been recorded. Bumps the playback generation so any in-flight
-/// replay stops before this one starts (never two at once), and emits
-/// `audio://test-play-ended` when playback finishes while still current.
+/// immediately; playback runs on a detached thread (like the sound cues). Any in-flight
+/// replay stops first (never two at once); emits `audio://test-play-ended` when playback
+/// finishes while still current. Nothing recorded yet: a no-op, with no event.
 #[tauri::command]
 pub fn play_mic_test(
     app: AppHandle,
