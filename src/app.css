@@ -298,8 +298,8 @@ html.accent-tick .transition-colors {
     padding-block: 24px 48px;
   }
   /* The one gap between a page's heading block (eyebrow, title, lede) and whatever comes
-     first below it — a toolbar, an action row, a list. Every screen uses it, so the
-     rhythm at the top of a page is the same everywhere; sections below it step by 20 px. */
+     first below it — a toolbar, an action row, a list — so the rhythm at the top of a page
+     is the same everywhere; sections below it step by 20 px. */
   .page-content { margin-top: 32px; }
   .page-prose { --page-w: var(--w-prose); }
   .page-cards { --page-w: var(--w-cards); }
