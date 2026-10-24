@@ -155,7 +155,7 @@ describe("round-trips against generateExport", () => {
     expect(parseImportedText("lrc", "[00:01.00]Alice: <00:01.00>Hello<00:01.50>world\n").segments[0].text).toContain("Hello world");
   });
   it("lrc: an astral (Ext-B) Han character at a word-tag seam round-trips without a space", () => {
-    // 𠮷 is a surrogate pair: the seam test used to look at one UTF-16 unit and miss it.
+    // 𠮷 is a surrogate pair: a seam test looking at one UTF-16 unit misses it.
     const text = "私は𠮷野家に行った山𠮷";
     const ws = ["私は", "𠮷野家", "に行った", "山𠮷"];
     const r: BatchResult = {
@@ -202,8 +202,8 @@ describe("plain text + errors", () => {
     expect(parseImportedText("txt", "line a\nline b\nline c").segments).toHaveLength(3);
   });
   it("clock-like prefixes never become speakers (a cue-bearing format reaches the guard)", () => {
-    // Through lrc, not txt: plain text can never set a speaker, so the old fixture passed
-    // for every input and the guard in cueText was untested.
+    // Through lrc, not txt: plain text can never set a speaker, so a txt fixture would pass
+    // for every input and leave the guard in cueText untested.
     const back = parseImportedText("lrc", "[00:12.00]12: lunch at noon");
     expect(back.segments[0].speaker).toBeUndefined();
     expect(back.segments[0].text).toBe("12: lunch at noon");
@@ -213,7 +213,7 @@ describe("plain text + errors", () => {
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);
     expect(() => parseImportedText("json", "not json")).toThrow(/Not valid JSON/);
-    // `null` parses fine, then the property read on it threw a raw TypeError.
+    // `null` parses fine; a property read on it must not surface a raw TypeError.
     expect(() => parseImportedText("json", "null")).toThrow(/No text found/);
   });
   it("json language is trimmed and a blank one dropped, with or without segments", () => {
@@ -462,8 +462,6 @@ describe("plain text + errors", () => {
   });
 });
 
-// The picker's dialog filter and the drag-and-drop accept test read ONE list;
-// a text source the parser handles must never be droppable-but-rejected.
 describe("parseClock via SRT import", () => {
   it("parses cues without fractional seconds", () => {
     const srt = "1\r\n00:00:10 --> 00:00:14\r\nHello world.\r\n";
@@ -950,7 +948,7 @@ describe("site subtitle cleanup", () => {
   });
   it("an empty cue does not make a file look rolling", () => {
     // srtExport writes an empty segment as an empty zero-length cue: it "repeats" its
-    // neighbours vacuously and used to merge the line said twice.
+    // neighbours vacuously, and must not merge the line said twice.
     const srt =
       "1\n00:00:00,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:04,000\nThank you.\n\n"
       + "3\n00:00:04,000 --> 00:00:04,000\n\n4\n00:00:04,000 --> 00:00:06,000\nBye.\n";
