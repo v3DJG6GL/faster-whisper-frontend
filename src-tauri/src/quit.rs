@@ -18,9 +18,8 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 static READY: Mutex<bool> = Mutex::new(false);
 static READY_CV: Condvar = Condvar::new();
 
-/// The exit sequence both quit paths ran before the handshake, unchanged: drop any live
-/// dictation first (app.exit ends the process without running managed-state destructors, so a
-/// mute_system session would otherwise leave the system audio muted), then exit.
+/// Drop any live dictation first (app.exit ends the process without running managed-state
+/// destructors, so a mute_system session would otherwise leave the system audio muted), then exit.
 fn exit_now(app: &AppHandle) {
     crate::session::cleanup_for_exit(app);
     app.exit(0);
@@ -48,7 +47,7 @@ pub fn request_quit(app: &AppHandle) {
                     READY_WAIT.as_millis()
                 );
             }
-            // Back on the main thread, where both paths ran the exit sequence before.
+            // Exit on the main thread, as the no-handshake path does.
             let main = waiter.clone();
             if waiter.run_on_main_thread(move || exit_now(&main)).is_err() {
                 exit_now(&waiter);
