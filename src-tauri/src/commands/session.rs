@@ -47,10 +47,7 @@ pub async fn start_stream(
             None
         };
         let state = app.state::<StreamState>();
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "stream state poisoned".to_string())?;
+        let mut guard = lock_state(&state.0, "stream state poisoned")?;
         // Stop any previous session first (Drop joins capture and aborts the WS task, no drain).
         *guard = None;
         let sess = session::start(
@@ -85,10 +82,7 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let sess = {
-            let mut guard = state
-                .0
-                .lock()
-                .map_err(|_| "stream state poisoned".to_string())?;
+            let mut guard = lock_state(&state.0, "stream state poisoned")?;
             let sess = guard.take();
             // Under the lock, so a Cancel that lands before finish() reaches THIS drain.
             if let Some(s) = &sess {
@@ -124,10 +118,7 @@ pub async fn cancel_stream(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let sess = {
-            let mut guard = state
-                .0
-                .lock()
-                .map_err(|_| "stream state poisoned".to_string())?;
+            let mut guard = lock_state(&state.0, "stream state poisoned")?;
             let sess = guard.take();
             // Settle the drain still running after a stop (see `settle_detached_on_cancel`): a
             // recovery cancel (stuck finalize, wake from sleep) releases it instead of discarding,
@@ -190,10 +181,7 @@ pub async fn start_record(
             None
         };
         let state = app.state::<RecordState>();
-        let mut guard = state
-            .0
-            .lock()
-            .map_err(|_| "record state poisoned".to_string())?;
+        let mut guard = lock_state(&state.0, "record state poisoned")?;
         *guard = None;
         let sess = session::start_record(
             app.clone(),
@@ -231,10 +219,7 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
         // `RecordSession::claim_detached` explains why a store outside the lock let a concurrent
         // cancel disown the wrong session.
         let sess = {
-            let mut guard = state
-                .0
-                .lock()
-                .map_err(|_| "record state poisoned".to_string())?;
+            let mut guard = lock_state(&state.0, "record state poisoned")?;
             let sess = guard.take();
             if let Some(s) = sess.as_ref() {
                 s.claim_detached();
@@ -292,10 +277,7 @@ pub async fn cancel_record(
         // live session WAS found: that session's device-loss salvage may already have published
         // its epoch as the detached batch.
         let sess = {
-            let mut guard = state
-                .0
-                .lock()
-                .map_err(|_| "record state poisoned".to_string())?;
+            let mut guard = lock_state(&state.0, "record state poisoned")?;
             let sess = guard.take();
             session::settle_detached_batch_on_cancel(
                 sess.is_some(),
@@ -330,6 +312,14 @@ pub async fn cancel_record(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Lock a session state slot; a poisoned lock rejects the command with `poisoned`.
+fn lock_state<'a, T>(
+    m: &'a std::sync::Mutex<T>,
+    poisoned: &str,
+) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    m.lock().map_err(|_| poisoned.to_string())
 }
 
 /// Retire the active session epoch WITHOUT draining or aborting — for the frontend's error / fatal-
