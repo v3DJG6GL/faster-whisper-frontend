@@ -7,6 +7,9 @@ import { pickRecordingsDir, logFolderPath, openLogFolder } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { SETTING } from "@/lib/settingsManifest";
 import { LOG_RETENTION_OPTIONS, withCurrentDay } from "@/lib/retentionOptions";
+import { DEFAULT_SETTINGS } from "@/lib/defaults";
+
+const LOG_DEFAULTS = DEFAULT_SETTINGS.logging!;
 
 /** Settings → General → Logging: the in-app log viewer's knobs. Level changes
  *  apply live (the Rust filter reloads on config save); a valid `RUST_LOG` overrides
@@ -27,6 +30,7 @@ export function LoggingSection() {
   useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   const [folder, setFolder] = useState<string | null>(null);
   const logDir = logging?.logDir ?? null;
+  const keepDays = logging?.keepDays ?? LOG_DEFAULTS.keepDays;
   const opening = openingFor !== undefined && openingFor === logDir;
   useEffect(() => {
     // An open failure is about the folder it was asked for: a new folder starts clean.
@@ -66,7 +70,7 @@ export function LoggingSection() {
         desc="How much detail is captured — lower levels aren’t recorded at all. Debug helps when reporting a problem; Info is right for every day. A valid RUST_LOG environment variable overrides this."
       >
         <Segmented
-          value={logging?.logLevel ?? "info"}
+          value={logging?.logLevel ?? LOG_DEFAULTS.logLevel}
           onChange={(v) => updateLogging({ logLevel: v })}
           ariaLabel="Log level"
           options={[
@@ -82,10 +86,10 @@ export function LoggingSection() {
         desc="Log files older than this are deleted right away when you change it, and again at every startup. The current session is always kept."
       >
         <Select
-          value={String(logging?.keepDays ?? 30)}
+          value={String(keepDays)}
           onChange={(v) => updateLogging({ keepDays: Number(v) })}
           ariaLabel="Keep log files"
-          options={withCurrentDay(LOG_RETENTION_OPTIONS, logging?.keepDays ?? 30)}
+          options={withCurrentDay(LOG_RETENTION_OPTIONS, keepDays)}
         />
       </SettingRow>
       <SettingRow
@@ -93,7 +97,7 @@ export function LoggingSection() {
         desc="Hidden, the page stays reachable from the button below — and from failure notices, which still appear."
       >
         <Toggle
-          checked={logging?.showInSidebar ?? true}
+          checked={logging?.showInSidebar ?? LOG_DEFAULTS.showInSidebar}
           onChange={(v) => updateLogging({ showInSidebar: v })}
         />
       </SettingRow>
