@@ -15,7 +15,7 @@ export interface ImportedText {
 
 export const TEXT_SOURCE_EXTS = ["srt", "vtt", "lrc", "txt", "json"] as const;
 /** The audio/video containers the file picker accepts — ONE list for the picker's dialog
- *  filter and the drag-and-drop accept test, which used to carry separate copies. */
+ *  filter and the drag-and-drop accept test. */
 export const AUDIO_SOURCE_EXTS = ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac", "mkv", "mov", "m4v"] as const;
 export const ACCEPTED_EXTS: readonly string[] = [...AUDIO_SOURCE_EXTS, ...TEXT_SOURCE_EXTS];
 
@@ -228,10 +228,10 @@ export interface RawCue {
  *  cue bridges a roll — extend that cue when nothing new is left: an ordinary file may say
  *  "Thank you." twice back to back, and both lines stay. Broadcast roll-up captions have no
  *  freeze cue but open most multi-line cues with the line(s) before; such a file gets the
- *  leading-line strip too. Ordinary files pass through unchanged — a word said at the end of one cue
- *  and the start of the next stays twice, and a short cue with text of its own (our own
+ *  leading-line strip too. Ordinary files keep their repeats — a word said at the end of one
+ *  cue and the start of the next stays twice, and a short cue with text of its own (our own
  *  exports keep a zero-length segment, even one repeating its neighbour) is kept; only an
- *  empty cue goes. */
+ *  empty cue goes, in every file. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
   // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
@@ -505,9 +505,8 @@ function parseLrc(body: string): ImportedText {
   const stops: number[] = [];
   for (const line of body.split(/\r?\n/)) {
     const trimmed = line.trim();
-    // Match all leading [mm:ss.xx] timestamp tags. LRC's most common compression
-    // repeats a chorus line under several timestamps: [00:12.00][00:45.00]text.
-    // Each tag produces its own segment sharing the same text.
+    // LRC's most common compression repeats a chorus line under several leading stamps
+    // ([00:12.00][00:45.00]text): each stamp gets its own segment.
     tagRe.lastIndex = 0;
     const starts: number[] = [];
     let lastTagEnd = 0;
