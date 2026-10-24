@@ -207,6 +207,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ]);
 }
 
+/** The bound on one keyring call (withTimeout's locked-wallet case). */
+const KEYRING_TIMEOUT_MS = 10_000;
+
 const CHIP_FIELD_SET: ReadonlySet<string> = new Set(CHIP_FIELDS);
 
 /** Own-property partition helpers. Own-props only: the blob is JSON-parsed, so
@@ -618,7 +621,7 @@ export async function composeBlob(
     if (opts.includeSecrets && (!opts.gates || opts.gates.apiKeys)) {
       const read = await withTimeout(
         readBackendKeyStates(cfg.backends.map((b) => b.id)),
-        10_000,
+        KEYRING_TIMEOUT_MS,
         null as BackendKeyRead | null,
       );
       let secrets = read?.keys ?? {};
@@ -1552,7 +1555,7 @@ async function reconcileBackendSecrets(
   const known = new Set(useApp.getState().backends.map((b) => b.id));
   const candidates = list.map((b) => b.id).filter((id) => known.has(id) && inboundSecret(secrets, id) !== undefined);
   const prior = candidates.length
-    ? await withTimeout(readBackendKeys(candidates), 10_000, null as Record<string, string> | null)
+    ? await withTimeout(readBackendKeys(candidates), KEYRING_TIMEOUT_MS, null as Record<string, string> | null)
     : null;
   const rotated =
     prior === null
@@ -1574,7 +1577,7 @@ async function reconcileBackendSecrets(
       // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
       await withTimeout(
         setBackendKey(id, key).catch((e) => console.error("keyring write failed", e)),
-        10_000,
+        KEYRING_TIMEOUT_MS,
         undefined,
       );
     }
@@ -1582,7 +1585,7 @@ async function reconcileBackendSecrets(
   if (aborted()) return { backends: list, rotated: landed() };
   const present = await withTimeout(
     readBackendKeyStates(list.map((b) => b.id)),
-    10_000,
+    KEYRING_TIMEOUT_MS,
     null as BackendKeyRead | null,
   );
   // A degraded read (locked wallet, timed out) must NOT demote: re-deriving `hasApiKey: false`
@@ -2550,7 +2553,7 @@ function snapshotChunks(json: string): string[] {
 async function dropSnapshotChunks(from: number, to: number): Promise<void> {
   const drops: Promise<void>[] = [];
   for (let i = from; i < to; i++) {
-    drops.push(withTimeout(deleteBackendKey(snapshotChunkAccount(i)).catch(() => {}), 10_000, undefined));
+    drops.push(withTimeout(deleteBackendKey(snapshotChunkAccount(i)).catch(() => {}), KEYRING_TIMEOUT_MS, undefined));
   }
   await Promise.all(drops);
 }
@@ -2576,7 +2579,7 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
       ),
       // Chunk i queues behind chunks 0..i-1 on that turn (a wallet-unlock prompt included), so
       // its bound grows with its place: 10 s for each write up to and including its own.
-      10_000 * (i + 1),
+      KEYRING_TIMEOUT_MS * (i + 1),
       false,
     ),
   );
@@ -2603,7 +2606,7 @@ async function restoreSnapshotSecrets(): Promise<void> {
   const accounts = Array.from({ length: snapshotChunkCount(state.snapshotSecretChunks) }, (_, i) =>
     snapshotChunkAccount(i),
   );
-  const read = await withTimeout(readBackendKeys(accounts), 10_000, {} as Record<string, string>);
+  const read = await withTimeout(readBackendKeys(accounts), KEYRING_TIMEOUT_MS, {} as Record<string, string>);
   const parts = accounts.map((a) => read[a]);
   let secrets: unknown = {};
   try {
@@ -2850,7 +2853,7 @@ async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<Sync
   if (cats.backends && isPlainObject(sig.backends)) {
     const read = await withTimeout(
       readBackendKeyStates(s.backends.map((b) => b.id)).catch(() => null),
-      10_000,
+      KEYRING_TIMEOUT_MS,
       null as BackendKeyRead | null,
     );
     // An id the store reports ABSENT holds no key (a stale `hasApiKey`), which is what the store
