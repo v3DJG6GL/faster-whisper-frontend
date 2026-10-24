@@ -11,14 +11,14 @@
 //! Windows (the plugin stays silent — it does everything the plugin can and
 //! more), mirroring the evdev-XOR-plugin invariant on Linux.
 //!
-//! WHY two feeds (the RDP saga): a focused mstsc with keyboard capture ("Apply
+//! WHY two feeds: a focused mstsc with keyboard capture ("Apply
 //! Windows key combinations" ≠ "On this computer", the fullscreen default)
 //! installs a low-level hook that swallows the keys it forwards to the remote —
 //! and that silenced BOTH single-feed implementations in turn. LL hooks run
 //! newest-first, so a hook installed at app start goes deaf the moment mstsc
-//! activates (v0.1.4); and swallowed keys turned out not to reach raw-input
-//! sinks either (v0.1.5, user-verified — delivery order vs. the LL chain is
-//! undocumented and this is the empirical answer). The fix is the AutoHotkey
+//! activates; and swallowed keys turned out not to reach raw-input sinks either
+//! (user-verified — delivery order vs. the LL chain is undocumented and this is
+//! the empirical answer). The fix is the AutoHotkey
 //! community's: RE-INSTALL our hook whenever the foreground changes — plus a
 //! short per-tick BURST after each change (the foreground event can fire before
 //! the activated app installs its own hook) and a slow watchdog re-arm (the OS
@@ -56,7 +56,7 @@
 //! swallowed keys reach no raw-input sink either; a desktop switch (Ctrl+Alt+Del,
 //! Win+L, a UAC prompt) takes the release to a desktop neither feed is on; and for
 //! third-party injected chords the hook is the ONLY feed, so its blind windows have
-//! no cover at all. One lost key-up used to strand that key in the held-set for the
+//! no cover at all. Unreconciled, one lost key-up would strand that key in the held-set for the
 //! rest of the listener's life — silently rewiring which chords match (a stranded Alt
 //! makes the Alt+Super quick-add chord complete on any Super press) and pinning a
 //! phantom modifier in `HeldKeys`, which stalls every injection and can divert every
@@ -102,9 +102,8 @@ pub use imp::{start, stop_held_sessions};
 #[cfg(not(windows))]
 pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 
-// ── Key mapping ──────────────────────────────────────────────────────────────
-// Compiled on every platform (plain data, no Win32 types) so the bindability test
-// below runs in the Linux CI leg — the Windows CI leg only does `cargo check`.
+// Key mapping: compiled on every platform (plain data, no Win32 types) so the
+// bindability test below runs in the Linux CI leg — the Windows leg runs no tests.
 
 /// NumpadEnter shares `VK_RETURN` with the main Enter; the receiver tells them apart
 /// by the extended-key flag, which we fold into a synthetic id above the 8-bit VK
@@ -304,7 +303,7 @@ fn physical_key_id(vk: u16, scan: u16, extended: bool) -> u16 {
     vk
 }
 
-/// Hook-event key id → the evdev keycode the shared inject gate speaks
+/// Key id (either feed) → the evdev keycode the shared inject gate speaks
 /// (`held_keys::SHORTCUT_MOD_CODES`). Only the eight shortcut modifiers are
 /// mirrored into HeldKeys — they're all the gate ever reads.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -372,7 +371,7 @@ mod imp {
         WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
     };
 
-    /// A physical key transition, forwarded from `hook_proc` to the worker.
+    /// A physical key transition, forwarded from either feed (`ll_hook_proc`, `wndproc`) to the worker.
     struct KeyEv {
         id: u16,
         down: bool,
@@ -382,16 +381,14 @@ mod imp {
         injected: bool,
     }
 
-    /// The receiver→worker channel. `wndproc` is a bare `extern "system"` fn with no
-    /// captures, so it reaches the current sender through this global; start()/
+    /// The feed→worker channel. `wndproc` and `ll_hook_proc` are bare `extern "system"` fns
+    /// with no captures, so they reach the current sender through this global; start()/
     /// shutdown() swap it. Locked per keystroke — uncontended in steady state.
     static TX: Mutex<Option<Sender<KeyEv>>> = Mutex::new(None);
 
-    /// Build chord specs for every enabled Profile whose hotkey maps cleanly,
-    /// plus the quick-add window chord. Equal chords are de-duped (first by config
-    /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
-    /// (Direct port of evdev::chords_from into VK space; the nesting/family
-    /// semantics live in the shared crate::hotkeys::chord_engine.)
+    /// Build chord specs for every enabled Profile whose hotkey maps cleanly, plus the
+    /// quick-add window chord. Conflicting chords are dropped (first in config order wins);
+    /// unmappable / empty ones are skipped. Port of evdev::chords_from into VK space.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
@@ -492,11 +489,11 @@ mod imp {
             Ok(g) => g,
             Err(_) => return,
         };
-        *g = None; // drop any previous Running → old worker drains + old hook unhooks
-                   // Fresh start: drop any held-key counts left over from a previous run so the
-                   // inject-gate can't wait on a phantom modifier — and retire the old worker's writer,
-                   // so its late post-loop decrements (it wakes AFTER this) can't zero counts the new
-                   // worker is about to record (see HeldKeys::clear).
+        // Drop any previous Running (old worker drains, old hook unhooks), then the held-key
+        // counts it left, so the inject-gate can't wait on a phantom modifier — and retire the
+        // old worker's writer, so its late post-loop decrements (it wakes AFTER this) can't zero
+        // counts the new worker is about to record (see HeldKeys::clear).
+        *g = None;
         let held_keys = app.state::<crate::hotkeys::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
@@ -651,11 +648,10 @@ mod imp {
             let timer = SetTimer(std::ptr::null_mut(), 0, WATCHDOG_MS, None);
             TIMER.with(|t| t.set(timer));
             if timer == 0 {
-                // Without the tick there is no burst and no watchdog: the hook is re-installed
-                // only at the instant of each foreground change — so a capture hook the
-                // activated RDP/VM client installs after that event, or a silent removal by the
-                // OS, leaves this feed deaf until the next focus change. That has to be visible
-                // in the support log.
+                // Without the tick the hook is re-installed only at the instant of each
+                // foreground change — so a capture hook the activated RDP/VM client installs
+                // after that event, or a silent removal by the OS, leaves this feed deaf until
+                // the next focus change.
                 tracing::warn!("[winhook] no re-arm timer; the keyboard hook is re-armed only on foreground changes (no burst, no watchdog)");
             }
             let _ = ready.send(Some(GetCurrentThreadId()));
@@ -765,11 +761,10 @@ mod imp {
                 0,
             );
             // A FAILED install (desktop switch in flight, hook-table pressure) must not cost
-            // us the hook we already have. The old code stored the null and unhooked the
-            // working one regardless, which took the feed down for a whole watchdog period on
-            // top of whatever caused the failure — the exact blind window this function
-            // exists to close. Keep the incumbent; the next scheduled re-arm (a burst tick
-            // or the 3 s watchdog) tries again.
+            // us the hook we already have: dropping it would take the feed down for a whole
+            // watchdog period — the exact blind window this function exists to close. Keep
+            // the incumbent; the next scheduled re-arm (a burst tick or the 3 s watchdog)
+            // tries again.
             if hook.is_null() {
                 if !HOOK_FAILED.replace(true) {
                     tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one (retried at the next re-arm: every tick during a focus-change burst, else every 3 s; logged once)");
@@ -1034,8 +1029,8 @@ mod imp {
 
     /// `chord_mods` = the firing chord's OWN modifier keycodes, already translated into the
     /// `held_keys` (evdev) namespace by the caller. This backend feeds `HeldKeys` and is always
-    /// the registrar on Windows, so without the snapshot `inject_text`'s held-modifier gate was
-    /// dead here — see `triggers::snapshot_trigger_mods`. `None` for a teardown-emitted stop.
+    /// the registrar on Windows, so without the snapshot `inject_text`'s held-modifier gate would
+    /// be dead here — see `triggers::snapshot_trigger_mods`. `None` for a teardown-emitted stop.
     fn emit(app: &AppHandle, profile_id: &str, action: &str, chord_mods: Option<&[u16]>) {
         // `None` = a teardown-emitted stop, which is not a user chord release: leave the existing
         // snapshot alone rather than clearing it, so a stop that follows a real chord press by
@@ -1044,10 +1039,8 @@ mod imp {
             crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
-        // session causality is otherwise invisible in the log, which made the key-chatter
-        // instant-stop bug diagnosable only by timing forensics.
-        // Defanged for the same reason as the evdev twin, and this is the platform where it
-        // matters most: the Windows support log is the artifact users are asked to send.
+        // session causality is otherwise invisible in the log. Defanged like the evdev twin —
+        // the Windows support log is the artifact users are asked to send.
         let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
         tracing::info!("[trigger] {profile_id_log}/{action} (winhook)");
         let _ = app.emit(
@@ -1085,14 +1078,12 @@ mod imp {
 
     /// The manufactured-stop rule, shared by all three teardown sites (`stop_held_sessions`,
     /// commit's teardown drain, the worker post-loop): emit the stop, and arm the loss latch
-    /// ONLY if a modifier of the chord is still physically down. The latch exists for
-    /// exactly one situation — the teardown is about to wipe the map that proves the chord is
-    /// held, and the injection that follows must not type into it. A chord the OS reports fully
-    /// UP is not that situation: the user released it (its key-up was parked in the debouncer,
-    /// or lost outright), so the injection is safe to type — and arming anyway diverted the next
-    /// phrase to the clipboard, silently, on a control that is designed never to produce a false
-    /// positive. A chord with ONE modifier still down IS that situation (a staggered release),
-    /// so the predicate fails toward arming.
+    /// ONLY if a modifier of the chord is still physically down. The latch exists for one
+    /// situation — the teardown wipes the map that proves the chord is held, and the injection
+    /// that follows must not type into it. A chord the OS reports fully UP was released (its
+    /// key-up parked in the debouncer or lost), so arming would silently divert the next phrase
+    /// to the clipboard; a chord with ONE modifier still down (a staggered release) fails
+    /// toward arming.
     ///
     /// While a remote-desktop client has focus the OS reading is blind (its capture hook
     /// swallows the keys it forwards, so a held chord reads UP — see `resync_held`), so there a
@@ -1137,25 +1128,21 @@ mod imp {
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
         for (profile_id, keys) in stuck {
-            // `None` chord mods = a stop we MANUFACTURED, not a user chord release; the loss
-            // latch is armed only when the chord is genuinely still down — see manufactured_stop.
             manufactured_stop(app, &profile_id, &keys);
         }
     }
 
     /// Commit one debounced key transition: update the held-set + the HeldKeys
-    /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
-    /// worker loop, factored out so deferred releases commit through the same path.)
+    /// mirror, step the engine, dispatch its fires. Live events and deferred releases
+    /// both commit through here.
     ///
     /// `teardown`: the post-loop drain of parked releases. `stop_held_sessions` may already have
     /// manufactured (and CLAIMED, via `take_hold`) the stop for a hold this release ends —
     /// `apply_bindings` calls it before the old listener is dropped — so a teardown Stop is
     /// emitted only if the hold is still unclaimed, and with no chord mods: HeldKeys was wiped by
     /// the successor's start, so a snapshot taken here would clear a fresh session's trigger mods.
-    /// The claimed Stop goes through `manufactured_stop`: the parked key IS released, but a
-    /// staggered chord may still have its other modifier down when the post-loop wipes it from
-    /// HeldKeys, and the OS check is what decides whether the loss latch arms — the same rule the
-    /// other two teardown sites apply.
+    /// It goes through `manufactured_stop` because a staggered chord may still have its other
+    /// modifier down even though the parked key is released.
     fn commit(
         app: &AppHandle,
         held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
@@ -1181,7 +1168,7 @@ mod imp {
 
         let fires = engine.step(held, std::time::Instant::now());
         // This backend's chord keys are VKs; `held_keys` is the shared evdev namespace, so the
-        // projection goes through the same translation `commit` uses above.
+        // projection goes through the same `vk_to_evdev_mod` as `held_keys.set` above.
         let chord_mods = |pid: &str| -> Vec<u16> {
             engine
                 .keys_for_profile(pid)
@@ -1230,12 +1217,11 @@ mod imp {
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
                 Fire::Reclassify(pid) => {
-                    // Same rising edge, same reason as Start/Toggle above: the engine fires
-                    // Reclassify only on the hands-free chord's own physical completion, so this
-                    // press IS in the map and the still-held check works normally for it — which
-                    // makes any pending loss latch a dud. Reachable when the hook is briefly
-                    // blind during a re-arm gap (≤3 s) and a release is missed, or when a
-                    // desktop-switch release never reaches either feed.
+                    // Same as Start/Toggle above: the engine fires Reclassify only on the
+                    // hands-free chord's own physical completion, so it is a fresh rising edge and
+                    // any pending loss latch is a dud — reachable when the hook is briefly blind
+                    // during a re-arm gap (≤3 s) and a release is missed, or when a desktop-switch
+                    // release never reaches either feed.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
@@ -1328,14 +1314,12 @@ mod imp {
     /// between calls.
     ///
     /// While a remote-desktop client has focus the OS reading alone is not enough: its capture
-    /// hook swallows the keys it forwards, so the async state reads a held chord UP and two
-    /// polls would cut every push-to-talk hold. Our re-armed hook sits above it and still sees
-    /// the autorepeat downs of the last-pressed held key, so there nothing is released while ANY
-    /// held key sent a down/autorepeat within RDP_LIVENESS (`last_down`, stamped by the worker) —
-    /// per held-set, not per key, because an earlier chord key stops repeating once the next one
-    /// goes down. That
-    /// keeps the repair for the RDP case the module header names first — a release swallowed
-    /// in a re-arm gap — instead of stranding the key until focus leaves the client.
+    /// hook swallows the keys it forwards, so a held chord reads UP and two polls would cut every
+    /// push-to-talk hold. Our re-armed hook sits above it and still sees the autorepeat downs of
+    /// the last-pressed held key, so there nothing is released while ANY held key sent a
+    /// down/autorepeat within RDP_LIVENESS (`last_down`) — per held-set, not per key, because an
+    /// earlier chord key stops repeating once the next one goes down. That keeps the repair for a
+    /// release swallowed in a re-arm gap instead of stranding the key until focus leaves the client.
     ///
     /// Liveness cannot vouch for THIRD-PARTY INJECTED keys (`injected_held`: SpeechMike-style
     /// companion apps, foot pedals, AutoHotkey — VK-only SendInput sends one down and never
@@ -1368,10 +1352,8 @@ mod imp {
         // Retain-then-swap: only keys up on BOTH polls are acted on.
         let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
-        // Under RDP a held-set that is still repeating is held, whatever the OS says about its
-        // earlier keys (only the last-pressed key repeats); every key keeps its strike and is
-        // asked again next poll. An injected key never repeats, so while one is held the
-        // set counts as alive. Both detectors (focus_is_remote), read only when a release is pending.
+        // RDP liveness veto (see the doc above): every key keeps its strike and is asked again
+        // next poll. focus_is_remote is read only when a release is pending.
         if !confirmed.is_empty()
             && focus_is_remote(app)
             && (!injected_held.is_empty()
@@ -1434,8 +1416,8 @@ mod imp {
         loop {
             // Wake for whichever comes first: a due deferred release, or the next
             // reconciliation. The reconciler is scheduled ONLY while we believe something is
-            // held — with an empty held-set there is nothing to repair and the worker goes
-            // back to blocking indefinitely on the channel, exactly as before.
+            // held — with an empty held-set there is nothing to repair and the worker blocks
+            // indefinitely on the channel.
             let deadline = match (
                 deb.next_deadline(),
                 (!held.is_empty()).then_some(next_resync),
@@ -1496,12 +1478,11 @@ mod imp {
         }
         // Channel closed (backend stopped or replaced). First commit every release still parked
         // in the debouncer: those keys ARE released, and a hold whose release is parked here
-        // would otherwise still read as active below and get a manufactured stop — with the loss
-        // latch armed on a chord the user let go of, which diverted the next phrase to the
-        // clipboard. Through `commit` in teardown mode: the HeldKeys decrement and the engine
-        // step happen exactly as if the window had elapsed a moment earlier, and the Stop is
-        // CLAIMED via take_hold — stop_held_sessions runs before this listener is dropped on the
-        // rebind/sync-pull path and may already have emitted it.
+        // would otherwise read as active below and get a manufactured stop, arming the loss
+        // latch (next phrase to the clipboard) on a chord the user let go of. `commit` in
+        // teardown mode acts as if the debounce window had elapsed a moment earlier and CLAIMS
+        // the Stop via take_hold — stop_held_sessions runs before this listener is dropped on
+        // the rebind/sync-pull path and may already have emitted it.
         for key in deb.drain() {
             commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
         }
@@ -1643,8 +1624,8 @@ mod tests {
         assert_eq!(super::physical_key_id(0xE7, 0x2C, false), 0xE7); // VK_PACKET ',' ≠ Z
     }
 
-    // A PC layout reports the numpad "=" (scan 0x59) as VK_CLEAR on both feeds, so a
-    // "NumpadEqual" binding (VK_OEM_NEC_EQUAL) bound fine but never fired on Windows.
+    // A PC layout reports the numpad "=" (scan 0x59) as VK_CLEAR on both feeds; a
+    // "NumpadEqual" binding (VK_OEM_NEC_EQUAL) must still match it by scan position.
     #[test]
     fn the_numpad_equal_key_fires_a_numpad_equal_binding() {
         let id = super::code_to_vk("NumpadEqual").unwrap();
