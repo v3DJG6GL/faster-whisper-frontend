@@ -101,6 +101,12 @@ function failedText(status: JobStatus): string {
   return status.state === "cancelled" ? "Cancelled" : "The run failed on the server";
 }
 
+/** Settle a ledgered job as failed: the failed record first, then forget the row. */
+async function failAndForget(row: LedgerRow, reason: string, attached: boolean): Promise<void> {
+  failJob(row, reason, { attached });
+  await forgetRow(row.jobId);
+}
+
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
  *  (transport error, an HTTP status, or the result is not published yet). A stored result
  *  Rust can never accept (over the body cap, not valid text, a parse failure) settles the run
@@ -133,13 +139,11 @@ async function ingestDone(
       return false;
     case "not_found":
     case "disabled":
-      failJob(row, r.kind === "disabled" ? DISABLED_ERROR : NO_RESULT_ERROR, { attached });
-      await forgetRow(row.jobId);
+      await failAndForget(row, r.kind === "disabled" ? DISABLED_ERROR : NO_RESULT_ERROR, attached);
       return true;
     case "error":
       if (isAnsweredError(r.message) && !/^HTTP \d/.test(r.message)) {
-        failJob(row, `The server's result could not be read: ${r.message}`, { attached });
-        await forgetRow(row.jobId);
+        await failAndForget(row, `The server's result could not be read: ${r.message}`, attached);
         return true;
       }
       return false;
@@ -185,6 +189,12 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
     void forgetRow(row.jobId);
   };
   if (opts.attached) setReattachStop(abandon);
+  // A terminal failure: stop polling, release the rail's hook, settle the run failed.
+  const giveUp = async (reason: string) => {
+    stop();
+    if (opts.attached) setReattachStop(null);
+    await failAndForget(row, reason, opts.attached);
+  };
   const base = opts.attached ? POLL_MS : HEADLESS_POLL_MS;
   const tick = async () => {
     if (stopped) return;
@@ -194,10 +204,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
       return;
     }
     if (Date.now() - row.startedAt > maxAgeMs(row)) {
-      stop();
-      if (opts.attached) setReattachStop(null);
-      failJob(row, GAVE_UP_ERROR, { attached: opts.attached });
-      await forgetRow(row.jobId);
+      await giveUp(GAVE_UP_ERROR);
       return;
     }
     // The backend was deleted mid-watch (here, or by a sync pull): no key resolves for it, so an
@@ -241,10 +248,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
         return;
       }
       if (r.kind === "not_found" || r.kind === "disabled") {
-        stop();
-        if (opts.attached) setReattachStop(null);
-        failJob(row, r.kind === "disabled" ? DISABLED_ERROR : NOT_FOUND_ERROR, { attached: opts.attached });
-        await forgetRow(row.jobId);
+        await giveUp(r.kind === "disabled" ? DISABLED_ERROR : NOT_FOUND_ERROR);
         return;
       }
       if (r.kind !== "ok") return;
@@ -267,10 +271,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
         delay = Math.min(base * 2 ** failures, MAX_BACKOFF_MS);
         return;
       }
-      stop();
-      if (opts.attached) setReattachStop(null);
-      failJob(row, failedText(status), { attached: opts.attached });
-      await forgetRow(row.jobId);
+      await giveUp(failedText(status));
     } finally {
       busy = false;
       if (!stopped) timer = setTimeout(() => void tick(), delay);
@@ -412,12 +413,10 @@ export async function reconcileJobs(): Promise<void> {
             retry = true;
             continue;
           case "disabled":
-            failJob(row, DISABLED_ERROR, { attached: false });
-            await forgetRow(row.jobId);
+            await failAndForget(row, DISABLED_ERROR, false);
             continue;
           case "not_found":
-            failJob(row, NOT_FOUND_ERROR, { attached: false });
-            await forgetRow(row.jobId);
+            await failAndForget(row, NOT_FOUND_ERROR, false);
             continue;
           case "running":
             // GET /v1/jobs/{id} never answers 409; treat like a transport hiccup.
@@ -434,8 +433,7 @@ export async function reconcileJobs(): Promise<void> {
           // reach this ingest: re-check after each of its awaits instead.
           if (!(await ingestDone(row, status, false, undefined, () => stoppedIds.has(row.jobId)))) retry = true;
         } else {
-          failJob(row, failedText(status), { attached: false });
-          await forgetRow(row.jobId);
+          await failAndForget(row, failedText(status), false);
         }
       } finally {
         // Handled (or left for the next pass); a running row stays until it is watched.
