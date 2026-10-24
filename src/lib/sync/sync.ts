@@ -210,6 +210,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 /** The bound on one keyring call (withTimeout's locked-wallet case). */
 const KEYRING_TIMEOUT_MS = 10_000;
 
+/** One bounded keyring key-state read: a locked wallet that never answers reads as null. */
+function readKeyStatesBounded(ids: string[]): Promise<BackendKeyRead | null> {
+  return withTimeout<BackendKeyRead | null>(readBackendKeyStates(ids), KEYRING_TIMEOUT_MS, null);
+}
+
 const CHIP_FIELD_SET: ReadonlySet<string> = new Set(CHIP_FIELDS);
 
 /** Own-property partition helpers. Own-props only: the blob is JSON-parsed, so
@@ -624,11 +629,7 @@ export async function composeBlob(
     // "API keys" gate off: the gate pass below carries the snapshot's keys whatever is read here,
     // so skip the live read — a locked wallet must not divert the list to the degraded pass-through.
     if (opts.includeSecrets && (!opts.gates || opts.gates.apiKeys)) {
-      const read = await withTimeout(
-        readBackendKeyStates(cfg.backends.map((b) => b.id)),
-        KEYRING_TIMEOUT_MS,
-        null as BackendKeyRead | null,
-      );
+      const read = await readKeyStatesBounded(cfg.backends.map((b) => b.id));
       let secrets = read?.keys ?? {};
       // A key the store reports ABSENT (read fine, no entry) is a stale local `hasApiKey` — config
       // copied from another machine, wallet reset, entry deleted by hand — not a locked wallet.
@@ -1582,11 +1583,7 @@ async function reconcileBackendSecrets(
     }
   }
   if (aborted()) return { backends: list, rotated: landed() };
-  const present = await withTimeout(
-    readBackendKeyStates(list.map((b) => b.id)),
-    KEYRING_TIMEOUT_MS,
-    null as BackendKeyRead | null,
-  );
+  const present = await readKeyStatesBounded(list.map((b) => b.id));
   // A degraded read (locked wallet, timed out) must NOT demote: re-deriving `hasApiKey: false`
   // for every backend would be hydrated and persisted, and the next push would then see no
   // backend claiming a key — bypassing `composeBlob`'s erase guard and PUTting a keyless list
@@ -2841,11 +2838,7 @@ async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<Sync
     },
   );
   if (cats.backends && isPlainObject(sig.backends)) {
-    const read = await withTimeout(
-      readBackendKeyStates(s.backends.map((b) => b.id)).catch(() => null),
-      KEYRING_TIMEOUT_MS,
-      null as BackendKeyRead | null,
-    );
+    const read = await readKeyStatesBounded(s.backends.map((b) => b.id)).catch(() => null);
     // An id the store reports ABSENT holds no key (a stale `hasApiKey`), which is what the store
     // holds — only a timeout, or a failed id of a backend that claims a key, leaves a rotation
     // unknowable. Counting the absent one as unread would ask on every backends conflict of every
