@@ -47,6 +47,9 @@ import type {
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/** The answer every desktop-only command gives in a plain browser (no Tauri). */
+const NOT_IN_DESKTOP = "Not running in the desktop app.";
+
 /** The server a command talks to: its URL plus whose key Rust resolves — the saved backend's
  *  keyring entry (`backendId`) or an explicit `apiKey` (a backend not saved yet). */
 export interface ServerTarget {
@@ -172,7 +175,7 @@ export async function remoteDesktopAutoDetected(appId: string): Promise<boolean>
 }
 
 export async function testConnection(args: ServerTarget): Promise<ConnectionInfo> {
-  const offline = { ok: false, openMode: false, models: [], error: "Not running in the desktop app." };
+  const offline = { ok: false, openMode: false, models: [], error: NOT_IN_DESKTOP };
   return invokeServer<ConnectionInfo>("test_connection", args, {}, offline);
 }
 
@@ -317,7 +320,7 @@ export async function urlPreview(args: ServerTarget & {
 }): Promise<UrlPreview> {
   return invokeServer<UrlPreview>("url_preview", args, {
     url: args.url,
-  }, new Error("Not running in the desktop app."));
+  }, new Error(NOT_IN_DESKTOP));
 }
 
 export interface SubtitleTrackIn {
@@ -421,7 +424,7 @@ export async function copyMediaTo(args: {
   audioBase?: string | null;
   noClobber?: boolean;
 }): Promise<number | null> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
+  if (!isTauri) throw new Error(NOT_IN_DESKTOP);
   return invoke<number | null>("copy_media_to", {
     src: args.src,
     dest: args.dest,
@@ -571,7 +574,7 @@ export async function getTranscribeProgress(args: ServerTarget & {
 }): Promise<BatchProgress> {
   return invokeServer<BatchProgress>("get_transcribe_progress", args, {
     progressId: args.progressId,
-  }, new Error("Not running in the desktop app."));
+  }, new Error(NOT_IN_DESKTOP));
 }
 
 /** Names of server-side override-profiles a client may reference (full backend
@@ -633,7 +636,7 @@ export async function getDecodeDefaults(args: ServerTarget & {
  *  the screen can branch (see PipelineFetch: `ok` = state present, 0 = unreachable,
  *  401/403 = gated, 404 = standard/old server). Outside Tauri → an unreachable result. */
 export async function getPipelineRules(args: ServerTarget): Promise<PipelineFetch> {
-  return invokeServer<PipelineFetch>("get_pipeline_rules", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
+  return invokeServer<PipelineFetch>("get_pipeline_rules", args, {}, { ok: false, status: 0, error: NOT_IN_DESKTOP });
 }
 
 /** Recently-transcribed word/phrase suggestions for the Dictionary's
@@ -673,7 +676,7 @@ export async function postUsageOutcomes(args: ServerTarget & {
 }): Promise<UsageOutcomePostResult> {
   return invokeServer<UsageOutcomePostResult>("post_usage_outcomes", args, {
     outcomes: args.outcomes,
-  }, { ok: false, status: 0, error: "Not running in the desktop app.", results: [] });
+  }, { ok: false, status: 0, error: NOT_IN_DESKTOP, results: [] });
 }
 
 /** `GET /v1/jobs/{id}` — a server job row, with the live progress while in
@@ -684,7 +687,7 @@ export async function getJob(args: ServerTarget & {
 }): Promise<JobOutcome<JobStatus>> {
   return invokeServer<JobOutcome<JobStatus>>("get_job", args, {
     jobId: args.jobId,
-  }, { kind: "error", message: "Not running in the desktop app." });
+  }, { kind: "error", message: NOT_IN_DESKTOP });
 }
 
 /** `GET /v1/jobs/{id}/result` — the stored payload as the BatchResult the
@@ -694,7 +697,7 @@ export async function getJobResult(args: ServerTarget & {
 }): Promise<JobOutcome<BatchResult>> {
   const o = await invokeServer<JobOutcome<BatchResult>>("get_job_result", args, {
     jobId: args.jobId,
-  }, { kind: "error", message: "Not running in the desktop app." });
+  }, { kind: "error", message: NOT_IN_DESKTOP });
   return o.kind === "ok" ? { ...o, value: withLanguageCode(o.value) } : o;
 }
 
@@ -704,7 +707,7 @@ export async function deleteJob(args: ServerTarget & {
 }): Promise<JobOutcome<null>> {
   return invokeServer<JobOutcome<null>>("delete_job", args, {
     jobId: args.jobId,
-  }, { kind: "error", message: "Not running in the desktop app." });
+  }, { kind: "error", message: NOT_IN_DESKTOP });
 }
 
 /** One invoke at a time for a per-device store (jobs ledger, usage queue, sync state) — also
@@ -767,7 +770,7 @@ export async function savePipelineRules(args: ServerTarget & {
     saved: [],
     conflicts: [],
     requires_restart: false,
-    detail: "Not running in the desktop app.",
+    detail: NOT_IN_DESKTOP,
   };
   return invokeServer<PipelineSaveResult>("save_pipeline_rules", args, { patch: args.patch }, offline);
 }
@@ -1516,7 +1519,7 @@ export async function pickRecordingsDir(): Promise<string | null> {
  *  result: 0 = unreachable, 200 = ok (version 0 = empty store), 401 = key,
  *  404 = the backend build predates sync. Outside Tauri → unreachable. */
 export async function syncPull(args: ServerTarget): Promise<SyncPullResult> {
-  return invokeServer<SyncPullResult>("sync_pull", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
+  return invokeServer<SyncPullResult>("sync_pull", args, {}, { ok: false, status: 0, error: NOT_IN_DESKTOP });
 }
 
 /** Push the composed blob (PUT /v1/synced-client-settings). `baseVersion` is the server
@@ -1531,12 +1534,12 @@ export async function syncPush(args: ServerTarget & {
     blob: args.blob,
     baseVersion: args.baseVersion,
     device: args.device,
-  }, { ok: false, status: 0, error: "Not running in the desktop app." });
+  }, { ok: false, status: 0, error: NOT_IN_DESKTOP });
 }
 
 /** Drop the account's server-side blob (DELETE /v1/synced-client-settings). */
 export async function syncDelete(args: ServerTarget): Promise<SyncDeleteResult> {
-  return invokeServer<SyncDeleteResult>("sync_delete", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
+  return invokeServer<SyncDeleteResult>("sync_delete", args, {}, { ok: false, status: 0, error: NOT_IN_DESKTOP });
 }
 
 /** Local sync bookkeeping (<config dir>/sync-state.json): last-synced snapshot
@@ -1589,7 +1592,7 @@ export async function exportSettingsFile(path: string, envelope: ExportEnvelope)
 /** Read + validate a settings-export file. Throws (string) with a clear message
  *  on not-an-export / newer formatVersion / structurally-broken lists. */
 async function importSettingsFile(path: string): Promise<ImportResult> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
+  if (!isTauri) throw new Error(NOT_IN_DESKTOP);
   return invoke<ImportResult>("import_settings_file", { path });
 }
 
@@ -1615,7 +1618,7 @@ export function pickSavePath(defaultName: string): Promise<string | null> {
 
 /** Write a plain text file via the Rust side (atomic tmp+rename). */
 export async function saveTextFile(path: string, contents: string): Promise<void> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
+  if (!isTauri) throw new Error(NOT_IN_DESKTOP);
   await invoke("save_text_file", { path, contents });
 }
 
@@ -1752,7 +1755,7 @@ export async function deleteTranscriptRecord(id: string, audioBase: string | nul
 /** Read a media file's raw bytes for the playback blob fallback (Linux
  *  WebKitGTK is unreliable with media over the asset protocol). */
 export async function readMediaFile(path: string): Promise<ArrayBuffer> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
+  if (!isTauri) throw new Error(NOT_IN_DESKTOP);
   return invoke<ArrayBuffer>("read_media_file", { path });
 }
 
@@ -1763,7 +1766,7 @@ export async function readMediaFile(path: string): Promise<ArrayBuffer> {
  *  blobs freeze the web process). Rejects with "gone" when the source
  *  file no longer exists. */
 export async function decodeMediaFile(path: string): Promise<string> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
+  if (!isTauri) throw new Error(NOT_IN_DESKTOP);
   return invoke<string>("decode_media_file", { path });
 }
 
