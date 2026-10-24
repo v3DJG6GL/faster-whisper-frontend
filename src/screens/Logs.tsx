@@ -186,7 +186,6 @@ export default function Logs() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimerRef.current), []);
   // Open log folder fails for real (a custom folder on an unmounted share, a read-only path,
   // no file manager): say so on the button like Copy does. A stalled mount must not queue opens
@@ -353,11 +352,9 @@ export default function Logs() {
     // object each render trips useSyncExternalStore's infinite-loop guard.
     const s = useApp.getState();
     const t = s.settings.transcribe;
-    // The most recent run, which is what a bug report is almost always about.
-    // The header used to read the TRANSCRIBE SCREEN's configured backend and
-    // model even for a dictation bug — so it confidently named a model that
-    // never ran, and a reader had no way to tell. A history record is the
-    // only durable account of what actually executed.
+    // The most recent run, which is what a bug report is almost always about. A history
+    // record is the only durable account of what actually executed: the Transcribe screen's
+    // settings would name a model that never ran for a dictation bug.
     // The listing the mount started may not have landed yet (or failed): wait for it, or retry it,
     // so a run on disk is not reported as "no run recorded". loadHistory joins an in-flight listing
     // and resolves at once when already loaded.
