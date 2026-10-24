@@ -156,10 +156,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setError(null);
     try {
       const res = await testConnection({ serverUrl, apiKey: key || undefined });
-      // Live-target guard, twin of `Backends.ConnectStep.testAndContinue`'s: both inputs stay
-      // editable for the whole network-timeout-length test, so a result for a target the user has
-      // since corrected must not mint a backend, write its key, pull sync or offer a restore (whose
-      // acceptance would bind sync to the abandoned server).
+      // Live-target guard, twin of `Backends.ConnectStep.testAndContinue`'s: a result for a target
+      // the user has since corrected must not mint a backend, write its key, pull sync or offer a
+      // restore (whose acceptance would bind sync to the abandoned server).
       if (!stillLive()) return;
       if (!res.ok) {
         setError(res.error || "Couldn’t reach the server.");
