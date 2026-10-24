@@ -1,7 +1,6 @@
-// The short label shown on the overlay chip for the active Profile. A Profile may
-// author its own `tag`; when it doesn't, we derive a compact fallback from the
-// name (uppercased, whitespace collapsed, capped). The chip also CSS-truncates, so
-// this is about a sensible default rather than a hard width guarantee.
+// The overlay chip's label for the active Profile: its authored `tag`, else one derived from
+// the name. The chip also CSS-truncates, so the caps here set a sensible default, not a hard
+// width guarantee.
 
 import { capCodePoints, profileDisplayName, trimLeadingInvisible } from "./sanitize";
 
