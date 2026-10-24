@@ -1,5 +1,5 @@
-// Shared helpers for editing a `callback:map` ("Word mappings") pipeline rule —
-// used by both the full Dictionary screen and the minimal QuickAdd window so the
+// Shared helpers for reading and editing pipeline rules (above all the `callback:map`
+// "Word mappings" rule) — one copy for every screen that touches them, so the
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
