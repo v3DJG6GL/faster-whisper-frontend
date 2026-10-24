@@ -1,7 +1,6 @@
-// pushNow's 409 auto-merge used to merge and apply the blob it composed BEFORE the PUT, so a
-// setting edited while the request was on the wire was in neither that blob nor the merge: the
-// apply hydrated over it, the retry pushed the old value and adopted it as the base, and the
-// edit's own push then found nothing to send. The merge must start from the live store.
+// pushNow's 409 auto-merge must start from the live store, not the blob composed before the PUT:
+// a setting edited while the request is on the wire is in neither, so the apply would revert it,
+// the retry push and adopt the old value as base, and the edit's own push find nothing to send.
 
 import { expect, it, vi } from "vitest";
 import { approvePendingReview, getPendingConflict, getPendingReview, pullNow, pushNow, resetSyncState } from "./sync";
