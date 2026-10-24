@@ -20,12 +20,10 @@ import type {
  *  Machine-local fields (evdevEnabled) are excluded by construction — this
  *  type simply doesn't have them. The quick-add chord lived here before the
  *  `dictionary` category existed; `migrateBlob` moves it on every inbound
- *  path, so post-migration blobs never carry it here. */
-/** EVERY field is optional on the wire: `gateComposeScalar` deletes a gated-off key the
+ *  path, so post-migration blobs never carry it here.
+ *  EVERY field is optional on the wire: `gateComposeScalar` deletes a gated-off key the
  *  snapshot has no value for, and `gateApplyScalar` deletes gated-off keys from every
- *  inbound blob — so "required" here was a lie the compiler could not see through, and a
- *  `blob.general.deepFieldDetection` deref reached Rust as `undefined`. Apply's spread keeps
- *  the device's local value for anything absent. */
+ *  inbound blob. Apply's spread keeps the device's local value for anything absent. */
 export interface SyncGeneral {
   theme?: ThemeName;
   /** Signal colour hue, 0–360. Absent in blobs written before it existed (2026-09-02). */
@@ -270,9 +268,8 @@ export interface SyncState {
   device?: string | null; // last writer's label as reported by the server
   hash?: string;
   snapshot?: SyncBlob;
-  /** Backend ids whose API keys belong to `snapshot`. The VALUES live in the OS keyring, not
-   *  here — this file sits beside config.json and used to hold them in cleartext. Absent when
-   *  the snapshot carries no keys. */
+  /** Backend ids whose API keys belong to `snapshot`. The VALUES live in the OS keyring, never
+   *  here — this file is plain JSON beside config.json. Absent when the snapshot carries no keys. */
   snapshotSecretIds?: string[];
   /** How many keyring accounts the stash of those keys spans (wincred caps one credential at
    *  2560 bytes). Absent means 1: the legacy single-account stash. */
