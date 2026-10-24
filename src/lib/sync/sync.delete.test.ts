@@ -1458,8 +1458,8 @@ describe("an edit landing during an approval's keyring wait", () => {
       api.conflicts = [];
     }
   });
-  // The signature is now read first: the same edit is then in the compose only, and an approval
-  // that applies straight away must keep it rather than take the category as "not edited".
+  // The signature is read before the compose, so the same edit lands in the compose only: an
+  // approval that applies straight away must keep it rather than take the category as "not edited".
   it("survives an approval that applies straight away", async () => {
     let release: (v: Record<string, string>) => void = () => {};
     try {
