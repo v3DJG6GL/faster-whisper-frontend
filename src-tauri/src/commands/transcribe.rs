@@ -406,8 +406,7 @@ fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &P
     if AUDIO_SUBDIRS.iter().any(|s| under(&base.join(s), parent)) {
         return true;
     }
-    // In the base root itself, the app's own names are taken (case-blind, for Windows/macOS),
-    // and so is every name ensure_audio_layout's legacy sweep claims (its own predicate).
+    // Case-blind for Windows/macOS; is_dictation_file is ensure_audio_layout's sweep predicate.
     let in_root = match (base.canonicalize(), parent.canonicalize()) {
         (Ok(b), Ok(p)) => b == p,
         _ => false,
