@@ -12,16 +12,16 @@
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Serialises a record write against the retention sweep's per-entry stat-then-unlink. The
-/// sweeps run on a background thread (`save_config`), so without it a save could rename a fresh
+/// Serialises a record write against the retention sweep's per-entry stat-then-unlink. The sweeps
+/// run on a background thread (`queue_retention_sweeps`), so without it a save could rename a fresh
 /// record into place between the sweep's mtime check and its `remove_file`, and the just-saved
 /// record would be deleted. Held per entry, never for a whole sweep, so a save waits at most one
-/// stat + unlink. The media-path rewriters (`rewrite_media_paths`, `heal_media_paths`) hold it
-/// per record across their re-read and rewrite too: they run on a background thread (the launch
+/// stat + unlink. The media-path rewriters (`rewrite_media_paths`, `heal_media_paths`) hold it per
+/// record across their re-read and rewrite too: they run on a background thread (the launch
 /// audio-layout job, an audio-base move) while saves and sweeps stay live, so an unlocked rewrite
 /// could overwrite a newer save with the stale copy it read, or resurrect a record a sweep or the
-/// user's delete just removed. Their path stats (the heal's, on possibly offline shares) run
-/// before they take it, so a slow share there cannot stall a main-thread save either.
+/// user's delete just removed. Their path stats (the heal's, on possibly offline shares) run before
+/// they take it, so a slow share there cannot stall a main-thread save either.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
 /// the two rewriters, and `delete_transcript_record` (across its record read + unlink only —
 /// its media-copy and recordings-folder unlinks both run after release, so a slow share there
