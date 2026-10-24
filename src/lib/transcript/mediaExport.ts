@@ -95,8 +95,8 @@ function trackSubtitle(result: BatchResult, opts: ExportOptions, track: string, 
   return generateExports(result, { ...opts, format, tracks: [track] })[0]?.content ?? "";
 }
 
-/** Whether a subtitle file holds at least one cue: every timing line has " --> " (cue text
- *  never does — VTT escapes its '>'), while a cue-less VTT is still a header and STYLE blocks. */
+/** Whether a subtitle file holds at least one cue: every cue's timing line has " --> ", and a
+ *  cue-less file has none (a cue-less VTT is still a header and STYLE blocks). */
 const hasCue = (content: string) => content.includes(" --> ");
 
 /** A track's language as the packager accepts it (Rust `is_package_lang`: a lowercase 2–3 letter
