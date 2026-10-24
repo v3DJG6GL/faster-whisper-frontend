@@ -87,9 +87,8 @@ export type RailStage = "downloading" | "separating" | "transcribing" | "diarizi
 export interface StageTime {
   start: number;
   end?: number;
-  /** Stamped only by a real progress poll. A merely seeded clock stays
-   *  unobserved — which is how a stage the server jumped over is told apart
-   *  from one that ran (see skippedStages). */
+  /** Stamped only by a real (non-"waiting") progress poll, never by the pump's seed:
+   *  mtFetchStage places an older server's model-fetch poll only on an observed open clock. */
   observed?: boolean;
 }
 
@@ -823,10 +822,8 @@ export function resetForInputChange() {
  *  Only meaningful between runs; the record itself stays in history. */
 export function closeRecord() {
   if (get().running) return;
-  // `running` is false, so there should be nothing left to abandon — but the
-  // epoch bump below is exactly the "our end is gone" move, and a stale handle
-  // here is the one shape that leaks server work. Idempotent, so it costs
-  // nothing when there is none.
+  // Defensive (`running` is false): a stale handle left past the epoch bump would
+  // leak server work. Idempotent, so free when there is none.
   abandonActiveRun();
   set((s) => ({
     epoch: s.epoch + 1,
@@ -1050,7 +1047,7 @@ export function flushPersistEdits(): void {
 
 /** Every settled run — success or failure — becomes a history record the
  *  moment it lands (failures keep their error and are retryable from the
- *  History screen). Registers under the path so later corrections re-save
+ *  History screen). Registers it (by id and path) so later corrections re-save
  *  the same record. */
 function recordRun(
   path: string,
@@ -1751,8 +1748,6 @@ export function foldProgress(p: BatchProgress) {
     // phantom span would read as the stage having run.
     const obs = p.stage !== "waiting";
     let stageTimes = s.stageTimes;
-    // Every non-"waiting" poll marks its stage observed — a stage whose clock only
-    // ever got seeded (never polled) is one the server jumped over.
     if (prev !== cur) {
       stageTimes = { ...stageTimes };
       const pc = prev ? stageTimes[prev] : undefined;
@@ -2009,9 +2004,8 @@ export function ingestJobResult(
     if (res.sourceVideoMediaId) {
       fetchRunUrlVideo(rec, row.ctx, res.sourceVideoMediaId);
     } else if (res.sourceVideoPending) {
-      // Headless: -1 never equals the store epoch, so the poll never paints
-      // the rail — it only waits for the video and pulls it. A re-attached run always has its
-      // job row (it was just read).
+      // Headless, -1 never equals the store epoch, so the poll never paints the rail — it only
+      // waits for the video and pulls it. Attached or not, the job row exists (it was just read).
       awaitRunUrlVideo(rec, row.ctx, row.jobId, opts.attached ? get().epoch : -1, undefined, true);
     }
   } else {
