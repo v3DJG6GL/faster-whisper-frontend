@@ -459,7 +459,7 @@ describe("per-target ticks", () => {
     expect(next.frontierIdx).toBe(9);
     expect(next.target).toBe("fr");
     expect(next.targetProgress).toBeCloseTo(0.9, 5);
-    // Without it, the old derivation stands.
+    // Without it, the frontier is derived from the global fraction.
     const derived = foldTranslatePoll(s, { stage: "translating", progress: 0.75 }, 1);
     expect(derived.frontierIdx).toBe(5);
     expect(derived.target).toBeUndefined();
