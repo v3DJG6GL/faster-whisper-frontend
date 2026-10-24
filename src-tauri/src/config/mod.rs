@@ -235,7 +235,7 @@ pub struct Backend {
 }
 
 /// A user-defined dictation setup: an activation type + chord, a target [`Backend`],
-/// and optional per-Profile language/prompt overrides (empty/None = inherit Backend).
+/// and optional per-Profile overrides of that Backend's settings (None = inherit).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -271,12 +271,13 @@ pub struct Profile {
     /// Per-Profile decode-param overrides, opaque to Rust.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
-    /// Per-Profile T2T translation overrides; for dictation, translateTo[0]
-    /// is the injection target. Opaque to Rust; skipped when None.
+    /// Per-Profile T2T translation overrides; for dictation, every translateTo
+    /// target is injected (blank-line separated). Opaque to Rust; skipped when None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation_overrides: Option<serde_json::Value>,
     /// Insert each phrase as the user speaks, rather than the whole transcript at the
-    /// end. None = off; skipped when None so existing configs round-trip byte-stable.
+    /// end. None = inherit `general.typeAsISpeak`; skipped when None so existing configs
+    /// round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_as_i_speak: Option<bool>,
     /// Per-Profile insertion overrides (method / paste chord / Enter / clipboard restore).
@@ -713,8 +714,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub home_profile_id: Option<String>,
     /// The pinned quick-add word-mapping list (Backend id + callback:map rule slug)
-    /// the QuickAdd window targets. None = not chosen yet. `#[serde(default, skip…)]`
-    /// so older configs load and an unset value round-trips byte-stable.
+    /// the QuickAdd window targets. None = not chosen yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_add_list: Option<QuickAddTarget>,
     pub general: GeneralSettings,
@@ -723,8 +723,7 @@ pub struct AppSettings {
     /// toggles, per-backend URL overrides). Frontend-owned opaque JSON like
     /// `quick_launch` — Rust stores + round-trips but never interprets
     /// it. MACHINE-LOCAL by contract: the TS sync layer excludes it from every
-    /// synced blob and export. `#[serde(default, skip…)]` so older configs load
-    /// and an unset value round-trips byte-stable.
+    /// synced blob and export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<serde_json::Value>,
     /// Transcribe-screen preferences (export format, display toggles, history
@@ -744,8 +743,7 @@ pub struct AppSettings {
     pub setup_dismissed: bool,
     /// Most-recently picked dictation translation targets, newest first — seeds the
     /// picker's "Recent" group. Frontend-owned and machine-local (the sync layer
-    /// excludes it); Rust only stores + round-trips it. Skipped when None so existing
-    /// configs round-trip byte-stable.
+    /// excludes it); Rust only stores + round-trips it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recent_translation_targets: Option<Vec<String>>,
     /// Most-recently picked spoken languages, newest first — the spoken-language picker's
@@ -815,7 +813,7 @@ pub struct Config {
     /// three keys: `id` and `appId` (the webview's `wellFormedAppRules` floor: both strings,
     /// non-empty key; a rule failing it is ignored, as the webview ignores it) and
     /// `remoteDesktop` (`inject::rdp_client::set_rules`, for the Quick-Add grab and the
-    /// push-to-talk liveness gate). `#[serde(default, skip…)]` so older configs load.
+    /// push-to-talk liveness gate).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_rules: Vec<serde_json::Value>,
     /// Schema version (absent = pre-versioning; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Gates the TS loader's one-shot migrations.
