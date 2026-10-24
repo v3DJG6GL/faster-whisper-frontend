@@ -132,6 +132,14 @@ async function seed(...rows: LedgerRow[]) {
   for (const r of rows) await persistRow(r);
 }
 
+/** An earlier launch's JOB_A still running on the server, re-attached to the idle rail (first poll landed). */
+async function reattachRunning(): Promise<void> {
+  await seed(row(JOB_A, T0));
+  getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+  await reconcileJobs();
+  await vi.advanceTimersByTimeAsync(0);
+}
+
 /** JOB_A's lost request is still running on the server: watch it headless and let the first poll land. */
 async function watchRunningLost(): Promise<void> {
   getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
@@ -451,10 +459,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a re-attached run whose backend is deleted settles failed instead of polling for days", async () => {
-    await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    await reconcileJobs();
-    await vi.advanceTimersByTimeAsync(0);
+    await reattachRunning();
     expect(useTranscribeRun.getState().running).toBe(true);
     // The user deletes the backend while the resumed run is on screen.
     useApp.setState({ backends: [] });
@@ -646,10 +651,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a done status whose result is not published yet re-polls, then ingests", async () => {
-    await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    await reconcileJobs();
-    await vi.advanceTimersByTimeAsync(0);
+    await reattachRunning();
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
     // The result endpoint still answers 409 on the first try.
     getJobResult.mockResolvedValueOnce({ kind: "running" }).mockResolvedValue(ok(RESULT));
@@ -668,10 +670,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a result fetch that keeps failing backs off, and still gives up past the row's age limit", async () => {
-    await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    await reconcileJobs();
-    await vi.advanceTimersByTimeAsync(0);
+    await reattachRunning();
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
     const at: number[] = [];
     getJobResult.mockImplementation(async () => {
@@ -695,10 +694,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a stored result Rust can never read settles the run failed instead of re-polling", async () => {
-    await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    await reconcileJobs();
-    await vi.advanceTimersByTimeAsync(0);
+    await reattachRunning();
     expect(useTranscribeRun.getState().running).toBe(true);
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
     getJobResult.mockResolvedValue({
@@ -747,10 +743,7 @@ describe("reconcileJobs", () => {
   });
 
   it("cancelling after a failed result fetch still forgets the row", async () => {
-    await seed(row(JOB_A, T0));
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    await reconcileJobs();
-    await vi.advanceTimersByTimeAsync(0);
+    await reattachRunning();
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
     getJobResult.mockResolvedValue({ kind: "error", message: "Could not connect" });
     await vi.advanceTimersByTimeAsync(1_000);
@@ -766,10 +759,7 @@ describe("reconcileJobs", () => {
 
   for (const outcome of ["error", "ok"] as const) {
     it(`cancelling while a re-attached run's result is in flight releases the rail (${outcome})`, async () => {
-      await seed(row(JOB_A, T0));
-      getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-      await reconcileJobs();
-      await vi.advanceTimersByTimeAsync(0);
+      await reattachRunning();
       getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
       let resolve!: (r: JobOutcome<BatchResult>) => void;
       getJobResult.mockImplementation(() => new Promise((res) => { resolve = res; }));
