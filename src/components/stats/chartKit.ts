@@ -20,7 +20,6 @@ export function bucketTick(b: { from: number }, mode: BucketMode, today: number)
   return fmtDateTick(b.from, mode === "month");
 }
 
-// The measure's formatters: the two `_s` measures are durations, the rest counts.
 export const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v) : fmtCompact(v));
 /** A value with its unit: `1,240 words` · `31h 12m` · `1 session`. */
 export function metricText(m: ChartMetric, v: number, compact = false): string {
