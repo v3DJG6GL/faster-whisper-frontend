@@ -19,17 +19,13 @@
 //     it is always safe.
 //   • The QUICK-ADD chord is a plain rising-edge chord, exactly like a
 //     hands-free toggle with nothing to upgrade: it opens the window and takes
-//     part in nesting only as an ordinary peer. (It used to be the third member
-//     of the family — a superset that aborted a just-started hold within a grace
-//     window. Nothing in the market nests a third chord over push-to-talk, the
-//     starter profiles never used it, and it was the one nesting with edge cases
-//     of its own — so it is gone, and hold ⊂ quick-add is an ordinary shadow
-//     conflict again.)
+//     part in nesting only as an ordinary peer. hold ⊂ quick-add is a shadow
+//     conflict, not a nesting: nothing in the market nests a third chord over
+//     push-to-talk, and a hold-aborting superset brought edge cases of its own.
 //   • A hold suppressed-then-unsuppressed (superset pressed and released while
 //     the root stays down) does NOT re-fire `Start`: holds start only on the
-//     physical completion edge. (The old matcher restarted here — wrong for
-//     the family: releasing Space out of Ctrl+Shift+Space would have begun a
-//     phantom push-to-talk session.)
+//     physical completion edge — otherwise releasing Space out of
+//     Ctrl+Shift+Space would begin a phantom push-to-talk session.
 //
 // Chords match by CONTAINMENT (`keys ⊆ held`), not by an exact modifier mask —
 // that is what lets the nesting above work at all, and what keeps a hold alive
@@ -42,10 +38,9 @@
 // OS-level registrar gives (`RegisterHotKey`, `XGrabKey`, `RegisterEventHotKey`
 // all match an exact mask). Without the guard, chords that merely OVERLAP — a
 // Ctrl+Super hands-free profile beside the factory Alt+Super quick-add, with Alt
-// down for any reason — both went fully-held on the same transition and BOTH
-// fired: dictation started and the quick-add window stole focus off one press.
-// The old guard only consulted configured strict SUPERSETS, which is empty for
-// every overlapping pair, so nothing arbitrated them.
+// down for any reason — go fully-held on the same transition and BOTH fire:
+// dictation starts and the quick-add window steals focus off one press. A
+// superset-only guard does not help: no overlapping pair has a strict superset.
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -243,7 +238,7 @@ impl Engine {
     /// subsets. A strict subset is exempt because that IS the designed nesting: the
     /// hands-free chord Ctrl+Shift+Space fires while its Ctrl+Shift hold is complete,
     /// which is the whole handoff. Everything else — a strict SUPERSET (which wins over
-    /// its subset, as before), or a mere OVERLAP like Alt+Super beside Ctrl+Super — makes
+    /// its subset), or a mere OVERLAP like Alt+Super beside Ctrl+Super — makes
     /// the press ambiguous, and an ambiguous press must do nothing rather than everything.
     ///
     /// Gates only the RISING arms. A hold that already started still stops on its own
@@ -438,10 +433,9 @@ mod tests {
         ])
     }
 
-    /// The factory Windows set as the field report ran it: push-to-talk Ctrl+Shift,
-    /// hands-free Ctrl+Super, quick-add Alt+Super. NOTHING nests here — the chords merely
-    /// OVERLAP on Super, the topology the old superset-only guard could not arbitrate and
-    /// which no other test covers.
+    /// The factory Windows set: push-to-talk Ctrl+Shift, hands-free Ctrl+Super, quick-add
+    /// Alt+Super. NOTHING nests here — the chords merely OVERLAP on Super, a topology no
+    /// other fixture covers.
     fn overlapping() -> Engine {
         Engine::new(vec![
             ChordSpec {
@@ -609,9 +603,8 @@ mod tests {
         assert_eq!(fires, vec![Fire::OpenQuickAdd, Fire::OpenQuickAdd]);
     }
 
-    /// The lift of a superset-only key must not fire the nested chord: only the
-    /// Hold arm was edge-gated; HandsFree/QuickAdd used the level and fired on
-    /// suppression-lift (dictation starting behind a just-opened quick-add window).
+    /// The lift of a superset-only key must not fire the nested chord in ANY arm, not
+    /// just Hold (else dictation starts behind a just-opened quick-add window).
     #[test]
     fn suppression_lift_does_not_fire_handsfree_or_quick_add() {
         let t = Instant::now();
@@ -672,8 +665,7 @@ mod tests {
 
     #[test]
     fn suppression_lift_does_not_restart_a_hold() {
-        // Root held throughout; superset pressed and released. The old matcher
-        // re-fired Start on the lift — the family must not.
+        // Root held throughout; superset pressed and released: the lift must not re-fire Start.
         let mut e = family();
         let t = Instant::now();
         let fires = run(
@@ -697,10 +689,10 @@ mod tests {
         );
     }
 
-    /// The reported bug. Alt is down for any reason (a menu, an Alt+Tab, a key-up the
-    /// Windows hook lost behind an RDP capture hook) and the user presses their hands-free
-    /// chord: Ctrl+Super and Alt+Super complete on the SAME transition. The old matcher
-    /// fired BOTH — dictation started and the quick-add window stole focus off one press.
+    /// Alt is down for any reason (a menu, an Alt+Tab, a key-up the Windows hook lost
+    /// behind an RDP capture hook) and the user presses their hands-free chord: Ctrl+Super
+    /// and Alt+Super complete on the SAME transition, so neither may fire — firing both
+    /// starts dictation and lets the quick-add window steal focus off one press.
     #[test]
     fn one_press_never_fires_two_overlapping_chords() {
         let mut e = overlapping();
