@@ -31,9 +31,8 @@ import type { DictationStatus, ServerWork } from "../types";
  * MOTION (pulse), never by hue alone — red/green is the most colour-blind-confused
  * pair (WCAG 1.4.1).
  *
- * NOTE: keep this in sync with the chip's own dot logic in Overlay.tsx — the chip
- * derives its resting colours from `state` below, layering only its edge-tuck /
- * standby-dock presentation on top.
+ * The chip's dot (Overlay.tsx) takes its colours from `state` and `tone` below, layering
+ * only its edge-tuck / standby-dock presentation on top.
  */
 export type DictationVisualState = "off" | "armed" | "speaking" | "processing" | "error";
 
@@ -95,9 +94,8 @@ export function dictationVisual(
 
 /**
  * THE single membership test for the "active session" set {listening, transcribing, translating, injecting}
- * — armed/capturing → finalizing → translating → inserting. Excludes idle (no session) and error.
- * Shared by the chip visibility, Home stop/cancel button, hotkey busy-gate and stream epoch-gating
- * so a future status can't be silently omitted at one of them.
+ * (idle and error excluded), shared by every "is a session running" gate so a future status can't be
+ * silently omitted at one of them.
  */
 export function isActiveDictation(status: DictationStatus): boolean {
   return (
