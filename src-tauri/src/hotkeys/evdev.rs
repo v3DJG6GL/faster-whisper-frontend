@@ -565,13 +565,12 @@ mod imp {
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
                 Fire::Reclassify(pid) => {
-                    // Same rising edge, same reason as Start/Toggle above: the engine fires
-                    // Reclassify only on the hands-free chord's own physical completion (`on &&
-                    // !active[i]`), and it CONTINUES a live session, so an injection follows it.
-                    // Multi-keyboard case: keyboard A's stream dies with a hold active and its
-                    // post-loop arms the latch while keyboard B's engine still has that hold;
-                    // completing the hands-free superset on B must not consume that stale latch
-                    // (TTL 130s) and divert the phrase to the clipboard.
+                    // A fresh rising edge, as for Start/Toggle (fired only on the hands-free
+                    // chord's own physical completion), and it CONTINUES a live session, so an
+                    // injection follows it. Multi-keyboard case: keyboard A's stream dies mid-hold
+                    // and its post-loop arms the latch while B's engine still has that hold;
+                    // completing the superset on B must not consume that stale latch and divert
+                    // the phrase to the clipboard.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
