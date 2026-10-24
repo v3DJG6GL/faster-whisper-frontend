@@ -415,7 +415,7 @@ async fn read_primary_now() -> Option<String> {
 /// than a plausible phrase is rejected — a paragraph isn't a spoken symbol. Edges are trimmed (a
 /// trailing newline from a to-end-of-line highlight just falls away); an INTERIOR line break (any
 /// of \n \r \v \f NEL U+2028 U+2029 — Word's manual line break copies as \v) or other control
-/// character rejects.
+/// character except Tab rejects.
 fn sanitize_seed(raw: &str) -> Option<String> {
     let s = raw.trim();
     if s.is_empty()
@@ -443,8 +443,8 @@ pub fn set_deep_field_detection(
 }
 
 /// Insert text into the focused field of the active app (paste or direct typing).
-/// Direct typing on Wayland routes through the RemoteDesktop portal; everything
-/// else uses enigo (clipboard paste, or direct on X11/Windows).
+/// On Wayland, direct typing prefers the virtual-keyboard protocol (portal fallback) and the
+/// paste chord goes through the RemoteDesktop portal; X11/Windows use enigo for both.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn inject_text(
