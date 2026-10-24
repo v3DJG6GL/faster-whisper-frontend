@@ -79,10 +79,10 @@ export function useOverrideContext(args: {
     if (!editing) {
       setLive(false);
       probedRef.current = null;
-      // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or
-      // drop a backend. A cached NULL is NOT terminal: refreshCaps cannot tell "server
-      // said no" from "the probe failed" (both arrive as null), and one blip must not pin
-      // the panels to empty lists for the session — retry on mount; refreshCaps coalesces.
+      // Absent ⇒ not fetched yet, or the last probe failed (refreshCaps stores only real
+      // answers); the store is invalidated at the sites that repoint or drop a backend. A cached
+      // NULL is not terminal either: refreshCaps writes it only for a known-standard server, which
+      // this branch has ruled out — so re-probe; refreshCaps coalesces.
       // Read fresh, not from the effect's closure: `caps` is deliberately NOT a dependency,
       // or every unrelated refreshCaps write would re-run the EDITING branch below and
       // re-probe the typed target.
