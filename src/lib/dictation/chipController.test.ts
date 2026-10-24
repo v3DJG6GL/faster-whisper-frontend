@@ -33,6 +33,14 @@ vi.mock("../api", async (orig) => ({
   playCue: vi.fn(() => Promise.resolve()),
 }));
 
+/** Every `dictation://update` payload emitted so far, oldest first. */
+const updates = <T,>() => emit.mock.calls.filter((c) => c[0] === "dictation://update").map((c) => c[1] as T);
+/** The newest `dictation://update` payload (undefined before the first). */
+const lastUpdate = <T,>(): T | undefined => {
+  const u = updates<T>();
+  return u[u.length - 1];
+};
+
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge, so
   // an inheriting profile never reads as "no translation" while dictation translates.
@@ -267,9 +275,7 @@ describe("initOverlayController — configLoaded reaches the chip", () => {
     const s = useApp.getState().settings;
     useApp.setState({ configLoaded: false, settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
     await initOverlayController();
-    const updates = () =>
-      emit.mock.calls.filter((c) => c[0] === "dictation://update").map((c) => c[1] as { configLoaded?: boolean });
-    const last = () => updates()[updates().length - 1];
+    const last = () => lastUpdate<{ configLoaded?: boolean }>();
     // The startup push carries the not-yet-loaded flag, so the chip keeps re-seeding its sizes.
     expect(last()?.configLoaded).toBe(false);
     const before = updates().length;
@@ -293,10 +299,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
         settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
       });
       await initOverlayController();
-      const last = () => {
-        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
-        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string };
-      };
+      const last = () => lastUpdate<{ canStart?: boolean; startHint?: string }>();
       expect(last()).toMatchObject({ canStart: false, startHint: "Add a profile to begin" });
       useApp.setState({ profiles: [profile] });
       expect(last()).toMatchObject({ canStart: false, startHint: "Enable a profile to begin" });
@@ -319,10 +322,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
         settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
       });
       await initOverlayController();
-      const last = () => {
-        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
-        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string };
-      };
+      const last = () => lastUpdate<{ canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string }>();
       useApp.setState({ backends: [] }); // force an emit from this state
       expect(last()).toMatchObject({ canStart: false, startHint: "Add a backend to begin", canCycle: true, cycleHint: "" });
       // Every profile off: now the cycle has nothing to cycle, and it says so — never "backend".
@@ -348,10 +348,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
         settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
       });
       await initOverlayController();
-      const last = () => {
-        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
-        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string };
-      };
+      const last = () => lastUpdate<{ canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string }>();
       // The picker's stamp: status stays "idle", only routePending says it is open.
       useApp.setState({ routePending: "choosing" });
       const picker = "Answer the target picker first";
@@ -531,10 +528,7 @@ describe("initOverlayController — the chip's speaking state follows every leve
       await initOverlayController();
       const set = useApp.getState().setDictation;
       set({ status: "listening", level: 0 });
-      const last = () => {
-        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
-        return u[u.length - 1]?.[1] as { speaking?: boolean };
-      };
+      const last = () => lastUpdate<{ speaking?: boolean }>();
       for (let i = 0; i < 30; i++, now += 33) set({ level: 0.3 });
       expect(last()?.speaking).toBe(true);
       for (let i = 0; i < 90; i++, now += 33) set({ level: 0 });
