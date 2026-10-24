@@ -1693,15 +1693,7 @@ mod imp {
             // KDE Wayland on a ch machine: XWayland holds the ch keymap while setxkbmap still
             // reports KWin's never-updated `us` rule names.
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let Some(ch) = xkb::Keymap::new_from_names(
-                &ctx,
-                "evdev",
-                "pc105",
-                "ch",
-                "de_nodeadkeys",
-                None,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            ) else {
+            let Some(ch) = names_keymap(&ctx, "ch", "de_nodeadkeys", None) else {
                 return; // no XKB data on this machine
             };
             let live = ch.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
@@ -1954,6 +1946,25 @@ mod imp {
             real_charmap_with(layout, "", None)
         }
 
+        /// Compile `layout(variant)` with `options` on the evdev rules and a pc105 model, as the
+        /// names fallback does. `None` when this machine has no XKB data for it.
+        fn names_keymap(
+            ctx: &xkb::Context,
+            layout: &str,
+            variant: &str,
+            options: Option<String>,
+        ) -> Option<xkb::Keymap> {
+            xkb::Keymap::new_from_names(
+                ctx,
+                "evdev",
+                "pc105",
+                layout,
+                variant,
+                options,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )
+        }
+
         /// `real_charmap` with an XKB variant and options (`caps:escape`, ...), as the live
         /// keymap carries them.
         fn real_charmap_with(
@@ -1962,15 +1973,7 @@ mod imp {
             options: Option<String>,
         ) -> Option<HashMap<char, KeySpec>> {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let keymap = xkb::Keymap::new_from_names(
-                &ctx,
-                "evdev",
-                "pc105",
-                layout,
-                variant,
-                options,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            )?;
+            let keymap = names_keymap(&ctx, layout, variant, options)?;
             let table = xkb::compose::Table::new_from_locale(
                 &ctx,
                 std::ffi::OsStr::new("en_US.UTF-8"),
@@ -2039,14 +2042,11 @@ mod imp {
         #[test]
         fn caps_lock_capitals_are_dropped_when_the_caps_key_acts_as_ctrl() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let Some(ctrl) = xkb::Keymap::new_from_names(
+            let Some(ctrl) = names_keymap(
                 &ctx,
-                "evdev",
-                "pc105",
                 "ch",
                 "de_nodeadkeys",
                 Some("caps:ctrl_modifier".into()),
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
             ) else {
                 eprintln!("skipped: no XKB data for `ch(de_nodeadkeys)`");
                 return;
@@ -2060,17 +2060,8 @@ mod imp {
         #[test]
         fn a_remapped_caps_key_is_never_tapped_to_cancel_a_live_caps_lock() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let compile = |options: Option<String>| {
-                xkb::Keymap::new_from_names(
-                    &ctx,
-                    "evdev",
-                    "pc105",
-                    "ch",
-                    "de_nodeadkeys",
-                    options,
-                    xkb::KEYMAP_COMPILE_NO_FLAGS,
-                )
-            };
+            let compile =
+                |options: Option<String>| names_keymap(&ctx, "ch", "de_nodeadkeys", options);
             let (Some(plain), Some(swapped)) =
                 (compile(None), compile(Some("caps:swapescape".into())))
             else {
@@ -2137,15 +2128,7 @@ mod imp {
                 ("ch", "de_nodeadkeys", "gar\u{e7}on"),
                 ("de", "", "5 \u{b5}m"),
             ] {
-                let Some(keymap) = xkb::Keymap::new_from_names(
-                    &ctx,
-                    "evdev",
-                    "pc105",
-                    layout,
-                    variant,
-                    None,
-                    xkb::KEYMAP_COMPILE_NO_FLAGS,
-                ) else {
+                let Some(keymap) = names_keymap(&ctx, layout, variant, None) else {
                     eprintln!("skipped: no XKB data for `{layout}({variant})`");
                     continue;
                 };
@@ -2165,15 +2148,7 @@ mod imp {
                 assert_eq!(caps_plan(&map[&'a'], true, true), Some((false, true)));
                 assert_eq!(caps_plan(&map[&'a'], false, true), Some((false, false)));
             }
-            if let Some(keymap) = xkb::Keymap::new_from_names(
-                &ctx,
-                "evdev",
-                "pc105",
-                "ch",
-                "de_nodeadkeys",
-                None,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            ) {
+            if let Some(keymap) = names_keymap(&ctx, "ch", "de_nodeadkeys", None) {
                 let map = charmap_from_keymap(&keymap, 0, None);
                 let cedilla = map[&'\u{e7}'];
                 assert!(cedilla.shift && !cedilla.caps_safe);
@@ -2197,15 +2172,7 @@ mod imp {
         fn every_planned_press_under_a_live_caps_lock_types_its_own_glyph() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
             for (layout, variant) in [("de", ""), ("pl", ""), ("ch", "de_nodeadkeys"), ("us", "")] {
-                let Some(keymap) = xkb::Keymap::new_from_names(
-                    &ctx,
-                    "evdev",
-                    "pc105",
-                    layout,
-                    variant,
-                    None,
-                    xkb::KEYMAP_COMPILE_NO_FLAGS,
-                ) else {
+                let Some(keymap) = names_keymap(&ctx, layout, variant, None) else {
                     eprintln!("skipped: no XKB data for `{layout}({variant})`");
                     continue;
                 };
@@ -2228,15 +2195,7 @@ mod imp {
                 // Plain letters keep the Shift XOR under Caps.
                 assert_eq!(caps_plan(&map[&'a'], true, true), Some((false, true)));
             }
-            let Some(de) = xkb::Keymap::new_from_names(
-                &ctx,
-                "evdev",
-                "pc105",
-                "de",
-                "",
-                None,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            ) else {
+            let Some(de) = names_keymap(&ctx, "de", "", None) else {
                 return;
             };
             let map = charmap_from_keymap(&de, 0, None);
@@ -2269,15 +2228,7 @@ mod imp {
         #[test]
         fn a_second_layouts_altgr_glyphs_are_typeable_when_the_first_has_no_altgr() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-            let Some(keymap) = xkb::Keymap::new_from_names(
-                &ctx,
-                "evdev",
-                "pc105",
-                "us,de",
-                ",",
-                None,
-                xkb::KEYMAP_COMPILE_NO_FLAGS,
-            ) else {
+            let Some(keymap) = names_keymap(&ctx, "us,de", ",", None) else {
                 eprintln!("skipped: no XKB data for `us,de`");
                 return;
             };
@@ -2303,15 +2254,7 @@ mod imp {
         fn a_keypad_only_digit_is_never_registered_as_a_shift_keypad_press() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
             for layout in ["th", "vn", "us"] {
-                let Some(keymap) = xkb::Keymap::new_from_names(
-                    &ctx,
-                    "evdev",
-                    "pc105",
-                    layout,
-                    "",
-                    None,
-                    xkb::KEYMAP_COMPILE_NO_FLAGS,
-                ) else {
+                let Some(keymap) = names_keymap(&ctx, layout, "", None) else {
                     eprintln!("skipped: no XKB data for `{layout}`");
                     continue;
                 };
