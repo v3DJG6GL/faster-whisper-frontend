@@ -131,7 +131,6 @@ describe("manifest integrity", () => {
   });
 
   it("legacy sub-toggle semantics carry over (defaults preserve today's behavior)", () => {
-    // The four pre-manifest sub-toggles keep their defaults under new ids.
     expect(DEFAULT_SETTING_SYNC.audioFolder).toBe(false); // was recordingsDir: false
     expect(DEFAULT_SETTING_SYNC.profileHotkeys).toBe(true);
     expect(DEFAULT_SETTING_SYNC.quickAddHotkey).toBe(true);
