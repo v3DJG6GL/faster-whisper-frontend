@@ -289,6 +289,8 @@ function useUsageView() {
   return { backends, statsBackends, viewBackend, setView, stats, dense };
 }
 
+const TREND_WORD = `${TREND_DAYS} days`;
+
 /** One kind's 30-day bars on the shared scale — a link into Statistics with that kind. */
 function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: UsageSeriesPoint[]; max: number; hatchId: string }) {
   const W = 200;
@@ -306,7 +308,7 @@ function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: U
         <span className="flex items-center gap-1.5"><Swatch kind={kind} />{KIND_LABEL[kind]}</span>
         <span className="font-num normal-case tracking-normal text-text">{fmtCompact(sum)}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[70px] w-full" aria-label={`${KIND_LABEL[kind]}: ${plural(Math.round(sum || 0), "word")} in 30 days`} role="img">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[70px] w-full" aria-label={`${KIND_LABEL[kind]}: ${plural(Math.round(sum || 0), "word")} in ${TREND_WORD}`} role="img">
         <line x1={0} x2={W} y1={H - 6} y2={H - 6} stroke="var(--c-line)" />
         {dense.map((p, i) => {
           const v = safeTotals(p[kind]).words;
@@ -327,8 +329,8 @@ export function HomeUsageStrip() {
   const hatchId = useId();
   if (!viewBackend || !stats) return null;
   // Home keeps the four headline figures; the Statistics page shows every measure.
-  const tiles = tileSpecs(stats, dense, "all", false, "30 days", TREND_DAYS).filter((t) => HOME_TILES.has(t.key));
-  const last30 = dense.slice(-30);
+  const tiles = tileSpecs(stats, dense, "all", false, TREND_WORD, TREND_DAYS).filter((t) => HOME_TILES.has(t.key));
+  const last30 = dense.slice(-TREND_DAYS);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
   // The server's window-clamped figure — the same one the Statistics tile shows for 30 days.
   const saved = nonNeg(stats.time_saved_s);
@@ -352,7 +354,7 @@ export function HomeUsageStrip() {
           <StatTile key={t.key} tile={t} spark />
         ))}
       </div>
-      <Panel title="By kind · 30 days" right={<Pill>time saved {fmtTimeSaved(saved)}</Pill>} className="mt-3 px-4 pb-2.5 pt-3">
+      <Panel title={`By kind · ${TREND_WORD}`} right={<Pill>time saved {fmtTimeSaved(saved)}</Pill>} className="mt-3 px-4 pb-2.5 pt-3">
         <svg width="0" height="0" className="absolute" aria-hidden="true">
           <defs><HatchDef id={hatchId} /></defs>
         </svg>
