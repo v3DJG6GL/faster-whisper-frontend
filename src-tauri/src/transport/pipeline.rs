@@ -31,18 +31,15 @@ const SETTING_NAME_MAX: usize = 64;
 /// across several lists, so one large but valid dictionary passes 1 MiB in compact JSON. The
 /// PATCH reply carries no rule bodies and stays at [`MAX_META_BODY`].
 const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
-/// Per-request bound on the GET, which covers reading the body: sized for the 2xx
-/// [`RULES_MAX_BODY`] read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and
-/// still well under the shared client's 120 s ceiling. Only that success body gets the 60 s:
-/// getting the response HEADERS (the request timeout covers the connect too) and reading a
-/// non-2xx error body share ONE `META_TIMEOUT` deadline, so an offline, black-holed or stalling
-/// host still shows Retry after 15 s, not 60 (nor 30, headers and error page each taking 15).
+/// Per-request bound on the GET, sized for reading the 2xx [`RULES_MAX_BODY`] the way
+/// [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`]. Only that success body gets the 60 s:
+/// connect + headers and a non-2xx error body share ONE `META_TIMEOUT` deadline, so an offline,
+/// black-holed or stalling host still shows Retry after 15 s (not 60, nor 15 + 15).
 const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Per-request bound on the PATCH (connect, headers and its [`MAX_META_BODY`] reply). Wider than
-/// `META_TIMEOUT` because the server validates every regex entry in a child process before it
-/// writes, budgeted up to 10 s (and queued behind another save's probe at worst), so a save that
-/// lands must not read as unsaved; still far under the shared client's 120 s ceiling, which left
-/// the Dictionary and QuickAdd on "Saving…" for two minutes against a black-holed host.
+/// `META_TIMEOUT` because the server validates every regex entry in a child process (up to 10 s,
+/// possibly queued behind another save), and a save that lands must not read as unsaved; the
+/// shared client's 120 s ceiling left "Saving…" up for two minutes against a black-holed host.
 const RULES_SAVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
@@ -150,9 +147,8 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     .map_err(|e| super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))
                 {
                     Ok(mut state) => {
-                        // `role` is the user's own privilege readout ("Editing as <role>"),
-                        // rendered inline in a wrapping row with no truncation — the sibling of
-                        // the identity strings discovery.rs already bounds.
+                        // `role` renders inline ("Editing as <role>") in a wrapping row with
+                        // no truncation.
                         state.role = super::bounded_server_text(&state.role, ROLE_MAX);
                         PipelineFetch {
                             ok: true,
@@ -174,9 +170,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                // The error body is small (MAX_ERROR_BODY): it shares the headers' 15 s deadline,
-                // not the 60 s sized for the success body (a 5xx that stalls would hold the card
-                // for 60 s) nor a fresh 15 s of its own (slow headers + a stalled page = 30 s).
+                // The small error body shares the headers' deadline (see RULES_TIMEOUT).
                 let read = super::error_detail(resp);
                 let detail = match tokio::time::timeout_at(meta_deadline, read).await {
                     Ok((_, d)) => d,
@@ -248,11 +242,9 @@ pub async fn save_pipeline_rules(
                     Ok(mut b) => PipelineSave {
                         ok: true,
                         status: code,
-                        // The one server-supplied string list in this module with no ceiling of its
-                        // own, while both siblings here take a count cap plus a per-entry bound
-                        // (`words`, `role`). It crosses the IPC and is JSON-parsed on the webview
-                        // main thread, and the only consumer reads `.length` — so nothing is lost
-                        // by holding it to the same shape as its neighbours.
+                        // Capped like `words`: it crosses the IPC and is JSON-parsed on the
+                        // webview main thread, and the only consumer reads `.length`, so the cap
+                        // loses nothing.
                         saved: {
                             b.saved.truncate(MAX_RECENT_WORDS);
                             b.saved
