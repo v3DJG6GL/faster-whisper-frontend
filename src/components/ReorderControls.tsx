@@ -1,5 +1,4 @@
-// A compact vertical up/down reorder control — drag-free and keyboard-accessible,
-// used to reorder profiles, backends and the entries of a Dictionary regex list.
+// A compact vertical up/down reorder control for list rows — drag-free and keyboard-accessible.
 
 import { useLayoutEffect, useRef } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";
