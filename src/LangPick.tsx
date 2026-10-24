@@ -6,7 +6,7 @@
 // goes back over `langpick://commit`.
 //
 // Not a command palette. The fast path is a NUMBERED quick-pick: the first nine rows (Recent,
-// then the model's languages) keep a stable digit, the profile's own targets are preselected,
+// then the model's languages) carry a digit, the profile's own targets are preselected,
 // and the whole decision is "2 3 Enter" without looking. Typing still filters, for the long
 // tail; Enter on a filtered row picks it and clears the filter. Rows, groups, search and
 // movement are the main window's target picker's (lib/languages, lib/listNav, OptionRows).
@@ -50,7 +50,7 @@ interface Seed {
   preset?: string[];
   /** Recently picked codes, most-recent first. */
   recent?: string[];
-  /** Profile tag + activation, for the header. */
+  /** The Profile's tag (or its name when the tag is blank), for the header. */
   tag?: string;
   /** "before" (hands-free, about to start) or "after" (push-to-talk, transcript ready). */
   when?: "before" | "after";
@@ -123,9 +123,9 @@ export default function LangPick() {
   const abort = useCallback(() => void abortLangPick().catch((e) => console.error("lang pick abort failed:", e)), []);
   // Recent, then the model's languages, then the rest — never the spoken language (translating
   // a language into itself is a no-op that would still cost a server round-trip per phrase).
-  // Grouped rather than merged: a flat list ranked by recency reorders under the user between
-  // summons, and a numbered pick is only fast if the number is where it was last time. The
-  // seed is untrusted shape, so every list is cleaned first.
+  // Grouped rather than merged so only the few Recent rows reorder between summons; the
+  // model's languages keep their alphabetical order below them. The seed is untrusted shape,
+  // so every list is cleaned first.
   const groups = useMemo(
     () =>
       targetSections({
@@ -162,7 +162,6 @@ export default function LangPick() {
     }
     const nav = navKey(e.key, active, rows.length);
     if (e.key === "Escape") {
-      // Abort the whole action (don't start / don't insert) — see the header comment.
       abort();
     } else if (e.key === "Enter") {
       if (query.length > 0) {
@@ -208,9 +207,8 @@ export default function LangPick() {
 
   // Esc/Enter/digits must work from anywhere in the window, not only while the filter
   // field is focused: clicking a row moves focus to <body>, an ancestor of the React root,
-  // so a keydown there never bubbled through the root div's handler — leaving an
-  // undecorated always-on-top window with no way to answer or dismiss (QuickAdd hit the
-  // same trap, and fixed it the same way).
+  // so a keydown there never bubbles through a root-div handler — leaving an undecorated
+  // always-on-top window with no way to answer or dismiss.
   useEffect(() => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
