@@ -386,7 +386,7 @@ fn create_session_file(dir: &Path, stamp: &str) -> std::io::Result<(std::fs::Fil
 
 /// Open this session's log file in `dir` (creating it), replaying the ring's
 /// current contents first so the file is complete from launch. Reused for a
-/// live folder change — the new file again starts with the full history.
+/// live folder change — the new file starts with the ring's last `RING_CAP` lines.
 pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
     if let Err(e) = crate::audio::create_dir_private(dir) {
         tracing::warn!("[log] cannot create session log dir {}: {e}", dir.display());
