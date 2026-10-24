@@ -7,8 +7,6 @@ license = "AGPL-3.0-or-later"
 edition = "2021"
 rust-version = "1.90"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -34,14 +32,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # HTTP client for the backend (batch transcription + model discovery). rustls to
-# avoid a system OpenSSL dependency. `system-proxy`: with default features off, reqwest read only
-# the HTTP(S)_PROXY / ALL_PROXY / NO_PROXY env vars, so a proxy set in Windows Internet Options or
-# macOS System Settings reached no route at all (on Linux the env vars remain the only source).
+# avoid a system OpenSSL dependency. `system-proxy` decides nothing at runtime: the shared client
+# sets its whole proxy from transport/proxy.rs (hyper-util's matcher, below), and adding any proxy
+# turns reqwest's implicit system one off.
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "stream", "rustls-no-provider", "system-proxy"] }
-# reqwest's own proxy matcher (env vars + OS settings + NO_PROXY), direct so the live-dictation
-# WebSocket takes the SAME proxy decision as every HTTP route — tungstenite dials the server
-# directly otherwise. The version reqwest already pulls in; `client-proxy-system` is what
-# `system-proxy` above turns on in it anyway.
+# hyper-util's proxy matcher (env vars + OS settings + NO_PROXY), direct so the live-dictation
+# WebSocket and the shared HTTP client take ONE proxy decision (transport/proxy.rs) — tungstenite
+# dials the server directly otherwise. The version reqwest already pulls in; `client-proxy-system`
+# is what `system-proxy` above turns on in it anyway.
 hyper-util = { version = "0.1.21", features = ["client-proxy", "client-proxy-system"] }
 # Decodes the system proxy's Basic login back into the URL userinfo reqwest's custom proxy reads
 # (transport/proxy.rs). The version reqwest and hyper-util already pull in.
@@ -76,7 +74,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
-# Human-readable local timestamps for saved-recording filenames (already in the lock tree).
+# Human-readable local timestamps for saved-recording filenames.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Errors / logging
@@ -95,7 +93,7 @@ parking_lot = "0.12"
 # Secure API-key storage in the OS secret store. HELD AT 3 (see renovate.json):
 # the keyring 4 "v1" migration broke API-key reads INSIDE the running app on
 # KDE/Plasma -- every streaming connect went out without Authorization and the
-# backend 403'd (shipped broken as v0.1.10, reverted in v0.1.11). Subtle part:
+# backend 403'd. Subtle part:
 # a standalone test binary read the same wallet entries fine, so the failure is
 # specific to the app's async environment (atspi switches zbus to the tokio
 # reactor process-wide; keyring 4's Linux store is zbus-based, while keyring 3's
@@ -200,8 +198,5 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.7"
 
-# NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
-# impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not
-# `cargo update -p time` past 0.3.47 until Tauri bumps `cookie`.
 [lints.rust]
 unused_crate_dependencies = "allow"
