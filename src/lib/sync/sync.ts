@@ -624,19 +624,19 @@ export async function composeBlob(
       let secrets = read?.keys ?? {};
       // A key the store reports ABSENT (read fine, no entry) is a stale local `hasApiKey` — config
       // copied from another machine, wallet reset, entry deleted by hand — not a locked wallet.
-      // Held as missing, it took the degraded pass-through below on every compose, and every
-      // merge then left backends out of the apply: `reconcileBackendSecrets`, the one place that
-      // re-derives the flag, never ran, and sync stayed degraded for good. So: the base's key for
+      // Held as missing, it would take the degraded pass-through below on every compose, and every
+      // merge would leave backends out of the apply: `reconcileBackendSecrets`, the one place that
+      // re-derives the flag, never runs, and sync stays degraded for good. So: the base's key for
       // that id travels when it holds one (nothing is erased; it is written back here only when an
       // apply's reconcile runs), else the entry goes up as keyless, which is what it is. Only a
       // read with NO failed id, and only while the base's keys were read back whole (otherwise "no
-      // base key" may just mean an unread stash): a failed id or a timeout keeps the old
-      // completeness rule as is. And only from the ADOPTED base: with none, or with backends
+      // base key" may just mean an unread stash): a failed id or a timeout keeps the completeness
+      // rule below as is. And only from the ADOPTED base: with none, or with backends
       // fresh, a merge's pass-through is the remote, whose key carried here reads as this
       // device's own — the consent rule then sees no change and the apply stores it unreviewed.
       // The stash latch is consulted only when a base is passed: a settings export passes none,
-      // so no base key could travel, and the latch (a sync-base matter) dropped every readable key
-      // from the backup over one stale flag.
+      // so no base key can travel, and the latch (a sync-base matter) would drop every readable
+      // key from the backup over one stale flag.
       if (keyReadFailedNowhere(read) && (snapshot === undefined || !snapshotSecretsUnavailable)) {
         const base = state.snapshot?.backends;
         const snapSecrets = base !== undefined && snapshot?.backends === base ? base.secrets : undefined;
@@ -1009,7 +1009,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // default, but a present non-string still fails the typed parse.
       enabled: p.enabled === true,
       // Trimmed, blank → unset: what every editor saves and the UI label shows. Untrimmed, a peer's
-      // "clinic-de " displayed as clinic-de but was sent verbatim, missing the server profile.
+      // "clinic-de " would display as clinic-de but be sent verbatim, missing the server profile.
       overrideProfile:
         typeof p.overrideProfile === "string" && p.overrideProfile.trim()
           ? p.overrideProfile.trim()
@@ -1067,14 +1067,12 @@ export function isCodeList(v: unknown): v is string[] {
 const MAX_CHORD_CODES = 16;
 
 /** Ceiling on the LENGTH of one code, paired with `MAX_CHORD_CODE_LEN` in commands/sync.rs — the same
- *  number, but not the same measure: this counts UTF-16 code units and Rust counts UTF-8 bytes, so
- *  the two disagree on non-ASCII input (Rust is the stricter of the pair). Every real code is
- *  ASCII, where the measures coincide, and both bound the field regardless. The count cap
- *  above bounds how many codes a chord has, never how long one is — 16 codes of ~250 KB each fit
- *  inside `SYNC_MAX_BODY` (4 MB) and reach `conflicts()`' O(k·m) subset scan, a `config.json`
- *  rewritten on every autosave, and `codeToLabel`'s raw fall-through render. Every real
- *  `KeyboardEvent.code` token is well under 32. A chord failing this is rejected whole, as an
- *  over-long one already is. */
+ *  number, but not the same measure: this counts UTF-16 code units and Rust counts UTF-8 bytes
+ *  (Rust is the stricter on non-ASCII; every real `KeyboardEvent.code` is ASCII and well under 32).
+ *  The count cap above bounds how many codes a chord has, never how long one is — 16 codes of
+ *  ~250 KB each fit inside `SYNC_MAX_BODY` (4 MB) and reach `conflicts()`' O(k·m) subset scan, a
+ *  `config.json` rewritten on every autosave, and `codeToLabel`'s raw fall-through render. A chord
+ *  failing this is rejected whole. */
 const MAX_CHORD_CODE_LEN = 64;
 
 /** Turn OFF the later member of every chord collision in an inbound binding set, including a
@@ -1839,8 +1837,6 @@ export async function applyBlob(
       }
       nextSettings = { ...nextSettings, transcribe };
     }
-    // The `fileTranscriptions` category — same routing into the opaque
-    // transcribe blob, same per-field validation.
     if (cats.fileTranscriptions && isPlainObject(blob.fileTranscriptions)) {
       const ft = sanitizeTranscription(
         pickFields(blob.fileTranscriptions as Record<string, unknown>, FILE_TRANSCRIPTION_SET),
@@ -3279,8 +3275,8 @@ export async function pushNow(manual = false): Promise<void> {
           return;
         }
         // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
-        // opt-outs like the other two applyBlob callers. A degraded-keyring compose leaves the
-        // backends category out of the apply, as reconcileRemote does.
+        // opt-outs, and leave the backends category out of a degraded-keyring compose's apply,
+        // as reconcileRemote does.
         const syncedCats = syncCats();
         const degraded = backendsDegraded(blob, syncedCats);
         const pushCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
@@ -3338,7 +3334,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   const cats = syncCats();
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
-  // With no base, the remote fills what this device does not sync (see `composeLive`).
+  // With no base, or for a fresh category, the remote fills what this device does not sync
+  // (see `composeLive`).
   const local = await composeLive(cats, passThroughFor(remoteBlob));
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
   const { merged, conflicts } = mergeFresh(local, remoteBlob);
@@ -3377,8 +3374,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     return;
   }
   const applied = await applyBlob(merged, applyCats);
-  // Epoch FIRST: applyBlob answers false exactly when a supersede bumped `gen` during its keyring
-  // wait, and the "ok" below would then land over the reset state (pushNow's 409 twin's order).
+  // Epoch FIRST: a supersede during applyBlob's keyring wait also answers false, and any status
+  // write below would then land over the reset state (pushNow's 409 twin's order).
   if (myGen !== gen) return;
   if (!applied) {
     // Refused (dictation live) or dropped. Persist no base so the next pull re-offers the blob —
@@ -3698,9 +3695,9 @@ export function securityChanges(
   }
   // The audio window (recordingsRetentionDays, default 0) and the record window
   // (dictationRetentionDays, default 7) are ONE clock: both sweeps delete by the stricter
-  // non-zero of the two (Rust's `effective_dictation_days`, Settings' `dictDays`). Judging
-  // each key alone asked consent for "saved recordings ... currently kept forever" when the
-  // effective window only lengthened (audio 0 + record 7 → 30/30). So compare that one value.
+  // non-zero of the two (Rust's `effective_dictation_days`, Settings' `dictDays`). Judged
+  // per key, a change that only lengthens the effective window (audio 0 + record 7 → 30/30)
+  // would ask consent for "currently kept forever" recordings, so compare that one value.
   if (cats.recording && isPlainObject(incoming.recording)) {
     const effDays = (a: number, r: number) => (a === 0 ? r : r === 0 ? a : Math.min(a, r));
     const localA = days(local.recording, "recordingsRetentionDays", 0);
@@ -4370,8 +4367,8 @@ async function resolveLocked(
   // server's favour — so a peer that also touches some category the user happened to edit
   // locally forces the pull down this branch and rides its backend repoint / key swap in
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
-  // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
-  // persist no base so a rejection is re-offered on the next pull.
+  // address change. Same shape as reconcileRemote: apply everything else, hold the flagged
+  // categories back, and persist no base so a rejection is re-offered on the next pull.
   const risky = gatedSecurityCheck(final, localNow, applyCats);
   if (risky.length > 0) {
     const applyNow = heldBack(applyCats, risky);
