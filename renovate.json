@@ -32,7 +32,7 @@
       "automerge": false
     },
     {
-      "description": "Tauri's Rust crates and its JS packages are released in lockstep, and a mismatch between them surfaces as an IPC/type error at runtime rather than a compile error - so they must land in a single PR. This is the one grouping Dependabot structurally cannot express, since its groups never span two ecosystems. Not automerged: ci.yml compiles, lints and unit-tests both halves (`pnpm build` + `pnpm test`, cargo clippy + `cargo test`) but never launches the app, so a regression in the tray-icon / global-shortcut / autostart plugins or at the IPC boundary would pass green.",
+      "description": "Tauri's Rust crates and its JS packages are released in lockstep, and a mismatch between them surfaces as an IPC/type error at runtime rather than a compile error - so they must land in a single PR. Not automerged: ci.yml compiles, lints and unit-tests both halves (`pnpm build` + `pnpm test`, cargo clippy + `cargo test`) but never launches the app, so a regression in the tray-icon / global-shortcut / autostart plugins or at the IPC boundary would pass green.",
       "groupName": "tauri",
       "matchPackageNames": [
         "tauri",
