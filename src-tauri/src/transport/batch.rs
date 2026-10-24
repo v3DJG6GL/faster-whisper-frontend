@@ -387,7 +387,7 @@ mod wire_field_tests {
                 .get("model")
                 .cloned()
         };
-        // 121..=200 characters (and over 128 BYTES): sent whole, so the check runs on that model.
+        // Up to MODEL_ID_MAX characters, even past 128 BYTES: sent whole, so the check runs on that model.
         let long = format!("org/{}", "é".repeat(146));
         assert_eq!(model(&long), Some(serde_json::json!(long)));
         // Past the cap, or blank: left out (the server's default), never cut.
@@ -1075,7 +1075,6 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
 /// each tick would otherwise leave a live GET behind — ~120 concurrent sockets per run.
 const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Poll the server-side progress entry for `progress_id`.
 pub async fn progress(
     server_url: &str,
     api_key: Option<&str>,
