@@ -677,7 +677,6 @@ pub async fn run<F>(
                                     break;
                                 }
                                 Err(_) => {
-                                    // Stalled send → the connection is gone.
                                     tracing::warn!("[stream] audio send timed out — connection lost");
                                     on_event(StreamEvent::Error(
                                         "stream connection lost (send timed out)".into(),
