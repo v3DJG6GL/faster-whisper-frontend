@@ -94,12 +94,15 @@ pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
 #[derive(Default)]
 pub struct MicPlayback(pub Arc<AtomicU64>);
 
+/// Bytes in the canonical PCM WAV header `wav_header` writes.
+pub const WAV_HEADER_LEN: usize = 44;
+
 /// The 44-byte canonical PCM WAV header for `data_len` bytes of 16-bit samples.
-pub fn wav_header(data_len: u32, sample_rate: u32, channels: u16) -> [u8; 44] {
+pub fn wav_header(data_len: u32, sample_rate: u32, channels: u16) -> [u8; WAV_HEADER_LEN] {
     let bits: u16 = 16;
     let byte_rate = sample_rate * channels as u32 * (bits as u32 / 8);
     let block_align = channels * (bits / 8);
-    let mut h = [0u8; 44];
+    let mut h = [0u8; WAV_HEADER_LEN];
     let mut at = 0usize;
     let mut put = |b: &[u8]| {
         h[at..at + b.len()].copy_from_slice(b);
@@ -125,7 +128,7 @@ pub fn wav_header(data_len: u32, sample_rate: u32, channels: u16) -> [u8; 44] {
 /// the tests check the copy-free paths against).
 #[cfg(test)]
 pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
-    let mut wav = Vec::with_capacity(44 + pcm.len());
+    let mut wav = Vec::with_capacity(WAV_HEADER_LEN + pcm.len());
     wav.extend_from_slice(&wav_header(pcm.len() as u32, sample_rate, channels));
     wav.extend_from_slice(pcm);
     wav
@@ -633,8 +636,11 @@ mod retention_tests {
     fn wav_header_matches_the_full_wrapper() {
         let n = 1000usize;
         let full = wav_from_pcm16(&vec![0u8; n], 44_100, 2);
-        assert_eq!(full.len(), 44 + n);
-        assert_eq!(&full[..44], &wav_header(n as u32, 44_100, 2)[..]);
+        assert_eq!(full.len(), WAV_HEADER_LEN + n);
+        assert_eq!(
+            &full[..WAV_HEADER_LEN],
+            &wav_header(n as u32, 44_100, 2)[..]
+        );
         assert_eq!(&full[..4], b"RIFF");
         assert_eq!(&full[36..40], b"data");
     }

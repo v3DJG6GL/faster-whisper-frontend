@@ -5,6 +5,7 @@
 //! the viewer plays a cached plain PCM WAV file instead. Fallback-path only: the
 //! `<audio>` element gets two chances at the original bytes first.
 
+use crate::audio::{wav_header, WAV_HEADER_LEN};
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::errors::Error as SymErr;
@@ -272,7 +273,7 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         .unwrap_or(2);
     // Header space reserved up front and patched in at the end: wrapping the
     // finished PCM afterwards would hold two ~640 MiB buffers at once.
-    let mut pcm: Vec<u8> = vec![0u8; 44];
+    let mut pcm: Vec<u8> = vec![0u8; WAV_HEADER_LEN];
     // Size the buffer from the header's frame count so the extend loop below
     // doesn't leave Vec's doubling slack (up to ~2x) behind a big decode. A
     // hint only — mid-stream channel changes and missing num_frames still
@@ -318,16 +319,16 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
                 interleaved.len() * std::mem::size_of::<i16>(),
             )
         };
-        if pcm.len() - 44 + byte_slice.len() > MAX_PCM_BYTES {
+        if pcm.len() - WAV_HEADER_LEN + byte_slice.len() > MAX_PCM_BYTES {
             return Err("audio too long to decode for playback".into());
         }
         pcm.extend_from_slice(byte_slice);
     }
-    if pcm.len() == 44 {
+    if pcm.len() == WAV_HEADER_LEN {
         return Err("no decodable audio in the file".into());
     }
-    let data_len = (pcm.len() - 44) as u32;
-    pcm[..44].copy_from_slice(&crate::audio::wav_header(data_len, sample_rate, channels));
+    let data_len = (pcm.len() - WAV_HEADER_LEN) as u32;
+    pcm[..WAV_HEADER_LEN].copy_from_slice(&wav_header(data_len, sample_rate, channels));
     Ok(pcm)
 }
 
