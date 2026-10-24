@@ -1,6 +1,6 @@
 // A speaker name half-typed into the rename field is stored when the batch run's follow switches
 // the viewer to its next finished file. That switch is no click, so no blur commits the draft:
-// the record-switch reset closed the editor and cleared the draft unsaved.
+// unless the record-switch reset commits it, closing the editor drops it unsaved.
 import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the viewer in.
 import viewerSrc from "./TranscriptViewer.tsx?raw";
@@ -20,7 +20,7 @@ describe("a speaker rename being typed survives a record switch without a blur",
     // Committed before the close: the close clears the draft the commit reads.
     expect(effect.indexOf("setRename(prev.okey")).toBeLessThan(effect.indexOf("setEditingSpeaker(null);"));
     expect(effect).toContain('setRenameDraft("");');
-    // Never under the record now on screen: that is the A-draft-onto-B's-speaker bug.
+    // Never under the record now on screen: that would write A's draft onto B's speaker.
     expect(effect).not.toContain("setRename(okey,");
   });
 
