@@ -18,9 +18,9 @@
 //!     audio. If that fails (AppData redirected to another volume, a locked file), copy into
 //!     a staging sibling, swap it in, and delete the old folder only after the copy succeeded.
 //!
-//! A move that cannot happen now (an old build still running, a failed move) quits the
-//! launch with a message BEFORE the builder creates the new folders — see `Verdict` — so
-//! the next launch retries it.
+//! A move that cannot happen now (an old build still running, a failed move, a settings
+//! re-point that could not land) quits the launch with a message BEFORE the builder creates
+//! the new folders — see `Verdict` — so the next launch retries it.
 //!
 //! The move is one-way: an older build started afterwards finds empty folders and shows
 //! onboarding (backend keys survive — the keyring is not identifier-scoped).
@@ -480,9 +480,9 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
             // file from a sudo run). The first launch to see it stops: a lock released a moment
             // later lets the loader start on settings still naming the vacated folder, and the
             // session would record into it where the next launch's re-point cannot follow. A
-            // lasting fault stops only once (`repoint_fault_stops`); the marker clears once the
-            // file reads again. Stopped only with the retry armed: without the marker no later
-            // launch comes back.
+            // lasting fault stops only once (`repoint_fault_stops`); the marker clears once a
+            // re-point lands (or finds nothing to re-point). Stopped only with the retry armed:
+            // without the marker no later launch comes back.
             if repoint_fault_stops(config, REPOINT_READ) && pending_fault_is(config, REPOINT_READ) {
                 tracing::warn!(
                     "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
