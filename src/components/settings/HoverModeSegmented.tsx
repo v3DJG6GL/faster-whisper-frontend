@@ -2,7 +2,7 @@ import { useApp } from "@/lib/store";
 import { Segmented } from "@/components/ui";
 import type { RecordingSettings } from "@/lib/types";
 
-// The keys of RecordingSettings whose value is a boolean (the chip-visibility flags).
+// The keys of RecordingSettings whose value is a boolean (a superset of the chip-visibility pairs).
 type ChipVisKey = {
   [K in keyof RecordingSettings]: RecordingSettings[K] extends boolean ? K : never;
 }[keyof RecordingSettings];
