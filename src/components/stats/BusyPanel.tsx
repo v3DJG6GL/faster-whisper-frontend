@@ -24,9 +24,9 @@ function phraseRule(rhythm: Rhythm, measure: string): string {
 
 /** The busy panel: one grid, three rhythms — weekday × hour, day of month × hour (the
  *  backend's geometry), year × month — for the page's measure, with side bars against a flat
- *  distribution, a peak line and per-kind tooltips that pair the measure with sessions. The
- *  rhythm is the panel's own state (`?rhythm=`): it changes this panel, the measure changes
- *  every panel. */
+ *  distribution, a peak line and per-kind tooltips that pair the measure with its companion
+ *  (sessions, or processing time when sessions is the measure). The rhythm is the panel's own
+ *  state (`?rhythm=`): it changes this panel, the measure changes every panel. */
 export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from, to, bounded = true }: {
   stats: UsageStats;
   dense: readonly UsageSeriesPoint[];
