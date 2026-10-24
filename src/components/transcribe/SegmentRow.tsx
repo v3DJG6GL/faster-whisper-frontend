@@ -108,8 +108,6 @@ export const SegmentRow = memo(function SegmentRow({
         // branch, an animated 1 → 0.6 fade reads as a bright flash.
         "relative -mx-1.5 flex gap-3 rounded-lg px-1.5 py-0.5",
         isActive && "bg-accent-soft/40",
-        // Karaoke's frontier idiom in the translate accent: the first row the
-        // in-flight chunk will fill next carries a soft teal wash.
         isFrontier && "bg-[color:var(--c-translate)]/10",
         passed && "opacity-60",
         editMode && seg.edited && "border-l-2 border-ok/60 pl-2",
@@ -196,15 +194,12 @@ export const SegmentRow = memo(function SegmentRow({
             // <div>, which textContent drops — gluing the words on either side.
             const typed = el.innerText ?? el.textContent ?? "";
             const shown = onCommitEdit(i, typed);
-            // Remount from props: React never rewrites text the user typed into a
-            // contentEditable, so an emptied line (committed as "no edit") would
-            // stay blank on screen while Copy and the exports keep its text, and
-            // pasted markup (bold, a link, an image — none of it in the plain text)
-            // would stay on screen though only the plain text is stored. Only
-            // then, though: a bare blur (Alt-Tab mid-correction) must keep the span,
-            // so the caret comes back when the window regains focus. The stored
-            // text is trimmed, so compare against the trimmed typing — a trailing
-            // space just typed is no reason to remount.
+            // Remount from props when the screen and the stored text disagree: React
+            // never rewrites a contentEditable the user typed into, so an emptied line
+            // (committed as "no edit") would stay blank while Copy and the exports keep
+            // its text, and pasted markup would stay though only plain text is stored. A bare blur (Alt-Tab mid-correction)
+            // keeps the span so the caret comes back on refocus. The stored text is
+            // trimmed: a trailing space just typed is no reason to remount.
             if (shown !== typed.trim() || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
@@ -346,9 +341,8 @@ export const SegmentRow = memo(function SegmentRow({
                     k === trCur && "rounded px-0.5 font-medium",
                     k !== trCur && k <= trPassed && "opacity-60",
                   )}
-                  // Soft speaker-accent fill (chipStyle idiom) — reads as the
-                  // follow-along highlight in both themes without the shared
-                  // teal block the MT lines used to carry.
+                  // Soft speaker-accent fill (chipStyle idiom): reads as the
+                  // follow-along highlight in both themes.
                   style={
                     k === trCur
                       ? {
