@@ -304,10 +304,10 @@ export function writesCue(c: Cue, tracks: string[]): boolean {
 
 /** The cues one SRT/VTT file carrying `tracks` writes, as srtExport/vttExport (cueLines) write
  *  them: a single own-timed track (a site track, or a translation under own timing) its own
- *  cues that clean to a line (cueResult feeds them through trOf, which drops a blank one);
- *  otherwise the shared cues — every one while the original rides, even blank, else only those
- *  where a picked translation cleans to a line. The count the preview, the Subtitles table and
- *  the Summary show, so none of them disagrees with the file. */
+ *  cues that clean to a line (cueResult hands them to the writer as translations, whose trOf
+ *  drops a blank one); otherwise the shared cues — every one while the original rides, even
+ *  blank, else only those where a picked translation cleans to a line. The count the preview,
+ *  the Subtitles table and the Summary show, so none of them disagrees with the file. */
 export function writtenCues(
   grid: CueGrid, tracks: string[],
 ): { start: number; end: number; text: string; seg: number; speaker?: string; q?: QuoteCtx }[] {
@@ -956,7 +956,8 @@ export function exportStemSuffix(tracks?: string[]): string {
 
 /** Subtitles that read faster than their language's limit (limitsFor; 20
  *  chars/sec without cue options), over the cues the export writes — the
- *  original included. Flagged, never reflowed. `index` = source segment.
+ *  original included. Flagged, never reflowed. `index` = source segment (-1 for
+ *  a site track's own cue).
  *  `grid` = the caller's subtitle cueGrid over (at least) these tracks, reused. */
 export function cpsWarnings(
   result: BatchResult,
