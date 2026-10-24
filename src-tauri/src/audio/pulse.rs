@@ -312,7 +312,6 @@ fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
             tracing::warn!("[audio] sound server query timed out after {TIMEOUT:?}");
             return Err(QueryFail::TimedOut);
         }
-        // The helper died without answering.
         Err(Waited::Died) => return Err(QueryFail::Error),
     };
     let server_name = info
