@@ -397,8 +397,8 @@ export function historyLoadFailed(): boolean {
   return useTranscriptHistory.getState().loadFailed;
 }
 
-/** Load the history from disk (once; later calls are no-ops unless forced, or until a listing
- *  succeeds — a failed one is retried by the next call). A FORCED call chains onto an
+/** Load the history from disk (once: after a listing succeeds, later calls are no-ops unless
+ *  forced; a failed one is retried by the next call). A FORCED call chains onto an
  *  in-flight listing instead of adopting it: every forced caller just changed the files on
  *  disk, and the listing already running was taken before that change. */
 export function loadHistory(force = false): Promise<void> {
