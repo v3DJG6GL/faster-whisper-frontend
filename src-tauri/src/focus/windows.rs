@@ -41,9 +41,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Poll cadence backing up the foreground event (see module docs). The frontend
-/// itself only re-reads the target every 700 ms, so 1 s recovery is invisible. A tick
-/// is near-free while the foreground HWND is unchanged (see `LAST_HWND`), so the poll
-/// costs nothing while the app idles in the tray.
+/// itself only re-reads the target every 700 ms, so 1 s recovery is invisible; idle
+/// ticks are near-free (see `LAST_HWND`).
 const POLL_MS: u32 = 1000;
 
 /// The foreground HWND the previous fold saw. Compared BEFORE any process work: the 1 s
