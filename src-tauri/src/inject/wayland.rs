@@ -2345,6 +2345,14 @@ mod imp {
 
         #[test]
         fn combining_mark_keys_type_a_letter_no_key_carries() {
+            // The chars `key_sequence` presses for `c`, in order.
+            let seq = |c: char, map: &HashMap<char, KeySpec>| -> Vec<char> {
+                key_sequence(c, map)
+                    .unwrap()
+                    .into_iter()
+                    .map(|(ch, _)| ch)
+                    .collect()
+            };
             // vn: ê ô on keys of their own, the tone marks U+0301 / U+0323 as combining keys.
             let vn = latin_with(&[
                 ('\u{ea}', spec(3, false, None)),
@@ -2353,19 +2361,9 @@ mod imp {
                 ('\u{323}', spec(6, false, None)),
             ]);
             // ệ = e + U+0323 + U+0302: ê takes the circumflex, the dot below is typed after it.
-            let seq: Vec<char> = key_sequence('\u{1ec7}', &vn)
-                .unwrap()
-                .into_iter()
-                .map(|(ch, _)| ch)
-                .collect();
-            assert_eq!(seq, ['\u{ea}', '\u{323}']);
+            assert_eq!(seq('\u{1ec7}', &vn), ['\u{ea}', '\u{323}']);
             // ố = ô + U+0301; ó = o + U+0301.
-            let seq: Vec<char> = key_sequence('\u{1ed1}', &vn)
-                .unwrap()
-                .into_iter()
-                .map(|(ch, _)| ch)
-                .collect();
-            assert_eq!(seq, ['\u{f4}', '\u{301}']);
+            assert_eq!(seq('\u{1ed1}', &vn), ['\u{f4}', '\u{301}']);
             assert_eq!(letter_reach("Vi\u{1ec7}t", &vn, CAPS_OFF), (4, 0));
             assert!(!divert_unreachable("Vi\u{1ec7}t Nam", &vn, CAPS_OFF));
             // A mark with no key of its own leaves the letter unreachable: ẽ needs U+0303.
@@ -2382,12 +2380,7 @@ mod imp {
                 ('\u{fc}', spec(3, false, None)),
                 ('\u{304}', spec(4, false, None)),
             ]);
-            let seq: Vec<char> = key_sequence('\u{1d6}', &diaeresis)
-                .unwrap()
-                .into_iter()
-                .map(|(ch, _)| ch)
-                .collect();
-            assert_eq!(seq, ['\u{fc}', '\u{304}']);
+            assert_eq!(seq('\u{1d6}', &diaeresis), ['\u{fc}', '\u{304}']);
         }
 
         /// A decomposed transcript keeps its accents on the portal path: looked up as a char of its
