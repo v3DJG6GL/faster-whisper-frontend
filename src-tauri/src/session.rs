@@ -53,7 +53,8 @@ pub fn retire_active_epoch() {
 
 /// The epoch of the batch transcription most recently DETACHED, published by `stop_record`
 /// (`RecordSession::claim_detached`, under the RecordState lock) or by the capture thread's
-/// device-loss salvage arm, never by `finish()` itself, and the epoch a cancel has since disowned.
+/// device-loss salvage arm, never by `finish()` itself; [`CANCELLED_BATCHES`] holds the epochs a
+/// cancel has since disowned.
 ///
 /// `stop_record` takes the session out of managed state and `finish` spawns the transcribe POST
 /// on its own task, so a cancel during the "transcribing…" phase finds no session; this slot lets
@@ -257,8 +258,6 @@ pub fn cleanup_for_exit(app: &AppHandle) {
         dropped |= sess.is_some();
         drop(sess);
     }
-    // The drops above only ENQUEUED the unmute on the worker; wait (bounded) for it to actually run
-    // before the process terminates, so quitting mid-dictation can't leave other apps muted.
     // The exit path runs this up to three times (the quit handler, then RunEvent::ExitRequested and
     // RunEvent::Exit). A healthy worker is flushed on every pass (microseconds), which also catches
     // the late Unmute of a stop_stream/stop_record already in flight (it took the session out of
@@ -343,7 +342,7 @@ impl StreamSession {
         if let Some(j) = self.capture_join.take() {
             let _ = j.join();
         }
-        drop(self.ws_task.take()); // detach → drains to completion on its own
+        drop(self.ws_task.take());
         tracing::info!("[stream] session {} finished (draining)", self.epoch);
     }
 }
@@ -702,8 +701,9 @@ fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + '
 
 /// Like `err_cb_with_stop`, but also records that the stop was caused by a TERMINAL device loss (vs a
 /// user/finish stop). The record/batch path has no channel-close teardown like the streaming path, so
-/// it inspects this flag after capture returns to emit a recovery "closed" ONLY on a real disconnect —
-/// never on a normal stop (which would settle the chip before the final transcript lands).
+/// it inspects this flag after capture returns to salvage and transcribe the clip ONLY on a real
+/// disconnect — a normal stop is `finish()`'s, and a second transcribe would settle the chip before
+/// the final transcript lands.
 fn err_cb_with_lost(
     stop: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
@@ -1086,8 +1086,6 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         rate: in_rate,
         ..
     } = input;
-    // Set by the capture err_cb on a TERMINAL device loss (vs a user/finish stop), so the post-capture
-    // arm below can emit a recovery "closed" only on a real disconnect.
     let device_lost = Arc::new(AtomicBool::new(false));
     let discard = Arc::new(AtomicBool::new(false));
 
@@ -1293,7 +1291,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // `stream://final` producer, and it feeds a `.txt` beside the recording and keystrokes
             // into the focused window. Bound it HERE, not in `transport::batch`: `post()` is shared
             // with `commands::transcribe_file` (3600s timeout), where a long transcript IS the
-            // product. At ~50 KB per hour of speech, 4 MiB is ~78 hours; this path's 120s POST
+            // product. At ~50 KB per hour of speech, 4 MiB is ~80 hours; this path's 120s POST
             // timeout caps a legitimate one far below that.
             let text = crate::transport::stream::bounded(
                 &res.text,
@@ -1376,7 +1374,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
 // start and mute every one that isn't ours (matched by PID) and isn't already muted, restoring
 // exactly those on drop. There's no mid-session watcher, so audio that STARTS after dictation
 // begins isn't muted. Falls back to muting the whole default sink when pactl can't enumerate
-// streams (no PulseAudio / pipewire-pulse); a no-op where neither exists (e.g. Windows). A hard
+// streams (no PulseAudio / pipewire-pulse); off unix a deliberate no-op (see `apply_mute`). A hard
 // crash mid-dictation can leave streams muted until the next dictation restores them.
 
 /// What the guard did, so Drop undoes exactly that.
@@ -1822,7 +1820,7 @@ mod tests {
         super::remove_recording(&wav, true);
         assert!(!wav.exists());
         assert!(!wav.with_extension("txt").exists());
-        // No sidecar written: only the clip goes, and a missing .txt is fine.
+        // Sidecar flagged but missing on disk: the clip still goes, and the missing .txt is fine.
         std::fs::write(&wav, b"RIFF").unwrap();
         super::remove_recording(&wav, true);
         assert!(!wav.exists());
