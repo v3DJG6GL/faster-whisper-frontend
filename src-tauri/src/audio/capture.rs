@@ -70,7 +70,6 @@ impl Recorder {
     fn push(&self, mono: &[f32]) {
         if let Ok(mut c) = self.clip.lock() {
             c.samples.extend(mono.iter().copied());
-            // VecDeque ring: O(1) per popped sample, not an O(len) front-shift on every callback.
             while c.samples.len() > self.cap {
                 c.samples.pop_front();
             }
