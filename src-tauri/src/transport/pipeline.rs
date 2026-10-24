@@ -109,6 +109,19 @@ pub struct PipelineSave {
     pub detail: Option<String>,
 }
 
+impl PipelineSave {
+    /// A save that did not come back `ok`: `conflicts` stays an empty array (the derived
+    /// Default would make it null).
+    fn failed(status: u16, detail: Option<String>) -> Self {
+        Self {
+            status,
+            conflicts: serde_json::json!([]),
+            detail,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct SaveBody {
     #[serde(default)]
@@ -217,15 +230,12 @@ pub async fn save_pipeline_rules(
                         tracing::warn!(
                             "[pipeline] rules PATCH: HTTP {code} body read failed: {reason}"
                         );
-                        return PipelineSave {
-                            ok: false,
-                            status: code,
-                            conflicts: serde_json::json!([]),
-                            detail: Some(format!(
+                        return PipelineSave::failed(
+                            code,
+                            Some(format!(
                                 "The server accepted the save, but its reply couldn't be read ({reason})."
                             )),
-                            ..Default::default()
-                        };
+                        );
                     }
                 };
                 match serde_json::from_str::<SaveBody>(&text)
@@ -256,15 +266,12 @@ pub async fn save_pipeline_rules(
                         tracing::warn!(
                             "[pipeline] rules PATCH: HTTP {code} but unparsable body: {e}"
                         );
-                        PipelineSave {
-                            ok: false,
-                            status: code,
-                            conflicts: serde_json::json!([]),
-                            detail: Some(format!(
+                        PipelineSave::failed(
+                            code,
+                            Some(format!(
                                 "The server accepted the save, but its reply was unexpected ({e})."
                             )),
-                            ..Default::default()
-                        }
+                        )
                     }
                 }
             } else {
@@ -294,29 +301,15 @@ pub async fn save_pipeline_rules(
                 // list embeds the submitted rule keys/values (user content).
                 tracing::warn!("[pipeline] rules PATCH failed: HTTP {code} {detail}");
                 PipelineSave {
-                    ok: false,
-                    status: code,
-                    conflicts: serde_json::json!([]),
                     errors,
-                    detail: if detail.is_empty() {
-                        None
-                    } else {
-                        Some(detail)
-                    },
-                    ..Default::default()
+                    ..PipelineSave::failed(code, (!detail.is_empty()).then_some(detail))
                 }
             }
         }
         Err(e) => {
             let msg = friendly_err(&e);
             tracing::warn!("[pipeline] rules PATCH failed: {msg}");
-            PipelineSave {
-                ok: false,
-                status: 0,
-                conflicts: serde_json::json!([]),
-                detail: Some(msg),
-                ..Default::default()
-            }
+            PipelineSave::failed(0, Some(msg))
         }
     }
 }
