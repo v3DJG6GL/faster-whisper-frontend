@@ -70,6 +70,8 @@ pub struct ConnectionInfo {
 /// snake_case (not camelCase) deliberately — it mirrors the backend contract
 /// 1:1, like the `decode_overrides` keys, so it passes straight through both
 /// the wire (deserialize) and the IPC boundary (serialize) with no remapping.
+/// A typed struct drops what it does not name, so every additive key the
+/// frontend reads must be listed here.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Capabilities {
     #[serde(default)]
@@ -91,8 +93,7 @@ pub struct Capabilities {
     pub url_download_enabled: Option<bool>,
     /// Whether a link's VIDEO can be kept/fetched (keep_video on the form,
     /// POST /v1/audio/url-media/video). Same `Some(true)`-only contract as
-    /// `url_download_enabled`. A typed struct drops what it does not name,
-    /// so every additive key the frontend reads must be listed here.
+    /// `url_download_enabled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_video_enabled: Option<bool>,
     /// Whether a link's own subtitle tracks can be listed and fetched
@@ -789,7 +790,7 @@ pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest
 pub const MAX_BODY: usize = 32 * 1024 * 1024;
 
 /// A server-supplied error string is surfaced in the UI and written to the log file users are
-/// asked to attach to support reports. Same ceiling the streaming parse path uses.
+/// asked to attach to support reports.
 pub const MAX_ERROR_TEXT: usize = 200;
 
 /// The one model-id rule: the longest server model id the pickers keep and the transport sends
@@ -800,11 +801,9 @@ pub(crate) const MODEL_ID_MAX: usize = 200;
 /// A server model id under the model-id rule with ceiling `max`: an id longer than `max` (counted
 /// on the RAW id, so a kept id is never cut) is dropped, a kept one is folded like any server
 /// string ([`bounded_server_text`]), and one that is blank ONCE FOLDED is dropped too — an id of
-/// invisible characters only folds to "" and names no model. Its users: the picker model lists
-/// and decode-default refs (discovery), the preload plan, the url-language body, and translation
-/// provenance (batch/text). The transcription form and T2T request fields (`model`,
-/// `translation_model`, `translation_mode`, `diarization_model`, `separation_model`) keep their
-/// own trim-and-omit-blank screen and are NOT capped by this rule.
+/// invisible characters only folds to "" and names no model. The transcription form and T2T
+/// request fields (`model`, `translation_model`, `translation_mode`, `diarization_model`,
+/// `separation_model`) keep their own trim-and-omit-blank screen and are NOT capped by this rule.
 pub(crate) fn model_id_within(s: &str, max: usize) -> Option<String> {
     (s.chars().count() <= max)
         .then(|| bounded_server_text(s, max))
@@ -934,9 +933,9 @@ pub fn wire_language(language: &str) -> Option<&str> {
     }
 }
 
-/// `wire_language`, but a STANDARD (plain OpenAI-compatible) server keeps the old
-/// omit-on-auto: it has no override profile whose language an empty value would override,
-/// and an empty `language` is not a valid code for a strict server to accept.
+/// `wire_language`, but a STANDARD (plain OpenAI-compatible) server omits the field on auto:
+/// it has no override profile whose language an empty value would override, and an empty
+/// `language` is not a valid code for a strict server to accept.
 pub fn wire_language_for(standard: bool, language: &str) -> Option<&str> {
     if standard {
         return (!language.is_empty() && language != "auto").then_some(language);
