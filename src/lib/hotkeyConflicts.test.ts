@@ -4,8 +4,7 @@ import type { Profile } from "./types";
 
 // These rules gate three surfaces at once — the per-card banner, the capture-time
 // warn, and the persistence save-gate that freezes ALL config saving — and their
-// header demands lockstep with the chord engine. Nothing pinned them until now:
-// a flipped exemption direction or a collapsed-sides regression passed every test.
+// header demands lockstep with the chord engine.
 
 let n = 0;
 function prof(hotkey: string[], activation: "hold" | "handsfree" = "hold", extra: Partial<Profile> = {}): Profile {
@@ -58,10 +57,10 @@ describe("conflicts — collapseSides", () => {
     expect(conflicts(sides, false)).toEqual([]);
   });
 
-  // The inbound-blob sanitizer calls `conflicts(peers, !IS_WINDOWS)` and turns the later
-  // member of every collision OFF. Both flag values are pinned here so the Windows side
-  // (side-distinct chords the low-level hook really registers) cannot regress into a
-  // silent mass-disable on every pull.
+  // The inbound-blob sanitizer collapses sides only off Windows without a live evdev backend
+  // and turns the later member of every collision OFF. Both flag values are pinned here so the
+  // side-distinct registrars (Windows low-level hook, evdev) cannot regress into a silent
+  // mass-disable on every pull.
   it("LCtrl+Space vs RCtrl+Space: a duplicate only where sides collapse", () => {
     const pair = [prof(["ControlLeft", "Space"]), prof(["ControlRight", "Space"])];
     expect(conflicts(pair, true).every((c) => c.kind === "duplicate")).toBe(true);
