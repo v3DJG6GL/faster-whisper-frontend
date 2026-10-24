@@ -63,7 +63,7 @@ export interface ExportOptions {
  *  the same hues): the Signal colour tints chrome only and never the speaker
  *  palette, so screen and export agree. */
 export const DEFAULT_SPEAKER_COLORS = [
-  "#ff9e2c", // amber (accent)
+  "#ff9e2c", // amber (armed)
   "#6faed9", // sky (think)
   "#36d07a", // green (live)
   "#c792ea", // lilac
@@ -81,7 +81,7 @@ export const EXPORT_EXTENSIONS: Record<ExportFormat, string> = {
   json: "json",
 };
 
-/** "SPEAKER_00" → "Speaker 1"; anything else verbatim. Mirrors the screen. */
+/** "SPEAKER_00" → "Speaker 1"; anything else verbatim. */
 export function prettySpeaker(label: string): string {
   const m = /^SPEAKER_(\d+)$/.exec(label);
   return m ? `Speaker ${parseInt(m[1], 10) + 1}` : label;
@@ -756,9 +756,8 @@ function projected(result: BatchResult, opts: ExportOptions): BatchResult {
 }
 
 /** The cues of `tracks`, leaving room for the "Name: " prefix their first
- *  line will carry — shared by the export, its reading-speed check and the
- *  panel's preview and summary. Only subtitle formats split: any other gets
- *  one cue per segment. */
+ *  line will carry. Only subtitle formats split: any other gets one cue per
+ *  segment. */
 export function cueGrid(result: BatchResult, opts: ExportOptions, tracks: string[]) {
   const pre = ctxOf(result, opts);
   return buildCues(result, isSubtitleFormat(opts.format) ? opts.cues : undefined, tracks, (seg) => nameReserve(pre, seg));
@@ -827,7 +826,8 @@ export interface ExportFileGroup {
  *  (cues no longer line up), and site tracks with their own timing; the rest
  *  share one file. A file of its own is named by trackFileSuffixes: its
  *  language's plain track `stem.de.srt` (the original `stem.srt`), the others
- *  `stem.YouTube.de.srt`. Names depend only on format, tracks and cue timing. */
+ *  `stem.YouTube.de.srt`. Names depend only on format, tracks, cue timing and the
+ *  result's language/timed tracks, never on content. */
 export function exportFileGroups(
   opts: ExportOptions,
   result: Pick<BatchResult, "language" | "timedTracks"> = {},
