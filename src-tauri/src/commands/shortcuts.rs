@@ -260,12 +260,9 @@ pub fn spawn_suspend_watch(app: AppHandle, seed: SuspendWatchSeed) {
                     "[suspend] resume detected (~{}s gap); clearing dictation",
                     slept.as_secs()
                 );
-                // Don't re-arm while a binding capture is in progress: the frontend suspended
-                // shortcuts on purpose so a press only rebinds, and it restores them via
-                // reregister_shortcuts when capture ends. Re-arming here would let the user's
-                // next chord both rebind AND fire dictation (for a held evdev PTT chord, wedge
-                // "listening" — exactly what the suspend guards). The capture's reregister
-                // rebuilds fresh held-state on completion, so nothing is lost by skipping.
+                // No re-arm mid-capture: the next chord would both rebind AND fire dictation (a
+                // held evdev PTT chord would wedge "listening"). The capture-end reregister rebuilds
+                // fresh held-state, so nothing is lost by skipping.
                 #[cfg(target_os = "linux")]
                 let listing = input_event_nodes();
                 if !apply_bindings_unless_capturing(&app) {
