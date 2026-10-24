@@ -1,4 +1,4 @@
-// Subtitle cues from transcript segments (D83/D84). Whisper segments run up to
+// Subtitle cues from transcript segments. Whisper segments run up to
 // ~30 s and several sentences; a subtitle must stay short enough to read. This
 // derives CUES from the stored segments — a projection, never a rewrite: edits,
 // speaker edits and stale marks stay keyed by segment index, and every cue
@@ -47,8 +47,8 @@ export interface Cue {
   speaker?: string;
   /** Translations cut onto this cue (same timing only). */
   tr: Record<string, string>;
-  /** The quotes of its segment around `text` (absent when there are none): wrapLines needs
-   *  them to pair a quote whose partner lies in the next cue of the same segment. */
+  /** The quote context of its segment around `text` (absent when empty): wrapLines needs it
+   *  to pair a quote whose partner lies in the next cue of the same segment. */
   q?: QuoteCtx;
   /** The same per translation in `tr`. */
   trq?: Record<string, QuoteCtx>;
@@ -63,8 +63,9 @@ export type QuoteCount = Record<'"' | "'", number>;
 export interface QuoteCtx {
   before: QuoteCount;
   after: QuoteCount;
-  /** The segment's characters right before and after the text: quoteFlags judges a quote at
-   *  its edge by them (an inch mark after the 6 of the cue before), as the segment's own count does. */
+  /** The segment's characters right before and after the text, when an ASCII letter or digit:
+   *  quoteFlags judges a quote at its edge by them (an inch mark after the 6 of the cue before),
+   *  as the segment's own count does. */
   prev?: string;
   next?: string;
   /** Whether, in the segment after the text, a ” closes a “ (no “ or „ first) and a ’ closes a
@@ -192,8 +193,7 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
     if (PHRASE_SPACE.test(l)) return false;
     cjk++;
     // A mark with more CJK text after it on the same line: the unpunctuated convention never
-    // writes one, so one line in eight suffices — not one line in any file, which let a single
-    // two-field credit ("翻译：小明。字幕：小红") or aside flip a whole unpunctuated file.
+    // writes one, so one line in eight suffices — yet a single stray aside does not flip a file.
     if (markInside(l, CJK_PHRASE_MARK) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
     if (
       evidenceMark(l, CJK_PHRASE_MARK) >= 0 ||
@@ -328,8 +328,6 @@ export function limitsTitle(l: CueLimits): string {
   return `${plural(l.lines, "line")} × ${l.cpl} characters · up to ${l.maxDur} s · ${l.cps} chars/s`;
 }
 
-// ── break scoring ───────────────────────────────────────────────────────────
-
 const CONJ = new Set([
   "and", "but", "so", "because", "or", "which", "who", "that", "when", "while", "if",
   "und", "aber", "dass", "weil", "denn", "oder", "wenn", "als", "sondern", "doch", "ob",
@@ -364,11 +362,10 @@ const TITLE_ABBREV = new Set(["dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "no."
 const SENT_END = /[.?!…。？！؟۔।॥։።፧។៕။།༎](["'»”’)\]」』）】〉》]*)$/;
 const CLAUSE = /[,;:–—、，；：،؛፣፤၊៖]["'»”’)\]」』）】〉》]*$/;
 /** A Japanese quote the sentence goes on from (「帰ろう。」と言った): the mark inside the
- *  bracket ends the quote, not the sentence — no seam bonus there, as before the brackets counted. */
+ *  bracket ends the quote, not the sentence — no seam bonus there. */
 const quoteGoesOn = (before: string, after: string): boolean =>
   /[」』）】〉》]$/u.test(before) && /^(?:と|って)/u.test(after);
 
-/** What isSentenceEnd knows around the stop: see there. */
 interface SentenceCut { next: string; lang?: string; prev?: string }
 /** A capital and its stop: an initial ("F."), or a letter that ends a sentence ("plan B."). Not
  *  the Roman numerals I, V and X: "World War I. After that" ends one. */
@@ -485,17 +482,11 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  before a number ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
- *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on;
- *  an all-capital one ("J.K.", "R.R.") before a capital is judged as a name's initial is, but not
- *  a place initialism (PLACE_INITIALS): "Washington D.C. Today", "Washington, D.C. Today", "Los
- *  Angeles, L.A. Tomorrow" and "The U.S. Army" end one. A name's
- *  initial or compact initials go on before a capital when another initial comes before or
- *  after it ("J. K. Rowling"), a capitalised word, a clause or sentence mark or the text's start
- *  before it ("John F. Kennedy", "George R.R. Martin", "In 1924, J. Edgar", a text-initial "J.K.
- *  Rowling"), the capitalised word not in German or Luxembourgish, which capitalise every noun,
- *  and none before a sentence opener (nameBefore): "a plan B. Then", "Option B. Then", "Plan B.
- *  What", "Plan B. Dann", "Answer: A. How", "the U.S. These days", "in den U.S.A. Seine" and,
- *  after a lowercase word, "the U.S. Army" and "by J.K. Rowling" end one. */
+ *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on.
+ *  Before a capital, a name's initial or initials ("John F. Kennedy", "J. K. Rowling", "George
+ *  R.R. Martin") go on when another initial is next to it or nameBefore holds; a place
+ *  initialism (PLACE_INITIALS: "Washington D.C. Today", "The U.S. Army") and initials after a
+ *  lowercase word ("by J.K. Rowling") end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
@@ -519,7 +510,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   ) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
-  return !ORDINAL.test(w); // German ordinal "3." or "100." (a year "1980." still ends a sentence)
+  return !ORDINAL.test(w);
 }
 
 /** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial or
@@ -564,8 +555,6 @@ function breakScore(prev: string, next: string, lang?: string, before?: string, 
   if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
 }
-
-// ── tokens ──────────────────────────────────────────────────────────────────
 
 interface Tok {
   /** Char span in the segment text. */
@@ -683,15 +672,15 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
 /** Scripts written without spaces between words that are no CJK (unspacedChar keeps
  *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
- *  between its syllables, like a CJK run — a space-joined multi-sentence Thai translation
- *  used to be a handful of unsplittable tokens. */
+ *  between its syllables, like a CJK run — else a space-joined multi-sentence Thai
+ *  translation is a handful of unsplittable tokens. */
 const SYLLABIC = "\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}";
 const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
  *  (CJK, Thai…) character with the opening brackets before it and its other punctuation
  *  after it (a Thai/Lao leading vowel rides with the consonant after it) —
  *  so a CJK translation holding one Latin word still splits between its characters, and
- *  never right after a 「 or （ (a Latin word or number before 「 used to swallow it). A
+ *  never right after a 「 or （ (a Latin word or number before 「 does not swallow it). A
  *  bracket with nothing after it is its own token, so no character falls out of the spans.
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
  *  variation selector) — they are Script=Inherited and would otherwise split off.
@@ -978,8 +967,6 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
   return out;
 }
 
-// ── translation cutting (same timing) ───────────────────────────────────────
-
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
  *  cuts after sentence/clause punctuation and never right after an article.
  *  `lang` is the text's language code, for whether "12." can be an ordinal. */
@@ -1108,8 +1095,6 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   return out;
 }
 
-// ── line wrapping ───────────────────────────────────────────────────────────
-
 /** Wrap one cue's text onto as few lines of `cpl` chars as it needs (the cue
  *  splitter keeps a cue within its line cap, so `_lines` only documents the
  *  caller's limit), bottom-heavy (the second line may be longer), preferring
@@ -1140,14 +1125,12 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
   // stays whole, as in wrapTokens; a word longer than cpl by itself still wraps per character.
   if (!spaced && t.length <= cpl && !BREAKS_ANYWHERE.test(t)) return [t];
   // Spaced text holding a CJK/Thai-like run (one Latin word in a Japanese line) wraps
-  // between that run's characters too: as one token the run used to take whole lines of
-  // its own, a three-line cue under a two-line cap that fits() had judged to fit.
-  // Unspaced text wraps by the same tokens, so a Latin word or number glued into it
-  // ("明日はMicrosoftの", "333メートル") stays whole and ASCII punctuation stays on its
-  // character; no gaps, so every seam is a plain character seam. A token longer than
-  // cpl (a Latin word, URL or e-mail in a Japanese line, a lone compound, or one in plain
-  // spaced Latin text) wraps per unit (tokenUnits): kept whole it took a line of its own,
-  // or ran over the cap — a URL in an English line left three or four lines.
+  // between that run's characters too; as one token the run took whole lines of its own,
+  // past the line cap fits() had judged. Unspaced text wraps by the same tokens, so a Latin
+  // word or number glued into it ("明日はMicrosoftの", "333メートル") stays whole and ASCII
+  // punctuation stays on its character; no gaps, so every seam is a plain character seam.
+  // A token longer than cpl (a URL, e-mail or compound) wraps per unit (tokenUnits); kept
+  // whole it took a line of its own or ran over the cap.
   const toks: string[] = [];
   const gaps: boolean[] = [];
   if (spaced && !BREAKS_ANYWHERE.test(t)) {
@@ -1243,8 +1226,8 @@ function partsAt(whole: string, parts: string[]): number[] {
 }
 
 /** The QuoteCtx of `whole[at, e)`, counted over `whole` once (on the first ask); undefined
- *  when no quote stands outside it and no ASCII letter or digit borders it (only those change
- *  how quoteFlags judges a quote at its edge). */
+ *  when no quote stands outside it, no ASCII letter or digit borders it, no ” / ’ closes after
+ *  it and no „ / ‚ is open at it (only those change how a quote at its edge is judged). */
 function quotesIn(whole: string): (at: number, e: number) => QuoteCtx | undefined {
   /** Counted quotes of each kind before index i. */
   let dq: number[] | null = null;
@@ -1374,9 +1357,9 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
  *  — both counted over the whole segment (`q`, the quotes around `t` when it is one cue of
  *  it) — and in every case a letter, digit or opener must follow. A quote between two ASCII
  *  letters or digits (it's) and an inch or foot mark after a digit (6.1") are no quotes
- *  (quoteFlags). The last unpaired one joins the text before it: a single unpaired quote,
- *  including a closer whose opener was in the previous segment, is ambiguous and stays
- *  joined backward. A match where a closing quote is glued to the next quotation's opener
+ *  (quoteFlags). The last unpaired one — a single quote, or a closer whose opener was in
+ *  the previous segment — is ambiguous and joins the text before it. A match where a
+ *  closing quote is glued to the next quotation's opener
  *  (他说：“你好。”“我很好。”, "Hello""再见) is first cut between the two (quoteSeams), so the
  *  closer stays with what it closes and the opener rides forward with what it opens. */
 function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
@@ -1530,16 +1513,15 @@ function wrapTokens(
       let s = 0;
       // An over-cap line is final, an over-full remainder can still wrap: when no candidate
       // keeps both within their caps, the line itself must fit. A line that cannot (one word
-      // over the cap) ends as early as it can, so that word then wraps per character —
-      // a better break further on used to win and leave a longer over-cap line.
+      // over the cap) ends as early as it can, so that word then wraps per character rather
+      // than a better break further on leaving a longer over-cap line.
       if (a > cpl) s -= 2000 + 50 * (a - cpl);
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
         s += breakScore(toks[i - 1], toks[i], lang, i >= 2 && gaps[i - 1] ? toks[i - 2] : undefined, toks[i + 1]) * 0.3;
         // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?", Thai
-        // "บ่อย ๆ"): it
-        // stays with its word — below the over-cap penalties, so a forced cut still happens,
-        // and not on a line over the cap, which only its overflow may decide.
+        // "บ่อย ๆ"): it stays with its word — below the over-cap penalties, so a forced cut still
+        // happens, and not on a line over the cap, which only its overflow may decide.
         // A whole word only: the " ฯ" of " ฯลฯ" is a token of its own but opens the abbreviation.
         if (a <= cpl && ((LONE_CLOSER.test(toks[i]) && (i + 1 >= T || gaps[i + 1])) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) {
           s -= 500;
@@ -1594,8 +1576,6 @@ function wrapTokens(
     }
   }
 }
-
-// ── the grid ────────────────────────────────────────────────────────────────
 
 /** Cues for the export/viewer. `tracks` = "orig" + translation codes + timed-track
  *  ids; `o` undefined = one cue per segment (as transcribed). `reserve(seg)` =
