@@ -156,7 +156,6 @@ pub enum Fire {
     /// Hands-free chord completed over a live hold — emit "reclassify" (the
     /// frontend upgrades in place, or toggles off when it's already hands-free).
     Reclassify(String),
-    /// Open the quick-add window.
     OpenQuickAdd,
 }
 
