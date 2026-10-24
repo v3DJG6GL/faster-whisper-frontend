@@ -880,9 +880,8 @@ function ConflictDialogBody({
         <Button variant="ghost" disabled={busy} onClick={dismissSyncConflict}>
           Later
         </Button>
-        {/* Resolve nulls the pending conflict before it awaits applyBlob, so the dialog is gone
-            during that await (no Later/backdrop click can land in it), and a refused apply brings
-            the same conflict back with the picks ConflictDialog kept. */}
+        {/* Resolve nulls the pending conflict before its await, so no Later/backdrop click can
+            land in this dialog meanwhile. */}
         <Button
           disabled={busy || dictating}
           onClick={() => {
