@@ -58,9 +58,9 @@ describe("pending-conflict identity", () => {
   });
 
   it("a re-raise of the same remote over other categories keeps the remote key", () => {
-    // resolveLocked's widening re-raise keeps the remote version, stamp and writer. A new id
-    // there reset the dialog's picks, so a "remote" pick came back on "This device" and the next
-    // Apply silently kept this device's settings.
+    // resolveLocked's widening re-raise keeps the remote version, stamp and writer. A new remote
+    // key there reset the dialog's picks, so a "remote" pick came back on "This device" and the
+    // next Apply silently kept this device's settings.
     raiseConflictForTests({ remoteVersion: 9, remoteUpdatedAt: 1700000000, remoteDevice: "laptop-b" });
     const first = getPendingConflict()!;
     raiseConflictForTests({
