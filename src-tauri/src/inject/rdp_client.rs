@@ -88,9 +88,7 @@ pub fn is_remote_window_class(class: &str) -> bool {
 }
 
 /// Is the user's focus in a remote-desktop client window right now? Matched by window class
-/// (see [`is_remote_window_class`]): mstsc's shell/input/output windows (the input sink also
-/// covers the RDP ActiveX embedded in RDCMan / mRemoteNG), RemoteApp seamless windows, the
-/// Windows App (msrdc), and FreeRDP. An unrecognized client just keeps the non-RDP behavior.
+/// (see [`is_remote_window_class`]); an unrecognized client just keeps the non-RDP behavior.
 ///
 /// Checked as: the foreground window, plus the foreground thread's focus and active windows
 /// (`GetGUIThreadInfo`) — focus usually sits on a CHILD (`IHWindowClass`) whose top-level is
