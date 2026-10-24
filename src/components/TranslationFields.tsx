@@ -14,7 +14,7 @@ import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
 import type { ChipPart } from "../lib/transcript/siteSubtitles";
 import { cn } from "../lib/cn";
-import type { Capabilities, TranslationOverrides } from "../lib/types";
+import type { Capabilities, TranslationMode, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { CodeChip, MicroLabel, Segmented, Stepper } from "./ui";
 import { inheritLabel, onOff, shortModelName } from "../lib/inherit";
@@ -131,8 +131,8 @@ export function TranslationOptionsFields({
    *  limit (`usedTargets`), and a language the site has subtitles for adds free (`freeTargets`). */
   usedTargets?: number;
   freeTargets?: readonly string[];
-  mode: "fluent" | "faithful";
-  onModeChange: (m: "fluent" | "faithful") => void;
+  mode: TranslationMode;
+  onModeChange: (m: TranslationMode) => void;
   model: string;
   onModelChange: (m: string) => void;
   /** What an empty model runs with — the backend's translation model, when it sets one (the
@@ -312,7 +312,7 @@ export function TranslationDefaultsEditor({
         <Segmented
           value={liveInsert ? "faithful" : v.mode ?? "inherit"}
           disabled={liveInsert}
-          onChange={(m) => patch({ mode: m === "inherit" ? undefined : (m as "fluent" | "faithful") })}
+          onChange={(m) => patch({ mode: m === "inherit" ? undefined : (m as TranslationMode) })}
           options={[
             { value: "inherit", label: inheritLabel(inherited.mode) },
             { value: "fluent", label: "Fluent" },

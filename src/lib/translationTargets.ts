@@ -4,7 +4,7 @@
 
 import { languageLabel } from "./languages";
 import { cleanCodes } from "./recent";
-import type { TranscribeOptions, TranslationOverrides } from "./types";
+import type { TranscribeOptions, TranslationMode, TranslationOverrides } from "./types";
 
 /** Drop the known source language from a target list — a source→source stage
  *  is a no-op run. "auto" is not a known source, so nothing is pruned. */
@@ -117,7 +117,7 @@ export function translationRunOptions(args: {
   available: boolean;
   /** The run's target codes — an empty list is an explicit "translate into nothing". */
   targets: string[];
-  mode: "fluent" | "faithful";
+  mode: TranslationMode;
   /** Resolved per-run model, trimmed here; empty/blank/undefined = the server's default. */
   model?: string;
   /** Tri-state: undefined = inherit, "" = explicit clear, value = use it. */
