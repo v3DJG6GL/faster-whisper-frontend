@@ -159,8 +159,7 @@ export async function initConfig(): Promise<void> {
     if (saveHeld && evdevPermittedFor("save") !== before) void flushPendingSave?.();
   };
 
-  // evdevPermitted (module scope, see there): read now, refreshed on the evdev toggle below.
-  // configReady waits for it (bounded) below, so the startup pull decides side-collapse on the
+  // configReady waits for this (bounded) below, so the startup pull decides side-collapse on the
   // real bit rather than on "unknown".
   const evdevKnown = evdevStatus()
     .then((st) => learnEvdevPermitted(st.permitted))
