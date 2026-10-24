@@ -1,4 +1,3 @@
-// One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
   addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget, writeTargets, resetSiteTargets,
@@ -10,7 +9,7 @@ import { parseImportedText } from "./subtitleImport";
 const tr = (id: string, lang: string, extra: Partial<SiteTrackInfo> = {}): SiteTrackInfo => ({
   id, lang, kind: "manual", ext: "vtt", hoh: false, ...extra,
 });
-// arte · 5 tracks (mockup example "multi")
+// arte · 5 tracks
 const ARTE = [tr("de", "de"), tr("de-hoh", "de", { hoh: true }), tr("en", "en"), tr("fr", "fr"), tr("it", "it")];
 // YouTube Dz_3b8WAWw4: one human de-CH, the de-orig auto track
 const YT = [tr("de-CH", "de-CH"), tr("de-orig", "de", { kind: "auto" })];
@@ -159,7 +158,7 @@ describe("badge clicks (v25, v27, v28)", () => {
     expect(st1.policy).toBe("custom");
     const states = derive(i1, st1).rows.flatMap((r) => r.badges.filter((b) => b.key).map((b) => b.state));
     expect(states).not.toContain("idle");
-    // Entering Custom wrote every wanted language into the targets (v32).
+    // Entering Custom wrote every wanted language into the targets.
     expect(i1.targets).toEqual(["en", "fr", "it"]);
     const [i2, st2] = apply(i1, pickPolicy(i1, st1, "prefer"));
     expect(st2.sel).toBeNull();
