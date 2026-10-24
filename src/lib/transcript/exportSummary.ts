@@ -1,4 +1,4 @@
-// The export panel's Content toggles and Summary rows (D85): what the chosen
+// The export panel's Content toggles and Summary rows: what the chosen
 // format can carry, and what the file will contain. Pure, no Tauri imports —
 // the panel maps these onto its controls.
 
@@ -92,7 +92,7 @@ export function contentStates(a: {
 export const NO_WORDS_SPLIT_WHY =
   "This run captured no word timing, so subtitles are not split: each segment stays one subtitle, only its lines are wrapped.";
 
-/** Mark Subtitle length while it asks for a split the transcript cannot get (W8). */
+/** Mark Subtitle length while it asks for a split the transcript cannot get. */
 export function lengthNeedsWords(hasWords: boolean, length: string): boolean {
   return !hasWords && length !== "transcribed";
 }
@@ -123,7 +123,6 @@ export function summaryCount(
   perTrack = false,
 ): { written: number; ownOnly: boolean; site?: boolean } {
   const orig = !tracks.length || tracks.includes("orig");
-  // One track, one file: writtenCues counts its own cues when it keeps them, else the shared ones.
   if (!orig && tracks.length === 1) {
     return { written: grid ? writtenCues(grid, tracks).length : 0, ownOnly: false, ...(timedTrack(result, tracks[0]) ? { site: true } : {}) };
   }
@@ -181,8 +180,6 @@ export function exportSummary(a: {
       : a.format === "lrc" ? { label: "Line timings", state: "on", why: "a time tag on every line" }
         : a.format === "json" ? { label: "Timestamps", state: "on", why: "every segment and word" }
           : { label: "Timestamps", state: a.showTs ? "on" : "off", why: a.showTs ? "a time before each line" : "off" };
-  // A plain-text source's clocks are 1 s placeholders: the file carries them, but they
-  // are not timing and must not read as fine.
   rows.push(
     a.timingSynthesized && timing.state === "on"
       ? { label: timing.label, state: "warn", why: "placeholders, 1 s per line — the source has no timing" }
