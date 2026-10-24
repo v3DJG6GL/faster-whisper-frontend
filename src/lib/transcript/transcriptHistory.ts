@@ -362,8 +362,8 @@ function newestFirst(records: TranscriptRecord[]): TranscriptRecord[] {
   // By the parsed instant, not the stamp string: a hand-edited or foreign stamp with an offset
   // ("…T23:30+14:00" is 09:30Z) or a damaged one ("garbage" sorts above every ISO stamp) would
   // otherwise top the list and take a slot in Transcribe's recent strip. Unparseable stamps go
-  // last. A consistent comparator (equal instants → 0, kept in order by the stable sort): two
-  // records minted in the same millisecond are reachable.
+  // last. Equal instants compare 0 (the stable sort keeps their order): two records minted in
+  // the same millisecond do happen.
   const at = (r: TranscriptRecord) => {
     const t = Date.parse(r.createdAt);
     return Number.isNaN(t) ? -Infinity : t;
