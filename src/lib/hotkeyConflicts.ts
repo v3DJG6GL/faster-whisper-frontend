@@ -22,10 +22,9 @@
 import type { Profile } from "./types";
 import { canonicalizeCodes, collapseModifierSides, sameCodes } from "./keys";
 
-/** Canonicalize a chord for conflict comparison. When `collapseSides` (the plugin backend is the
- *  registrar — evdev off), fold right-side modifiers into their left equivalent first, so two chords
- *  differing only by modifier side compare equal (the plugin can't tell them apart; one would
- *  silently never fire). Under evdev, sides stay distinct. */
+/** Canonicalize a chord for conflict comparison. When `collapseSides` (the plugin is the registrar —
+ *  no evdev / Windows hook), fold right-side modifiers into their left equivalent first: the plugin
+ *  can't tell sides apart, so one of two side-only-different chords would silently never fire. */
 function conflictCodes(hotkey: string[], collapseSides: boolean): string[] {
   return canonicalizeCodes(collapseSides ? collapseModifierSides(hotkey) : hotkey);
 }
@@ -38,9 +37,8 @@ export interface ProfileConflict {
   kind: ConflictKind;
 }
 
-/** The global quick-add chord participates in conflict detection as a synthetic peer profile, so a
- *  profile chord colliding with it is flagged on all three surfaces (per-card banner, the Editor
- *  capture-warn check, and the persistence save-gate). One factory + id keeps those in lockstep. */
+/** The global quick-add chord joins conflict detection as a synthetic peer profile, so a profile
+ *  chord colliding with it is flagged by every conflict gate; one factory + id keeps them in lockstep. */
 export const QUICK_ADD_PEER_ID = "__quick-add__";
 
 export function quickAddPeer(hotkey: string[]): Profile {
@@ -73,7 +71,7 @@ function isDesignedNesting(subKind: BindingKind, supKind: BindingKind): boolean 
   return subKind === "hold" && supKind === "handsfree";
 }
 
-/** Find every chord conflict among the given profiles. `collapseSides` (= plugin backend / evdev off)
+/** Find every chord conflict among the given profiles. `collapseSides` (= plugin is the registrar)
  *  folds L/R modifier sides together so a side-only difference is treated as a duplicate. */
 export function conflicts(profiles: Profile[], collapseSides = false): ProfileConflict[] {
   const active = profiles
