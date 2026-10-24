@@ -22,7 +22,7 @@ fn sync_state_path(dir: &Path) -> PathBuf {
 /// (or non-object — `[]`, `null`, a bare scalar) file is treated as "no state": the engine
 /// then re-pulls and rebuilds the snapshot — safe (worst case one spurious conflict
 /// prompt), so no .bak dance here. `device_info` applies the same object check: a non-object
-/// document could not carry the device id, so a fresh one was minted on EVERY call.
+/// document cannot carry the device id, so a fresh one would be minted on every call.
 ///
 /// A file that exists but can't be READ (a Windows AV/indexer lock outlasting the retries of
 /// `config::read_config_text`, an EIO) is an `Err`, never `None` — the same rule as
