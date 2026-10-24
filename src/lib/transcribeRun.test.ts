@@ -1858,17 +1858,23 @@ describe("an on-demand video that finishes is pulled once", () => {
     resetVideoPoll();
   });
 
-  it("the request's answer pulls the video while the poll only reads the closed entry", async () => {
-    getTranscribeProgress.mockImplementation(() =>
-      Promise.resolve({ stage: "unknown" } as import("./types").BatchProgress));
+  // Retries the video with its on-demand request held open; the returned call answers it with `dl`.
+  const retryHeld = (): (() => void) => {
     let answer: (d: typeof dl) => void = () => {};
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
     retryRunVideo(url, RUN_CTX);
+    return () => answer(dl);
+  };
+
+  it("the request's answer pulls the video while the poll only reads the closed entry", async () => {
+    getTranscribeProgress.mockImplementation(() =>
+      Promise.resolve({ stage: "unknown" } as import("./types").BatchProgress));
+    const answer = retryHeld();
     // Before the handler claims the id (or after it closes it) there is no entry: an open
     // request keeps the poll alive instead of giving up.
     tick!(); await flush();
     expect(cleared).toBe(0);
-    answer(dl);
+    answer();
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     expect(fetchUrlVideo.mock.calls[0][0].mediaId).toBe("v1");
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
@@ -1877,10 +1883,8 @@ describe("an on-demand video that finishes is pulled once", () => {
   });
 
   it("a request that answers before any poll names the video's format on the row", async () => {
-    let answer: (d: typeof dl) => void = () => {};
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, RUN_CTX);
-    answer(dl);
+    const answer = retryHeld();
+    answer();
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
     expect(video?.state).toBe("done");
@@ -1892,10 +1896,8 @@ describe("an on-demand video that finishes is pulled once", () => {
     useTranscribeRun.setState({ stageMeta: { downloading: { video: {
       state: "failed", error: "old", height: 1080, label: "1080p Premium", vcodec: "avc1.640028", container: "mp4",
     } } } });
-    let answer: (d: typeof dl) => void = () => {};
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, RUN_CTX);
-    answer(dl);
+    const answer = retryHeld();
+    answer();
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
     expect(video?.height).toBe(720);
@@ -1907,10 +1909,8 @@ describe("an on-demand video that finishes is pulled once", () => {
     useTranscribeRun.setState({ stageMeta: { downloading: { video: {
       state: "failed", error: "old", height: 720, label: "720p60", vcodec: "vp09.00.40.08", container: "webm",
     } } } });
-    let answer: (d: typeof dl) => void = () => {};
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, RUN_CTX);
-    answer(dl);
+    const answer = retryHeld();
+    answer();
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     const video = useTranscribeRun.getState().stageMeta.downloading?.video;
     expect(video?.label).toBe("720p60");
@@ -1922,9 +1922,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "queued" },
     } as import("./types").BatchProgress));
-    let answer: (d: typeof dl) => void = () => {};
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, RUN_CTX);
+    const answer = retryHeld();
     tick!(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
     const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
@@ -1938,7 +1936,7 @@ describe("an on-demand video that finishes is pulled once", () => {
     expect(cleared).toBe(1);
     expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
-    answer(dl);
+    answer();
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
   });
@@ -1947,12 +1945,10 @@ describe("an on-demand video that finishes is pulled once", () => {
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "done", mediaId: "v1" },
     } as import("./types").BatchProgress));
-    let answer: (d: typeof dl) => void = () => {};
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
-    retryRunVideo(url, RUN_CTX);
+    const answer = retryHeld();
     tick!(); await flush();
     expect(fetchUrlVideo).toHaveBeenCalledTimes(1);
-    answer(dl);
+    answer();
     await flush(); await flush();
     expect(fetchUrlVideo).toHaveBeenCalledTimes(1);
   });
