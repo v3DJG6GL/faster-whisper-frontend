@@ -56,7 +56,7 @@ pub fn trigger_modifiers_still_held(held: &crate::hotkeys::held_keys::HeldKeys) 
 /// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down, so an
 /// unrelated held Ctrl (scroll-zoom) or Shift does not divert an ordinary phrase to the clipboard.
 /// An empty slice produces an empty snapshot — a chord with no observable modifiers.
-/// Teardown-emitted stops pass `None` to the backends, which skip this call entirely
+/// The evdev/Windows backends' teardown-emitted stops pass `None` and skip this call entirely,
 /// so the existing snapshot survives for the clipboard gate.
 pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
     if let Ok(mut g) = TRIGGER_MODS.lock() {
