@@ -410,7 +410,6 @@ export function TranscriptViewer({
   // keep their timings; corrections inherit the replaced span) — karaoke and
   // word-level exports both read THIS, so they always agree with the text.
   const effWords = useMemo(() => applyTextEdits(result, fileEdits), [result, fileEdits]);
-  // Word index ranges per segment (karaoke + word-level exports).
   const segWordRanges = useMemo(
     () => segmentWordRanges(result.segments ?? [], effWords),
     [result, effWords],
@@ -601,8 +600,8 @@ export function TranscriptViewer({
   // Re-entry gate that survives remounts: a ctl exists ⇔ the loop is live.
   const translating = trCtls.has(trKey) && trRun != null;
 
-  /** Translate the given segment indexes into `targets` in `TRANSLATE_CHUNK`-segment
-   *  chunks, merging each chunk back into the record as it lands (track
+  /** Translate the given segment indexes into `targets` in runChunkedTranslate's chunks,
+   *  merging each chunk back into the record as it lands (track
    *  chips appear on the first merge). Uses the record's backend (else the
    *  first); explicit `opts` (the panel's picks) override its stored
    *  translation defaults. */
