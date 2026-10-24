@@ -157,7 +157,7 @@ fn transcripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Dictation-session records live in a subdirectory so their (stricter)
 /// retention window can sweep independently of file transcriptions. The
 /// top-level listing skips non-`.json` entries, so the subdir is invisible
-/// to the pre-existing sweep.
+/// to the file-transcription sweep.
 fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("dictation"))
 }
@@ -367,9 +367,8 @@ fn fix_records_in(
             // Two passes so `fix` (the heal stats arbitrary user paths, possibly on an offline
             // share) never runs under `RECORD_IO`: first read, parse and map without the lock;
             // then, under it, re-read and apply each change only where the field still holds the
-            // value it was computed from. A record a sweep removed first is unreadable here and
-            // skipped, not resurrected; a non-UTF-8 file is no record the listing could load
-            // either. Any other read failure (a sync client's or antivirus's lock) may hide a
+            // value it was computed from. A record a sweep removed first is skipped, not
+            // resurrected; other read failures (a sync client's or antivirus's lock) may hide a
             // moved path.
             let read = |path: &Path, tally: &mut FixTally| match std::fs::read_to_string(path) {
                 Ok(t) => serde_json::from_str::<serde_json::Value>(&t).ok(),
@@ -442,9 +441,8 @@ fn fix_records_in(
     tally
 }
 
-/// Re-point every media field ([`MEDIA_KEYS`]: mediaPath, videoPath, sourcePath) of every
-/// record whose stored path appears in `lookup`
-/// (old absolute path → new absolute path), after a migration or base move.
+/// Re-point every media field ([`MEDIA_KEYS`]) of every record whose stored path appears in
+/// `lookup` (old absolute path → new absolute path), after a migration or base move.
 /// Best-effort per record; a record that fails to parse is left untouched. Returns false when
 /// a record that may point at a moved file could not be read or rewritten (locked, unreadable,
 /// disk full) or a history folder could not be listed: the caller must then leave the heal to
@@ -482,7 +480,7 @@ fn rewrite_media_paths_in(
 ///
 /// A link keeps its audio in `links/` and its video in `video/` under the SAME `<id>.<ext>`
 /// name (and audio/webm and video/webm share `webm`), so a basename search in plain
-/// `AUDIO_SUBDIRS` order re-pointed a stale `videoPath` at the audio-only copy. A video lives
+/// `AUDIO_SUBDIRS` order would re-point a stale `videoPath` at the audio-only copy. A video lives
 /// only in `video/`, and audio never does; among the rest, the subfolder the stale path itself
 /// named goes first.
 fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a str> {
@@ -554,8 +552,8 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
     (tally.complete(), tally.fixed)
 }
 
-/// Copy cap — beyond this the copy is silently skipped (the record keeps
-/// playing from the original while it exists).
+/// Size cap for a media copy, a link-media download and an export's upload. An over-cap copy
+/// is skipped (the record keeps playing from the original while it exists).
 pub(crate) const MAX_MEDIA_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
@@ -655,7 +653,7 @@ fn owned_dir_tally(
 
 /// The recordings folder's readout: bytes and count of every file "Delete all dictations" removes
 /// (`dictation-*.wav` and the `.txt` sidecar beside each), plus how many of them are audio — the
-/// delete confirm names audio files, and counting the sidecars there doubled the number.
+/// delete confirm names audio files, and counting the sidecars there would double the number.
 fn recordings_usage(dir: &Path) -> (u64, u32, u32) {
     owned_dir_tally(dir, is_own_recording, is_wav)
 }
@@ -666,9 +664,8 @@ fn is_wav(p: &Path) -> bool {
 }
 
 /// Does the transcript store hold ANY `.json` record? Cheap (a directory listing), so the
-/// startup migration can skip the full read+parse heal on a fresh install. Checks both
-/// `transcripts/` and `transcripts/dictation/` — the same `record_dirs` `heal_media_paths`
-/// scans — so the predicate and the work it guards agree on what a record is.
+/// startup migration can skip the full read+parse heal on a fresh install. Walks the heal's own
+/// `record_dirs`, so the predicate and the work it guards agree on what a record is.
 pub fn has_any_records(app: &AppHandle) -> bool {
     any_records_in(&record_dirs(app))
 }
@@ -1209,8 +1206,8 @@ fn sweep_orphans_in(dir: &Path, records: &Path) -> usize {
         let path = entry.path();
         // An in-progress copy (`<id>.<ext>.tmp`, written on a blocking thread for up
         // to MAX_MEDIA_BYTES = 10 GiB) is not an orphan: this sweep runs on every
-        // config save, and unlinking the tmp under the writer made its final rename
-        // fail — the record then silently lost its only playable audio.
+        // config save, and unlinking the tmp under the writer would fail its final
+        // rename, silently losing the record's only playable audio.
         if is_partial_copy(&path) {
             // A media download tmp of another (so dead: single-instance) process has no
             // writer left, and nothing else would ever reclaim it once its record is gone.
