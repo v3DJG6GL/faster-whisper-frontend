@@ -58,15 +58,21 @@ async function restoreSingleBackend() {
   useApp.setState({ backends: [B1], usageViewBackendId: null });
   await tick(30_000);
 }
+/** Open the page, then hide the window for `ticks` ticks, settling the hidden pass that
+ *  skips the page's documents. Returns the page's cleanup. */
+async function openPageThenHiddenPass(ticks: number) {
+  const close = openStatisticsPage();
+  await settle();
+  setHidden(true);
+  await tick(ticks * 30_000);
+  return close;
+}
 /** b1 + b2 (b1 picked), the page open, a hidden pass that skipped it; then b2's trend fetch
  *  hangs until `b2.release` runs. `ok` is the implementation it replaced. */
 async function hiddenPageWithStuckB2() {
   useApp.setState({ backends: [B1, B2], usageViewBackendId: "b1" });
   await tick(30_000);
-  const close = openStatisticsPage();
-  await settle();
-  setHidden(true);
-  await tick(10 * 30_000); // a hidden pass skips the page's documents
+  const close = await openPageThenHiddenPass(10);
   const ok = getUsageStats.getMockImplementation()!;
   const b2: { release?: (v: null) => void } = {};
   getUsageStats.mockImplementation((a) =>
@@ -143,10 +149,7 @@ describe("usage poll gates", () => {
   });
 
   it("shown right after a hidden pass, the open page still catches up", async () => {
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await tick(10 * 30_000); // the 10th tick runs a pass without the page
+    const close = await openPageThenHiddenPass(10); // the 10th tick runs a pass without the page
     getUsageStats.mockClear();
     setHidden(false); // no tick passed over since, yet the page's documents are stale
     await settle();
@@ -171,10 +174,7 @@ describe("usage poll gates", () => {
   it("a tray reopen fetches the page documents once, unless the catch-up pass delivers an outcome", async () => {
     for (const queued of [0, 1]) {
       await tick(30_000); // settle any pass the previous round left pending
-      const close = openStatisticsPage();
-      await settle();
-      setHidden(true);
-      await tick(12 * 30_000); // a hidden pass skips the page, two ticks pass over
+      const close = await openPageThenHiddenPass(12); // a hidden pass skips the page, two ticks pass over
       outcomes.queued = queued; // a session outcome the catch-up pass's flush delivers
       getUsageStats.mockClear();
       try {
@@ -193,10 +193,7 @@ describe("usage poll gates", () => {
 
   it("a tray reopen whose own page fetch missed leaves the catch-up pass to retry it", async () => {
     await tick(30_000); // settle any pass the previous case left pending
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await tick(12 * 30_000);
+    const close = await openPageThenHiddenPass(12);
     getUsageStats.mockClear();
     // The show's direct view + year fetches miss (the network is not back yet); the rest answer.
     getUsageStats.mockResolvedValueOnce(null as never).mockResolvedValueOnce(null as never);
@@ -212,10 +209,7 @@ describe("usage poll gates", () => {
 
   it("a page closed while hidden does not make every later show run a pass", async () => {
     await tick(30_000); // settle any pass the previous case left pending
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await tick(10 * 30_000); // the hidden pass skips the open page
+    const close = await openPageThenHiddenPass(10); // the hidden pass skips the open page
     getUsageStats.mockClear();
     close();
     setHidden(false); // no catch-up pass: the closed page took the flag with it
