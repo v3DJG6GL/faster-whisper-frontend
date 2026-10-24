@@ -337,9 +337,7 @@ mod tests {
 
     #[test]
     fn a_failed_cache_write_leaves_no_tmp_behind() {
-        let dir = std::env::temp_dir().join(format!("fwf-decode-cache-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::audio::scratch_dir("decode-cache");
         // `out` is an existing NON-EMPTY directory, so the rename into it fails.
         let out = dir.join("abc.wav");
         std::fs::create_dir_all(out.join("occupied")).unwrap();
@@ -363,9 +361,7 @@ mod tests {
 
     #[test]
     fn eviction_is_by_oldest_mtime_and_spares_the_kept_file() {
-        let dir = std::env::temp_dir().join(format!("fwf-decode-prune-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::audio::scratch_dir("decode-prune");
         let big = vec![0u8; 1024];
         let stamp = |p: &std::path::Path, secs: u64| {
             let f = std::fs::File::options().write(true).open(p).unwrap();
@@ -395,9 +391,7 @@ mod tests {
 
     #[test]
     fn prune_sweeps_other_processes_tmps_but_not_its_own() {
-        let dir = std::env::temp_dir().join(format!("fwf-decode-tmps-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::audio::scratch_dir("decode-tmps");
         let own = std::process::id();
         let foreign = if own == 1 { 2 } else { own - 1 };
         let keep = dir.join("keep.wav");
@@ -423,9 +417,7 @@ mod tests {
 
     #[test]
     fn concurrent_requests_for_one_output_decode_once() {
-        let dir = std::env::temp_dir().join(format!("fwf-decode-flight-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::audio::scratch_dir("decode-flight");
         let out = dir.join("abc.wav");
         let decodes = std::sync::atomic::AtomicUsize::new(0);
         std::thread::scope(|s| {
@@ -455,9 +447,7 @@ mod tests {
 
     #[test]
     fn waiters_share_a_failed_decode_and_a_later_open_retries() {
-        let dir = std::env::temp_dir().join(format!("fwf-decode-fail-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::audio::scratch_dir("decode-fail");
         let out = dir.join("abc.wav");
         let decodes = std::sync::atomic::AtomicUsize::new(0);
         let failing = || {

@@ -598,6 +598,15 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) -> bool {
     }
 }
 
+/// An empty `fwf-<tag>-<pid>` dir under the OS temp dir, wiped first so a crashed earlier run leaves nothing behind.
+#[cfg(test)]
+fn scratch_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("fwf-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 #[cfg(test)]
 mod retention_tests {
     #[cfg(unix)]
@@ -671,10 +680,7 @@ mod retention_tests {
     /// past ~10.7 million days and PANICS, killing the sweep on every launch once persisted.
     #[test]
     fn an_absurd_retention_window_is_clamped_not_fatal() {
-        let dir = std::env::temp_dir()
-            .join(format!("fwf-retention-clamp-{}", std::process::id()).as_str());
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("retention-clamp");
         seed(&dir, "dictation-old.wav", 400);
         // u32::MAX days is ~11.7 million years; clamped, this is simply "keep everything".
         assert_eq!(prune_recordings(&dir, u32::MAX), 0);
@@ -686,10 +692,7 @@ mod retention_tests {
     /// folder cannot have the server-supplied transcript written through it.
     #[test]
     fn a_transcript_never_overwrites_an_existing_file() {
-        let dir = std::env::temp_dir()
-            .join(format!("fwf-sidecar-nofollow-{}", std::process::id()).as_str());
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("sidecar-nofollow");
         let victim = dir.join("dictation-x.txt");
         std::fs::write(&victim, b"original").unwrap();
         save_transcript_sidecar(&dir.join("dictation-x.wav"), "replacement text");
@@ -699,10 +702,7 @@ mod retention_tests {
 
     #[test]
     fn keeps_everything_when_retention_is_off() {
-        let dir =
-            std::env::temp_dir().join(format!("fwf-retention-off-{}", std::process::id()).as_str());
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("retention-off");
         seed(&dir, "dictation-old.wav", 400);
         assert_eq!(prune_recordings(&dir, 0), 0);
         assert!(dir.join("dictation-old.wav").exists());
@@ -711,10 +711,7 @@ mod retention_tests {
 
     #[test]
     fn removes_only_our_files_past_the_window() {
-        let dir = std::env::temp_dir()
-            .join(format!("fwf-retention-window-{}", std::process::id()).as_str());
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch_dir("retention-window");
         seed(&dir, "dictation-old.wav", 40);
         seed(&dir, "dictation-old.txt", 40);
         seed(&dir, "dictation-fresh.wav", 2);
