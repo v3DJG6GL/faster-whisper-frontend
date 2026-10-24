@@ -9,27 +9,25 @@ import {
 import type { UsageKind, UsageKinds, UsageStats } from "@/lib/types";
 import { Num } from "@/components/stats/primitives";
 
-/* ── tiles ───────────────────────────────────────────────────────────────── */
-
 export interface TileSpec {
   key: string;
   label: string;
   icon: typeof Type;
   tone: "dict" | "ok" | "warn";
-  /** The ledger's three rows (D53 C): today, the page's range, and the per-day average. */
+  /** The ledger's three rows: today, the page's range, and the per-day average. */
   today: string;
   range: string;
   rangeLabel: string;
   perDay: string;
-  /** Sessions only (D56 K1): the range's sessions per kind, a stacked bar + legend. */
+  /** Sessions under the All scope only: the range's sessions per kind, a stacked bar + legend. */
   split?: { kind: UsageKind; value: number }[];
   /** One quiet line under the rows (Time saved: the spoken-vs-typed rate). */
   note?: ReactNode;
   spark: number[];
   sparkColor: string;
-  /** The measure this tile mirrors (D35 A): clicking it measures the page in it. */
+  /** The measure this tile mirrors: clicking it measures the page in it. */
   metric?: ChartMetric;
-  /** Time saved: a conclusion drawn from two measures, not a switch — spans two columns (D39 L1). */
+  /** Time saved: a conclusion drawn from two measures, not a switch — spans two columns. */
   wide?: boolean;
 }
 
@@ -43,11 +41,9 @@ function fmtPerDay(m: ChartMetric | "saved", v: number): string {
 
 const TILE_ICON: Record<ChartMetric, typeof Type> = { audio_s: Clock, words: Type, sessions: Mic, requests: Activity, processing_s: Cpu, errors: TriangleAlert };
 
-/** The tile row for a scope: one tile per measure in measure order (Duration · Words ·
- *  Sessions · Requests · Processing Time · Errors), then Time saved, which is dictation-only
- *  by definition (the server's figure is too), whatever the scope. Each tile is a ledger
- *  (D53 C): today, the range (`rangeLabel`, `days` calendar days) and the per-day average;
- *  `dense` feeds the sparkline. */
+/** The tile row for a scope: one tile per measure in CHART_METRICS order, then Time saved,
+ *  which is dictation-only by definition (the server's figure is too), whatever the scope.
+ *  `days` (calendar days in the range) divides the per-day average; `dense` feeds the sparkline. */
 export function tileSpecs(stats: UsageStats, dense: readonly UsageKinds[], scope: UsageScope, withSaved: boolean, rangeLabel: string, days: number): TileSpec[] {
   const today = scopeTotals(stats.today, scope);
   const total = scopeTotals(stats.total, scope);
