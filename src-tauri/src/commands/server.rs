@@ -82,7 +82,7 @@ pub async fn get_decode_defaults(
     .await
 }
 
-/// P17: the post-processing (pipeline) rules the caller may view + edit
+/// The post-processing (pipeline) rules the caller may view + edit
 /// (`GET /v1/pipeline-rules`) — for the Dictionary screen. Structured result so
 /// the UI can distinguish standard-server (404) / unauthorized (401) / no-access
 /// (403) / parse errors from a real rule list.
@@ -96,7 +96,7 @@ pub async fn get_pipeline_rules(
     transport::pipeline::get_pipeline_rules(&server_url, key.as_deref()).await
 }
 
-/// P17: apply a per-rule patch (`PATCH /v1/pipeline-rules`). `patch` is the
+/// Apply a per-rule patch (`PATCH /v1/pipeline-rules`). `patch` is the
 /// `{rules_patch, fingerprints}` object the client builds from its edits.
 /// Structured result carries saved / conflicts / requires_restart, plus 422
 /// `errors` or a 400/403/500 `detail`.
@@ -111,7 +111,7 @@ pub async fn save_pipeline_rules(
     transport::pipeline::save_pipeline_rules(&server_url, key.as_deref(), patch).await
 }
 
-/// P18: recently-transcribed word/phrase suggestions for the Dictionary's
+/// Recently-transcribed word/phrase suggestions for the Dictionary's
 /// spoken-symbol key field (`GET /v1/recent-words`). Best-effort — returns an
 /// empty list on any failure (old/standard server, unreachable) so the editor
 /// degrades to a plain input.
@@ -125,10 +125,10 @@ pub async fn get_recent_words(
     transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
 }
 
-/// P28: the caller's own usage document (`GET /v1/usage`) — per-kind today/total, the
+/// The caller's own usage document (`GET /v1/usage`) — per-kind today/total, the
 /// daily series, stages, dictation facets, apps, calendar and streak — for the Home strip,
 /// the Statistics page and the optional chip readout. Best-effort — null on any error so
-/// the UI hides the feature on a standard/old server or when unreachable. `tz` is the
+/// the UI hides the feature on a standard/old server or when unreachable. `query.tz` is the
 /// caller's IANA zone so the server reckons days (and DST) the way the viewer does.
 #[tauri::command]
 pub async fn get_usage_stats(
@@ -142,8 +142,8 @@ pub async fn get_usage_stats(
 }
 
 /// Report end-of-dictation outcomes (`POST /v1/usage/outcome`). Structured result
-/// (never throws) so the TS queue can tell retry-later (0 / 5xx / 408 / 429) from
-/// drop-it (other 4xx) — see lib/usageOutcome.ts.
+/// (never throws) so the TS queue can tell retry-later (0 / 5xx / 408 / 429 / 401 / 403)
+/// from drop-it (other 4xx) — see lib/usageOutcome.ts.
 #[tauri::command]
 pub async fn post_usage_outcomes(
     server_url: String,
