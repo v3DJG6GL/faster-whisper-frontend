@@ -317,7 +317,6 @@ describe("exportStem", () => {
     expect(new TextEncoder().encode(long + ".Machine-translation.de.srt.tmp").length).toBeLessThanOrEqual(255);
     expect(long).toBe(exportStem("会議".repeat(39), "/home/u/x.mp4"));
     expect(exportStem(undefined, "/tmp/a:b?.mkv")).toBe("a b");
-    // The link info is ignored for a local file.
     expect(exportStem("Talk", "/a.mp4", { createdAt: new Date(2026, 9, 4, 19, 34), extractor: "Youtube" })).toBe("Talk");
   });
 
