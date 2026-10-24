@@ -531,7 +531,7 @@ export default function QuickAdd() {
   // usual way one arrives.
   const addProblem = find.trim() ? (mapEntryProblem(find, insert) ?? mapKeyTwinProblem(find, rows)) : null;
   const addMapping = useCallback(() => {
-    if (!find.trim()) return; // ignore a blank/whitespace-only spoken phrase
+    if (!find.trim()) return;
     // Its reason is already on screen (addProblem).
     if (mapEntryProblem(find, insert) ?? mapKeyTwinProblem(find, rowsRef.current)) return;
     const k = find; // keep the key VERBATIM — leading/trailing spaces are meaningful (see pipelineMap)
@@ -541,7 +541,7 @@ export default function QuickAdd() {
     setInsert("");
     setOpenOnSummon(false); // refocus the find field, but keep its dropdown out of the way
     setFocusInsert(false); // after "add another" the find field gets focus (capture the next word)
-    setShowSeq((s) => s + 1); // remount Combobox → re-focus find for the next add
+    setShowSeq((s) => s + 1);
   }, [find, insert, mutate]);
 
   // Rows whose phrase is a case twin of another row — the reason shows under each, and flushSave
@@ -821,9 +821,10 @@ export default function QuickAdd() {
  *  that the SAME word is still selected, then paste the list-corrected version over it — correcting
  *  the word in place. Skips if the selection is gone or changed (the "check first" guard), or — on
  *  the typing method only — if its edges carry a line break that typing would turn into Enter.
- *  Paste replaces the active selection; the user's prior clipboard is restored afterwards —
- *  unless Rust diverts to the clipboard (focus moved, or untypeable text on Wayland), in which
- *  case the correction stays on the clipboard and the selection is left as it was. */
+ *  Paste replaces the active selection; the prior clipboard is restored afterwards when the
+ *  resolved restore-clipboard setting says so — unless Rust diverts to the clipboard (focus moved,
+ *  or untypeable text on Wayland), in which case the correction stays on the clipboard and the
+ *  selection is left as it was. */
 async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
@@ -834,11 +835,9 @@ async function replaceSelectionAfterClose(
   // selection re-read TYPES a copy-chord into whatever is focused, so firing early doesn't
   // just miss — it silently drops the correction (unchanged clipboard reads as "gone").
   await new Promise((r) => setTimeout(r, IS_WINDOWS ? 400 : 250));
-  // Focus is back on the source app now; read its selection AND identity together, then resolve the
-  // injection target through the SAME shared resolver the main injection path uses — so per-app
-  // method / paste-shortcut AND the deep-detection non-editable→clipboard coercion all apply here too.
-  // (A live selection can sit in a NON-editable view — a read-only doc/web page — where a synthetic
-  // paste/type would misfire; the resolver coerces those to clipboard-only.)
+  // Focus is back on the source app now; read its selection AND identity together. A live selection
+  // can sit in a NON-editable view (a read-only doc/web page) where a synthetic paste/type would
+  // misfire; the resolver coerces those to clipboard-only.
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null) return;
   // No profile layer, deliberately: the correction is a Quick-Add action, not a dictation,
@@ -857,8 +856,6 @@ async function replaceSelectionAfterClose(
     console.info("[quick-add] correct-on-close skipped: selection changed or edge line break on a typed route");
     return;
   }
-  // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
-  // clipboard with no keystroke; restore the prior clipboard only for a real paste.
   // The replacement text comes from the server's mapping list, and every typing path turns a
   // newline into a real Enter — which would SUBMIT whatever the corrected word landed in. A
   // word mapping is a single line by construction, so fold controls to spaces.
