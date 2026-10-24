@@ -192,9 +192,6 @@ export function tailUnits(s: string, n: number): string {
   return /^[\uDC00-\uDFFF]/.test(t) ? t.slice(1) : t;
 }
 
-/** Assemble the full `dictation://update` payload from a store snapshot. Everything the
- *  chip renders is resolved HERE (main window) because the overlay webview can't read
- *  this store — it only ever sees these payloads. */
 function chipPayload(state: ReturnType<typeof useApp.getState>) {
   const rec = state.settings.recording;
   let chip: {
