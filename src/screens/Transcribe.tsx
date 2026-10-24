@@ -472,8 +472,8 @@ export default function Transcribe() {
   // standard server hides the full-backend-only stages.
   const isStandard = serverKind === "standard";
 
-  // Capability gate for the per-run decode editor — the same context the Backend/Profile
-  // editors use (the inherited baseline comes from useDecodeDefaults below).
+  // The server's capabilities, which gate the screen's per-run fields and stages — the same
+  // context the Backend/Profile editors use (the inherited baseline comes from useDecodeDefaults below).
   const serverUrl = backend ? effectiveServerUrl(backend, settings) : "";
   const { caps } = useOverrideContext({ serverUrl, backendId: backend?.id, serverKind });
   // What the server gives this run: the EFFECTIVE model and profile — the per-run picks win,
@@ -1923,7 +1923,6 @@ export default function Transcribe() {
                             }}
                             inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}
-                            // While the panel holds the chips, the link's spoken language is never one.
                             exclude={chipSource(!!siteChips, siteInput?.spoken, knownSource)}
                           >
                             <OverrideHeader
@@ -2117,8 +2116,8 @@ export default function Transcribe() {
           !panelItem?.siteFallback &&
           !(panelResult?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
         const stages = railStages(panelOptions, forUrl, forText, siteT);
-        // The server-owned plan behind this file; the overall fraction and the
-        // ETA below are the server's numbers too, verbatim.
+        // The server-owned plan behind this file; the overall fraction and this
+        // file's ETA below are the server's numbers too, verbatim.
         const plan = planOf(progress, panelResult);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
@@ -2804,8 +2803,6 @@ export default function Transcribe() {
                                 </span>
                               )
                             )}
-                            {/* Per-unit receipts (a translate target or a
-                                diarize step): what each one took. */}
                             {state === "done" && hasUnits && planStage?.units?.map((u) => {
                               const tgt = (st === "diarizing" ? safeDisplayText(u.target, 16) : langText(u.target, 12)).trim();
                               if (!tgt) return null;
