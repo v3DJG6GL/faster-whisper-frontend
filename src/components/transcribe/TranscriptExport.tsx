@@ -40,7 +40,7 @@ import {
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
-  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams, type PackageSource,
+  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -419,9 +419,10 @@ export function TranscriptExport({
     );
   }, [open, editedResult, exportOptions, previewFile, subGrid, gridTracks]);
 
-  /** A local copy under way: the footer shows "copying…" until it settles. */
-  const copying = async <T,>(job: Promise<T>): Promise<T> => {
-    setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
+  /** A step with no server job id under way (a local copy, a link's fetch): the footer shows
+   *  its phase until it settles. */
+  const withMediaJob = async <T,>(phase: MediaExportPhase, job: Promise<T>): Promise<T> => {
+    setMediaJob({ jobId: "", phase, done: 0, total: null });
     try {
       return await job;
     } finally {
@@ -444,16 +445,10 @@ export function TranscriptExport({
       if (!rec) return null;
       // The id actually sent: a re-run may stamp a newer one meanwhile.
       const sentId = serverAudioId;
-      setMediaJob({ jobId: "", phase: "fetching-audio", done: 0, total: null });
-      let got: string | null;
-      try {
-        got = await fetchUrlMedia({
-          serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
-          mediaId: serverAudioId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
-        });
-      } finally {
-        setMediaJob(null);
-      }
+      const got = await withMediaJob("fetching-audio", fetchUrlMedia({
+        serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
+        mediaId: serverAudioId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
+      }));
       if (got) {
         // The fetched copy is the record's local copy now: playback has a file, and the
         // next Save copies it instead of downloading again.
@@ -486,9 +481,9 @@ export function TranscriptExport({
       // "bin" = a type the fetch could not name; the confirmed extension is the better guess.
       if (ext && ext !== "bin" && ext !== extOf(dest)) {
         const real = dest.replace(/\.[^.\\/]+$/, "") + "." + ext;
-        if ((await copying(copyMediaTo({ src, dest: real, recordId, audioBase, noClobber: true }))) !== null) return real;
+        if ((await withMediaJob("copying", copyMediaTo({ src, dest: real, recordId, audioBase, noClobber: true }))) !== null) return real;
       }
-      await copying(copyMediaTo({ src, dest, recordId, audioBase }));
+      await withMediaJob("copying", copyMediaTo({ src, dest, recordId, audioBase }));
       return dest;
     };
     const kept = localAudio;
@@ -530,7 +525,7 @@ export function TranscriptExport({
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
-      await copying(copyMediaTo({ src: localVideo, dest, recordId: rec.id, audioBase }));
+      await withMediaJob("copying", copyMediaTo({ src: localVideo, dest, recordId: rec.id, audioBase }));
       return true;
     }
     if (!trBackend) throw new Error("No backend is selected.");
@@ -564,19 +559,16 @@ export function TranscriptExport({
     const picked = packageSource(storedId, localVideo);
     if (picked) source = picked;
     else if (urlVideoOnDemand) {
-      setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
       try {
         // The link card's quality and format picks, as the run's own on-demand fetch
-        // honours them; none = the Settings default.
-        const got = await fetchUrlVideoOnDemand({
+        // honours them; none = the Settings default. Fetched, the job clears: a wait in the
+        // queue below shows as Queued (with its Cancel), not as a fetch that never ends.
+        const got = await withMediaJob("fetching", fetchUrlVideoOnDemand({
           serverUrl, backendId: trBackend.id, url: path,
           maxHeight: videoMaxHeightOf(path),
           formatId: useTranscribeRun.getState().urlMeta[path]?.videoFormat ?? null,
-        });
+        }));
         source = { sourceMediaId: got.mediaId };
-        // Fetched: a wait in the queue below shows as Queued (with its Cancel), not as
-        // a fetch that never ends.
-        setMediaJob(null);
         // Only reachable for a link (urlVideoOnDemand), so this lands in sourceVideo*.
         rememberUpload(got.mediaId, got.expiresAt ?? undefined);
         // Keep a local copy too (the Settings' video store), best effort.
@@ -584,7 +576,6 @@ export function TranscriptExport({
           .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
           .catch(() => {});
       } catch (e) {
-        setMediaJob(null);
         const msg = safeDisplayText(errorText(e), 300) || "The video could not be fetched.";
         if (mine()) setMediaError({ kind: "fetch", msg });
         else late(msg);
