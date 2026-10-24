@@ -677,10 +677,10 @@ export default function Dictionary() {
   // load() calls for the SAME backend (e.g. Refresh during the post-save reload, or rapid Refresh) —
   // an out-of-order network resolution would let the older fetch win. Bump per call, ignore stale.
   const loadGen = useRef(0);
-  // The backend whose rules are on screen, and whether they carry unsaved edits (set each render,
-  // below `dirty`). The load-on-change effect also re-runs when a sync changes the selected
-  // backend's address or drops it from the candidates; with unsaved edits it keeps the document and
-  // sets `held` instead of replacing it in silence (dictionaryLoadAction).
+  // The backend whose rules are on screen (set by the loads), and whether they carry unsaved edits
+  // (set each render, below `dirty`). The load-on-change effect also re-runs when a sync changes the
+  // selected backend's address or drops it from the candidates; with unsaved edits it keeps the
+  // document and sets `held` instead of replacing it in silence (dictionaryLoadAction).
   const loadedIdRef = useRef<string | null>(null);
   /** The address the rules on screen were fetched from. */
   const loadedUrlRef = useRef<string | null>(null);
@@ -936,7 +936,7 @@ export default function Dictionary() {
   }, [held, hasDirty, backend?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // The same unsaved-work guard the three list editors register: the sticky bar and the
   // backend pills already refuse to lose edits, but a sidebar click or the chip's
-  // app://navigate unmounted this screen and threw them away in silence.
+  // app://navigate would unmount this screen and drop them in silence.
   const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
   // Why the Save is held: a dirty rule whose body the server would refuse — a word-mapping list
@@ -1074,10 +1074,9 @@ export default function Dictionary() {
                   disabled={saving || (dirty.length > 0 && !active)}
                   title={dirty.length > 0 && !active ? "Save or discard your changes before switching backend" : undefined}
                   onClick={() => {
-                    // Clicking the ACTIVE pill is a no-op switch: setSelectedId is unchanged so the
-                    // load-on-change effect (keyed on [id, serverUrl]) never re-runs and never clears
-                    // loading — setting it true here would strand the "Loading rules…" spinner forever
-                    // (Refresh is disabled while loading, so there's no recovery). Bail early.
+                    // Clicking the ACTIVE pill changes no selection, so the load-on-change effect never
+                    // re-runs to clear `loading` — setting it here would strand the "Loading rules…"
+                    // spinner forever (Refresh is disabled while loading, so there's no recovery).
                     if (b.id === selectedId) return;
                     setSelectedId(b.id);
                     setLoading(true); // show the spinner on switch, not the prior backend's rules
