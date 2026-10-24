@@ -61,9 +61,9 @@ export function newCaptureIdBook(
   const arrived = new Map<number, string>();
   /** Phrases parked on an id that hasn't arrived, by ordinal. */
   const waiters = new Map<number, Array<(id: string | null) => void>>();
-  /** Ordinals that will never yield an id again: one already handed out, or
-   *  one already waited out — a repeat take answers at once instead of
-   *  re-paying the full wait. */
+  /** Ordinals that will never yield an id again: one already handed out, one
+   *  already waited out, or one a higher ordinal's id proved id-less — a repeat
+   *  take answers at once instead of re-paying the full wait. */
   const spent = new Set<number>();
   /** Highest ordinal the server has minted a row for. Rows are written in
    *  utterance order, so an id for a higher ordinal proves the lower ones got
