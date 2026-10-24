@@ -247,9 +247,7 @@ export function ConfirmLeave({
   );
 }
 
-/** A text "›" disclosure toggle that rotates 90° when open (used to reveal advanced/override
- *  sections). The chevron + base button styling are single-sourced; pass `className` for per-site
- *  spacing (e.g. mt-4) and `children` for the label (and any trailing "· set" suffix). */
+/** A text "›" disclosure toggle that rotates 90° when open. */
 export function DisclosureToggle({
   open,
   onToggle,
