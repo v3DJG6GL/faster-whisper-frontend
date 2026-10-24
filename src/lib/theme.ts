@@ -6,9 +6,9 @@
 //
 // Signal colour: the accent is hue-only. `settings.accentHue` (0–360) picks the hue;
 // lightness and chroma are fixed per theme and the concrete tokens are derived here in
-// OKLCH and stamped inline on <html> by `applyTheme` — which is why every caller sets
-// the hue (`setAccentHue`) and the motion (`setAccentMotion`) BEFORE stamping the theme,
-// and why an OS scheme flip under "auto" re-derives the light/dark variant for free. The
+// OKLCH and stamped inline on <html> by `applyTheme` — which is why `applyAccentAndTheme`
+// sets the hue and the motion BEFORE stamping the theme, and why an OS scheme flip under
+// "auto" re-derives the light/dark variant for free. The
 // default hue (65 = the amber app.css hand-tunes) removes the inline overrides instead of
 // recomputing them, so the stock look stays byte-identical to the stylesheet.
 //
@@ -40,8 +40,6 @@ export function resolvedTheme(t: ThemeName): "dark" | "light" {
   if (t !== "auto") return t;
   return window.matchMedia(LIGHT_MQ).matches ? "light" : "dark";
 }
-
-/* ── Signal colour (accent hue) ───────────────────────────────────────── */
 
 /** The amber app.css defines by hand; `applyTheme` stamps nothing for it. */
 export const DEFAULT_ACCENT_HUE = 65;
@@ -117,9 +115,9 @@ function alpha(hex: string, a: number): string {
 export interface DerivedAccent {
   accent: string;
   /** The Rhythm calendar's four steps (`--c-cal-1..4`): one hue, fixed L/C per theme, so
-   *  the ramp stays a single-hue sequential scale whatever the Signal colour (D27–D29). */
+   *  the ramp stays a single-hue sequential scale whatever the Signal colour. */
   cal: [string, string, string, string];
-  /** Text on accent fills — flips with the accent's luminance (a lime needs dark ink). */
+  /** Text on accent fills — fixed per theme, never per hue (see `deriveAccent`). */
   ink: string;
   soft: string;
   glowA: string;
@@ -127,7 +125,7 @@ export interface DerivedAccent {
   glow0: string;
 }
 
-/** Calendar steps, [L, C] per step; at Amber (65°) they land on the app.css hexes. */
+/** Calendar steps, [L, C] per step; at Amber (65°) they approximate the app.css hexes. */
 const CAL_STEPS_DARK: ReadonlyArray<readonly [number, number]> = [[0.33, 0.07], [0.46, 0.1], [0.6, 0.14], [0.72, 0.16]];
 const CAL_STEPS_LIGHT: ReadonlyArray<readonly [number, number]> = [[0.84, 0.07], [0.74, 0.11], [0.62, 0.14], [0.47, 0.13]];
 
@@ -139,11 +137,9 @@ export function deriveAccent(hue: number, dark: boolean): DerivedAccent {
   return {
     accent,
     cal,
-    // Decided by theme, not by the clipped sRGB luminance: OKLCH L is fixed per
-    // theme (0.78 dark / 0.58 light), so the ink was never meant to vary with hue.
-    // The old `lum(accent) > 0.4` rule oscillated 8 times at hues 14-29° because
-    // gamut clipping of red-orange values created non-monotonic sRGB luminance
-    // around the threshold — flashing accent-ink buttons white during motion.
+    // By theme, not by luminance: OKLCH L is fixed per theme, and gamut clipping makes
+    // the sRGB luminance non-monotonic around red-orange (14–29°), so a `lum(accent)`
+    // threshold flipped the ink back and forth there during motion.
     ink: dark ? "#1a1207" : "#fff8ec",
     soft: alpha(accent, dark ? 0.14 : 0.12),
     glowA: alpha(accent, dark ? 0.09 : 0.05),
@@ -165,8 +161,6 @@ const ACCENT_VARS = [
   "--c-cal-3",
   "--c-cal-4",
 ] as const;
-
-/* ── Motion (the pure arithmetic every window runs) ───────────────────── */
 
 export const DEFAULT_ACCENT_MOTION: AccentMotion = { period: 0, range: "wheel" };
 /** The custom slider's span: 30 s … 7 d. Presets sit inside it. */
@@ -209,7 +203,7 @@ export function driftHue(base: number, motion: AccentMotion, nowMs: number): num
   if (motion.range === "wheel") return (base + 360 * ph) % 360;
   const far = motion.arcHue ?? DEFAULT_ARC_HUE;
   const near = motion.arcFrom ?? nearestPreset(base, far);
-  // Signed shortest angular distance, in (−180, 180].
+  // Signed shortest angular distance, in [−180, 180).
   const d = ((((far - near) % 360) + 540) % 360) - 180;
   const e = (1 - Math.cos(2 * Math.PI * ph)) / 2;
   return ((((near + d * e) % 360) + 360) % 360);
@@ -233,8 +227,6 @@ export function effectiveMotion(m: AccentMotion, reduced: boolean): AccentMotion
   return reduced || !(m.period > 0) ? { ...m, period: 0 } : m;
 }
 
-/* ── The custom-speed slider (Settings) ───────────────────────────────── */
-
 const LOG_MIN = Math.log(MOTION_MIN_PERIOD);
 const LOG_MAX = Math.log(MOTION_MAX_PERIOD);
 /** Slider position 0…1000 → seconds per turn, log scale: 0 = 30 s, 1000 = 7 d. */
@@ -256,8 +248,6 @@ export function fmtPer(s: number): string {
   if (h < 24) return `one turn every ${h} h`;
   return `one turn every ${Math.round((s / 86400) * 10) / 10} d`;
 }
-
-/* ── Per-window engine state ──────────────────────────────────────────── */
 
 let accentHue = DEFAULT_ACCENT_HUE;
 let accentMotion: AccentMotion = DEFAULT_ACCENT_MOTION;
@@ -353,8 +343,8 @@ function stampHue(hue: number, dark: boolean): void {
   for (const fn of listeners) fn(hue);
 }
 
-/** Stamp the resolved theme on the document root (the only place data-theme is set),
- *  then the Signal colour derived for that theme at this instant. */
+/** Set the hue and motion, then stamp the theme — `applyTheme` (the only place data-theme is
+ *  set) derives the Signal colour from both, so they must land first. */
 export function applyAccentAndTheme(hue: number | undefined, motion: AccentMotion | undefined, theme: ThemeName): void {
   setAccentHue(hue ?? DEFAULT_ACCENT_HUE);
   setAccentMotion(motion);
@@ -389,8 +379,6 @@ export function watchSystemTheme(get: () => ThemeName): () => void {
   mq.addEventListener("change", onChange);
   return () => mq.removeEventListener("change", onChange);
 }
-
-/* ── The drift driver (one per window) ────────────────────────────────── */
 
 let driverRunning = false;
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -456,7 +444,7 @@ export function isAccentDriftPaused(): boolean {
 
 /** What a Motion speed costs, for the note under Settings' Motion row: the update rate is
  *  the driver's own tick (`driftTickMs`), so the note can never disagree with the engine.
- *  Two updates a second or more warns; about one a second is a quiet note; slower costs
+ *  Two updates a second or more warns; one to two a second is a quiet note; slower costs
  *  nothing worth saying. */
 export function motionCostNote(period: number): { tone: "warn" | "note"; text: string } | null {
   if (!(period > 0)) return null;
