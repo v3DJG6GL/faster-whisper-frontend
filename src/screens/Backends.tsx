@@ -157,10 +157,9 @@ function Editor({
   const storedTarget = useRef({ url: effUrl, key });
   const storedFresh = storedTarget.current.url === effUrl && storedTarget.current.key === key;
   const stored = storedFresh ? storedConn : undefined;
-  // A blank-key verdict is only still true while the stored key's generation is unchanged (see
-  // `resultTarget.gen`): a sync pull that rotates the key moves neither address nor key field, so
+  // A blank-key verdict also needs the stored key unrotated and neither added nor removed
+  // (`resultTarget.gen` / `hadKey`): a pull that changes it moves neither address nor key field, so
   // the reset effect above never fires and the old caller's "Connected", chips and models would stay.
-  // Nor may the stored key have come or gone since (`resultTarget.hadKey`).
   const resultLive =
     result && (key || (resultTarget.current.gen === credentialGeneration(b.id) && resultTarget.current.hadKey === keyStoredNow))
       ? result
