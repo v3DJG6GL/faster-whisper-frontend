@@ -1,10 +1,12 @@
 //! HTTP transport to a faster-whisper / OpenAI-compatible backend.
 //!
-//! `discovery` resolves server capabilities (`/v1/models`, `/auth/whoami`),
-//! usage stats (`/v1/usage`), and override profiles;
+//! `discovery` runs the connection test (`/v1/models`, `/auth/whoami`) and reads
+//! capabilities (`/v1/me`), decode defaults, usage stats (`/v1/usage`) and override profiles;
 //! `preload` sends the best-effort model pre-warm hint;
 //! `batch` does the multipart `POST /v1/audio/transcriptions`; `stream` is the
 //! streaming WebSocket client (`proxy` routes it through the same proxy as reqwest);
+//! `jobs` reads the durable job resource (`/v1/jobs`); `media` uploads and packages
+//! videos (`/v1/audio/media`);
 //! `pipeline` reads/writes the server's text rules;
 //! `sync` is the settings-sync client (`/v1/synced-client-settings`);
 //! `text` handles T2T translation (`/v1/text/translations`);
@@ -56,16 +58,14 @@ pub struct ConnectionInfo {
     /// The UI uses this to gate server-specific override knobs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_id: Option<String>,
-    /// The server's build version from `/v1/models` (`server_version`, non-standard;
-    /// emitted by faster-whisper-backend ≥ v0.1.0). Shown in the Detected chip;
-    /// absent on standard servers and older backend builds.
+    /// The server's build version from `/v1/models` (`server_version`, non-standard),
+    /// shown beside the connected status; absent on standard servers and older backend builds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
-// P11: capability + resolved-profile transport types (see commands/discovery).
 /// The caller's effective request-override capabilities, from `GET /v1/me`.
 /// snake_case (not camelCase) deliberately — it mirrors the backend contract
 /// 1:1, like the `decode_overrides` keys, so it passes straight through both
@@ -336,8 +336,7 @@ pub struct DecodeDefaults {
     pub word_timestamps: Option<DecodeDefault>,
 }
 
-// P28: per-user usage stats (`GET /v1/usage`). snake_case passthrough like
-// Capabilities — mirrors the backend JSON 1:1 and reaches the TS side unchanged.
+// `GET /v1/usage` types: snake_case passthrough like Capabilities, no remapping to TS.
 // Every field defaults so a server that omits a block (or a later one that adds a
 // facet) still deserializes; the bounding in `discovery::get_usage_stats` caps the lists.
 /// One usage bucket's counters for one job kind (or `all`).
@@ -656,9 +655,9 @@ pub fn base_url(server_url: &str) -> String {
 
 pub fn client() -> reqwest::Client {
     // One process-wide client: a reqwest::Client owns the connection pool + TLS session cache,
-    // so rebuilding it per request threw away keep-alive reuse and paid a fresh TCP/TLS handshake
-    // on every call (incl. the 30s usage poll). The config is constant (no per-request timeout/
-    // header), and clone is cheap (Arc inside) so callers still get an owned client sharing the pool.
+    // so every call (incl. the 30s usage poll) reuses keep-alive connections instead of a fresh
+    // TCP/TLS handshake. The config is constant (no per-request timeout/header); clone is cheap
+    // (Arc inside), so callers get an owned client sharing the pool.
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
         .get_or_init(|| {
@@ -676,28 +675,14 @@ pub fn client() -> reqwest::Client {
                 // + body verbatim to the `Location` host — and the sync push's body is the settings
                 // blob, which carries `backends.secrets`, i.e. every backend's plaintext API key.
                 // A hostile (or MITM'd — cleartext http is permitted) server answering the PUT with
-                // a 308 would have that key set POSTed to a host of its choosing.
+                // a 308 would have that key set replayed to a host of its choosing.
                 //
-                // Same-host hops still follow, so a server that redirects http→https or normalizes
-                // a trailing slash keeps working. Cross-host, TLS-downgrade and same-scheme
-                // port changes are all refused — see each rule below.
-                // The same-host test alone was not enough, because it says nothing about the
-                // SCHEME. reqwest drops `Authorization` when host, port or scheme changes, but it
-                // replays the BODY verbatim on 307/308 — and the sync PUT body carries every
-                // backend's plaintext API key. So `308 Location: http://<same host>/…` counted as
-                // same-host, was followed, and re-sent that credential set in the clear for anyone
-                // on the path to read. Refuse the downgrade specifically: http→https (the proxy
-                // case) and every same-scheme hop still follow.
-                // And the PORT, for the same reason one level down. A different port is a
-                // different listener, and on a multi-tenant box — or on the loopback/LAN
-                // deployments where plaintext is deliberately un-warned — any unprivileged local
-                // process can bind a high one. reqwest strips `Authorization` on a port change but
-                // still replays the body, so `308 Location: https://<same host>:9443/…` handed the
-                // whole key set to that listener, which needed no credential to read it.
-                //
-                // Compared only WITHIN a scheme: an http→https upgrade almost always moves the
-                // port too (80→443, 8000→8443), and refusing on port equality alone would break
-                // the very hop the downgrade rule above deliberately keeps working.
+                // Same-host hops follow (http→https upgrade, trailing-slash normalization), except:
+                // - an https→http downgrade, which would re-send that key set in the clear;
+                // - a port change within one scheme: a different port is a different listener, and
+                //   on a multi-tenant box or a loopback/LAN deployment any unprivileged local process
+                //   can bind a high one. Compared only within a scheme because an http→https upgrade
+                //   almost always moves the port too (80→443, 8000→8443).
                 .redirect(reqwest::redirect::Policy::custom(|attempt| {
                     let prev = attempt.previous().last();
                     let same_host = prev.and_then(|u| u.host_str()) == attempt.url().host_str();
@@ -737,12 +722,9 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
     } else if e.is_timeout() {
         TIMED_OUT.into()
     } else {
-        // `is_connect`/`is_timeout` catch two kinds; everything else lands here, and reqwest's
-        // Display appends " for url ({url})" with `Url`'s FULL serialization — userinfo included.
-        // A `serverUrl` of the form `https://user:secret@host/` would then be written verbatim
-        // into the UI banners below AND into the pipeline `tracing::warn!` calls, i.e. the log
-        // file users are asked to attach to a support report. `without_url()` consumes the error
-        // and we only have a reference, so strip the suffix reqwest itself appends.
+        // reqwest's Display appends " for url ({url})" with `Url`'s FULL serialization —
+        // userinfo included — which would put `user:secret@` into UI banners and the log file.
+        // `without_url()` consumes the error and we only have a reference, so strip the suffix.
         let mut msg = e.to_string();
         if e.url().is_some() {
             if let Some(i) = msg.find(" for url (") {
@@ -755,9 +737,8 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
 }
 
 /// A connect error whose cause is the server's certificate. reqwest files a rustls rejection
-/// (`invalid peer certificate: UnknownIssuer`, `… certificate expired`) under `is_connect`, so a
-/// LAN backend with a self-signed or expired certificate read as "is the server running?" and sent
-/// the user to debug the wrong thing. Only the source chain names the cause.
+/// (`invalid peer certificate: UnknownIssuer`, `… certificate expired`) under `is_connect`, and
+/// only the source chain names the cause.
 fn cert_rejected(e: &dyn std::error::Error) -> bool {
     let mut cause = e.source();
     while let Some(c) = cause {
@@ -776,10 +757,9 @@ pub(crate) const MAX_ERR: usize = 300;
 /// Pull FastAPI's `detail` string from an error body, falling back to the raw text.
 ///
 /// Bounded HERE rather than at each call site: every caller surfaces the result to the UI or the
-/// log, the fallback arm returns the WHOLE response body (32 MiB, see [`MAX_BODY`]), and only the
-/// two `session.rs` sites had picked up [`bounded_server_text`]. The sync pull runs unattended at
-/// startup and on every window focus, so a hostile server needed no user action to plant a
-/// multi-megabyte, newline-bearing string in a `<Notice>` and in the log file.
+/// log, the fallback arm returns the WHOLE response body, and the sync pull runs unattended — a
+/// hostile server would otherwise plant a multi-megabyte, newline-bearing string in a `<Notice>`
+/// and in the log file with no user action.
 pub fn detail_from(body: &str) -> String {
     let raw = serde_json::from_str::<serde_json::Value>(body)
         .ok()
@@ -837,16 +817,13 @@ pub const MAX_NOTICES: usize = 50;
 /// Ceiling on a body we read ONLY to pull a `detail` string out of. `detail_from` full-parses the
 /// whole body as JSON to extract at most [`MAX_ERROR_TEXT`] characters, so the transcription-sized
 /// [`MAX_BODY`] buys nothing on a non-2xx arm — it just lets a hostile server bill us 32 MiB and a
-/// full serde tree for 200 characters it will then discard. `sync.rs` already reads its error arms
-/// at `SYNC_MAX_BODY` for exactly this reason; this is the same bound for the routes left behind.
+/// full serde tree for 200 characters it will then discard.
 pub const MAX_ERROR_BODY: usize = 256 * 1024;
 
 /// Ceiling on a METADATA response — capabilities, model lists, usage counters, pipeline rules,
-/// recent words. Every one of these has a per-field cap applied AFTER the read, so leaving them at
-/// the transcription-sized [`MAX_BODY`] meant the 32 MiB buffer and the full serde tree were paid
-/// first and the cap only trimmed the result. Several fire on screen entry or from a gesture-free
-/// effect. [`MAX_BODY`] should now be reachable only from the routes that can legitimately carry
-/// a transcription (`batch`) or a T2T translation (`text`).
+/// recent words. Their per-field caps apply only AFTER the read, so the buffer and the serde tree
+/// need this bound first; several fire on screen entry or from a gesture-free effect. [`MAX_BODY`]
+/// is reserved for routes that can legitimately carry a transcription or a T2T translation.
 pub const MAX_META_BODY: usize = 1024 * 1024;
 
 /// Per-request bound on the metadata probes ([`get_json_status`]): they read at most
@@ -862,15 +839,11 @@ pub(crate) fn fin_nonneg(v: Option<f64>) -> Option<f64> {
 
 /// Bound and defang a server-supplied string on its way to the UI or the log.
 ///
-/// The streaming parse path caps its `error` frames at [`MAX_ERROR_TEXT`], but the BATCH sibling
-/// formatted the transport error straight into the emitted message — and that error carries
-/// `detail_from(&body)`, which falls back to the whole response body (bounded only by
-/// [`MAX_BODY`]). Newlines are folded too, so a server cannot forge log records.
-/// The fold is Cc AND the invisible-format set, not `is_control()` alone. These strings are
-/// single-line labels printed next to a connection verdict or inside a consent dialog, and a bidi
-/// override there reorders the sentence the user is reading to make a trust decision — the same
-/// reason the injection path strips them. Doing it here means every consumer of a bounded server
-/// string inherits it, instead of each render site remembering to sanitize.
+/// Newlines are folded so a server cannot forge log records. The fold is Cc AND the
+/// invisible-format set, not `is_control()` alone: these strings are single-line labels printed
+/// next to a connection verdict or inside a consent dialog, and a bidi override there reorders the
+/// sentence the user is reading to make a trust decision (the same reason the injection path strips
+/// them). Doing it here means every consumer inherits it instead of each render site sanitizing.
 pub fn bounded_server_text(s: &str, n: usize) -> String {
     bounded_chars(s, n, |_| Some(' '))
 }
@@ -916,8 +889,7 @@ pub fn clean_text(s: &str, n: usize) -> String {
 }
 
 /// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened before they join
-/// a form field or a JSON body. Shared by the batch form and the T2T text route, which used
-/// to carry two hand-copied versions of this predicate.
+/// a form field or a JSON body. Shared by the batch form and the T2T text route.
 pub(crate) fn is_lang_code(s: &str) -> bool {
     (2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
@@ -949,13 +921,11 @@ pub(crate) const MAX_TARGETS: usize = 8;
 /// `Some("")` = send an empty value (auto-detect, stated explicitly, which OVERRIDES that
 /// inherited language), `Some(code)` = that language.
 ///
-/// "auto" must be said on the wire: folding it onto "omit" (which both transports did)
-/// meant a user picking auto-detect on a backend bound to a server profile silently got that
-/// profile's language instead. The three states are the wire contract; today no picker
-/// actually emits `""` (every backend is seeded "auto" and the Backends/Transcribe pickers
-/// have no inherit row — the Profile's inherit row resolves to the backend's language first),
-/// so `None` is reserved for a future inherit row and for a config synced with an empty
-/// `language`.
+/// "auto" must be said on the wire: folding it onto "omit" would give a user picking
+/// auto-detect on a backend bound to a server profile that profile's language instead. Today no
+/// picker emits `""` (every backend is seeded "auto" and the Backends/Transcribe pickers have no
+/// inherit row — the Profile's inherit row resolves to the backend's language first), so `None`
+/// is reserved for a future inherit row and for a config synced with an empty `language`.
 pub fn wire_language(language: &str) -> Option<&str> {
     match language {
         "" => None,
@@ -980,7 +950,7 @@ mod wire_language_tests {
 
     #[test]
     fn auto_is_sent_as_empty_and_unset_is_omitted() {
-        // The whole point: these two used to be the same request.
+        // Auto-detect overrides an inherited profile language; unset inherits it.
         assert_eq!(wire_language("auto"), Some(""));
         assert_eq!(wire_language(""), None);
     }
@@ -1048,8 +1018,7 @@ mod usage_hour_cell_tests {
     use super::{UsageHourCell, UsageStats};
 
     /// The busy-hours grid reads the nested per-kind splits the server puts on every
-    /// slot beside the flat words. They used to be dropped on the way through this
-    /// typed mirror, which left the grid empty for every measure but words.
+    /// slot beside the flat words; the typed mirror must carry them through.
     #[test]
     fn nested_measure_splits_survive_the_typed_mirror() {
         let body = r#"{"hours":[{"dow":1,"hour":9,"all":120,"dictation":100,"file":20,"url":0,"text":0,
@@ -1187,7 +1156,7 @@ const TOO_LARGE: &str = "The server sent an unreasonably large response — igno
 
 /// Best-effort `GET <url>` deserialized as `T`: any failure — transport error, non-2xx, an
 /// over-large body, or one that won't deserialize — collapses to `None`. The discovery probes
-/// (`/v1/me`, `/v1/usage`, `/v1/override-profiles/{name}`) all treat an unreachable/absent/
+/// (`/v1/me`, `/auth/whoami`, `/v1/override-profiles`) all treat an unreachable/absent/
 /// unauthorized endpoint this way.
 pub async fn get_json<T: serde::de::DeserializeOwned>(
     url: String,
