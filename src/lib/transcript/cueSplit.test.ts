@@ -29,6 +29,15 @@ function seg1(text: string, a: number, b: number, extra: Partial<BatchResult> = 
   };
 }
 
+/** Cue texts of `t` with one 0.3 s slot per space-separated word, cut to one line of `cpl`. */
+function spacedCues(t: string, lang = "", cpl = 32): string[] {
+  const ws = t.split(" ");
+  const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+  const r: BatchResult = { text: t, language: lang, words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+  return buildCues(r, { length: "custom", custom: { cpl, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+    .cues.map((c) => c.text);
+}
+
 const STD: CueOptions = { length: "standard", timing: "same" };
 /** No lone surrogate: an emoji was never cut in half. */
 const wellFormed = (s: string) => !/[\ud800-\udfff]/.test(s.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
@@ -1965,47 +1974,33 @@ describe("cutByShare", () => {
   });
   it("a lowercase unit before a lowercase word ends no sentence and stays with its number in the cut, the wrap and the cue split", () => {
     // A Lithuanian date is the same shape ("1995 m. birželio", year + month).
-    const cues = (t: string, lang: string, cpl: number) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang, words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const away = "about 300 m. away from the house we were in";
-    for (const parts of [cutByShare(away, [1, 1], "en"), wrapLines(away, 26, 2, 0, undefined, "en"), cues(away, "en", 26)])
+    for (const parts of [cutByShare(away, [1, 1], "en"), wrapLines(away, 26, 2, 0, undefined, "en"), spacedCues(away, "en", 26)])
       expect(parts).toEqual(["about 300 m. away", "from the house we were in"]);
     expect(wrapLines("It is about 5 m. long and quite heavy", 18, 2, 0, undefined, "en"))
       .toEqual(["It is about", "5 m. long", "and quite heavy"]);
     const long = "It is about 5 m. long and quite heavy now.";
     expect(cutByShare(long, [1, 1], "en")).toEqual(["It is about 5 m. long", "and quite heavy now."]);
-    expect(cues(long, "en", 24)).toEqual(["It is about 5 m. long", "and quite heavy now."]);
+    expect(spacedCues(long, "en", 24)).toEqual(["It is about 5 m. long", "and quite heavy now."]);
     const lt = "Mano sesuo gimė 1995 m. birželio mėnesį Kaune";
     expect(cutByShare(lt, [1, 2], "lt")).toEqual(["Mano sesuo gimė", "1995 m. birželio mėnesį Kaune"]);
     // Nor is the unit torn from its number ("1995" / "m. birželio …", "took 5" / "ms.").
     expect(wrapLines(lt, 30, 2, 0, undefined, "lt")).toEqual(["Mano sesuo gimė 1995 m.", "birželio mėnesį Kaune"]);
-    expect(cues(lt, "lt", 30)).toEqual(["Mano sesuo gimė 1995 m.", "birželio mėnesį Kaune"]);
+    expect(spacedCues(lt, "lt", 30)).toEqual(["Mano sesuo gimė 1995 m.", "birželio mėnesį Kaune"]);
     expect(cutByShare("We waited and it took 5 ms.", [5, 1], "en")).toEqual(["We waited and it took", "5 ms."]);
     // Before a capital the unit still ends one, and the titles stay with the name.
     const next = "The tower is about 300 m. The next one is taller";
-    for (const parts of [cutByShare(next, [1, 1], "en"), wrapLines(next, 30, 2, 0, undefined, "en"), cues(next, "en", 30)])
+    for (const parts of [cutByShare(next, [1, 1], "en"), wrapLines(next, 30, 2, 0, undefined, "en"), spacedCues(next, "en", 30)])
       expect(parts).toEqual(["The tower is about 300 m.", "The next one is taller"]);
     expect(cutByShare("Hier j'ai vu M. Dupont à la gare du nord", [1, 2], "fr"))
       .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
   });
   it("a name's initials stay inside the name in the cut, the wrap and the cue split; \"a plan B.\" still ends a sentence", () => {
-    const cues = (t: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: "en", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 42, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const jfk = "Yesterday we met John F. Kennedy at the old airport";
-    for (const parts of [cutByShare(jfk, [1, 1], "en"), wrapLines(jfk, 32, 2, 0, undefined, "en"), cues(jfk)])
+    for (const parts of [cutByShare(jfk, [1, 1], "en"), wrapLines(jfk, 32, 2, 0, undefined, "en"), spacedCues(jfk, "en", 42)])
       expect(parts).toEqual(["Yesterday we met John F. Kennedy", "at the old airport"]);
     const jkr = "The book by J. K. Rowling sold many copies worldwide";
-    for (const parts of [cutByShare(jkr, [1, 1], "en"), wrapLines(jkr, 32, 2, 0, undefined, "en"), cues(jkr)])
+    for (const parts of [cutByShare(jkr, [1, 1], "en"), wrapLines(jkr, 32, 2, 0, undefined, "en"), spacedCues(jkr, "en", 42)])
       expect(parts).toEqual(["The book by J. K. Rowling", "sold many copies worldwide"]);
     expect(cutByShare("Later George W. Bush gave a speech at the old airport", [1, 1], "en"))
       .toEqual(["Later George W. Bush gave", "a speech at the old airport"]);
@@ -2017,17 +2012,10 @@ describe("cutByShare", () => {
     ] as const) {
       expect(cutByShare(t, [1, 1], "en")[0]).toBe(first);
       expect(wrapLines(t, 32, 2, 0, undefined, "en")[0]).toBe(first);
-      expect(cues(t)[0]).toBe(first);
+      expect(spacedCues(t, "en", 42)[0]).toBe(first);
     }
   });
   it("a letter after a capitalised noun ends a sentence before a sentence opener or in German; a name's initials stay held", () => {
-    const cues = (t: string, lang: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang, words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     for (const [t, lang, want] of [
       ["First choose Option B. Then press the green button", "en", ["First choose Option B.", "Then press the green button"]],
       ["We went into Room C. After that we waited an hour", "en", ["We went into Room C.", "After that we waited an hour"]],
@@ -2039,7 +2027,7 @@ describe("cutByShare", () => {
       ["The book by J. K. Rowling sold many copies worldwide", "en", ["The book by J. K. Rowling", "sold many copies worldwide"]],
       ["Das Buch von J. K. Rowling wurde sehr oft verkauft", "de", ["Das Buch von J. K. Rowling", "wurde sehr oft verkauft"]],
     ] as const) {
-      for (const parts of [cutByShare(t, [1, 1], lang), wrapLines(t, 32, 2, 0, undefined, lang), cues(t, lang)])
+      for (const parts of [cutByShare(t, [1, 1], lang), wrapLines(t, 32, 2, 0, undefined, lang), spacedCues(t, lang)])
         expect(parts).toEqual(want);
     }
     const option = "First choose Option B. Then press the green button to continue now";
@@ -2141,13 +2129,6 @@ describe("cutByShare", () => {
   it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
     // Each row is the cut, the wrap and the cue split as they read with no initial held ("Answer:"
     // is no first name either); the name rows below them stay held.
-    const cues = (t: string, lang?: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const ROWS: [text: string, lang: string, cpl: number, cut: string, wrap: string, cue: string][] = [
       ["First choose Option B. What happens next is up to you", "en", 30,
         "First choose Option B. | What happens next is up to you", "First choose Option B. | What happens next is up to you",
@@ -2195,7 +2176,7 @@ describe("cutByShare", () => {
     ];
     for (const [t, lang, cpl, cut, wrap, cue] of ROWS) {
       for (const l of [lang, undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }
     }
@@ -2336,13 +2317,6 @@ describe("cutByShare", () => {
   it("a name's compact initials or a capital initialism before a capital is judged as a name's initial is", () => {
     // Compact initials ("J.K.", "C.S.", "J.R.R.") before a capital are judged as a single initial
     // ("F. Scott") is; a place initialism ("U.S.") never holds.
-    const cues = (t: string, lang?: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
       // After a lowercase word it ends one, as "by F. Scott" does; a place initialism ("the U.S.
       // Army") ends one after any word.
@@ -2374,20 +2348,13 @@ describe("cutByShare", () => {
     ];
     for (const [t, cpl, cut, wrap, cue] of ROWS) {
       for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }
     }
   });
   it("a capital initialism after a lowercase word ends a sentence before any capital, a name's compact initials after a capitalised word or at the start do not", () => {
     // Any capital, not only the closed opener list: "These", "Most", "Seine".
-    const cues = (t: string, lang?: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const ROWS: [text: string, langs: (string | undefined)[], cpl: number, cut: string, wrap: string, cue: string][] = [
       ["They moved to the U.S. These days the rest of the family lives in Ireland", ["en", undefined], 36,
         "They moved to the U.S. | These days the rest of the family lives in Ireland",
@@ -2409,19 +2376,12 @@ describe("cutByShare", () => {
     ];
     for (const [t, langs, cpl, cut, wrap, cue] of ROWS) {
       for (const l of langs) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }
     }
   });
   it("the seam between a first name and its compact initials is held as the one before a single initial is", () => {
-    const cues = (t: string, lang?: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
       ["I have been reading George R.R. Martin all summer", 30,
         "I have been reading | George R.R. Martin all summer", "I have been reading | George R.R. Martin all summer",
@@ -2436,19 +2396,12 @@ describe("cutByShare", () => {
     ];
     for (const [t, cpl, cut, wrap, cue] of ROWS) {
       for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }
     }
   });
   it("a place initialism after a place name or a comma ends a sentence before any capital, as no name's initials", () => {
-    const cues = (t: string, lang?: string) => {
-      const ws = t.split(" ");
-      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
-      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
-      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
-        .cues.map((c) => c.text);
-    };
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
       ["We flew into Washington D.C. Today we drive to the coast", 34,
         "We flew into Washington D.C. | Today we drive to the coast", "We flew into Washington D.C. | Today we drive to the coast",
@@ -2466,7 +2419,7 @@ describe("cutByShare", () => {
     ];
     for (const [t, cpl, cut, wrap, cue] of ROWS) {
       for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
         expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
       }
     }
