@@ -86,8 +86,6 @@ export function conflicts(profiles: Profile[], collapseSides = false): ProfileCo
         out.push({ profileId: a.id, otherId: b.id, kind: "duplicate" });
         out.push({ profileId: b.id, otherId: a.id, kind: "duplicate" });
       } else if (isStrictSubset(a.codes, b.codes)) {
-        // a is shadowed by b (b is the more specific superset) — unless this
-        // is a nesting the chord engine implements on purpose.
         if (isDesignedNesting(a.kind, b.kind)) continue;
         out.push({ profileId: a.id, otherId: b.id, kind: "shadow" });
         out.push({ profileId: b.id, otherId: a.id, kind: "shadow" });
@@ -102,11 +100,9 @@ export function conflicts(profiles: Profile[], collapseSides = false): ProfileCo
 }
 
 /**
- * Capture-time check: would binding `codes` to a binding of kind `selfKind`
- * clash with any OTHER enabled profile? Returns the first clashing profile +
- * kind, or null. Use this while the user is choosing a chord (pass the other
- * profiles). `selfKind` is what the chord BEING BOUND will behave as — it
- * decides whether a nesting is the designed family or a real shadow.
+ * Capture-time check while the user is choosing a chord: the first enabled profile
+ * in `others` it clashes with, or null. `selfKind` is what the chord BEING BOUND
+ * will behave as — it decides whether a nesting is the designed family or a real shadow.
  */
 export function findChordConflict(
   codes: string[],
