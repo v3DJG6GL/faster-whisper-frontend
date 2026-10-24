@@ -636,6 +636,13 @@ mod tests {
     use super::{bound_decode_defaults, bounded_model_id, decode_defaults_url, nonneg_retention};
     use crate::transport::{DecodeDefaults, UsageDictation, UsageStats};
 
+    /// A decode-defaults answer as the transport hands it on: parsed, then bounded.
+    fn bounded_defaults(raw: serde_json::Value) -> DecodeDefaults {
+        let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
+        bound_decode_defaults(&mut d);
+        d
+    }
+
     #[test]
     fn usage_jobs_retention_stays_absent_on_older_servers_and_never_goes_negative() {
         let old: UsageStats = serde_json::from_str(r#"{"range":{"source":"rollups"}}"#).unwrap();
@@ -732,8 +739,7 @@ mod tests {
             "separation_model": entry(serde_json::json!("UVR-MDX-NET")),
             "word_timestamps": entry(serde_json::json!(true)),
         });
-        let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
-        bound_decode_defaults(&mut d);
+        let d = bounded_defaults(raw);
         let out = serde_json::to_value(d).unwrap();
         for (i, k) in keys.iter().enumerate() {
             assert_eq!(out["settings"][k]["value"], i, "{k}");
@@ -800,17 +806,13 @@ mod tests {
         // "a…" keys sort ahead of every k###, so the length rule (not `take(64)`) decides them.
         settings.insert("a".repeat(48), serde_json::json!({"value": 1}));
         settings.insert("a".repeat(49), serde_json::json!({"value": 1}));
-        let mut d: DecodeDefaults =
-            serde_json::from_value(serde_json::json!({"settings": settings})).unwrap();
-        bound_decode_defaults(&mut d);
+        let d = bounded_defaults(serde_json::json!({"settings": settings}));
         assert_eq!(d.settings.len(), 64);
         assert!(!d.settings.contains_key("Bad-Key"));
         assert!(d.settings.contains_key(&"a".repeat(48)));
         assert!(!d.settings.contains_key(&"a".repeat(49)));
-        let mut sep: DecodeDefaults = serde_json::from_value(serde_json::json!({"settings": {
-            "streaming_hard_break_separator": {"value": "\n\u{202e}\r\t¶", "label": "a\nb"}}}))
-        .unwrap();
-        bound_decode_defaults(&mut sep);
+        let sep = bounded_defaults(serde_json::json!({"settings": {
+            "streaming_hard_break_separator": {"value": "\n\u{202e}\r\t¶", "label": "a\nb"}}}));
         let e = &sep.settings["streaming_hard_break_separator"];
         assert_eq!(e.value, "\n\t¶");
         assert_eq!(e.label, "a b");
@@ -828,8 +830,7 @@ mod tests {
             },
             "prompt": {"value": "p\u{202e}x"},
         });
-        let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
-        bound_decode_defaults(&mut d);
+        let d = bounded_defaults(raw);
         assert!(d.settings["beam_size"].value.is_null());
         assert!(d.settings["vad_filter"].value.is_null());
         assert_eq!(d.settings["temperature"].value, "0.0,0.2");
@@ -1060,10 +1061,7 @@ mod tests {
     fn the_resolved_default_model_follows_the_model_list_rule() {
         let long = format!("org/{}", "m".repeat(146));
         let model = |m: &str| -> String {
-            let mut d: DecodeDefaults =
-                serde_json::from_value(serde_json::json!({ "model": m, "settings": {} })).unwrap();
-            bound_decode_defaults(&mut d);
-            d.model
+            bounded_defaults(serde_json::json!({ "model": m, "settings": {} })).model
         };
         // Whole, exactly as `bound_models` keeps it, so the Backends chip still finds its entry.
         assert_eq!(model(&long), long);
@@ -1076,13 +1074,11 @@ mod tests {
         for blank in ["\u{200b}", " \u{200b} ", "\u{2060}\u{200f}"] {
             assert_eq!(bounded_model_id(blank), None, "{blank:?}");
         }
-        let mut d: DecodeDefaults = serde_json::from_value(serde_json::json!({
+        let d = bounded_defaults(serde_json::json!({
             "model": "\u{200b}",
             "settings": {},
             "diarization_model": { "value": "\u{200b}", "source": "server" },
-        }))
-        .unwrap();
-        bound_decode_defaults(&mut d);
+        }));
         assert_eq!(d.model, "");
         assert_eq!(d.diarization_model.unwrap().value, serde_json::Value::Null);
     }
@@ -1090,14 +1086,12 @@ mod tests {
     #[test]
     fn the_default_speaker_and_separation_refs_follow_the_model_list_rule() {
         let refs = |r: &str| -> (serde_json::Value, serde_json::Value) {
-            let mut d: DecodeDefaults = serde_json::from_value(serde_json::json!({
+            let d = bounded_defaults(serde_json::json!({
                 "model": "m",
                 "settings": {},
                 "diarization_model": { "value": r, "source": "server" },
                 "separation_model": { "value": r, "source": "server" },
-            }))
-            .unwrap();
-            bound_decode_defaults(&mut d);
+            }));
             (
                 d.diarization_model.unwrap().value,
                 d.separation_model.unwrap().value,
