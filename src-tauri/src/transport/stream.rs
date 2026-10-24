@@ -132,8 +132,7 @@ pub struct StreamParams {
     // request, so the server holds each per-utterance receipt open and merges
     // the translation into it instead of logging two unlinked halves. Opaque
     // JSON like decode_overrides: the shape is the server's contract, not this
-    // transport's business. Omitted → the server logs immediately, exactly as
-    // it always has.
+    // transport's business. Omitted → the server logs immediately.
     pub translate_expect: Option<serde_json::Value>,
     /// Client-minted session id (32 hex) → handshake `client_job`, so every utterance
     /// row on the server links to ONE dictation session (usage counts sessions, not
@@ -221,13 +220,11 @@ fn handshake_auth_headers(
 
 /// The stream URL as it is safe to PRINT — userinfo stripped and length bounded.
 ///
-/// `friendly_err` gave the reqwest half of the transport exactly this treatment: a `serverUrl` of
-/// the form `https://user:secret@host/` is storable (`isStorableServerUrl` accepts it, which is why
-/// `authorityOf` exists at all), and `http_to_ws` carries the userinfo through by construction, so
-/// the connect-failure message — a routine one — otherwise wrote the user's own reverse-proxy
-/// password into the message AND into `tracing::warn!`, which on Windows is a log file on disk that
-/// users are asked to attach to support reports. Bounded too: `serverUrl` carries no length cap on
-/// the sync/import path, only the 4 MiB whole-blob ceiling.
+/// The reqwest-side twin is `friendly_err`. A `serverUrl` like `https://user:secret@host/` is
+/// storable and `http_to_ws` carries the userinfo through, so a routine connect failure would put
+/// the user's reverse-proxy password into the message AND `tracing::warn!` — on Windows a log file
+/// users attach to support reports. Bounded because `serverUrl` has no length cap on the
+/// sync/import path, only the 4 MiB whole-blob ceiling.
 fn display_url(u: &str) -> String {
     let (scheme, rest) = match u.split_once("://") {
         Some((s, r)) => (s, r),
@@ -404,40 +401,29 @@ pub async fn run<F>(
     }
 
     // Connect with a bounded timeout. A Stop may arrive before we've connected — most
-    // commonly a quick push-to-talk *tap* (press + release within a fraction of a
-    // second), which fires the stop before the millisecond-fast handshake to a
-    // reachable server completes. Treating that as "unreachable" gave a false error on
-    // every quick tap. So we DON'T bail on early stop: we remember it and let the
-    // in-flight connection finish. If it connects we fall straight through to draining
-    // (flush + stop → a clean no-op, no audio, no error); only a genuine connect
-    // failure / timeout surfaces the unreachable error. The timeout still bounds an
-    // unreachable host (whose handshake would otherwise hang on SYN retries for the OS
-    // default of a minute+, sticking the UI at "finalizing…").
+    // commonly a quick push-to-talk tap, which fires the stop before even a fast handshake
+    // completes; bailing then gave a false "unreachable" error on every quick tap. So we
+    // remember the stop and let the in-flight connection finish: if it connects we fall
+    // straight through to draining (send the capture queued meanwhile, then flush + stop);
+    // only a genuine connect failure / timeout surfaces the error. The timeout bounds an
+    // unreachable host, whose handshake would otherwise hang on SYN retries for a minute+.
     const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     let mut stop_requested = false;
-    // Bound one inbound frame. This socket was the last transport route with no read ceiling: every
-    // HTTP route got one (`MAX_BODY` for the transcript parse, `MAX_META_BODY` for the metadata
-    // probes, `MAX_ERROR_BODY` for error arms), but `connect_async` takes tungstenite's DEFAULT
-    // `max_message_size` of 64 MiB, so a hostile server buffered 64 MiB and had it expanded into a
-    // full serde `Value` tree — several times that in RSS — BEFORE `MAX_TRANSCRIPT` and its
-    // neighbours trimmed anything, repeatable for the life of the session.
+    // Bound one inbound message. tungstenite's default `max_message_size` is 64 MiB, which a hostile
+    // server could fill and have expanded into a full serde `Value` tree — several times that in
+    // RSS — BEFORE `MAX_TRANSCRIPT` and its neighbours trim anything, repeatedly per session.
     //
-    // Sized so it can never reject a frame whose content the parser would have KEPT IN FULL, which
-    // is the only truncation that would be a regression. The largest such frame is a `final`:
-    // `committed` + `tail`, each capped at MAX_TRANSCRIPT *chars* (not bytes) — so at the 4-byte
-    // worst case that is 2 × 4 Mchars × 4 B = 32 MiB of payload, plus keys, quoting and the
-    // 50 × 200 `overrides_ignored` list. 48 MiB clears that with room to spare while removing a
-    // quarter of the amplification. (A cap sized to REAL usage — an hour of dictation is ~50 KB —
-    // would be far tighter and worth much more, but it could refuse a frame the parser would have
-    // accepted whole, which is the D12/E8/N1 truncation trade the owner has settled against.
-    // Recorded in the notes as the alternative.)
+    // Sized so it never rejects a frame whose content the parser would keep IN FULL. The largest
+    // is a `final`: `committed` + `tail`, each capped at MAX_TRANSCRIPT *chars* — at 4 bytes/char
+    // that is 2 × 4 Mchars × 4 B = 32 MiB, plus keys, quoting and the 50 × 200 `overrides_ignored`
+    // list; 48 MiB clears that with room to spare. A cap sized to real usage (an hour of dictation
+    // is ~50 KB) would be tighter but could refuse a frame the parser would have accepted whole —
+    // a truncation trade settled against.
     const MAX_WS_MESSAGE: usize = 48 * 1024 * 1024;
-    // ONLY `max_message_size` is overridden. `max_frame_size` keeps tungstenite's default, which is
-    // 16 MiB — NOT 64 MiB — and `read_frame` reserves on the DECLARED length before any payload
-    // arrives, so setting it to 48 MiB here would have tripled the free per-frame commit a server
-    // can demand with a one-byte body. That is the opposite of this change's purpose: the 32 MiB
-    // no-truncation argument above is about the assembled MESSAGE, and a message larger than one
-    // frame is simply fragmented, so the 16 MiB frame default costs nothing and is left in force.
+    // ONLY `max_message_size` is overridden. `max_frame_size` keeps tungstenite's 16 MiB default:
+    // `read_frame` reserves on the DECLARED length before any payload arrives, so raising it to
+    // 48 MiB would triple the allocation a server can demand with a one-byte body. The bound above
+    // is about the assembled MESSAGE; a larger message is simply fragmented.
     let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(MAX_WS_MESSAGE));
     let proxy = super::proxy::system_route(&params.ws_url);
@@ -481,38 +467,30 @@ pub async fn run<F>(
         "response_format": params.response_format,
         "audio": { "format": "pcm_s16le", "sample_rate": 16000 }
     });
-    // language sentinel, the same three states the batch form uses (see
-    // `transport::wire_language`): "auto" → "", auto-detect stated explicitly, which
-    // OVERRIDES an override profile's DEFAULT_LANGUAGE; a code → send it; "" → omit
-    // (reserved: no picker emits it today). This route only ever talks to the full
-    // backend, so no standard-server variant is needed here.
+    // Three-state language sentinel (see `StreamParams::language`): "auto" goes out as "", which
+    // OVERRIDES an override profile's DEFAULT_LANGUAGE. This route only ever talks to the full
+    // backend, so the standard-server variant (`wire_language_for`) is not needed.
     if let Some(wire) = super::wire_language(&params.language) {
         config["language"] = json!(wire);
     }
-    // prompt sentinel: omit the field entirely → server inherits DEFAULT_PROMPT;
-    // send it (incl. "") → server uses it verbatim, where "" CLEARS the prompt.
     if let Some(p) = &params.prompt {
         config["prompt"] = json!(p);
     }
-    // Forward per-request decode overrides as a nested object (only when non-empty).
     if let Some(v) = &params.decode_overrides {
         if v.as_object().is_some_and(|m| !m.is_empty()) {
             config["decode_overrides"] = v.clone();
         }
     }
-    // Forward the server override-profile name (only when non-empty).
     if let Some(p) = &params.override_profile {
         if !p.is_empty() {
             config["override_profile"] = json!(p);
         }
     }
-    // Forward the translation declaration (only when it names targets).
     if let Some(v) = &params.translate_expect {
         if v.as_object().is_some_and(|m| !m.is_empty()) {
             config["translate_expect"] = v.clone();
         }
     }
-    // Forward the client-minted session id (only when set).
     if let Some(j) = &params.client_job {
         if !j.is_empty() {
             config["client_job"] = json!(j);
@@ -538,10 +516,10 @@ pub async fn run<F>(
     let mut saved_capped = false;
     let mut gated: Vec<u8> = Vec::new();
     // Accumulate the session transcript HERE (Rust) so a saved recording gets its `.txt` sidecar
-    // written in the drain — independent of the epoch-gated `recording-saved` emit — exactly like the
-    // batch path (transcribe_recording). A session superseded by cancel/suspend would otherwise keep
-    // the `.wav` with no `.txt` (the frontend never sees the suppressed emit). Mirrors the frontend's
-    // per-hard-break join: `current_doc` is the running document; a Boundary banks it into `docs`.
+    // written in the drain, like the batch path: a session superseded by cancel/suspend never
+    // delivers its epoch-gated `recording-saved` emit, so the frontend can't write it. Mirrors the
+    // frontend's per-hard-break join: `transcript_cur` is the running document; a Boundary banks
+    // it into `transcript_docs`.
     let mut transcript_docs: Vec<String> = Vec::new();
     let mut transcript_cur = String::new();
     let save_dir = params.save_dir.as_deref();
@@ -564,21 +542,15 @@ pub async fn run<F>(
     let mut bytes_sent: u64 = 0;
     let mut partials_seen: u32 = 0;
 
-    // Bound on a single WS send. The server now decodes off its receive loop (it no
-    // longer freezes mid-utterance), so a stalled send means a genuinely dead/half-
-    // open link (suspend, network loss) — but keep this generous so a brief server
-    // hiccup doesn't kill an otherwise-recoverable session and discard buffered audio.
-    // A truly dead link is still caught promptly by the client keepalive PING below.
+    // Bound on a single WS send. A stalled send means a dead/half-open link (suspend, network
+    // loss), but keep this generous so a brief server hiccup doesn't kill a recoverable session;
+    // a truly dead link is still caught promptly by the client keepalive PING below.
     const SEND_TIMEOUT: Duration = Duration::from_secs(20);
 
-    // Drive the read half in a DEDICATED task. tokio-tungstenite only answers the
-    // server's keepalive PINGs (with a PONG) while the read half is polled; in the
-    // old single-`select!` loop a blocked/slow `write.send().await` (a full or
-    // half-open socket buffer) starved that poll, so the server stopped hearing
-    // PONGs and closed the connection with `1011 keepalive ping timeout`. A separate
-    // reader keeps PONGs flowing whenever the link is alive, independent of the write
-    // side. It forwards parsed messages over `evt_rx` and signals `Closed` when the
-    // socket ends or the terminal frame arrives.
+    // Drive the read half in a DEDICATED task. tokio-tungstenite only answers the server's
+    // keepalive PINGs while the read half is polled; sharing one `select!` with a blocked
+    // `write.send().await` (a full or half-open socket buffer) starves that poll, and the server
+    // closes with `1011 keepalive ping timeout`.
     let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<FromReader>();
     // AbortOnDrop: the reader must die with this task on EVERY exit. A cancelled session aborts the
     // outer task (StreamSession::drop), and a bare JoinHandle dropped by that abort only DETACHES
@@ -774,29 +746,22 @@ pub async fn run<F>(
     );
     if draining {
         // Finalize the current utterance and ask the server to close, then read the
-        // remaining finals (delivered by the reader task) so the last words aren't
-        // lost. The WHOLE block is bounded by one deadline: the flush/stop writes are
-        // inside it too, so a half-open socket (suspend / dropped link) can't park
-        // them indefinitely — we always fall through to the terminal `Closed` below.
-        // The writes get one flat bound (a half-open socket can't park them);
-        // the reads below get an ACTIVITY-based window instead.
+        // remaining finals (delivered by the reader task) so the last words aren't lost.
+        // The writes get one flat bound so a half-open socket (suspend / dropped link)
+        // can't park them; the reads below get an ACTIVITY-based window instead.
         const DRAIN_WRITE_DEADLINE: Duration = Duration::from_secs(10);
         // Sub-cap on the PCM drain alone: the capture thread closes the channel within ~one
         // buffer; the cap exists so a cpal Stream drop that stalls (device yanked, wedged audio
         // service) cannot starve the flush/stop sends below out of the whole write budget.
         const PCM_DRAIN_CAP: Duration = Duration::from_secs(2);
         if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
-            // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
-            // signal won the (non-biased) select — push it through the resampler and send it, so the
-            // final tens of ms aren't silently dropped from the transcript. `recv().await` (not a
-            // one-shot try_recv) keeps draining until the channel CLOSES, so we also catch the chunks
-            // the capture callback enqueues during its own shutdown: finish()/Drop set capture_stop
-            // BEFORE ws_stop, so the capture thread is already exiting and drops its sender within
-            // ~one buffer. The drain has its own sub-cap (PCM_DRAIN_CAP, one flat deadline so a
-            // trickle of chunks can't extend it) so the flush/stop frames below always run under
-            // the remaining DRAIN_WRITE_DEADLINE budget. Saved (when recording) through the speech
-            // gate exactly like the live loop: after a Stop during connect the WHOLE phrase is
-            // queued here, and the live loop never saw any of it.
+            // Send the PCM still queued when the stop signal won the (non-biased) select, so the
+            // final tens of ms reach the transcript. Drain until the channel CLOSES (not a one-shot
+            // try_recv) to also catch chunks enqueued during capture shutdown: finish()/Drop set
+            // capture_stop BEFORE ws_stop, so the capture thread drops its sender within ~one
+            // buffer. PCM_DRAIN_CAP is one flat deadline, so a trickle of chunks can't extend it.
+            // Saved through the speech gate like the live loop: after a Stop during connect the
+            // WHOLE phrase is queued here, and the live loop never saw any of it.
             let pcm_deadline = tokio::time::Instant::now() + PCM_DRAIN_CAP;
             loop {
                 let chunk = match tokio::time::timeout_at(pcm_deadline, pcm_rx.recv()).await {
@@ -843,15 +808,13 @@ pub async fn run<F>(
         // Read the remaining finals with an idle window that every server frame
         // RESETS — the `loading` keepalives a cold model load emits every ~3 s
         // count, so an arbitrarily long load can't get the finished transcript
-        // discarded (a 10 s flat deadline used to fire seconds before large-v3
-        // finished loading). The window must comfortably exceed a slow finalize
-        // decode (VPN latency + a busy GPU queue beat the old 6 s repeatedly).
-        // First-frame window is 30 s when the WHOLE session was silent: an old
-        // backend without keepalives cold-loads without a byte on the wire.
-        // A dead socket doesn't ride any of this — the reader task surfaces the
-        // close/error as `Closed` and the drain exits immediately. The UI-side
-        // stuck-finalize watchdog (STUCK_FINALIZE_MS, streaming.ts) re-arms on
-        // the same keepalives, so the two stay ordered: watchdog > idle window.
+        // discarded. The window must comfortably exceed a slow finalize decode
+        // (VPN latency + a busy GPU queue). First-frame window is 30 s when the
+        // WHOLE session was silent: an old backend without keepalives cold-loads
+        // without a byte on the wire. A dead socket doesn't ride any of this — the
+        // reader task surfaces it as `Closed` and the drain exits immediately. The
+        // UI-side stuck-finalize watchdog (STUCK_FINALIZE_MS, streaming.ts) re-arms
+        // on the same keepalives, so the two stay ordered: watchdog > idle window.
         let mut saw_frame = partials_seen > 0;
         let timed_out = loop {
             let idle = if saw_frame {
@@ -896,8 +859,7 @@ pub async fn run<F>(
         };
         if timed_out {
             // The one silent-transcript-loss path left: the server never sent its
-            // finals (or its close) within the deadline. Say so loudly — this line
-            // is the difference between a diagnosable report and a mystery.
+            // finals (or its close) within the deadline, so log it.
             tracing::warn!(
                 "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
@@ -1025,7 +987,7 @@ pub async fn run<F>(
         if !saved.is_empty() {
             // On the blocking pool: up to MAX_RECORD_PCM_BYTES plus an fsync and the sidecar, and
             // a recordings folder on a sleeping disk or an offline share must not park a runtime
-            // worker (the rule 27d8bdd applied to the batch path's media copy).
+            // worker.
             let dir = dir.to_path_buf();
             let wrote = tokio::task::spawn_blocking(move || {
                 let path = crate::audio::save_recording(&dir, &saved, 16_000)?;
@@ -1112,9 +1074,8 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
 ///
 /// The clip's disk work (the `.wav` and the previous clip's `.txt`) is queued to the
 /// [`ClipWriter`] only AFTER the event is forwarded, so the client already holds the utterance's
-/// record when the clip's path arrives; a recordings folder on a sleeping disk or an offline share
-/// held the utterance's own `Final` — the phrase shown and typed — behind the spin-up or the share
-/// timeout, and, written inline, every later phrase too.
+/// record when the clip's path arrives, and a recordings folder on a sleeping disk or an offline
+/// share never holds back the `Final` being shown and typed.
 #[allow(clippy::too_many_arguments)]
 fn forward_saved<F: Fn(StreamEvent)>(
     e: StreamEvent,
@@ -1207,7 +1168,7 @@ struct ClipIo {
 
 /// Writes one session's clips on its own thread, in queue order, and sends each clip's
 /// `RecordingSaved` back to the session loop. It owns the clip paths: a `.txt` belongs to the last
-/// `.wav` actually written, so a failed `.wav` takes its text with it, as before the move.
+/// `.wav` actually written, so a failed `.wav` takes its text with it.
 struct ClipWriter {
     dir: PathBuf,
     stamp: String,
@@ -1295,8 +1256,8 @@ impl ClipCutter {
             }
             // Not the closing final: the server stamps it with the NEXT ordinal (its utterance
             // counter has already advanced) though no such utterance was announced. Cutting on it
-            // flushed the previous clip's `.txt` before that final's released words folded in and
-            // wrote the ungated drain tail as an orphan clip; the close-time flush covers it.
+            // would close the previous clip's `.txt` before its released words fold in and write
+            // the ungated drain tail as an orphan clip; the close-time flush covers it.
             StreamEvent::Final {
                 utterance: Some(n),
                 last: false,
@@ -1399,13 +1360,12 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
     }
 }
 
-/// Bank one finished document (trimmed, non-empty) into the session transcript. The ONE push
-/// site for both a hard break and the end of the drain, so the budget cannot drift between them
-/// again. Total-size budget across the whole session: each field is capped at MAX_TRANSCRIPT,
-/// but the number of banked documents was not, so a server looping final/boundary grew this
-/// without limit and `join("\n")` then allocated the whole thing a second time before writing it
-/// under the user's recordings directory. Only the `.txt` sidecar clips: the `.wav` and the text
-/// actually typed are untouched, and 8 MiB is well over a million words.
+/// Bank one finished document (trimmed, non-empty) into the session transcript — the ONE push
+/// site for both a hard break and the end of the drain, so both share the budget. The budget is
+/// session-wide: each field is capped at MAX_TRANSCRIPT, but a server looping final/boundary
+/// could bank unboundedly many documents, and `join("\n")` allocates the whole thing again.
+/// Only the `.txt` sidecar clips: the `.wav` and the typed text are untouched, and 8 MiB is well
+/// over a million words.
 fn bank_doc(docs: &mut Vec<String>, doc: &str) {
     let trimmed = doc.trim();
     let banked: usize = docs.iter().map(|d| d.len()).sum();
@@ -1435,11 +1395,9 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
     match v.get("type").and_then(|t| t.as_str()) {
         Some("ready") => {
             on_event(StreamEvent::Ready {
-                // Bounded here, at the parse boundary, like its neighbours `separator` and
-                // `message`: the BATCH sibling caps this same list at 50 × 200 chars, but the
-                // streaming arm forwarded it whole to `stream://overrides-ignored`, where Home
-                // renders `join(", ")` in a wrapping span. The only other ceiling was tungstenite's
-                // 64 MiB frame limit — one `ready` frame froze the main window.
+                // Same 50 × 200 ceiling the batch path applies: it goes to
+                // `stream://overrides-ignored`, where Home renders `join(", ")` in a wrapping span,
+                // and an unbounded `ready` frame froze the main window.
                 overrides_ignored: bounded_str_vec_field(&v, "overrides_ignored"),
             });
             Frame::Continue
@@ -1487,11 +1445,10 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
         }
         Some("error") => {
             // Defanged, not merely truncated: this string is rendered in the error banner and in
-            // the always-on-top overlay, and the log copy's own fold is Cc-only — so the bidi and
-            // invisible-format class survived into the sentence the user reads to judge a failed
-            // dictation. NOT applied to the `separator` above: separators are legitimately "\n"
-            // and are typed as Enter, so folding controls to spaces would silently turn every
-            // hard break into a space.
+            // the always-on-top overlay, and the log copy's own fold is Cc-only (bidi and
+            // invisible-format chars would pass). NOT applied to the `separator` above: separators
+            // are legitimately "\n" and typed as Enter, so folding controls to spaces would turn
+            // every hard break into a space.
             on_event(StreamEvent::Error(super::bounded_server_text(
                 str_field(&v, "message"),
                 super::MAX_ERROR_TEXT,
@@ -1520,16 +1477,15 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
     }
 }
 
-/// Ceiling on ONE transcript field. These four were the last fields on this socket with no bound
-/// at all — their neighbours (`separator`, `message`, `overrides_ignored`) are all capped here —
-/// and tungstenite's 64 MiB limit is PER MESSAGE, so it bounds nothing cumulative. They reach two
-/// sinks: a cross-window IPC emit plus an overlay re-render on every frame, and `injectText`,
-/// which on direct-typing synthesizes them key by key into whatever window has focus.
+/// Ceiling on ONE transcript field (`partial`/`final` text). tungstenite's message limit
+/// (`MAX_WS_MESSAGE`) is PER MESSAGE, so it bounds nothing cumulative. These fields reach a
+/// cross-window IPC emit plus an overlay re-render on every frame, and `injectText`, which on
+/// direct-typing synthesizes them key by key into whatever window has focus.
 ///
 /// `bounded` and NOT `bounded_server_text`: a transcript legitimately contains newlines, and
-/// folding controls to spaces would destroy every hard break. Sized for headroom rather than
-/// thrift — an hour of continuous dictation is roughly 50 KB, and `final.committed` is the whole
-/// document so far and grows across a hands-free session, so 4 MiB is a whole working week of speech.
+/// folding controls to spaces would destroy every hard break. Sized for headroom — an hour of
+/// continuous dictation is roughly 50 KB, and `final.committed` is the whole document so far and
+/// grows across a hands-free session, so 4 MiB is a whole working week of speech.
 pub(crate) const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 
 /// Ceiling on the whole saved-transcript sidecar for one session. Applies ONLY to the `.txt`
@@ -1825,7 +1781,7 @@ mod emit_message_tests {
             "type": "boundary", "separator": " -- sig\n\n", "suffix": " -- sig",
         }));
         assert_eq!(docs, ["Hello -- sig", "World"]);
-        // A server that sends no suffix field (no output suffix set) banks as before.
+        // A server that sends no suffix field (no output suffix set) banks the bare text.
         let docs = sidecar_docs(serde_json::json!({ "type": "boundary", "separator": "\n\n" }));
         assert_eq!(docs, ["Hello", "World"]);
     }
@@ -2207,9 +2163,9 @@ mod clip_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The phrase is forwarded BEFORE its clip touches the disk: a sleeping recordings disk or an
-    /// offline share held the utterance's `Final` (shown and typed) behind the `.wav` write, and a
-    /// hard break behind the previous clip's `.txt`. Both files still land, in order, right after.
+    /// The phrase is forwarded BEFORE its clip touches the disk, so a sleeping recordings disk or an
+    /// offline share cannot hold the utterance's `Final` (shown and typed) behind the `.wav` write,
+    /// or a hard break behind the previous clip's `.txt`. Both files still land, in order, right after.
     #[test]
     fn the_phrase_is_forwarded_before_its_clip_is_written() {
         let dir = std::env::temp_dir().join(format!("fwf-clips-order-{}", std::process::id()));
@@ -2304,11 +2260,11 @@ mod clip_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The clip writes leave the session loop: `forward_saved` hands them to the writer thread and
-    /// forwards no clip itself (a recordings folder on a sleeping disk or an offline share held
-    /// every later phrase, the audio upload and the keepalive behind each write). The writer saves
-    /// the clips in order, ends each `.txt` where the next utterance begins, and writes the
-    /// close-time `.txt` before its channel closes — so `run` forwards them all before `Closed`.
+    /// The clip writes leave the session loop (`forward_saved` only hands them to the writer
+    /// thread), so a sleeping recordings disk or offline share cannot stall later phrases, the
+    /// audio upload or the keepalive. The writer saves the clips in order, ends each `.txt` where
+    /// the next utterance begins, and writes the close-time `.txt` before its channel closes — so
+    /// `run` forwards them all before `Closed`.
     #[test]
     fn clip_writes_leave_the_session_loop_and_arrive_in_order() {
         let dir = std::env::temp_dir().join(format!("fwf-clips-writer-{}", std::process::id()));
