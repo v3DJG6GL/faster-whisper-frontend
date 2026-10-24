@@ -82,11 +82,11 @@ export function useOverrideContext(args: {
       probedRef.current = null;
       // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or
       // drop a backend. A cached NULL is NOT terminal: refreshCaps cannot tell "server
-      // said no" from "the probe failed" (both arrive as null), so one blip pinned the
-      // panels to empty lists for the session — retry on mount; refreshCaps coalesces.
+      // said no" from "the probe failed" (both arrive as null), and one blip must not pin
+      // the panels to empty lists for the session — retry on mount; refreshCaps coalesces.
       // Read fresh, not from the effect's closure: `caps` is deliberately NOT a dependency,
-      // or every unrelated refreshCaps write re-ran the EDITING branch below and re-probed
-      // the typed target (and, with the clear below, blanked the gate for a round trip).
+      // or every unrelated refreshCaps write would re-run the EDITING branch below and
+      // re-probe the typed target.
       const cur = useApp.getState();
       if (!hasOwn(cur.caps, backendId) || !ownProp(cur.caps, backendId)) void refreshCaps(backend);
       return;
