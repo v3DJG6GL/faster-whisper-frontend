@@ -7,7 +7,6 @@ const post = vi.hoisted(() => ({
   // When set, a save stays pending until `saveRelease` runs it out.
   holdSaves: false,
   saveRelease: [] as (() => void)[],
-  // Every postUsageOutcomes call's args.
   calls: [] as { serverUrl: string; backendId: string }[],
 }));
 // The store the flush reads: config loaded, backend "b" at "u" (its address never moved).
