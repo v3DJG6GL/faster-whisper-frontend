@@ -1,6 +1,6 @@
-// The export's tracks (D88–D92): what each track is (its language and source), how it
-// reads in chips, tabs and lane labels, and — from the track order — which track is a
-// language's plain one, its title in a video and its file name. Pure; unit-tested.
+// The export's tracks: what each track is (its language and source), how it reads in
+// chips, tabs and lane labels, and — from the track order — which track is a language's
+// plain one, its title in a video and its file name. Pure; unit-tested.
 
 import { timedTrack, trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "../languages";
@@ -33,8 +33,8 @@ export function trackInfo(result: TrackResult, track: string): TrackInfo {
   return { id: track, lang, source: track === "orig" ? "whisper" : "mt", hoh: false };
 }
 
-/** The source word (D88): Whisper, Machine translation, YouTube, YouTube auto, YouTube SDH —
- *  or as a title's brackets / a file label (siteWord's styles; Machine-translation in a file). */
+/** The source word: Whisper, Machine translation, YouTube, YouTube auto, YouTube SDH — or as
+ *  a title's brackets / a file label (siteWord's styles; Machine-translation in a file). */
 export function sourceWord(t: TrackInfo, style: SourceWordStyle = "word"): string {
   if (t.source === "whisper") return WHISPER_WORD;
   if (t.source === "mt") return style === "file" ? MT_WORD.replace(/ /g, "-") : MT_WORD;
@@ -72,9 +72,6 @@ export function transcriptTracks(result: Pick<BatchResult, "translation" | "segm
   return ["orig", ...translationTracks(result), ...(result.timedTracks ?? []).map((t) => t.id)];
 }
 
-// ── Track order (D92) ───────────────────────────────────────────────────────────────────────
-
-/** Within a language: Whisper, the site's, the site's auto-generated, machine translation. */
 const SOURCE_RANK: Record<TrackSource, number> = { whisper: 0, site: 1, auto: 2, mt: 3 };
 
 /** The language a track counts for — its primary subtag ("de-CH" and "de" are one language). */
@@ -196,8 +193,6 @@ export function mergeOrder(result: TrackResult, order: readonly string[], sub: r
   });
 }
 
-// ── Picking tracks (D88) ────────────────────────────────────────────────────────────────────
-
 /** A language's code segment: on (any track chosen) → all its tracks off; off → all but its
  *  auto-generated ones on (all of them when that is all it has). Null = nothing would be left. */
 export function toggleLanguage(
@@ -224,8 +219,6 @@ export function toggleTrack(order: readonly string[], chosen: readonly string[],
   const next = order.filter((t) => (t === track ? !chosen.includes(t) : chosen.includes(t)));
   return next.length ? next : null;
 }
-
-// ── Names, files and flags (D89) ────────────────────────────────────────────────────────────
 
 export interface PlannedTrack extends TrackInfo {
   /** The first chosen track of its language: the plain name (`German`, `stem.de.srt`) and
@@ -272,11 +265,11 @@ export function planTracks(
   });
 }
 
-/** Each track's file suffix (the name after the stem), D89: a language's plain track
- *  `.de.srt` (`origBare`: the original's plain track `.srt`, the text export's own name), the
- *  others `.YouTube.de.srt`; a hearing-impaired track adds `.sdh` after the language (anything
- *  else there breaks mpv). Never two alike, nor one in `taken`: a clash falls back to the
- *  labelled form, then to a numbered label. */
+/** Each track's file suffix (the name after the stem): a language's plain track `.de.srt`
+ *  (`origBare`: the original's plain track `.srt`, the text export's own name), the others
+ *  `.YouTube.de.srt`; a hearing-impaired track adds `.sdh` after the language (anything else
+ *  there breaks mpv). Never two alike, nor one in `taken`: a clash falls back to the labelled
+ *  form, then to a numbered label. */
 export function trackFileSuffixes(
   tracks: readonly PlannedTrack[], ext: string, opts: { origBare?: boolean; taken?: readonly string[] } = {},
 ): string[] {
@@ -295,8 +288,6 @@ export function trackFileSuffixes(
     return name;
   });
 }
-
-// ── Per-transcript prefs ────────────────────────────────────────────────────────────────────
 
 /** A transcript's dragged track order and typed track names (TranscriptRecord.exportTracks). */
 export interface TrackPrefs {
