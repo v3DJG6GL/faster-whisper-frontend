@@ -34,12 +34,15 @@ export function stripUrlNoise(raw: string): string {
   );
 }
 
+/** The address already names an http(s) scheme with its two slashes. */
+const hasHttpScheme = (t: string): boolean => /^https?:\/\//i.test(t);
+
 /** Loose user input → a connectable URL: trim, strip trailing slashes, default
  *  the scheme to http (LAN servers are the common case, so "host:8000" is accepted).
  *  "" when it carries a scheme other than http(s). */
 export function normalizeUrl(raw: string): string {
   const t = stripUrlNoise(raw).replace(/\/+$/, "");
-  if (/^https?:\/\//i.test(t)) return t;
+  if (hasHttpScheme(t)) return t;
   return isSchemelessAddress(t) ? `http://${t}` : "";
 }
 
@@ -56,7 +59,7 @@ export function storedTypedUrl(raw: string): string {
   // port (the isSchemelessAddress rule): `http:8000` (host `http`, port 8000) keeps its
   // schemeless meaning, and a bare `http:` is left alone.
   const t = canonicalHttpScheme(stripUrlNoise(raw.trim()));
-  return !t || /^https?:\/\//i.test(t) ? t : normalizeUrl(t) || t;
+  return !t || hasHttpScheme(t) ? t : normalizeUrl(t) || t;
 }
 
 /** The lenient-scheme step of `storedTypedUrl` alone, on an already-cleaned string: `http:/h`,
@@ -64,7 +67,7 @@ export function storedTypedUrl(raw: string): string {
  *  `serverUrlFromPeer` (the sync/import path), which must not apply `storedTypedUrl`'s JS `trim()`
  *  (it also strips U+FEFF, which `stripUrlNoise` keeps because the transport does). */
 export function canonicalHttpScheme(t: string): string {
-  if (/^https?:\/\//i.test(t)) return t;
+  if (hasHttpScheme(t)) return t;
   const canon = (_m: string, s: string) => `${s.toLowerCase()}://`;
   return t.replace(/^(https?):[\\/]+/i, canon).replace(/^(https?):(?![\\/]|\d+(?:\/|$))(?=\S)/i, canon);
 }
@@ -122,7 +125,7 @@ function isSchemelessAddress(t: string): boolean {
  *  build's config), which would otherwise reach the transport unchecked. */
 export function isStorableServerUrl(raw: string): boolean {
   const t = stripUrlNoise(raw);
-  return t === "" || /^https?:\/\//i.test(t) || isSchemelessAddress(t);
+  return t === "" || hasHttpScheme(t) || isSchemelessAddress(t);
 }
 
 /** An address that arrived verbatim (a sync pull, an imported file — and this device's own
@@ -134,7 +137,7 @@ export function isStorableServerUrl(raw: string): boolean {
 export function serverUrlFromPeer(raw: string): string {
   const t = canonicalHttpScheme(stripUrlNoise(raw));
   if (!isStorableServerUrl(t)) return "";
-  return /^https?:\/\//i.test(t) || t === "" ? t : normalizeUrl(t) || t;
+  return hasHttpScheme(t) || t === "" ? t : normalizeUrl(t) || t;
 }
 
 /** True for addresses that never leave the user's own machine or LAN, where plain http is the
