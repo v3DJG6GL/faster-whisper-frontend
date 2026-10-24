@@ -1,7 +1,5 @@
 // Single source of truth for the app's navigable screens and the dictation
-// actions the overlay can trigger. Consumed by the Sidebar, the overlay chip's
-// quick-launch row, the Settings quick-launch editor, and the cross-window
-// navigation bridge (App.tsx). Keep `id`s in sync with the router paths in App.tsx.
+// actions the overlay can trigger. Keep each `path` in sync with the <Route>s in App.tsx.
 
 import { LayoutDashboard, AudioLines, Command, Server, Settings, Power, RefreshCw, AppWindow, BookA, BarChart3, Plus, History, ScrollText } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
