@@ -174,12 +174,13 @@ function Editor({
   // full → unknown → full, which counts as a rise and refetches an unchanged target (and a
   // paste + Test inside the debounce would refetch the old address). Holding it until the debounce
   // lands moves the kind change and the new address into the same render — one fetch.
+  const targetSettled = debouncedUrl === effUrl && debouncedKey === key;
   const hookKindRef = useRef(kind);
-  if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
+  if (targetSettled) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
   // Held the same way: a paste + Test inside the debounce window must not refetch the OLD target.
   const hookTestGenRef = useRef(testGen);
-  if (debouncedUrl === effUrl && debouncedKey === key) hookTestGenRef.current = testGen;
+  if (targetSettled) hookTestGenRef.current = testGen;
   const hookTestGen = hookTestGenRef.current;
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
   // generation, and the hooks below then re-ask as the new caller (as resultLive does) — they
@@ -218,7 +219,7 @@ function Editor({
   // address, key and model it was fetched for are still the ones typed (else the previous typing's
   // resolution would name the chip). Without it, modelDevice falls back to the listed consensus.
   const chipModel =
-    !ownModel && decodeDefaults?.model && debouncedUrl === effUrl && debouncedKey === key && debouncedModel.trim() === b.model.trim()
+    !ownModel && decodeDefaults?.model && targetSettled && debouncedModel.trim() === b.model.trim()
       ? decodeDefaults.model
       : b.model;
   const chips = backendChips({ model: chipModel }, conn ?? undefined);
