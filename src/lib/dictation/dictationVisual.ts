@@ -5,7 +5,7 @@ import type { DictationStatus, ServerWork } from "../types";
  * shared by every surface (overlay chip, sidebar status dot, Home hero button, the
  * waveforms).
  *
- * It mirrors the overlay chip's palette, which is the design intent:
+ * The palette:
  *   • green  (live)   — actively speaking
  *   • amber  (armed)  — armed but silent ("ready to speak"; the OS mic-in-use cue). Its
  *                       own fixed token (--c-armed), not the accent: the Signal colour is
