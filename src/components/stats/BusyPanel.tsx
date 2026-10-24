@@ -58,13 +58,15 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
   const hov = useMemo(() => {
     if (!tip) return null;
     const i = tip.i;
+    // "≈ 40 words per Tuesday" · "78 Tuesdays in range": the average over each occurrence.
+    const perOcc = (v: number, occ: number, one: string, many: string): [string, string] => [`≈ ${metricText(metric, v / occ, true)} per ${one}`, `${fmtFull(occ)} ${many} in range`];
     if (i < N) {
       const c = model.cells[i];
       if (!c) return null;
       if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: rhythm === "months" ? `${L.cellName(i)} is outside ${fmtDateFull(from)} – ${fmtDateFull(to)}` : rhythm === "hours" ? `no ${DOW_LONG[c.row]} falls between ${fmtDateFull(from)} and ${fmtDateFull(to)}` : `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
       const occ = model.occOf(c);
       const extra: [string, string][] = [];
-      if (c.value > 0 && occ > 1) extra.push([`≈ ${metricText(metric, c.value / occ, true)} per ${model.occWord(c)}`, `${fmtFull(occ)} ${rhythm === "hours" ? `${model.occWord(c)}s` : "months"} in range`]);
+      if (c.value > 0 && occ > 1) extra.push(perOcc(c.value, occ, model.occWord(c), rhythm === "hours" ? `${model.occWord(c)}s` : "months"));
       return { title: L.cellName(i), kinds: c.kinds, total: c.value, quarter: c.level ? QUARTER_NAME[c.level] : undefined, extra };
     }
     if (i < N + L.cols) {
@@ -72,9 +74,9 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
       const v = model.colTotals[col];
       const extra: [string, string][] = [["share", share(v)], ["vs average", `${model.colIndex[col].toFixed(1)}× an average ${L.colUnit}`]];
       const days = to - from + 1;
-      if (rhythm === "hours" && v > 0 && days > 1) extra.push([`≈ ${metricText(metric, v / days, true)} per day`, `${fmtFull(days)} days in range`]);
+      if (rhythm === "hours" && v > 0 && days > 1) extra.push(perOcc(v, days, "day", "days"));
       const occ = L.colOcc?.[col] ?? 1;
-      if (rhythm === "days" && v > 0 && occ > 1) extra.push([`≈ ${metricText(metric, v / occ, true)} per month`, `${fmtFull(occ)} months in range`]);
+      if (rhythm === "days" && v > 0 && occ > 1) extra.push(perOcc(v, occ, "month", "months"));
       return { title: `${L.colLong(col)} · every ${L.rowUnit}`, kinds: sumKinds(model.cells.filter((c) => c.col === col)), total: v, quarter: undefined, extra };
     }
     const row = i - N - L.cols;
@@ -84,7 +86,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
     const extra: [string, string][] = [["share", share(v)], ["vs average", `${model.rowIndex[row].toFixed(1)}× an average ${L.rowUnit}`]];
     const first = model.cells[row * L.cols];
     const occ = first ? model.occOf(first) : 1;
-    if (rhythm === "hours" && v > 0 && occ > 1) extra.push([`≈ ${metricText(metric, v / occ, true)} per ${DOW_LONG[row]}`, `${fmtFull(occ)} ${DOW_LONG[row]}s in range`]);
+    if (rhythm === "hours" && v > 0 && occ > 1) extra.push(perOcc(v, occ, DOW_LONG[row], `${DOW_LONG[row]}s`));
     return { title: `${L.rowLong(row)} · all ${L.colUnits}`, kinds: sumKinds(model.cells.slice(row * L.cols, row * L.cols + L.cols)), total: v, quarter: undefined, extra };
   }, [tip, model, L, N, metric, rhythm, from, to]);
   // Arrow keys move between cells only; the bars are plain tab stops.
