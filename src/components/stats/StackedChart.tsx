@@ -12,11 +12,9 @@ import type { UsageKind, UsageKinds } from "@/lib/types";
 import { BUCKET_WORD, bucketTick, fmtMonthYear, kindFill, metricText, metricTick, useWidth } from "@/components/stats/chartKit";
 import { HatchDef, Panel, Swatch } from "@/components/stats/primitives";
 
-/* ── stacked columns by kind ─────────────────────────────────────────────── */
-
 const TIP_W = 176;
 
-/** Tooltip header: the day, `Woche ab 6.7.`-style for a week, month + year for a month. */
+/** Tooltip header: the day, a week's first – last day, month + year for a month. */
 function bucketTitle(b: UsageBucket, mode: BucketMode): string {
   if (mode === "day") return fmtDateFull(b.from);
   if (mode === "week") return `${fmtDateTick(b.from)} – ${fmtDateTick(b.to)}`;
@@ -159,7 +157,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
                       if (!(v > 0)) return null;
                       const h = yOf(v);
                       y -= h;
-                      // 2 px surface gap between stacked segments (the mockup's `h-2`).
+                      // 2 px surface gap between stacked segments.
                       return (
                         <rect key={k} x={x.toFixed(1)} y={y.toFixed(1)} width={barW.toFixed(1)} height={Math.max(0.5, h - 2).toFixed(1)} rx={Math.min(2, barW / 2)} fill={kindFill(k, hatchId)} />
                       );
@@ -215,8 +213,6 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
   );
 }
 
-/* ── the per-kind tooltip (D31 T3 / D33): present kinds, a split bar, the total ── */
-
 export function KindTip({ title, kinds, metric, scope, total, quarter, extra, companion }: {
   title: string;
   kinds: UsageKinds;
@@ -225,9 +221,9 @@ export function KindTip({ title, kinds, metric, scope, total, quarter, extra, co
   total: number;
   /** The cell's quarter name, on the total line (or the single row). */
   quarter?: string;
-  /** Faint lines after the total: `[["≈ 40 words per Tuesday", "78 Tuesdays in range"]]` (D32). */
+  /** Faint lines after the total: `[["≈ 40 words per Tuesday", "78 Tuesdays in range"]]`. */
   extra?: ReadonlyArray<[string, string]> | null;
-  /** D45 C1: a second measure beside the first on every row ("1h 12m · 4 sessions"). */
+  /** A second measure beside the first on every row ("1h 12m · 4 sessions"). */
   companion?: ChartMetric;
 }) {
   const rows = presentKinds(kinds, metric, scope);
