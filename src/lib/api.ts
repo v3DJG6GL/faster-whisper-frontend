@@ -707,12 +707,12 @@ export async function deleteJob(args: ServerTarget & {
   }, { kind: "error", message: "Not running in the desktop app." });
 }
 
-/** One invoke at a time for a per-device store (jobs ledger, usage queue, sync state): the next
- *  is only SENT once the previous one settled. Rust's per-store lock keeps two saves from
- *  interleaving but not their order — Tauri deserialises each invoke's (possibly MB-sized)
- *  args in its own task before the lock, so a later save could take the lock first and an
- *  older snapshot land over a newer one. A failed call doesn't wedge the chain; its caller
- *  still gets the rejection. */
+/** One invoke at a time for a per-device store (jobs ledger, usage queue, sync state) — also
+ *  the keyring, mic-test and shortcut chains: the next is only SENT once the previous one
+ *  settled. Rust's per-store lock keeps two saves from interleaving but not their order —
+ *  Tauri deserialises each invoke's (possibly MB-sized) args in its own task before the lock,
+ *  so a later save could take the lock first and an older snapshot land over a newer one. A
+ *  failed call doesn't wedge the chain; its caller still gets the rejection. */
 function storeTurn(): <T>(call: () => Promise<T>) => Promise<T> {
   let tail: Promise<unknown> = Promise.resolve();
   return (call) => {
@@ -797,12 +797,7 @@ export async function resolveLegacyMic(name: string): Promise<{ id: string; labe
 // Mic-test start/stop run on Rust's blocking pool and meet on a non-FIFO mutex, so two in
 // flight could apply out of order — a stale stop landing after a newer start kills the new test
 // with the UI still on "testing". Issue each only once the previous one settled.
-let micTestChain: Promise<unknown> = Promise.resolve();
-function inMicTestOrder<T>(op: () => Promise<T>): Promise<T> {
-  const run = micTestChain.then(op);
-  micTestChain = run.catch(() => {});
-  return run;
-}
+const inMicTestOrder = storeTurn();
 
 /** `onIssued` runs when the start actually goes out, i.e. after every earlier start/stop settled
  *  (and so after a replaced capture was joined and had sent its last event). */
@@ -1107,12 +1102,7 @@ export async function retireSessionEpoch(): Promise<void> {
 // Suspend/re-register run on Rust's blocking pool and meet on the non-FIFO APPLY_LOCK, so two in
 // flight could apply out of order — a suspend landing after its paired re-register would leave
 // capture suspension on with every hotkey dead. Issue each only once the previous one settled.
-let shortcutChain: Promise<unknown> = Promise.resolve();
-function inShortcutOrder<T>(op: () => Promise<T>): Promise<T> {
-  const run = shortcutChain.then(op);
-  shortcutChain = run.catch(() => {});
-  return run;
-}
+const inShortcutOrder = storeTurn();
 
 /** Re-register global hotkeys after the bindings change (or to restore them). */
 export async function reregisterShortcuts(): Promise<void> {
