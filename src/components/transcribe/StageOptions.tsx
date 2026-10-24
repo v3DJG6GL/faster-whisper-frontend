@@ -1,7 +1,7 @@
 // A stage row's folded settings (Transcribe's processing card): a gear beside the row's switch
 // and one quiet line under its description naming what the stage will run with ("Auto speakers
 // · Default · speaker-diarization-community-1") both toggle the panel; an accent dot in the line
-// shows a value off its default while folded.
+// shows a value off its default.
 //
 // The gear sits in SettingRow's control column and the panel in its `expand` slot, so the
 // two share one `useStageOptions()` state.
