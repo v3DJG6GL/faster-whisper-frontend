@@ -194,7 +194,7 @@ export function activeRailIndex(
   skipped?: ReadonlySet<RailStage>,
 ): number {
   // A server plan is authoritative: the row it marks active is the active
-  // row, and once every stage is done the rail is past its end.
+  // row, and once every stage has settled the rail is past its end.
   const plan = progress?.plan;
   if (plan?.length) {
     const active = plan.find((p) => p.state === "active");
@@ -674,7 +674,7 @@ export interface TranscribeRunState {
     keepVideo?: boolean;
     videoMaxHeight?: number | null;
     /** The link card's explicit rung (a yt-dlp format id); absent = the
-     *  Settings height cap decides at run time. */
+     *  height cap (videoMaxHeightOf) decides at run time. */
     videoFormat?: string | null;
     /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) named by the site,
      *  detected, or picked — kept even when it equals the screen's (frozenLinkSpoken); absent =
@@ -2473,9 +2473,9 @@ async function pump(
       // this file's polls from the previous file's last in-flight one — a late
       // answer would open the previous file's stage on the next file's clocks.
       let pollingDone = false;
-      // Monotonic sequence: fold only the newest-sent poll's answer — an
-      // out-of-order response (poll latency > 1s on a loaded backend) would
-      // rewind the stage clocks.
+      // One poll in flight at a time (pollInFlight), and only the newest-sent
+      // poll's answer folds: a slow answer (latency > 1s on a loaded backend)
+      // overtaken by a newer one would rewind the stage clocks.
       let pollSeq = 0;
       let pollInFlight = false;
       // The file's ledger row is on disk (the server holds a job under pid),
