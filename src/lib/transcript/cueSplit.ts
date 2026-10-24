@@ -152,11 +152,9 @@ function evidenceMark(l: string, marks: RegExp): number {
   const i = l.search(marks);
   if (i < 0) return -1;
   const before = l.slice(0, i);
-  // A colon is a credit or note field ("翻译：小明。") unless it opens a quotation the mark sits
-  // inside (他问：“你好，…”): a quote closed before the mark (字幕：「XX字幕组」。) is a credit's name.
-  // Only when every colon's quote is closed: one still open holds the mark, whether a second
-  // speaker's (甲问：“好吗” 乙答：“好的，…”) or an outer one around a closed inner quote
-  // (他说：“她说：‘好’，…”).
+  // A quote closed before the mark (字幕：「XX字幕组」。) is a credit's name, but only when every
+  // colon's quote is closed: one still open holds the mark, whether a second speaker's
+  // (甲问：“好吗” 乙答：“好的，…”) or an outer one around a closed inner quote (他说：“她说：‘好’，…”).
   // One lastIndexOf per closer: a line of many colons stays linear.
   const lastClose = new Map<string, number>();
   let quoted = false;
@@ -441,15 +439,11 @@ const ELIDED: Record<string, string[]> = {
 function nameBefore(before: string, after: string, lang?: string): boolean {
   const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
   if (INITIAL.test(b)) return true;
-  // No word before it (the text's start) or one that ends a clause or sentence ("In 1924, J.
-  // Edgar", "He said it. J. Edgar"): only the word after tells a name from a sentence end.
   if (b !== "" && !CLAUSE.test(b) && !SENT_END.test(b) && !/^\p{Lu}/u.test(b)) return false;
   const base = primarySubtag(lang);
-  // Only a capitalised word says nothing of a name in German or Luxembourgish ("Plan B. Dann"):
-  // with no word before the initial, or a mark ending it, the opener decides there too.
   if (NOUN_CAPS.has(base) && b !== "" && !CLAUSE.test(b) && !SENT_END.test(b)) return false;
-  // Another initial after it makes a name, as in isSentenceEnd: stripped, "Mary | J. A. Smith"
-  // read its "A." as the article opening a sentence.
+  // Another initial after it makes a name, as in isSentenceEnd: stripped of its stop below, the
+  // "A." of "Mary | J. A. Smith" would read as the article opening a sentence.
   if (/^\p{Lu}\.$/u.test(after.split(/\s/)[0])) return true;
   const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
   const opener = SENT_OPENER.get(base) ?? ANY_OPENER;
@@ -499,11 +493,6 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (unit && cut && /^\p{Ll}/u.test(cut.next)) return false;
   if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
-  // A name's initial ("John F. Kennedy") or compact initials ("J.K. Rowling", "George R.R.
-  // Martin") before a capital, judged alike by the word before it: after a lowercase word the
-  // stop ends a sentence ("by J.K. Rowling", as "by F. Scott" does). A place initialism is no
-  // name's initials: before a capital it ends one after any word ("Washington D.C. Today", "the
-  // U.S. These days", "in den U.S.A. Seine", "the U.S. Army").
   if (
     cut && (nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
@@ -668,7 +657,7 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
 /** What rides after a base character: combining marks, emoji skin tones, Thai/Lao following
  *  vowels, a halfwidth voicing mark (ﾞ ﾟ — a letter, not a mark, so it rides before a
  *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks,
- *  a killed Burmese/Khmer consonant. */
+ *  a killed Burmese/Khmer consonant, then an optional repetition mark (REPEAT). */
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
 /** Scripts written without spaces between words that are no CJK (unspacedChar keeps
  *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
@@ -692,8 +681,8 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  "ＣＰＵ，ＧＰＵ" or the ： of "ＵＲＬ：" stays a clause seam; a run longer than a line still wraps per
  *  character through `tokenUnits`. Glued to ASCII letters or digits ("ＰＳ5", "ＮＨＫnews")
  *  it stays one word too (mixedTokens joins them): the seam between the two widths is no
- *  word break. A no-break space (BREAK_SPACE) between two characters of a word is part of it:
- *  "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
+ *  word break. A no-break space (one BREAK_SPACE excludes) between two characters of a word is
+ *  part of it: "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
 const WORD_CHAR = `[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]`;
@@ -968,7 +957,7 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
 }
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
- *  cuts after sentence/clause punctuation and never right after an article.
+ *  cuts after sentence/clause punctuation and avoiding one right after an article.
  *  `lang` is the text's language code, for whether "12." can be an ordinal. */
 export function cutByShare(text: string, shares: number[], lang?: string): string[] {
   if (shares.length < 2) return [text.trim()];
@@ -1390,10 +1379,10 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     let c = qr?.[1][0] ?? '"';
     // A glued run whose first quote closes the quotation before it (他说"你好""再见", or of the
     // other kind: 他说'你好'"再见"): that quote joins the text it closes and the rest of the run
-    // is judged on its own. Judged as one, the quote opening the next quotation joined backward
-    // too, and a line or part ended on it. A closer followed by an English clitic stays whole:
-    // "東京"'s and '東京''s are possessives, not a second quotation ('你好'"OK", "你好"'S' and
-    // "你好"'T恤' still are: the "clitic" there is quoted on its own or glued to more letters).
+    // is judged on its own. Judged as one, the quote opening the next quotation would join
+    // backward too, and a line or part would end on it. A closer followed by an English clitic
+    // stays whole: "東京"'s and '東京''s are possessives, not a second quotation ('你好'"OK",
+    // "你好"'S' and "你好"'T恤' still are: the "clitic" there is quoted on its own or glued to more letters).
     const runEnd = idx + (qr?.[0].length ?? 0);
     if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].length > 1 && flags[idx] && quotes[c] % 2 === 1
       && !(qr[1].slice(1) === "'" && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])(?!'(?![A-Za-z]))/iu.test(t.slice(runEnd)))) {
@@ -1414,11 +1403,11 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     for (let j = idx; j < end; j++) if (flags[j]) quotes[t[j]]++;
     // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
-    // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
-    // “東京… on two lines.
+    // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off would leave
+    // „Hallo / “東京… on two lines.
     const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
     // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
-    // off, the line ended on the no-break space.
+    // off, the line would end on the no-break space.
     const held = !!open && /[\u00a0\u202f\u2007]$/u.test(toks[k].slice(0, open.index));
     let from = idx;
     if (open && open.index > 0 && !held) {
@@ -1542,7 +1531,7 @@ function wrapTokens(
       else if (gaps.length && (runL[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       // Right after a compound's hyphen (tokenUnits keeps it on the line it ends): the seam a
       // compound longer than a line wraps at, rather than one inside its parts. Not on a line
-      // under a third of the target: the bonus left a stub ("s-") alone on one.
+      // under a third of the target: the bonus would leave a stub ("s-") alone on one.
       if (!gaps[i] && a >= target / 3 && /[\p{L}\p{N}][-\u2010]$/u.test(toks[i - 1]) && /^[\p{L}\p{N}]/u.test(toks[i])) s += 10;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
@@ -1562,8 +1551,8 @@ function wrapTokens(
       // pushed over only by the name prefix stays whole; an unspaced run has no
       // word to protect (CJK or Thai-like), so it still wraps to fit the prefixed line.
       // A token holding a no-break space ("東京 avait", "さ !") is at most cpl long and
-      // stays whole too: units() drops whitespace, and the per-character wrap deleted it
-      // and cut where the no-break space holds.
+      // stays whole too: units() drops whitespace, so the per-character wrap would delete
+      // it and cut where the no-break space holds.
       out.push(...wrapTokens(units(toks[lo]), [], cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;
