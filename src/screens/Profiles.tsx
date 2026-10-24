@@ -116,7 +116,6 @@ function Editor({
   // Dictation runs a profile whose backend is gone (or unset) on the FIRST backend
   // (dictation.ts backendForProfile) — preview that one too, and say so on the field.
   const backend = boundBackend ?? backends[0];
-  // Probes the backend's models once per session when the connection cache is empty.
   const models = useBackendModels(backend);
   const serverKind = backend
     ? effectiveServerKind(backend, ownProp(connections, backend.id))
@@ -355,8 +354,7 @@ function Editor({
         )}
       </div>
 
-      {/* Laid out like the Backends editor: the plain fields are rows in one card, and decode,
-          live dictation, insertion and translation each get their OWN disclosure. */}
+      {/* Laid out like the Backends editor. */}
       <div className="mt-5 rounded-card border border-line bg-surface-2/40 px-[18px] py-1">
         <OverrideHeader title="Backend" env={false}>
           <div className={OVERRIDE_CONTROL_W}>
@@ -746,8 +744,7 @@ function ProfileRow({
   /** The bound Backend's id: its server's per-request target cap bounds the route preview. */
   backendId?: string;
   /** The bound Backend's language — the fallback half of the effective-language
-   *  resolution the chip does (a set Profile override wins). Resolved by the parent,
-   *  which holds the backend list. */
+   *  resolution the chip does (a set Profile override wins). */
   backendLanguage?: string;
   /** The bound Backend's translate-to defaults — the inherited half of the route. */
   backendTargets?: string[];
