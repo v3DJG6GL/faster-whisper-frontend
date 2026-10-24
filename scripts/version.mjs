@@ -11,8 +11,9 @@
 //   node scripts/version.mjs         → print the current version (the authoritative one,
 //                                       tauri.conf.json — what the in-app readout reports).
 //
-// NOTE: changing Cargo.toml's version means the next `cargo build`/`cargo check`
-// regenerates Cargo.lock — run one (CI already builds) so the lockfile lands in the commit.
+// NOTE: changing Cargo.toml's version leaves Cargo.lock stale, and every CI cargo step is
+// --locked — run `cargo update --workspace --manifest-path src-tauri/Cargo.toml` (as
+// release.yml does) so the lockfile lands in the commit.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,6 @@ const PKG = join(ROOT, "package.json");
 const CARGO = join(ROOT, "src-tauri", "Cargo.toml");
 const TAURI = join(ROOT, "src-tauri", "tauri.conf.json");
 
-// --- readers -------------------------------------------------------------------------
 // First top-level `"version": "..."` — dependency entries are keyed by package name,
 // never a bare "version" key, so the first match is the package's own version.
 const readJsonVersion = (p) => readFileSync(p, "utf8").match(/"version":\s*"([^"]*)"/)?.[1] ?? null;
@@ -49,14 +49,12 @@ const FILES = [
   { path: PKG, label: "package.json", read: readJsonVersion, write: writeJsonVersion },
 ];
 
-// --- writers (targeted single-line edits to keep the diff minimal) --------------------
+// Writers make targeted single-line edits to keep the diff minimal.
 function writeJsonVersion(p, v) {
   const src = readFileSync(p, "utf8");
   const re = /("version":\s*")[^"]*(")/; // first match = top-level
-  // Test the regex, don't compare before/after content: replacing the version with the SAME value
-  // yields a byte-identical string, so an `out === src` guard would mis-fire "no version found" on
-  // an idempotent re-set — and, since tauri.conf.json is written first, abort mid-loop leaving
-  // Cargo.toml + package.json unwritten (the very drift this script prevents). Mirrors writeCargoVersion.
+  // Test the regex, not `out === src`: an idempotent re-set yields identical bytes, so that guard
+  // would throw on tauri.conf.json (written first) and leave the other two files unwritten.
   if (!re.test(src)) throw new Error(`no top-level "version" found in ${p}`);
   writeFileSync(p, src.replace(re, `$1${v}$2`));
 }
@@ -76,7 +74,6 @@ function writeCargoVersion(p, v) {
   writeFileSync(p, lines.join("\n"));
 }
 
-// --- cli -----------------------------------------------------------------------------
 const arg = process.argv[2];
 
 if (arg === "--check") {
@@ -91,7 +88,7 @@ if (arg === "--check") {
 } else if (!arg) {
   console.log(readJsonVersion(TAURI) ?? "(none)");
 } else {
-  const v = arg.replace(/^v/, ""); // accept a git tag like "v1.2.3"
+  const v = arg.replace(/^v/, "");
   if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(v)) {
     console.error(`✗ not a semver version: "${arg}"`);
     process.exit(1);
