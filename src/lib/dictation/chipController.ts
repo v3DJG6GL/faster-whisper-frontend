@@ -316,10 +316,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",
     targetSkip: tgt ? (state.targetSkip ?? "") : "",
-    // AND with the parent like the other hover flags below: in "On hover" mode the
-    // "Only while speaking" control is disabled, but a `true` set earlier in "Always" mode
-    // persists and would gate the target on `expanded` (never true while armed-but-silent),
-    // so hovering could never reveal it — defeating the user's "On hover" choice.
+    // Off in "On hover" mode: there the "Only while speaking" control is disabled, but a `true`
+    // set earlier in "Always" mode persists and would gate the target on `expanded` (never true
+    // while armed-but-silent), so hovering could never reveal it — defeating the "On hover" choice.
     targetOnlySpeaking: !rec.showTargetOnHover && rec.showTargetOnlySpeaking,
     targetOnHover: rec.showTargetOnOverlay && rec.showTargetOnHover,
     // Sent UNGATED by ACTIVE — the end-of-session done marker must reach the chip on the
