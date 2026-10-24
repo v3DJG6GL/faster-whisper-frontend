@@ -24,8 +24,7 @@ export const PRIDE_FLAG_URI = `data:image/svg+xml,${encodeURIComponent(PRIDE_FLA
 
 /** Plain 6-stripe rainbow Pride flag, top→bottom (Gay_Pride_Flag.svg). Used for the
  *  WAVEFORM reveal: it's uniform horizontally, so one vertical gradient fills the whole
- *  meter seamlessly — no tiling, no chevron to duplicate. (The sidebar mark keeps the
- *  fuller Intersex-Inclusive Progress flag above.) */
+ *  meter seamlessly — no tiling, no chevron to duplicate. */
 export const PRIDE_RAINBOW_STOPS = [
   "#E50000", // red
   "#FF8D00", // orange
