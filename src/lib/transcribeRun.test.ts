@@ -1865,6 +1865,14 @@ function openFailedVideoLink(id: string, url: string): void {
     stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
 }
 
+// Ends a video-poll test: the poll's mocks, the stubbed window timers, the Video row.
+function resetVideoPoll(): void {
+  getTranscribeProgress.mockReset();
+  fetchUrlVideoOnDemand.mockReset();
+  vi.unstubAllGlobals();
+  useTranscribeRun.setState({ stageMeta: {} });
+}
+
 describe("an on-demand video that fails outright shows on the Video row", () => {
   it("retryRunVideo queues the row, then marks it failed with the request's error", async () => {
     vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
@@ -1902,11 +1910,8 @@ describe("an on-demand video that finishes is pulled once", () => {
     openFailedVideoLink("rec-od", url);
   });
   afterEach(() => {
-    getTranscribeProgress.mockReset();
-    fetchUrlVideoOnDemand.mockReset();
     fetchUrlVideo.mockReset();
-    vi.unstubAllGlobals();
-    useTranscribeRun.setState({ stageMeta: {} });
+    resetVideoPoll();
   });
 
   it("the request's answer pulls the video while the poll only reads the closed entry", async () => {
@@ -2026,11 +2031,8 @@ describe("an on-demand video whose request fails stays failed", () => {
     openFailedVideoLink("rec-odf", url);
   });
   afterEach(() => {
-    getTranscribeProgress.mockReset();
-    fetchUrlVideoOnDemand.mockReset();
     fetchUrlVideo.mockReset();
-    vi.unstubAllGlobals();
-    useTranscribeRun.setState({ stageMeta: {} });
+    resetVideoPoll();
   });
 
   it("a poll answering 'downloading' after the request failed does not repaint the row", async () => {
@@ -2133,10 +2135,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       await run(2);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(8);
     } finally {
-      getTranscribeProgress.mockReset();
-      fetchUrlVideoOnDemand.mockReset();
-      vi.unstubAllGlobals();
-      useTranscribeRun.setState({ stageMeta: {} });
+      resetVideoPoll();
     }
   });
 
@@ -2170,10 +2169,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       expect(getTranscribeProgress).toHaveBeenCalledTimes(7);
     } finally {
       windowHidden = false;
-      getTranscribeProgress.mockReset();
-      fetchUrlVideoOnDemand.mockReset();
-      vi.unstubAllGlobals();
-      useTranscribeRun.setState({ stageMeta: {} });
+      resetVideoPoll();
     }
   });
 
@@ -2217,10 +2213,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       expect(hiddenListeners.size).toBe(before);
     } finally {
       windowHidden = false;
-      getTranscribeProgress.mockReset();
-      fetchUrlVideoOnDemand.mockReset();
-      vi.unstubAllGlobals();
-      useTranscribeRun.setState({ stageMeta: {} });
+      resetVideoPoll();
     }
   });
 });
@@ -2259,10 +2252,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
       for (let i = 0; i < 6; i++) { watcher(); await flush(); }
       expect(useTranscribeRun.getState().stageMeta.downloading?.video).toBeUndefined();
     } finally {
-      getTranscribeProgress.mockReset();
-      fetchUrlVideoOnDemand.mockReset();
-      vi.unstubAllGlobals();
-      useTranscribeRun.setState({ stageMeta: {} });
+      resetVideoPoll();
     }
   });
 });
