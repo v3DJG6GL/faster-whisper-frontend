@@ -300,14 +300,14 @@ pub(crate) fn restrict_file_private(path: &Path) {
     let _ = path;
 }
 
-/// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
-/// Windows.
+/// Create one of the app's data directories (recordings and their subfolders, logs, transcripts,
+/// caches) owner-only — 0700 on Unix, an owner-only inheritable DACL on Windows.
 ///
-/// The folder is USER-CHOSEN, so it may sit somewhere shared, and a listing of it is a per-second
-/// timestamped log of every dictation (when, how often, how large the archive is). On Windows the
-/// default inherited ACL of a folder outside the profile (`C:\Users\Public`, a mapped share, a
-/// OneDrive/Dropbox tree) would leave the directory and every `.wav`/`.txt` in it readable by other
-/// accounts. A directory that already exists keeps whatever permissions the user gave it.
+/// The recordings folder is USER-CHOSEN, so it may sit somewhere shared, and a listing of it is a
+/// per-second timestamped log of every dictation (when, how often, how large the archive is). On
+/// Windows the default inherited ACL of a folder outside the profile (`C:\Users\Public`, a mapped
+/// share, a OneDrive/Dropbox tree) would leave the directory and every `.wav`/`.txt` in it readable
+/// by other accounts. A directory that already exists keeps whatever permissions the user gave it.
 pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -617,7 +617,7 @@ mod retention_tests {
         assert_eq!(mode(&leaf), 0o700);
         assert_ne!(mode(&root.join("a")), 0o700);
         assert_ne!(mode(&root.join("a").join("b")), 0o700);
-        // Idempotent: a second (or racing) creator is Ok.
+        // Idempotent: an existing leaf is Ok and keeps its mode.
         super::create_dir_private(&leaf).unwrap();
         assert_eq!(mode(&leaf), 0o700);
         let _ = std::fs::remove_dir_all(&root);
