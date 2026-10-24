@@ -1,4 +1,4 @@
-// The export's Tracks chips (D88/D92): one compound chip per language — its code switches the
+// The export's Tracks chips: one compound chip per language — its code switches the
 // whole language, each part one track — and the track order: a chip dragged (or its code
 // moved with Alt+←/→) reorders the languages, a part dragged (Alt+←/→ on it) reorders the
 // tracks inside its language. Pointer events, not HTML5 drag and drop: WebKitGTK's DnD is
