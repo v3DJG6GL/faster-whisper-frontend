@@ -138,7 +138,7 @@ fn apply_bindings_locked(app: &AppHandle) {
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
     // keeps the Super+Alt factory default harmless out of the box;
-    // designating a list (onboarding step 3 / the Dictionary screen) arms it.
+    // designating a list (onboarding's quick-add step / the Dictionary screen) arms it.
     let no_quick_add: Vec<String> = Vec::new();
     let quick_add = if cfg.settings.quick_add_list.is_some() {
         &cfg.settings.general.quick_add_hotkey
