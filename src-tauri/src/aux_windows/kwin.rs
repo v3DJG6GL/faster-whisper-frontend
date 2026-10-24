@@ -20,19 +20,23 @@ pub fn is_kde_wayland() -> bool {
     wayland && kde
 }
 
+/// Run `program` to completion with all stdio null. No piped stdout: writing kwinrulesrc can
+/// D-Bus-activate kded6/kconf_update, which would inherit a captured stdout pipe and hold it open,
+/// deadlocking the wait. Null stdio = no pipe to leak — and these callers never read the output.
+fn run_silent(program: &str, args: &[&str]) -> std::io::Result<std::process::ExitStatus> {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+}
+
 /// First of the candidate KConfig CLI tools that is runnable.
 fn tool(candidates: &[&'static str]) -> Option<&'static str> {
     candidates
         .iter()
-        .find(|name| {
-            Command::new(name)
-                .arg("--help")
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok()
-        })
+        .find(|name| run_silent(name, &["--help"]).is_ok())
         .copied()
 }
 
@@ -46,12 +50,11 @@ pub fn config_tools() -> Option<(&'static str, &'static str)> {
     ))
 }
 
-/// Write one KConfig key. No piped stdout: writing kwinrulesrc can D-Bus-activate kded6/kconf_update,
-/// which would inherit a captured stdout pipe and hold it open, deadlocking the wait. Null stdio =
-/// no pipe to leak — and we never read the output.
+/// Write one KConfig key (null stdio: see `run_silent`).
 pub fn set_key(tool: &str, group: &str, key: &str, value: &str) {
-    let _ = Command::new(tool)
-        .args([
+    let _ = run_silent(
+        tool,
+        &[
             "--file",
             "kwinrulesrc",
             "--group",
@@ -59,11 +62,8 @@ pub fn set_key(tool: &str, group: &str, key: &str, value: &str) {
             "--key",
             key,
             value,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        ],
+    );
 }
 
 /// Read one KConfig key (None when empty / unreadable).
@@ -80,17 +80,15 @@ fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
 
 /// Ask KWin to reload its configuration so a just-written rule applies to the live window.
 pub fn reconfigure() {
-    let _ = Command::new("dbus-send")
-        .args([
+    let _ = run_silent(
+        "dbus-send",
+        &[
             "--type=method_call",
             "--dest=org.kde.KWin",
             "/KWin",
             "org.kde.KWin.reconfigure",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+        ],
+    );
 }
 
 /// Serializes the General/rules read-modify-write below. The chip, quick-add window and language
