@@ -2,7 +2,7 @@
 //! GStreamer plugin set cannot play AAC/MP4 — the format yt-dlp's `bestaudio`
 //! picks — and feeding the same bytes back as a blob doesn't change that.
 //! Symphonia decodes the file in-process (pure Rust, no system codecs) and
-//! the viewer plays a plain PCM WAV blob instead. Fallback-path only: the
+//! the viewer plays a cached plain PCM WAV file instead. Fallback-path only: the
 //! `<audio>` element gets two chances at the original bytes first.
 
 use symphonia::core::codecs::audio::AudioDecoderOptions;
@@ -13,9 +13,9 @@ use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
-/// Decoded-PCM ceiling: ~1 h of 44.1 kHz stereo. Blobs beyond that would
-/// strain the webview more than help it; the viewer then shows its honest
-/// "can't be decoded" note instead.
+/// Decoded-PCM ceiling: ~1 h of 44.1 kHz stereo. The whole decode is held in
+/// memory before it is written to the cache, so this bounds that buffer; past it
+/// the viewer shows its honest "can't be decoded" note instead.
 const MAX_PCM_BYTES: usize = 640 * 1024 * 1024;
 
 /// Playback-cache ceiling: decoded WAVs beyond this total are pruned
@@ -271,8 +271,7 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         .map(|c| c.count() as u16)
         .unwrap_or(2);
     // Header space reserved up front and patched in at the end: wrapping the
-    // finished PCM afterwards would hold two ~640 MiB buffers at once, on the
-    // very path that exists to keep big decodes off the heap.
+    // finished PCM afterwards would hold two ~640 MiB buffers at once.
     let mut pcm: Vec<u8> = vec![0u8; 44];
     // Size the buffer from the header's frame count so the extend loop below
     // doesn't leave Vec's doubling slack (up to ~2x) behind a big decode. A
