@@ -8,8 +8,7 @@
 //! chords — its accelerators are "modifiers + exactly one key". This backend
 //! observes every physical key transition system-wide and can match all of them,
 //! with no permissions needed. It is therefore ALWAYS the active backend on
-//! Windows (the plugin stays silent — it does everything the plugin can and
-//! more), mirroring the evdev-XOR-plugin invariant on Linux.
+//! Windows (the plugin stays silent), mirroring the evdev-XOR-plugin invariant on Linux.
 //!
 //! WHY two feeds: a focused mstsc with keyboard capture ("Apply
 //! Windows key combinations" ≠ "On this computer", the fullscreen default)
@@ -660,7 +659,7 @@ mod imp {
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 if abandoned.load(std::sync::atomic::Ordering::Relaxed) {
-                    break; // start() gave up on us; fall through to the cleanup below
+                    break; // start() gave up on us
                 }
                 // The re-arm timer targets no window (thread message) — handle it
                 // here; DispatchMessageW would drop it.
