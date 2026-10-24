@@ -161,7 +161,7 @@ pub(super) fn foreground_app_id_live() -> Option<String> {
 /// untouched (a shell surface, or an unreadable process).
 unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {
     if is_shell_window(hwnd) {
-        return None; // taskbar / desktop / Alt-Tab flicker
+        return None;
     }
     let mut pid = 0u32;
     GetWindowThreadProcessId(hwnd, &mut pid);
