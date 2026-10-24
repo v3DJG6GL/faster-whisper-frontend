@@ -99,11 +99,9 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
         typeof (r as AppRule).id === "string" &&
         typeof (r as AppRule).appId === "string",
     )
-    // The one normalization this floor applies (the exception to shape-only): `appId` is the
-    // matching key and the audit screen renders it through a filter that deletes invisible
-    // characters, so an un-normalized key displays as armed and matches nothing. A no-op on a
-    // legitimate rule. Rules whose key is entirely invisible are dropped: they could never match
-    // and could never be read.
+    // The one normalization this floor applies (the exception to shape-only; why: normalizeAppId).
+    // A no-op on a legitimate rule. Rules whose key is entirely invisible are dropped: they could
+    // never match and could never be read.
     .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
     // On the COMPARISON key: a joiner-only appId keeps its stored joiner but keys to "".
     .filter((r) => appRuleKey(r.appId).length > 0);
