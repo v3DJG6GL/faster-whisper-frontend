@@ -2089,49 +2089,79 @@ mod clip_tests {
         out
     }
 
+    /// A scratch dir path of its own for one test: removed, never created.
+    fn scratch(prefix: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// One per-utterance-clip session over `dir`: the cutter and its writer channel, the saved
+    /// buffer, the transcript `forward_saved` folds into and the discard flag.
+    struct Session<'a> {
+        dir: &'a std::path::Path,
+        saved: Vec<u8>,
+        clips: Option<ClipCutter>,
+        rx: UnboundedReceiver<StreamEvent>,
+        docs: Vec<String>,
+        cur: String,
+        discard: AtomicBool,
+    }
+
+    impl<'a> Session<'a> {
+        fn new(dir: &'a std::path::Path, saved: Vec<u8>) -> Self {
+            let (cutter, rx) = ClipCutter::new(dir);
+            Self {
+                dir,
+                saved,
+                clips: Some(cutter),
+                rx,
+                docs: Vec::new(),
+                cur: String::new(),
+                discard: AtomicBool::new(false),
+            }
+        }
+
+        fn feed(&mut self, e: StreamEvent) {
+            self.feed_to(e, &|_| {});
+        }
+
+        fn feed_to(&mut self, e: StreamEvent, on_event: &impl Fn(StreamEvent)) {
+            forward_saved(
+                e,
+                Some(self.dir),
+                &self.discard,
+                &mut self.saved,
+                &mut self.clips,
+                &mut self.docs,
+                &mut self.cur,
+                on_event,
+            );
+        }
+    }
+
     /// One clip per ordinal final, cut at the decode mark; a release final's words reach the
     /// previous clip's `.txt`; a dropped utterance's audio goes nowhere.
     #[test]
     fn each_utterance_gets_its_own_clip_and_text() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 64_000]; // 2 s
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
-        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(
-                e,
-                Some(&dir),
-                &keep,
-                saved,
-                clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
-        };
-        feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
-        saved.extend(vec![0u8; 32_000]); // 1 s after the mark: the next utterance's
-        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
-        assert_eq!(saved.len(), 32_000);
+        let dir = scratch("fwf-clips");
+        let mut s = Session::new(&dir, vec![0u8; 64_000]); // 2 s
+        s.feed(state(UtteranceState::Decoding, 1));
+        s.saved.extend(vec![0u8; 32_000]); // 1 s after the mark: the next utterance's
+        s.feed(fin(" Hallo Welt", Some(1)));
+        assert_eq!(s.saved.len(), 32_000);
         // A release final: no clip of its own, its words belong to utterance 1.
-        feed(fin(" Hallo Welt Komma", None), &mut saved, &mut clips);
+        s.feed(fin(" Hallo Welt Komma", None));
         // No decode mark: the clip takes everything buffered.
-        feed(
-            fin(" Hallo Welt Komma und weiter", Some(2)),
-            &mut saved,
-            &mut clips,
-        );
-        assert!(saved.is_empty());
-        saved.extend(vec![0u8; 3_200]);
-        feed(state(UtteranceState::Decoding, 3), &mut saved, &mut clips);
-        feed(state(UtteranceState::Dropped, 3), &mut saved, &mut clips);
-        assert!(saved.is_empty());
-        clips.as_mut().unwrap().flush_txt(&cur);
+        s.feed(fin(" Hallo Welt Komma und weiter", Some(2)));
+        assert!(s.saved.is_empty());
+        s.saved.extend(vec![0u8; 3_200]);
+        s.feed(state(UtteranceState::Decoding, 3));
+        s.feed(state(UtteranceState::Dropped, 3));
+        assert!(s.saved.is_empty());
+        s.clips.as_mut().unwrap().flush_txt(&s.cur);
 
-        let seen = finish(clips, rx);
+        let seen = finish(s.clips, s.rx);
         assert_eq!(seen.len(), 2);
         assert_eq!((seen[0].1, seen[0].2), (Some(1), 2_000));
         assert_eq!((seen[1].1, seen[1].2), (Some(2), 1_000));
@@ -2151,8 +2181,7 @@ mod clip_tests {
     /// or a hard break behind the previous clip's `.txt`. Both files still land, in order, right after.
     #[test]
     fn the_phrase_is_forwarded_before_its_clip_is_written() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-order-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = scratch("fwf-clips-order");
         let files_with = |ext: &str| {
             std::fs::read_dir(&dir).map_or(0, |d| {
                 d.filter(|f| {
@@ -2171,11 +2200,7 @@ mod clip_tests {
             };
             seen.borrow_mut().push(tag);
         };
-        let mut saved = vec![0u8; 32_000];
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
+        let mut s = Session::new(&dir, vec![0u8; 32_000]);
         for e in [
             fin(" Hallo Welt", Some(1)),
             StreamEvent::Boundary {
@@ -2183,19 +2208,10 @@ mod clip_tests {
                 suffix: String::new(),
             },
         ] {
-            forward_saved(
-                e,
-                Some(&dir),
-                &keep,
-                &mut saved,
-                &mut clips,
-                &mut docs,
-                &mut cur,
-                &on_event,
-            );
+            s.feed_to(e, &on_event);
         }
         assert_eq!(seen.into_inner(), ["final wav=0", "boundary txt=0"]);
-        assert_eq!(finish(clips, rx).len(), 1);
+        assert_eq!(finish(s.clips, s.rx).len(), 1);
         assert_eq!(files_with("wav"), 1);
         assert_eq!(
             files_with("txt"),
@@ -2209,13 +2225,8 @@ mod clip_tests {
     /// typed text; the server sends it on the `boundary`, never in a `final`.
     #[test]
     fn a_clip_a_hard_break_ends_keeps_its_output_suffix() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-suffix-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 32_000];
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
+        let dir = scratch("fwf-clips-suffix");
+        let mut s = Session::new(&dir, vec![0u8; 32_000]);
         for e in [
             fin(" Hallo Welt", Some(1)),
             StreamEvent::Boundary {
@@ -2223,23 +2234,14 @@ mod clip_tests {
                 suffix: " -- sig".into(),
             },
         ] {
-            forward_saved(
-                e,
-                Some(&dir),
-                &keep,
-                &mut saved,
-                &mut clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
+            s.feed(e);
         }
-        let seen = finish(clips, rx);
+        let seen = finish(s.clips, s.rx);
         assert_eq!(seen.len(), 1);
         let wav = std::path::Path::new(&seen[0].0);
         let txt = std::fs::read_to_string(wav.with_extension("txt")).unwrap();
         assert!(txt.starts_with("Hallo Welt -- sig"), "{txt:?}");
-        assert_eq!(docs, ["Hallo Welt -- sig"]);
+        assert_eq!(s.docs, ["Hallo Welt -- sig"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2250,8 +2252,7 @@ mod clip_tests {
     /// `run` forwards them all before `Closed`.
     #[test]
     fn clip_writes_leave_the_session_loop_and_arrive_in_order() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-writer-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = scratch("fwf-clips-writer");
         let forwarded = RefCell::new(Vec::new());
         let on_event = |e: StreamEvent| {
             forwarded.borrow_mut().push(match e {
@@ -2260,33 +2261,20 @@ mod clip_tests {
                 _ => return,
             });
         };
-        let mut saved = Vec::new();
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
+        let mut s = Session::new(&dir, Vec::new());
         let words = [" eins", " eins zwei", " eins zwei drei"];
         for (i, doc) in words.iter().enumerate() {
-            saved.extend(vec![0u8; 3_200 * (i + 1)]);
-            forward_saved(
-                fin(doc, Some(i as u32 + 1)),
-                Some(&dir),
-                &keep,
-                &mut saved,
-                &mut clips,
-                &mut docs,
-                &mut cur,
-                &on_event,
-            );
+            s.saved.extend(vec![0u8; 3_200 * (i + 1)]);
+            s.feed_to(fin(doc, Some(i as u32 + 1)), &on_event);
         }
         assert_eq!(
             forwarded.into_inner(),
             ["final Some(1)", "final Some(2)", "final Some(3)"],
             "no clip is written or forwarded inline"
         );
-        clips.as_mut().unwrap().flush_txt(&cur);
+        s.clips.as_mut().unwrap().flush_txt(&s.cur);
 
-        let seen = finish(clips, rx);
+        let seen = finish(s.clips, s.rx);
         let order: Vec<_> = seen.iter().map(|s| (s.1, s.2)).collect();
         assert_eq!(order, [(Some(1), 100), (Some(2), 200), (Some(3), 300)]);
         let texts: Vec<_> = seen
@@ -2304,44 +2292,23 @@ mod clip_tests {
     /// none of a later utterance's.
     #[test]
     fn a_discarded_drain_cuts_no_clip() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-discard-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 64_000];
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let discard = AtomicBool::new(false);
-        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(
-                e,
-                Some(&dir),
-                &discard,
-                saved,
-                clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
-        };
+        let dir = scratch("fwf-clips-discard");
+        let mut s = Session::new(&dir, vec![0u8; 64_000]);
         // Utterance 1 is cut and kept before the Cancel.
-        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
-        assert!(clips.as_ref().unwrap().cut_any);
-        discard.store(true, std::sync::atomic::Ordering::SeqCst);
-        saved.extend(vec![0u8; 32_000]);
+        s.feed(fin(" Hallo Welt", Some(1)));
+        assert!(s.clips.as_ref().unwrap().cut_any);
+        s.discard.store(true, std::sync::atomic::Ordering::SeqCst);
+        s.saved.extend(vec![0u8; 32_000]);
         // The drain's release final still belongs to utterance 1…
-        feed(fin(" Hallo Welt Komma", None), &mut saved, &mut clips);
+        s.feed(fin(" Hallo Welt Komma", None));
         // …and utterance 2's final ends that text but cuts no clip of its own.
-        feed(
-            fin(" Hallo Welt Komma und weiter", Some(2)),
-            &mut saved,
-            &mut clips,
-        );
-        clips.as_mut().unwrap().flush_txt(&cur);
+        s.feed(fin(" Hallo Welt Komma und weiter", Some(2)));
+        s.clips.as_mut().unwrap().flush_txt(&s.cur);
         assert_eq!(
-            cur, " Hallo Welt Komma und weiter",
+            s.cur, " Hallo Welt Komma und weiter",
             "the transcript still folds in"
         );
-        let seen = finish(clips, rx);
+        let seen = finish(s.clips, s.rx);
         assert_eq!(seen.len(), 1, "no clip after the Cancel");
         let wav = std::path::Path::new(&seen[0].0);
         assert_eq!(
@@ -2363,31 +2330,18 @@ mod clip_tests {
     /// `cut_any` stays false so the end of `run` takes its discard arm for the session audio.
     #[test]
     fn a_drain_discarded_before_any_clip_writes_nothing() {
-        let dir = std::env::temp_dir().join(format!("fwf-discard-early-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 64_000];
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let discard = AtomicBool::new(true);
+        let dir = scratch("fwf-discard-early");
+        let mut s = Session::new(&dir, vec![0u8; 64_000]);
+        s.discard = AtomicBool::new(true);
         for e in [
             fin(" Hallo Welt", Some(1)),
             fin(" Hallo Welt und weiter", Some(2)),
         ] {
-            forward_saved(
-                e,
-                Some(&dir),
-                &discard,
-                &mut saved,
-                &mut clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
+            s.feed(e);
         }
-        assert!(!clips.as_ref().unwrap().cut_any, "nothing was cut");
-        assert_eq!(saved.len(), 64_000, "no audio was split off");
-        assert!(finish(clips, rx).is_empty(), "no clip is saved");
+        assert!(!s.clips.as_ref().unwrap().cut_any, "nothing was cut");
+        assert_eq!(s.saved.len(), 64_000, "no audio was split off");
+        assert!(finish(s.clips, s.rx).is_empty(), "no clip is saved");
         assert!(!dir.exists(), "no file was written");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2396,31 +2350,17 @@ mod clip_tests {
     /// leaving it at the head of the next utterance's clip.
     #[test]
     fn a_markless_drop_discards_its_burst() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-drop-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 32_000]; // 1 s of noise the gate ignores
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
-        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(
-                e,
-                Some(&dir),
-                &keep,
-                saved,
-                clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
-        };
-        feed(state(UtteranceState::Dropped, 1), &mut saved, &mut clips);
-        assert!(saved.is_empty());
-        saved.extend(vec![0u8; 16_000]); // 0.5 s
-        feed(state(UtteranceState::Decoding, 2), &mut saved, &mut clips);
-        feed(fin(" Hallo", Some(2)), &mut saved, &mut clips);
-        let seen: Vec<_> = finish(clips, rx).into_iter().map(|s| (s.1, s.2)).collect();
+        let dir = scratch("fwf-clips-drop");
+        let mut s = Session::new(&dir, vec![0u8; 32_000]); // 1 s of noise the gate ignores
+        s.feed(state(UtteranceState::Dropped, 1));
+        assert!(s.saved.is_empty());
+        s.saved.extend(vec![0u8; 16_000]); // 0.5 s
+        s.feed(state(UtteranceState::Decoding, 2));
+        s.feed(fin(" Hallo", Some(2)));
+        let seen: Vec<_> = finish(s.clips, s.rx)
+            .into_iter()
+            .map(|s| (s.1, s.2))
+            .collect();
         assert_eq!(seen, vec![(Some(2), 500)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2429,43 +2369,22 @@ mod clip_tests {
     /// clip from the drain tail, and its released words still reach the last clip's `.txt`.
     #[test]
     fn the_closing_final_cuts_no_clip() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-last-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mut saved = vec![0u8; 32_000];
-        let (cutter, rx) = ClipCutter::new(&dir);
-        let mut clips = Some(cutter);
-        let (mut docs, mut cur) = (Vec::new(), String::new());
-        let keep = AtomicBool::new(false);
-        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(
-                e,
-                Some(&dir),
-                &keep,
-                saved,
-                clips,
-                &mut docs,
-                &mut cur,
-                &|_| {},
-            );
-        };
-        feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
-        saved.extend(vec![0u8; 3_200]);
-        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
-        saved.extend(vec![0u8; 640]); // the ungated drain/resampler tail
-        feed(
-            StreamEvent::Final {
-                committed: " Hallo Welt Komma".into(),
-                tail: String::new(),
-                last: true,
-                utterance: Some(2),
-            },
-            &mut saved,
-            &mut clips,
-        );
-        assert!(clips.as_ref().unwrap().cut_any);
-        clips.as_mut().unwrap().flush_txt(&cur);
+        let dir = scratch("fwf-clips-last");
+        let mut s = Session::new(&dir, vec![0u8; 32_000]);
+        s.feed(state(UtteranceState::Decoding, 1));
+        s.saved.extend(vec![0u8; 3_200]);
+        s.feed(fin(" Hallo Welt", Some(1)));
+        s.saved.extend(vec![0u8; 640]); // the ungated drain/resampler tail
+        s.feed(StreamEvent::Final {
+            committed: " Hallo Welt Komma".into(),
+            tail: String::new(),
+            last: true,
+            utterance: Some(2),
+        });
+        assert!(s.clips.as_ref().unwrap().cut_any);
+        s.clips.as_mut().unwrap().flush_txt(&s.cur);
 
-        let seen: Vec<_> = finish(clips, rx).into_iter().map(|s| s.1).collect();
+        let seen: Vec<_> = finish(s.clips, s.rx).into_iter().map(|s| s.1).collect();
         assert_eq!(seen, vec![Some(1)]);
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
