@@ -1,5 +1,6 @@
-// The Statistics calendar's year document on a failed fetch: same rule as the page document —
-// the last good year from the same backend + target stays up, marked failed, never another's.
+// The store's Statistics documents. On a failed fetch the year document follows the page
+// document's rule: the last good year from the same backend + target stays up, marked failed,
+// never another's. Forgetting, removing or re-keying a backend drops the documents that name it.
 
 import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, useApp } from "./store";
