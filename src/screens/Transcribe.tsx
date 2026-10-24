@@ -192,6 +192,9 @@ function savedBackendOf(t: TranscribeSettings | undefined, backends: readonly Ba
   return id && backends.some((b) => b.id === id) ? id : undefined;
 }
 
+/** The stored picks that name something on ONE server: cleared whenever the saved backend changes. */
+const CLEARED_SCOPED_PICKS = { model: "", translationModel: "", language: undefined } as const;
+
 /** A run is in flight: an item running, or one queued behind it. */
 function queueBusy(queue: readonly QueueItem[]): boolean {
   return queue.some((it) => it.status === "running" || it.status === "queued");
@@ -429,7 +432,7 @@ export default function Transcribe() {
     setLanguage(lang);
     const nextT = pruneTargets(translateTo, lang);
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
-    persistOptions({ backendId: id, model: "", translationModel: "", language: undefined, translateTo: nextT });
+    persistOptions({ backendId: id, ...CLEARED_SCOPED_PICKS, translateTo: nextT });
   };
   useEffect(() => {
     if (backends.length && !backends.some((b) => b.id === backendId)) {
@@ -463,7 +466,7 @@ export default function Transcribe() {
       setTranslationMode(s.translationMode);
       setSeparateBgm(s.separateBgm);
       if (switched) {
-        persistOptions({ backendId: s.backendId, model: "", translationModel: "", language: undefined, translateTo: targets });
+        persistOptions({ backendId: s.backendId, ...CLEARED_SCOPED_PICKS, translateTo: targets });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
@@ -897,7 +900,7 @@ export default function Transcribe() {
     persistOptions(
       useApp.getState().settings.transcribe?.backendId === backendId
         ? { backendId, ...patch }
-        : { backendId, model: "", language: undefined, translationModel: "", ...patch },
+        : { backendId, ...CLEARED_SCOPED_PICKS, ...patch },
     );
   /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
   const panelHeldChips = useRef(false);
