@@ -309,9 +309,9 @@ export default function Dashboard() {
             "bg-armed text-[#1a1207]"
           : "bg-surface-2 text-dim";
   const waveTone = vis.tone;
-  // Mirror the chip (Overlay working = processing || warming): vis.state is "processing" for
-  // transcribing/injecting AND cold-mic warm-up, so the bars self-sweep during warm-up instead of
-  // sitting flat at the ~0 level a warming mic delivers.
+  // Mirror the chip: vis.state is "processing" for transcribing/injecting AND cold-mic warm-up,
+  // so the bars self-sweep during warm-up instead of sitting flat at the ~0 level a warming mic
+  // delivers.
   const waveProcessing = vis.state === "processing";
 
   // The live-transcript card is shown while a session is live (or on error), then
@@ -350,8 +350,6 @@ export default function Dashboard() {
     // (dictate refuses a disabled profile or one with no Backend). backendForProfile falls back to
     // the first Backend even for no profile, so a backend check alone lets a profile-less session through.
     if (!canStart || !headerBackend || !target) return;
-    // Stamps the active Profile for the chip, honours "Ask for target languages", and
-    // resolves effective language / prompt / decode (target over backend).
     startHandsFree(headerBackend, micId, target);
   };
 
