@@ -186,7 +186,6 @@ function Editor({
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
   // generation, and the hooks below then re-ask as the new caller (as resultLive does) — they
   // and the override-profile picker apply that stored-key generation rule themselves.
-  // Caller capabilities, for gating the decode editor.
   const { caps: ctxCaps } = useOverrideContext({
     serverUrl: probeUrl,
     backendId: b.id,
@@ -1042,8 +1041,8 @@ function RestoreOffer({
           match = withKey;
         }
       } catch (e) {
-        // Don't lose an applied restore over a keyring failure — leave the backend
-        // keyless; the sync tab's no-key warning takes it from there.
+        // Don't lose an applied restore over a keyring failure: a new backend is left keyless
+        // (the sync tab's no-key warning takes it from there), an existing one keeps whatever key it had.
         console.error("saving API key failed:", e);
         if (!s.backends.some((b) => b.id === match!.id)) s.upsertBackend({ ...match, hasApiKey: false });
       }
