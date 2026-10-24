@@ -18,10 +18,10 @@ const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 /// sync-state.json carries the sync snapshot, config.json carries server URLs, and the Wayland
 /// restore token is a capability that re-acquires input-injection rights without a consent prompt.
 ///
-/// The open does not follow a symlink at the final component. `export_settings_file` writes to
-/// `<user-picked-path>.tmp`, which can land in a world-writable directory (a save dialog
-/// pointed at /tmp is entirely plausible) — without `O_NOFOLLOW` a pre-planted symlink there
-/// would have this truncate and overwrite whatever it pointed at, with the user's privileges.
+/// On Linux the open does not follow a symlink at the final component. `export_settings_file`
+/// writes to `<user-picked-path>.tmp`, which can land in a world-writable directory (a save
+/// dialog pointed at /tmp) — without `O_NOFOLLOW` a pre-planted symlink there would have this
+/// truncate and overwrite whatever it pointed at, with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = std::fs::OpenOptions::new();
@@ -49,11 +49,9 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 /// Replace `path` atomically: write `<path>.tmp` owner-only (`write_private`), then rename it
-/// into place, so a reader sees the old file or the new one, never half of it. Don't leave the
-/// tmp behind when the write OR the rename fails (a full volume — write_private fails AFTER
-/// creating and truncating the file — a Windows AV/indexer lock, which the config reader already
-/// retries for, a read-only or cross-device app-data dir). `export_settings_file` writes through
-/// here too.
+/// into place, so a reader sees the old file or the new one, never half of it. The tmp is
+/// removed when the write OR the rename fails (write_private can fail after creating the file,
+/// e.g. on a full volume). `export_settings_file` writes through here too.
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
     if let Err(e) = write_private(&tmp, contents) {
@@ -124,9 +122,9 @@ fn default_true() -> bool {
     true
 }
 
-/// Quick-add default: Super+Alt (user-set 2026-07-13; canonical order per
-/// `code_rank`). An independent chord beside the push-to-talk/hands-free defaults;
-/// nesting it over a hold is a shadow conflict, not a feature (see hotkeys/chord_engine.rs).
+/// Quick-add default: Super+Alt (canonical order per `code_rank`). An independent chord
+/// beside the push-to-talk/hands-free defaults; nesting it over a hold is a shadow
+/// conflict, not a feature (see hotkeys/chord_engine.rs).
 fn default_quick_add_hotkey() -> Vec<String> {
     vec!["AltLeft".into(), "MetaLeft".into()]
 }
@@ -181,15 +179,13 @@ fn default_stats_metric() -> OverlayStatsMetric {
     OverlayStatsMetric::Both
 }
 
-/// How a Profile's chord behaves. First-class, decoupled from the Profile's id
-/// (the old `DictationModeId = hold|handsfree` fused identity with behavior).
+/// How a Profile's chord behaves, independent of the Profile's id.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ActivationType {
     Hold,
-    /// Tap once to start, tap again to stop. `alias` keeps configs written while
-    /// this was called "latch" loading unchanged — the variant renamed, the stored
-    /// value did not have to, and a config that still says `latch` is valid forever.
+    /// Tap once to start, tap again to stop. `alias`: configs that still store the
+    /// pre-rename value `latch` stay valid.
     #[serde(alias = "latch")]
     HandsFree,
 }
@@ -220,8 +216,8 @@ pub struct Backend {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cleared: Option<bool>,
     pub response_format: ResponseFormat,
-    /// Phase-B placeholder: per-Backend decode-param defaults. Skipped when None
-    /// so Phase-A configs round-trip byte-stable and the frontend need not send it.
+    /// Per-Backend decode-param defaults, opaque to Rust. Skipped when None so
+    /// existing configs round-trip byte-stable and the frontend need not send it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
     /// Per-Backend T2T translation defaults (targets/model/context/glossary/
@@ -269,10 +265,11 @@ pub struct Profile {
     /// Override the Backend's language; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Override the Backend's prompt; None/empty = inherit.
+    /// Override the Backend's prompt: None = inherit, "" = explicit clear (send no
+    /// initial_prompt), a value = override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
-    /// Phase-B placeholder: per-Profile decode-param overrides.
+    /// Per-Profile decode-param overrides, opaque to Rust.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_overrides: Option<serde_json::Value>,
     /// Per-Profile T2T translation overrides; for dictation, translateTo[0]
@@ -280,8 +277,7 @@ pub struct Profile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation_overrides: Option<serde_json::Value>,
     /// Insert each phrase as the user speaks, rather than the whole transcript at the
-    /// end. Replaced the global three-way `insertTiming`. None = off; skipped when None
-    /// so existing configs round-trip byte-stable.
+    /// end. None = off; skipped when None so existing configs round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub type_as_i_speak: Option<bool>,
     /// Per-Profile insertion overrides (method / paste chord / Enter / clipboard restore).
@@ -294,9 +290,8 @@ pub struct Profile {
     pub override_profile: Option<String>,
     /// Ask which target languages to translate into at activation time instead of
     /// using the Profile's fixed `translationOverrides.translateTo`. Frontend-owned;
-    /// Rust only stores + round-trips it. Skipped when None so configs round-trip
-    /// byte-stable. (Without this field serde dropped the key on every save, so the
-    /// toggle never survived a restart — the same class as `AppSettings::transcribe`.)
+    /// Rust only round-trips it, but it must be typed here: a key missing from this
+    /// mirror is dropped on every save. Skipped when None so configs round-trip byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_translation_targets: Option<bool>,
 }
@@ -461,8 +456,9 @@ where
 pub struct GeneralSettings {
     pub open_at_login: bool,
     pub start_minimized: bool,
-    /// When to auto-insert the transcription (off / on stop / live). `#[serde(default)]`
-    /// so configs predating this field (which had `autoPaste`) load without resetting.
+    /// Retired three-way timing (off / on stop / live), superseded by `type_as_i_speak`.
+    /// Kept so a rollback to an older build reads a conservative value instead of
+    /// defaulting back to "live"; `#[serde(default)]` so configs predating it load.
     #[serde(default = "default_insert_timing")]
     pub insert_timing: InsertTiming,
     pub insert_method: InsertMethod,
@@ -497,15 +493,11 @@ pub struct GeneralSettings {
     #[serde(default)]
     pub deep_field_detection: bool,
     /// Global chord (KeyboardEvent.code list) that opens the quick-add window. Empty =
-    /// unset. Factory default = Super+Alt (`default_quick_add_hotkey`) (inert until a
-    /// quick-add list is designated — see apply_bindings). `#[serde(default = …)]` so
-    /// configs missing the field get the factory value. Registered via the same paths
-    /// as Profile hotkeys (evdev / plugin / the `--quick-add` CLI flag).
-    /// Deserialized through `de_hotkey`, exactly like `Profile.hotkey`. Without it this chord got
-    /// no canonicalization and no dedup, so it was the one binding whose LENGTH nothing bounded:
-    /// `chords_from` maps every element (a million copies of one modifier all map), and
-    /// `Engine::step` then walks the whole vector on EVERY system-wide key transition. The dedup
-    /// makes that structurally impossible for all three consumers at once.
+    /// unset. Factory default = Super+Alt, inert until a quick-add list is designated (see
+    /// apply_bindings). Registered via the same paths as Profile hotkeys (evdev / plugin /
+    /// the `--quick-add` CLI flag). Deserialized through `de_hotkey` like `Profile.hotkey`:
+    /// its dedup bounds the chord's length, which `Engine::step` walks on every system-wide
+    /// key transition.
     #[serde(default = "default_quick_add_hotkey", deserialize_with = "de_hotkey")]
     pub quick_add_hotkey: Vec<String>,
 }
@@ -516,8 +508,7 @@ pub struct RecordingSettings {
     pub indicator_position: IndicatorPosition,
     pub save_recordings: bool,
     /// User-chosen folder for saved `.wav` recordings; None/empty = the default under
-    /// the app data dir. `#[serde(default, skip…)]` so older configs load and configs
-    /// that never set it round-trip byte-stable.
+    /// the app data dir.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recordings_dir: Option<String>,
     /// One base folder for ALL stored audio — `dictations/`, `files/` and
@@ -568,16 +559,14 @@ pub struct RecordingSettings {
     /// When the route is shown, reveal it only while hovering the chip (vs. always).
     #[serde(default)]
     pub show_route_on_hover: bool,
-    /// Show a tiny usage readout (today's words/minutes) on the chip. Default on;
-    /// `#[serde(default = …)]` so configs missing the field get the factory value.
+    /// Show a tiny usage readout (today's words/minutes) on the chip.
     #[serde(default = "default_true")]
     pub show_stats_on_overlay: bool,
     /// When the readout is shown, reveal it only while hovering the chip (vs. always).
     /// `#[serde(default)]` so older configs default to always-shown.
     #[serde(default)]
     pub overlay_stats_on_hover: bool,
-    /// Which usage figure the chip shows. `#[serde(default = …)]` (both) so older
-    /// configs load with a sensible metric.
+    /// Which usage figure the chip shows.
     #[serde(default = "default_stats_metric")]
     pub overlay_stats_metric: OverlayStatsMetric,
     /// Show the injection target app (→ AppName) on the chip, plus a warn hint when the focused
@@ -614,7 +603,7 @@ pub struct RecordingSettings {
     pub hover_reveal_ms: u32,
     /// "Chip size": one factor for the whole chip (0.75–2.0). Rust reads it only to pre-warm
     /// the KDE placement rule; at runtime the webview passes it to `show_overlay`, which
-    /// clamps it. `#[serde(default = …)]` so older configs load at 100 %.
+    /// clamps it.
     #[serde(default = "default_scale")]
     pub chip_scale: f64,
     /// "Dot size": extra factor (1.0–3.0) for the status dot while the chip is minimized
@@ -712,9 +701,7 @@ pub struct AppSettings {
     /// The Signal colour (hue in degrees) and its motion — frontend-owned like `sync`
     /// and `transcribe`: Rust stores + round-trips both and never interprets them.
     /// Every secondary window (quick-add, picker) reads the config THROUGH this struct,
-    /// so a key missing here is silently dropped by serde: the quick-add window stayed
-    /// amber and the colour did not survive a restart until these fields existed.
-    /// `#[serde(default, skip…)]` so older configs load and an unset value round-trips
+    /// so a key missing here is silently dropped by serde. An unset value round-trips
     /// byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_hue: Option<f64>,
@@ -726,8 +713,7 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub microphone_label: Option<String>,
     /// Which Profile the Home "click to dictate" button targets (None = first
-    /// enabled). Pure storage; the frontend resolves it. `#[serde(default)]` so
-    /// older configs load.
+    /// enabled). Pure storage; the frontend resolves it.
     #[serde(default)]
     pub home_profile_id: Option<String>,
     /// The pinned quick-add word-mapping list (Backend id + callback:map rule slug)
@@ -751,17 +737,13 @@ pub struct AppSettings {
     /// (`transcribe_retention_days`), `dictationRetentionDays`
     /// (`dictation_retention_days`) and `keepDictationHistory`
     /// (`keep_dictation_history`) — for the retention sweeps in store/transcripts.rs.
-    /// Renaming any of them on the TS side silently changes retention. Was silently
-    /// DROPPED before this field existed (serde ignored the unknown key), so
-    /// these preferences never survived a restart. `#[serde(default, skip…)]`
-    /// so older configs load and an unset value round-trips byte-stable.
+    /// Renaming any of them on the TS side silently changes retention.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcribe: Option<serde_json::Value>,
-    /// In-app logging preferences. `#[serde(default)]` so older configs load.
     #[serde(default)]
     pub logging: LoggingSettings,
     /// "Skip for now" on the first-run gate: fall back to the Home checklist
-    /// instead of re-gating every launch. `#[serde(default)]` so older configs load.
+    /// instead of re-gating every launch.
     #[serde(default)]
     pub setup_dismissed: bool,
     /// Most-recently picked dictation translation targets, newest first — seeds the
@@ -803,10 +785,9 @@ impl AppSettings {
 
     /// The ONE dictation clock Settings shows ("Delete dictations after"): the stricter
     /// non-zero of the audio window (`recording.recordingsRetentionDays`) and the record
-    /// window (`dictationRetentionDays`), mirroring Settings.tsx's `dictDays`. The row writes
-    /// both keys, but a never-touched install has audio 0 + record 7 — the row reads 7 days
-    /// while the audio sweep kept every recording forever. Both sweeps use this value, so
-    /// text and audio leave together as the row promises. 0 = keep forever.
+    /// window (`dictationRetentionDays`), mirroring Settings.tsx's `dictDays`. A never-touched
+    /// install has audio 0 + record 7 and the row reads 7 days, so both sweeps use this value
+    /// and text and audio leave together as the row promises. 0 = keep forever.
     pub fn effective_dictation_days(&self) -> u32 {
         match (
             self.recording.recordings_retention_days,
@@ -927,7 +908,6 @@ fn config_path(dir: &Path) -> PathBuf {
     dir.join("config.json")
 }
 
-// ── Legacy (pre-v2) config migration ────────────────────────────────────────
 // Pre-v2 configs stored `profiles: ModelProfile[]` (= today's Backend) and
 // `modes: ModeBinding[]` with a fused `mode: "hold"|"handsfree"`. The fields are
 // the ONLY signal of intent, so we parse them explicitly (a plain serde default
@@ -1170,10 +1150,11 @@ fn decode_keeping_invalid_utf8(path: &Path, bytes: &[u8]) -> String {
 /// Load config from `<dir>/config.json`, falling back to defaults if missing or invalid. A legacy
 /// (pre-v2) config is migrated losslessly and re-saved so the next load takes the fast path.
 ///
-/// Returns `(config, recovered)`: `recovered` is true ONLY when a PRESENT-but-unreadable/unparseable
-/// config was backed up to `.json.bak` and replaced with defaults — so the frontend can warn the user
-/// their settings were reset (and where the backup is) instead of silently losing them. It is false
-/// for a clean load, a migration, and a genuine first-run (absent file).
+/// Returns `(config, recovered)`: `recovered` is true when a PRESENT-but-unreadable/unparseable
+/// config was replaced with defaults — by this load or an earlier one this session (sticky, see
+/// below) — and backed up to `.json.bak` unless `backup_failed()`, so the frontend can warn the user
+/// their settings were reset instead of silently losing them. Before any reset it is false for a
+/// clean load, a migration, and a genuine first-run (absent file).
 pub fn load_outcome(dir: &Path) -> (Config, bool) {
     // Sticky for the process: once a corrupt config is backed up + reset, EVERY later load this
     // session reports `recovered` — even a caller that came after the recovery. setup() runs the
@@ -1222,10 +1203,9 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
         }
         None => {
             tracing::warn!("config parse failed; backing up + using defaults");
-            // Don't silently discard a config we couldn't parse — the frontend arms auto-save
-            // after load, so the next save would overwrite it with defaults and lose the user's
-            // backends/profiles/settings for good. Stash the unparseable file so a corrupt,
-            // hand-edited, or forward-incompatible config stays recoverable, and report `recovered`.
+            // The frontend arms auto-save after load, so the next save would overwrite this file
+            // with defaults: stash it so a corrupt, hand-edited or forward-incompatible config
+            // stays recoverable.
             if !backup_unreadable(&path) {
                 BACKUP_FAILED.store(true, Ordering::SeqCst);
             }
@@ -1337,9 +1317,7 @@ pub mod keys {
         matches!(e, keyring::Error::PlatformFailure(_))
     }
 
-    /// The loop's actual gate: retry only the FIRST attempt, and only a retryable error.
-    /// (`retryable` alone was pinned by a test while the loop ignored it and retried — and
-    /// double-prompted — everything.)
+    /// The read loop's gate: retry only the FIRST attempt, and only a retryable error.
     pub(crate) fn should_retry(attempt: u8, e: &keyring::Error) -> bool {
         attempt == 0 && retryable(e)
     }
@@ -1407,8 +1385,7 @@ pub mod keys {
                     let read = failed_read(&e);
                     match read {
                         // Simply not stored — the caller treats the backend as keyless. Memoized
-                        // like a hit: `set`/`delete` write through (and a read that raced one is not
-                        // cached), so it cannot go stale in-process.
+                        // like a hit (see `cache`).
                         KeyRead::Absent => {
                             remember(backend_id, seen, None);
                         }
@@ -1422,8 +1399,8 @@ pub mod keys {
                             "[keys] keyring read failed for backend {backend_id:?}: {e}"
                         ),
                     }
-                    // Not `continue`: falling out of the match re-entered the loop, so every
-                    // non-retryable error was read (and prompted for) a second time anyway.
+                    // Return, never fall through: the loop would read (and prompt for) every
+                    // non-retryable error a second time.
                     return read;
                 }
             }
