@@ -276,10 +276,9 @@ export default function Transcribe() {
   // Per-run stage options, seeded from the persisted screen defaults.
   // undefined = the server's default (request-default-settings `diarize`), shown as "Default · …".
   const [diarize, setDiarize] = useState<boolean | undefined>(seed.diarize);
-  // Speaker count as an explicit MODE (auto / count / range) instead of a
-  // stepper whose 0 doubles as "auto" — one accidental "−" click used to flip
-  // the mode silently and persist. Legacy blobs have no speakerMode: a pinned
-  // numSpeakers means "count" there.
+  // Speaker count as an explicit MODE (auto / count / range), not a stepper whose
+  // 0 doubles as "auto", where one stray "−" click would flip the mode silently
+  // and persist. Legacy blobs have no speakerMode: a pinned numSpeakers means "count".
   const [speakerMode, setSpeakerMode] = useState<"auto" | "count" | "range">(seed.speakerMode);
   const [numSpeakers, setNumSpeakers] = useState(seed.numSpeakers);
   const [minSpeakers, setMinSpeakers] = useState(seed.minSpeakers);
@@ -290,7 +289,7 @@ export default function Transcribe() {
   // stored list is synced, and the chips, the site panel's parts and the run read this one list.
   const [translateTo, setTranslateTo] = useState<string[]>(seed.translateTo);
   // The translation-model pick names a model on the saved backend's server, so it rides on
-  // savedBackend like model/language (a deleted or unresolved backend must not hand its model to
+  // savedBackendOf like model/language (a deleted or unresolved backend must not hand its model to
   // backends[0]). Trimmed at the seed for the same reason as the Whisper model: the stored value
   // is synced, and a whitespace-only pick is no pick, so the picker's custom note and reset agree
   // with effectiveTranslationModel, which sends the inherited model.
@@ -1004,7 +1003,7 @@ export default function Transcribe() {
     const running = useTranscribeRun
       .getState()
       .queue.some((it) => it.status === "running" || it.status === "queued");
-    if (running) stageFiles(paths); // kept for the next run, the live run is untouched
+    if (running) stageFiles(paths);
     else addFiles(paths);
   };
 
@@ -1073,8 +1072,8 @@ export default function Transcribe() {
     setVadNoticeDismissed(null); // fresh results argue their own case
     // The screen's toggle/chips are AUTHORITATIVE (an empty list = off) —
     // Backend defaults only seed the toggle, they never force the stage on
-    // (an invisible fallback made translation impossible to switch off and
-    // silently swallowed an explicit Translate-to-English).
+    // (an invisible fallback would make translation impossible to switch off
+    // and silently swallow an explicit Translate-to-English).
     // Sent whole even over a lower server's limit: the audio route drops the extras with a
     // result warning naming them, and translateParsed (subtitle/text files, a link's site
     // transcript) cuts to the server's limit from the backend's caps with the same warning —
@@ -1142,10 +1141,8 @@ export default function Transcribe() {
    *  the file with the otherwise-unchanged run settings. */
   const retryWithoutVad = (path: string) => {
     if (busy || !vadRetryable) return;
-    // The run's own settings (the store's), like retry() — except the spoken-language mode
-    // (`multilingual`), which retryOverrides takes from the screen as buildCtx takes the
-    // language half; the rest of runOverrides is unpersisted state that a remount resets and
-    // later panel edits change.
+    // The run's own settings (the store's), like retry(): runOverrides is unpersisted state that
+    // a remount resets and later panel edits change.
     const next = retryOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
     // The panel keeps the user's later edits and only flips the switch; the retry itself
     // replays the run's own settings.
@@ -1541,9 +1538,8 @@ export default function Transcribe() {
                     disabled={busy}
                   />
                 </div>
-                {/* Keep the video too: only when the server can and the link
-                    has one. The quality select lists the site's own rungs;
-                    a rung over the server's cap stays visible but disabled. */}
+                {/* The quality select lists the site's own rungs; a rung over
+                    the server's cap stays visible but disabled. */}
                 {caps?.url_video_enabled === true &&
                   (urlPreviewData.video_ladder ?? []).some((r) => r.kind === "video") && (() => {
                     const ladder = urlPreviewData.video_ladder ?? [];
@@ -1610,11 +1606,9 @@ export default function Transcribe() {
 
       <div className="mt-6">
         <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">processing</div>
-        {/* Rows in PIPELINE order, previewing the run rail: separate music →
-            skip silence → translate to English (the decode's task) → identify
-            speakers → translation. The hairline + dots say "sequence" without
-            over-claiming stages (skip-silence and Whisper translate live inside
-            the transcribe stage). */}
+        {/* Rows in PIPELINE order, previewing the run rail. The hairline +
+            dots say "sequence" without over-claiming stages (skip-silence and
+            Whisper translate live inside the transcribe stage). */}
         <Card className="px-5 py-1">
           {isStandard ? (
             <SettingRow
@@ -1790,7 +1784,7 @@ export default function Transcribe() {
                         label="Speaker diarization"
                         summary={diarizationSummary(
                           speakersText(speakerMode, numSpeakers, minSpeakers, maxSpeakers),
-                          // The model only says something when there is a choice of one.
+                          // "Default · <name>" only when there is a model to choose; a lone model shows its bare name.
                           diarizationModels.length > 1 || diarizationModel
                             ? stageModelText(diarizationModel, defaultDiarizationName)
                             : defaultDiarizationName,
@@ -2424,7 +2418,7 @@ export default function Transcribe() {
                 // is declined moments before its slot). A plan stage the
                 // server marks "failed" (a soft failure the run survived —
                 // diarization, separation, translation) keeps its own state:
-                // folding it into "done" put a green check beside the
+                // folded into "done" it would put a green check beside the
                 // warning that says it failed.
                 const planStage = planBy.get(st);
                 const state: StepState =
@@ -2519,7 +2513,8 @@ export default function Transcribe() {
                   dlBytes && dlElapsedMs && dlElapsedMs > 0
                     ? dlBytes / (dlElapsedMs / 1000)
                     : null;
-                // VAD both halves: kept fraction from the live poll.
+                // VAD kept fraction from the live poll: drives the active row's
+                // kept/skipped bar and the done row's silence receipt.
                 const vr =
                   st === "transcribing" && typeof progress?.vadRetained === "number"
                     ? progress.vadRetained
@@ -2824,8 +2819,8 @@ export default function Transcribe() {
                                 </span>
                               )
                             )}
-                            {/* Per-language receipts: what each target took,
-                                kept after the run like every other chip. */}
+                            {/* Per-unit receipts (a translate target or a
+                                diarize step): what each one took. */}
                             {state === "done" && hasUnits && planStage?.units?.map((u) => {
                               const tgt = (st === "diarizing" ? safeDisplayText(u.target, 16) : langText(u.target, 12)).trim();
                               if (!tgt) return null;
