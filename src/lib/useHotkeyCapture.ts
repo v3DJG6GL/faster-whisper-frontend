@@ -220,7 +220,7 @@ export function useHotkeyCapture(opts: {
     };
     // If focus is stolen mid-chord (alt-tab, an OS/global-shortcut modifier grab), the matching
     // keyup never arrives — drop the in-progress chord so a phantom-held modifier can't poison the
-    // next captured binding, and reset `peak` (which otherwise only ever grows within a session).
+    // next captured binding, and reset the `peak` high-water mark with it.
     const onBlur = () => {
       pressed.clear();
       peak = [];
