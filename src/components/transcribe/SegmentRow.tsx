@@ -272,10 +272,10 @@ export const SegmentRow = memo(function SegmentRow({
         // Own-property read: a language code like `valueOf` would otherwise
         // return an inherited function and `.trim()` would throw mid-render.
         const tr = ownProp(translations, lang);
-        // Stripped BEFORE trimming (like the Edit span): whitespace inside a
+        // Cleaned like the original line (rowText, strip before trim): whitespace inside a
         // leading/trailing bidi mark would otherwise survive as an indent and
         // an empty first word that shifts the follow-along highlight.
-        const trText = stripControlChars(tr ?? "").trim();
+        const trText = rowText(tr ?? "");
         if (!trText) return null;
         // Tagged on the SANITIZED code, falling back like the original line's tag
         // (origLang): a code that strips to blank would draw an empty tag.
