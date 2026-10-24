@@ -37,6 +37,14 @@ const PLAIN: BatchResult = {
 /** A manual German site subtitle track ("de-x-site") with these cues. */
 const deSiteTrack = (cues: TimedTrack["cues"]): TimedTrack => ({ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues });
 
+/** One segment holding `text`, its words `ws` timed 0.5 s apiece from 0. */
+const wordLine = (text: string, ws: string[], language?: string): BatchResult => ({
+  text,
+  ...(language ? { language } : {}),
+  segments: [{ start: 0, end: ws.length * 0.5, text }],
+  words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+});
+
 describe("prettySpeaker / speakerOrder", () => {
   it("maps pyannote labels to human names and keeps others verbatim", () => {
     expect(prettySpeaker("SPEAKER_00")).toBe("Speaker 1");
@@ -738,35 +746,18 @@ describe("lrc word tags", () => {
       .toBe("[00:00.00]<00:00.00>今日<00:00.50>は<00:01.00>晴れ\n");
   });
   it("one Latin word in a CJK line keeps its spaces, the CJK seams stay joined", () => {
-    const ja = ["これは", "iPhone", "の", "新しい", "機能", "です"];
-    const r: BatchResult = {
-      text: "これは iPhone の新しい機能です",
-      language: "ja",
-      segments: [{ start: 0, end: 3, text: "これは iPhone の新しい機能です" }],
-      words: ja.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-    };
+    const r = wordLine("これは iPhone の新しい機能です", ["これは", "iPhone", "の", "新しい", "機能", "です"], "ja");
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>これは <00:00.50>iPhone <00:01.00>の<00:01.50>新しい<00:02.00>機能<00:02.50>です\n");
   });
   it("a segment without whitespace joins every tag without a space (Thai, CJK + digits)", () => {
-    const one = (text: string, ws: string[]): BatchResult => ({
-      text,
-      segments: [{ start: 0, end: ws.length * 0.5, text }],
-      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-    });
-    expect(generateExport(one("สวัสดีครับ", ["สวัสดี", "ครับ"]), { format: "lrc", wordTimestamps: true }))
+    expect(generateExport(wordLine("สวัสดีครับ", ["สวัสดี", "ครับ"]), { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>สวัสดี<00:00.50>ครับ\n");
-    expect(generateExport(one("今年是2024年", ["今年", "是", "2024", "年"]), { format: "lrc", wordTimestamps: true }))
+    expect(generateExport(wordLine("今年是2024年", ["今年", "是", "2024", "年"]), { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>今年<00:00.50>是<00:01.00>2024<00:01.50>年\n");
   });
   it("a spaced Thai line takes its seams from the text: a space only where the text has one", () => {
-    const ws = ["สวัสดี", "ครับ", " ผม", "ชื่อ"];
-    const r: BatchResult = {
-      text: "สวัสดีครับ ผมชื่อ",
-      language: "th",
-      segments: [{ start: 0, end: 2, text: "สวัสดีครับ ผมชื่อ" }],
-      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-    };
+    const r = wordLine("สวัสดีครับ ผมชื่อ", ["สวัสดี", "ครับ", " ผม", "ชื่อ"], "th");
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>สวัสดี<00:00.50>ครับ <00:01.00>ผม<00:01.50>ชื่อ\n");
   });
