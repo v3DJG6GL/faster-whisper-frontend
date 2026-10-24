@@ -50,6 +50,7 @@ pub fn injection_epoch() -> u64 {
 /// a rejected stop) is different: the user never asked for the text to go away, and the
 /// stop-mode path already copies the transcript for manual recovery. Set alongside the bump so
 /// the two cases stay distinguishable at the point the job bails.
+///
 /// Carries the epoch VALUE produced by the most recent error-abort bump, not a bare "the last
 /// bump was an error" flag. A flag is read long after it is written — the job that bailed asks
 /// about it at the end of `inject_text` — so two interleaved aborts let a user cancel adopt an
@@ -206,7 +207,6 @@ pub fn note_paste_target(remote: bool) {
     DELIVERED_ON_CLIPBOARD.store(false, Ordering::SeqCst);
 }
 
-/// Did the most recent paste go to a remote-desktop target?
 pub fn last_paste_was_remote() -> bool {
     LAST_PASTE_REMOTE.load(Ordering::SeqCst)
 }
@@ -499,8 +499,9 @@ const CLIP_IDLE_WAIT: Duration = Duration::from_secs(1);
 /// the same tick as the grab: the paste's write then bumps the sequence number the grab reads as
 /// "the copy landed", the grab puts the user's old clipboard back during the paste's settle, and
 /// the Ctrl+V pastes that instead of the phrase. A third, try-only taker (Windows only, like the
-/// grab) is `begin_injection`'s session-snapshot read: mid-grab the clipboard holds the user's SELECTION, which that read would
-/// otherwise store and the end-of-session restore write over their real clipboard. It holds the
+/// grab) is `begin_injection`'s session-snapshot read: mid-grab the clipboard holds the user's
+/// SELECTION, which that read would otherwise store and the end-of-session restore write over
+/// their real clipboard. It holds the
 /// lock only across one capped read (a read stuck past its 400 ms cap keeps it, so a paste then
 /// waits up to `CLIP_JOB_WAIT` and answers `NothingWritten` — the same answer a stuck read already
 /// gives via `wait_clip_read_idle`, only later). Only `paste` waits for it (`wait_clip_job`); the
@@ -697,7 +698,8 @@ impl Drop for RequeueRestore {
 }
 
 /// True on a native Wayland session (where enigo's X11 text path can't type
-/// Unicode into native windows — direct typing routes through the portal instead).
+/// Unicode into native windows — direct typing routes through the virtual keyboard or the portal
+/// instead).
 pub fn is_wayland() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -715,14 +717,11 @@ pub fn is_wayland() -> bool {
 /// (legitimate keystrokes); CR is first normalized to LF. The Wayland direct-typing paths already
 /// drop controls; this brings the paste / clipboard / X11-direct paths to the same posture.
 pub fn sanitize_injected(text: &str) -> String {
-    // Collapse CRLF and a lone CR to LF first, so every path sees exactly one '\n' per line break.
-    // The Wayland typing paths map both '\r' and '\n' to an Enter keypress (`wayland`'s
-    // KeySpec, the virtual keyboard), so a server's CRLF would otherwise type TWO Enters per break
-    // — a spurious blank line. The enigo path (X11/Windows/macOS) does NOT get Enter from a
-    // character at all — enigo maps '\n' to XK_Linefeed on X11 and may inject U+200B on macOS —
-    // so `inject` types each '\n' as a Return KEY via `typing_segments`. The clipboard paths turn
-    // the LF back into CRLF on Windows (`clipboard_newlines`). One LF here is what makes all of
-    // them agree on one Enter per break.
+    // Collapse CRLF and a lone CR to LF so every path sees one '\n' per line break: the Wayland
+    // typing paths map both '\r' and '\n' to an Enter keypress (`wayland`'s KeySpec, the virtual
+    // keyboard), so a server's CRLF would otherwise type TWO Enters per break. The enigo path types
+    // each LF as a Return key (`typing_segments`), and the clipboard paths turn it back into CRLF on
+    // Windows (`clipboard_newlines`).
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
         .chars()
@@ -1056,8 +1055,6 @@ fn serve_clipboard_blocking(
     #[cfg(target_os = "linux")]
     {
         match arboard::Clipboard::new() {
-            // Blocks here serving the selection until another app replaces it — that's what
-            // keeps the text on the clipboard after a plain set would return + drop it.
             Ok(mut cb) => {
                 // Report BEFORE the wait, not after: `set().wait()` does not return until another
                 // app takes the selection, which may be never. Connecting to the clipboard is the
@@ -1220,9 +1217,9 @@ fn serve_transcript(
     }
 }
 
-/// Restore clipboard text captured (time-bounded) by the caller before the paste, after a short delay so the paste
-/// has consumed the clipboard first. No-op when `prev` is None. Restores via a LIVE owner
-/// (not a plain set_text) so the restored value actually persists on Wayland.
+/// Restore clipboard text the caller captured before the paste, after a short delay so the paste
+/// has consumed the clipboard first. Restores via a LIVE owner (not a plain set_text) so the
+/// restored value actually persists on Wayland.
 ///
 /// Scheduled through `RestoreSlot`: a newer clipboard write inside the 400ms takes it over (a
 /// local paste adopts it, anything else drops it), and the timer then finds itself superseded.
@@ -1354,8 +1351,8 @@ fn paste(
     chord: &[String],
     remote_target: bool,
     // See `injection_cancelled`. The pre-job check in `inject` runs before `Enigo::new`, and this
-    // function then does an unbounded blocking `get_text()` plus a settle sleep before it touches
-    // anything, so it checks again at the sink.
+    // function then waits on the clipboard-job lock and does an un-timed blocking `get_text()`
+    // before its write, and a settle sleep before its chord, so it checks again at each.
     epoch: u64,
     own_window_focused: OwnWindowFocused<'_>,
     // Nothing here is worth leaving on the clipboard (the hard-break separator): every arm that
@@ -1429,21 +1426,21 @@ fn paste(
     } else {
         None
     };
-    // A cancel that landed during `Enigo::new` / `Clipboard::new` / the un-timed `get_text()` above
-    // must not still clobber the user's clipboard with the transcript they discarded. Bailing here
-    // is clean: nothing has been written yet and `previous` was only read, never replaced. The
-    // caller (`inject`) returns `Ok(Landed::Yes)` into `inject_text`'s `res`, so the error-abort
-    // recovery block at the end of that function still runs and a died session keeps its text.
+    // A cancel that landed during `inject`'s `Enigo::new` / the clipboard-job wait /
+    // `Clipboard::new` / the un-timed `get_text()` above must not still clobber the user's
+    // clipboard with the transcript they discarded. Bailing here is clean: nothing has been written
+    // yet and `previous` was only read, never replaced. The caller (`inject`) returns
+    // `Ok(Landed::Yes)` into `inject_text`'s `res`, so the error-abort recovery block at the end of
+    // that function still runs and a died session keeps its text.
     if injection_cancelled(epoch) {
         tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
         return Ok(Landed::Yes);
     }
-    // Own-window check at the clipboard WRITE. `inject_text`'s guard ran before `spawn_blocking`,
-    // and between it and here sit `Enigo::new`, `Clipboard::new` and an explicitly UN-TIMED
-    // blocking `get_text()` — the longest guard-to-sink gap on any injection path. Without it, a
-    // click into one of our own windows mid-injection clobbers the user's clipboard and then
-    // pastes into our own field. `NothingWritten`: `previous` was only READ, so the caller
-    // re-sends and no text is duplicated.
+    // Own-window check at the clipboard WRITE: between `inject_text`'s guard and here sit
+    // `Enigo::new`, the clipboard-job wait and the un-timed read above — the longest guard-to-sink
+    // gap on any injection path — and a click into one of our own windows during them would
+    // clobber the user's clipboard and then paste into our own field.
+    // `NothingWritten`: `previous` was only READ, so the caller re-sends and no text is duplicated.
     if own_window_focused() {
         tracing::info!("[clip] paste: skipped at the clipboard write — our own window took focus");
         return Ok(Landed::NothingWritten);
@@ -1484,8 +1481,6 @@ fn paste(
         }
         true
     } else if paste_write_via_live_owner(remote_target, cfg!(target_os = "linux")) {
-        // A local paste on Linux is served by the live owner too — see
-        // `paste_write_via_live_owner`.
         persist_transcript(text)?;
         true
     } else {
@@ -1757,8 +1752,8 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
 mod tests {
     use super::sanitize_injected;
 
-    /// `paste` asked about a cancel only BEFORE its stuck-read wait (up to 1s on Windows), so a
-    /// cancel during the wait still wrote the discarded transcript — with no prior read to restore.
+    /// A cancel that lands during `paste`'s stuck-read wait (up to 1s on Windows) must write
+    /// nothing: the discarded transcript would go out with no prior read to restore.
     #[test]
     fn a_cancel_during_the_stuck_read_wait_writes_nothing() {
         use super::{idle_wait_gate, Landed};
@@ -1782,9 +1777,9 @@ mod tests {
     }
 
     /// A cancel that lands during the own-window probe (a main-thread round trip) must stop the
-    /// paste chord and auto-Enter on every backend: read only before the probe, a cancel from the
-    /// hotkey, the tray or an error abort (focus stays in the target app, the probe answers false)
-    /// still pressed Ctrl+V or Return on the transcript.
+    /// paste chord and auto-Enter on every backend: a cancel from the hotkey, the tray or an error
+    /// abort leaves focus in the target app, so the probe answers false and only a cancel read
+    /// after it keeps Ctrl+V or Return off the transcript.
     #[test]
     fn a_cancel_during_the_own_window_probe_stops_the_sink() {
         use super::{sink_gate, SinkGate};
@@ -1807,8 +1802,8 @@ mod tests {
 
     /// A typing loop (the `direct` segments, the Wayland portal characters) must read the cancel
     /// AFTER its per-step own-window probe: that probe sits right in front of every line break, so
-    /// a cancel landing during it, read before, still pressed the cancelled transcript's Return,
-    /// which submits a chat or form.
+    /// a cancel landing during it, if read before, would still press the cancelled transcript's
+    /// Return, which submits a chat or form.
     #[test]
     fn a_cancel_during_the_typing_probe_stops_the_line_break() {
         use super::{typing_gate, typing_segments, SinkGate, TypeSeg};
@@ -1906,8 +1901,8 @@ mod tests {
     }
 
     /// A failed paste keeps the transcript on the clipboard by the divert's rule: off Linux the
-    /// plain write already holds it, so re-writing the same text only duplicated it in the Win+V
-    /// history (and could log a false "may not stay on the clipboard").
+    /// plain write already holds it, so re-writing the same text would only duplicate it in the
+    /// Win+V history (and could log a false "may not stay on the clipboard").
     #[test]
     fn a_failed_paste_keeps_a_durable_write_of_the_same_form() {
         use super::{after_chord, AfterChord};
@@ -2334,7 +2329,7 @@ mod tests {
     }
 
     /// A chord whose main key does not map (Shift + Insert on macOS, or any unmapped key) falls
-    /// back to the WHOLE platform paste chord. Keeping its modifiers sent Shift+V, typing a
+    /// back to the WHOLE platform paste chord: keeping its modifiers would send Shift+V, typing a
     /// literal 'V' while reporting a paste.
     #[test]
     fn unmapped_paste_key_falls_back_to_the_whole_paste_chord() {
