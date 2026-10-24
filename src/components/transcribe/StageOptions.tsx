@@ -1,13 +1,10 @@
-// A stage row's settings, folded (Transcribe's processing card): a gear beside the row's
-// switch opens them, and under the row's description one quiet line names what the stage
-// will run with ("Auto speakers · Default · community-1") — the line toggles too. Closed by
-// default; open, the panel takes the accent edge and the gear the accent. The gear never hides:
-// while the stage is off it greys out. A value off its default puts the accent dot in the
-// line, so a change shows while folded.
+// A stage row's folded settings (Transcribe's processing card): a gear beside the row's switch
+// and one quiet line under its description naming what the stage will run with ("Auto speakers
+// · Default · community-1") both toggle the panel; an accent dot in the line shows a value off
+// its default while folded.
 //
 // The gear sits in SettingRow's control column and the panel in its `expand` slot, so the
-// two share one `useStageOptions()` state: <StageGear> beside the switch, <StageOptions> in
-// `expand`.
+// two share one `useStageOptions()` state.
 import { useId, useState, type ReactNode } from "react";
 import { Settings } from "lucide-react";
 import { SettingExpand } from "@/components/ui";
