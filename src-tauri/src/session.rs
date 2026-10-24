@@ -40,13 +40,12 @@ fn next_session_epoch() -> u64 {
 }
 
 /// Retire the active epoch when a session is DISCARDED (cancel) before any successor claims one, so
-/// the discarded session — and its already-detached background drain (finish() detaches the WS task;
-/// the batch path its spawned transcribe POST) — can never emit again. Without this the cancelled
-/// epoch stays active until the NEXT start claims one, leaving that next session's start prologue
-/// (status flips to "listening" before start() runs next_session_epoch) a window where the stale
-/// drain's final/closed would pass BOTH emit_if_active AND the frontend inSession() guard. Safe: a
-/// fresh start always claims a strictly higher epoch via next_session_epoch, and a discarded session's
-/// late `closed` can only reach the (cancelStream-calling) handler while its own epoch is still active.
+/// the discarded session and its detached background drain can never emit again. Without this the
+/// cancelled epoch stays active until the NEXT start claims one, leaving that next session's start
+/// prologue (status flips to "listening" before start() runs next_session_epoch) a window where the
+/// stale drain's final/closed would pass BOTH emit_if_active AND the frontend inSession() guard.
+/// Safe: a fresh start always claims a strictly higher epoch, and a discarded session's late
+/// `closed` can only reach the (cancelStream-calling) handler while its own epoch is still active.
 pub fn retire_active_epoch() {
     ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
@@ -687,13 +686,12 @@ fn announce_mic(
     let _ = (&input.watch_source, pin, stop);
 }
 
-/// Build a cpal stream error callback that signals `stop` on a TERMINAL device error. A mid-session
-/// device disconnect surfaces as DeviceNotAvailable / StreamInvalidated and then no more data callbacks
-/// fire — without this the capture thread stays blocked in publish_levels_with_live (loops until stop), its
-/// pcm sender never drops, and the session wedges at "listening" with a frozen meter until the user
-/// cancels. Tripping stop unblocks it so the channel closes and the session drains to Closed (the
-/// same teardown a user stop triggers). Transient errors (xruns, backend glitches) are logged,
-/// throttled, and do NOT stop the session — unless they arrive as a storm (see `stream_errors`).
+/// Build a cpal stream error callback that signals `stop` on a TERMINAL device error (which errors
+/// count: `stream_errors`). After a mid-session disconnect no more data callbacks fire, so without
+/// this the capture thread stays blocked in publish_levels_with_live (loops until stop), its pcm
+/// sender never drops, and the session wedges at "listening" with a frozen meter until the user
+/// cancels. Tripping stop lets the channel close and the session drain to Closed (the same teardown
+/// a user stop triggers).
 fn err_cb_with_stop(stop: Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + 'static {
     crate::audio::stream_errors::error_callback("stream", move || {
         stop.store(true, Ordering::SeqCst);
@@ -1237,8 +1235,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     };
     if pcm.is_empty() {
         // Nothing captured (an instant tap / misfire): close without sending, as the streaming path
-        // does. No minimum-DURATION gate: any actual audio is sent and the BACKEND decides
-        // (CAPTURES_RECORDING_MIN_DURATION_S).
+        // does.
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
