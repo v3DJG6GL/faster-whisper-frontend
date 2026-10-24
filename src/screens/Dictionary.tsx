@@ -353,8 +353,8 @@ function RuleCard({
               {shownEntries.map((row, i) => {
                 const hasNote = !!(row.note && row.note.length);
                 const noteShown = noteShow.has(row.id) ? !!noteShow.get(row.id) : hasNote;
-                // Against the SHOWN slice: the down-arrow on the last visible row otherwise
-                // swapped it into the hidden tail, where it vanished with no undo.
+                // Against the SHOWN slice: the down-arrow on the last visible row would otherwise
+                // swap it into the hidden tail, where it vanishes with no undo.
                 const last = i === shownEntries.length - 1;
                 const setRow = (patch: Partial<EntryRow>) =>
                   setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...patch } : r)));
@@ -366,7 +366,7 @@ function RuleCard({
                         {i + 1}
                       </span>
                       {/* ReorderControls keeps keyboard focus on the arrow across the re-keyed move
-                          and at the top/bottom, where a native `disabled` dropped it to <body>. */}
+                          and at the top/bottom, where a native `disabled` would drop it to <body>. */}
                       {bodyEditable && (
                         <ReorderControls
                           canUp={!saving && i > 0}
@@ -430,8 +430,8 @@ function RuleCard({
                           <textarea value={row.note ?? ""} disabled={inputsDisabled} rows={2} autoFocus={row.id === noteFocusId}
                             placeholder="note (optional)"
                             onChange={(ev) => {
-                              // Pin the open state first: a note shown only because it had text
-                              // (no explicit toggle) otherwise unmounted the moment it was cleared.
+                              // Pin the open state first: a note shown only because it has text
+                              // (no explicit toggle) would otherwise unmount the moment it is cleared.
                               if (!noteShow.has(row.id)) setNoteShow((m) => new Map(m).set(row.id, true));
                               setRow({ note: ev.target.value });
                             }}
@@ -658,8 +658,8 @@ export default function Dictionary() {
   // effect (the effect deps key on the CONNECTED address, not just serverUrl).
   const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
 
-  // Candidate Backends: full faster-whisper servers (and untested ones — we can't
-  // prove "standard", so we let the fetch decide). Standard servers are excluded.
+  // Candidate Backends: full faster-whisper servers, and untested ones — we can't
+  // prove "standard", so we let the fetch decide.
   const candidates = useMemo(
     () => backends.filter((b) => effectiveServerKind(b, ownProp(connections, b.id)) !== "standard"),
     [backends, connections],
