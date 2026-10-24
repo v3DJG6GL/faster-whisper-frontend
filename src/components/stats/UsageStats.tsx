@@ -278,7 +278,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
 }
 
 /** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
- *  defaulting to the dictation/home-target backend), the fixed 30-day series, and a
+ *  defaulting to the home-target backend), the fixed 30-day series, and a
  *  setter. Shared by the Home strip + the Statistics page so they stay in sync. The chip
  *  readout is independent — it always follows the dictation backend (see lib/usage.ts). */
 function useUsageView() {
