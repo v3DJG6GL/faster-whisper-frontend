@@ -38,6 +38,18 @@ function spacedCues(t: string, lang = "", cpl = 32): string[] {
     .cues.map((c) => c.text);
 }
 
+/** Whisper-style words (no space before a CJK word; a quote glued to the word before it). */
+function resOf(ws: string[], language: string, pauses: Record<number, number> = {}): BatchResult {
+  let t = 0;
+  const words = ws.map((word, i) => {
+    const w = { word, start: t, end: t + 0.3 };
+    t = w.end + 0.05 + (pauses[i] ?? 0);
+    return w;
+  });
+  const text = ws.join("");
+  return { text, language, words, segments: [{ start: 0, end: t, text }] };
+}
+
 const STD: CueOptions = { length: "standard", timing: "same" };
 /** No lone surrogate: an emoji was never cut in half. */
 const wellFormed = (s: string) => !/[\ud800-\udfff]/.test(s.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
@@ -300,25 +312,18 @@ describe("buildCues", () => {
     // Clocked at the end of 」", the opener puts the pause on the seam after it (never cut): a cue
     // runs over the silence and own timing loses the gap.
     const ws = ["他说", "今天", "天气", "很好", "「真的", '」"', '再见"', "然后", "我们", "一起", "走了", "很远", "很远", "的路", "回家"];
-    let t = 0;
-    const words = ws.map((word, i) => {
-      const w = { word, start: t, end: t + 0.3 };
-      t = w.end + 0.05 + (i === 5 ? 2 : 0);
-      return w;
-    });
-    const text = ws.join("");
-    const r: BatchResult = { text, language: "zh", words, segments: [{ start: 0, end: t, text }] };
-    const [pauseFrom, pauseTo] = [words[5].end, words[6].start];
+    const r = resOf(ws, "zh", { 5: 2 });
+    const [pauseFrom, pauseTo] = [r.words![5].end, r.words![6].start];
     for (const length of ["short", "standard"] as const) {
       const { cues } = buildCues(r, { length, timing: "same" }, ["orig"]);
       const all = cues.map((c) => `${c.text} [${c.start}–${c.end}]`).join(" | ");
       expect(cues.every((c) => c.end <= pauseFrom + 1e-9 || c.start >= pauseTo - 1e-9), all).toBe(true);
       expect(cues.some((c) => c.text.startsWith('"再见"')), all).toBe(true);
-      expect(cues.map((c) => c.text).join("")).toBe(text);
+      expect(cues.map((c) => c.text).join("")).toBe(r.text);
     }
     const en = 'He said the weather today is nice, "really", goodbye, and then we walked a very long way home together';
     const own = buildCues(
-      { ...r, segments: [{ start: 0, end: t, text, translations: { en } }] },
+      { ...r, segments: [{ ...r.segments![0], translations: { en } }] },
       { length: "short", timing: "own" },
       ["orig", "en"],
     ).own.en;
@@ -1498,17 +1503,6 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
 });
 
 describe("buildCues keeps quotation marks with what they open and close", () => {
-  /** Whisper-style words (no space before a CJK word; a quote glued to the word before it). */
-  const resOf = (ws: string[], language: string, pauses: Record<number, number> = {}): BatchResult => {
-    let t = 0;
-    const words = ws.map((word, i) => {
-      const w = { word, start: t, end: t + 0.3 };
-      t = w.end + 0.05 + (pauses[i] ?? 0);
-      return w;
-    });
-    const text = ws.join("");
-    return { text, language, words, segments: [{ start: 0, end: t, text }] };
-  };
   it("a quote Whisper glued to a closing bracket (」\") opens the next quotation: no cue ends on it", () => {
     const r = resOf(["他说", "今天", "天气", "「two", " words", '」"', '再见"', "然后", "我们", "一起", "走了", "很远", "很远", "的路"], "zh");
     for (const length of ["short", "standard"] as const) {
