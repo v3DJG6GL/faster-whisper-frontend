@@ -56,8 +56,10 @@ function dd(over: Partial<DecodeDefaults> = {}): DecodeDefaults {
   };
 }
 
+/** A plain server default with no label or lock. */
+const e = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
+
 describe("server default names (W6–W8)", () => {
-  const e = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
   it("names a default model short", () => {
     expect(shortModelName("Systran/faster-whisper-large-v3")).toBe("faster-whisper-large-v3");
     expect(serverName(e("pyannote/speaker-diarization-community-1"))).toBe("speaker-diarization-community-1");
@@ -148,7 +150,7 @@ describe("serverInherited", () => {
   });
   it("an output suffix of one space is a value, from the server and from a Backend", () => {
     const fromServer = serverInherited(
-      dd({ settings: { output_suffix: { value: " ", source: "server", label: "", locked: false } } as DecodeDefaults["settings"] }),
+      dd({ settings: { output_suffix: e(" ") } as DecodeDefaults["settings"] }),
     );
     expect(inheritLabel(String(fromServer.values.output_suffix))).toBe("Inherit · ␠");
     expect(fromServer.sources.output_suffix).toBe("Server default");
@@ -189,18 +191,17 @@ describe("serverInherited", () => {
     expect(p.value).toBe("Medizin");
     expect(p.locked).toBe(true);
     expect(p.source).toBe("Set for your account on the server (user · profile studio)");
-    expect(serverInherited(dd({ prompt: { value: null, source: "server", label: "", locked: false } })).prompt?.value).toBeUndefined();
+    expect(serverInherited(dd({ prompt: e(null) })).prompt?.value).toBeUndefined();
   });
   it("keeps a multiline value's newline and names the new keys' null text", () => {
-    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
     const s = serverInherited(
       dd({
         settings: {
-          streaming_hard_break_separator: entry("\n"),
-          output_prefix: entry(" "),
-          hallucination_silence_threshold: entry(null),
-          suppress_chars: entry(null),
-          some_newer_server_key: entry(5),
+          streaming_hard_break_separator: e("\n"),
+          output_prefix: e(" "),
+          hallucination_silence_threshold: e(null),
+          suppress_chars: e(null),
+          some_newer_server_key: e(5),
         } as DecodeDefaults["settings"],
       }),
     );
@@ -212,15 +213,13 @@ describe("serverInherited", () => {
     expect(Object.keys(s.values)).not.toContain("some_newer_server_key");
   });
   it("reads an empty server text value as none, not as unknown", () => {
-    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
-    const s = serverInherited(dd({ settings: { output_prefix: entry(""), suppress_chars: entry("") } as DecodeDefaults["settings"] }));
+    const s = serverInherited(dd({ settings: { output_prefix: e(""), suppress_chars: e("") } as DecodeDefaults["settings"] }));
     expect(s.values.output_prefix).toBe("none");
     expect(s.sources.output_prefix).toBeDefined();
     expect(s.values.suppress_chars).toBe("none");
   });
   it("keeps a multiline key's empty server value as empty, not none", () => {
-    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
-    const s = serverInherited(dd({ settings: { streaming_hard_break_separator: entry("") } as DecodeDefaults["settings"] }));
+    const s = serverInherited(dd({ settings: { streaming_hard_break_separator: e("") } as DecodeDefaults["settings"] }));
     expect(s.values.streaming_hard_break_separator).toBe("");
     expect(s.sources.streaming_hard_break_separator).toBeDefined();
   });
