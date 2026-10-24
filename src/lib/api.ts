@@ -832,11 +832,10 @@ export async function stopMicTestPlayback(): Promise<void> {
   await invoke("stop_mic_test_playback");
 }
 
-/** Shared contract for every event subscription: no-op (empty unlisten) outside Tauri, else
- *  dynamic-import the event module and listen, handing the typed payload to `cb`. Keeps the
- *  isTauri guard + dynamic import in ONE place so a subscriber can't forget the empty-unlisten
- *  return (which would throw, not no-op, in non-Tauri `pnpm dev`). Returns the unlisten fn.
- *  Exported for the aux windows (Overlay, QuickAdd, LangPick) that listen to their own events. */
+/** Every event subscription goes through here: outside Tauri it returns an empty unlisten (a
+ *  subscriber that forgot one would throw, not no-op, in non-Tauri `pnpm dev`), else it
+ *  dynamic-imports the event module and listens, handing the typed payload to `cb`. Returns the
+ *  unlisten fn. */
 export async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
@@ -1194,18 +1193,14 @@ export interface InjectOutcome {
   /** The text landed — typed, pasted, or deliberately left on the clipboard. False means no key
    *  or chord went out and the transcript was not delivered: do not advance a typed baseline,
    *  there is nothing to recover, and the phrase must go out again (a re-send is safe). That
-   *  invariant is the contract; the causes today are one of our own windows holding focus, so the
-   *  insert was skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel
-   *  landed during one of its own-window probes (the chord-time probe or the portal job's pre-job
-   *  probe), otherwise it is a divert), or a clipboard write that was busy or failed before any
-   *  keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on Windows:
-   *  a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read still held
-   *  it, or the remote-desktop owner or legacy write failed or timed out — a timed-out offer may
-   *  still reach the clipboard later); or an insert marked `withholdOnDivert` (the hard-break
-   *  separator) that would otherwise have been diverted, or recovered after a sink that wrote
-   *  nothing, before anything was written: nothing is written, and that caller drops it rather
-   *  than re-sending. A cancel (user or error abort) before the write is not a `false` cause: it
-   *  stops the insert with `landed: true` and nothing written, like any cancelled insert. */
+   *  invariant is the contract. The causes (one of our own windows holding focus, a clipboard
+   *  write that was busy or failed before any keystroke, a bare auto-Enter the divert withheld)
+   *  are spelled out on the Rust `InjectOutcome.landed` (inject/text.rs). The exception to
+   *  re-sending: an insert marked `withholdOnDivert` (the hard-break separator) that would
+   *  otherwise have been diverted, or recovered after a sink that wrote nothing, comes back
+   *  `false` with nothing written, and that caller drops it. A cancel (user or error abort)
+   *  before the write is not a `false` cause: it stops the insert with `landed: true` and nothing
+   *  written, like any cancelled insert. */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  focus had moved to a different app, one of our own windows took focus just before the paste
@@ -1279,8 +1274,9 @@ export async function recoverTextToClipboard(text: string): Promise<boolean> {
   return await invoke<boolean>("recover_to_clipboard", { text });
 }
 
-/** The focused app's id + title + (when deep detection is on) editability, via AT-SPI.
- *  null when nothing is known yet (no a11y bridge / cold listener). */
+/** The focused app's id + title + (when deep detection is on) editability, via AT-SPI on Linux
+ *  and the foreground window on Windows. null when nothing is known yet (no a11y bridge / cold
+ *  listener). */
 export async function getFocusedApp(): Promise<FocusedApp | null> {
   if (!isTauri) return null;
   return (await invoke<FocusedApp | null>("get_focused_app")) ?? null;
