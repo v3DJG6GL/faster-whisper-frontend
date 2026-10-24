@@ -2,8 +2,8 @@
 //!
 //! Connects to `ws[s]://HOST/v1/audio/transcriptions/stream`, sends the JSON
 //! `config` frame, then forwards 16 kHz mono s16le PCM (resampled from the
-//! capture rate) as binary frames while parsing the server's
-//! `ready`/`partial`/`final`/`error`/`closing` messages into [`StreamEvent`]s.
+//! capture rate) as binary frames while parsing the server's JSON messages
+//! into [`StreamEvent`]s.
 
 use crate::audio::resample::Resampler16k;
 use futures_util::{SinkExt, StreamExt};
@@ -243,8 +243,8 @@ fn display_url(u: &str) -> String {
     if remainder.contains('@') {
         return "the configured server address".to_string();
     }
-    // The path is a fixed literal on every one of these URLs, so it carries no information for the
-    // reader and only spends the message's budget. Scheme + host is the whole point.
+    // The path is mostly the fixed stream route, so it tells the reader little and only spends the
+    // message's budget. Scheme + host is the whole point.
     let joined = if scheme.is_empty() {
         host.to_string()
     } else {
@@ -535,8 +535,6 @@ pub async fn run<F>(
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
     // record save so both paths trim identically); here it's fed chunk-by-chunk as audio arrives.
     let mut gate = crate::audio::SpeechGate::new();
-    // Live-phase telemetry, reported once at drain entry: "sent 0 frames" instantly
-    // separates a dead mic from a server that got audio and answered nothing.
     let mut frames_sent: u64 = 0;
     let mut bytes_sent: u64 = 0;
     let mut partials_seen: u32 = 0;
