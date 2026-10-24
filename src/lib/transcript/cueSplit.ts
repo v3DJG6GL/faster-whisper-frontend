@@ -658,10 +658,10 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
  *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks,
  *  a killed Burmese/Khmer consonant, then an optional repetition mark (REPEAT). */
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
-/** Scripts written without spaces between words that are no CJK (unspacedChar keeps
- *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
- *  between its syllables, like a CJK run — else a space-joined multi-sentence Thai
- *  translation is a handful of unsplittable tokens. */
+/** Scripts written without spaces between words that are no CJK (unspacedChar holds
+ *  only Han/Kana and CJK punctuation, as the LRC seams need): inside spaced text a run of
+ *  them still breaks between its syllables, like a CJK run — else a space-joined
+ *  multi-sentence Thai translation is a handful of unsplittable tokens. */
 const SYLLABIC = "\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}";
 const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
@@ -1152,10 +1152,9 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
     });
   }
   if (toks.length < 2) {
-    // One token: a spaced-script word pushed over only by the prefix stays whole, as in
-    // wrapTokens; an unspaced run wraps per unit. A token holding a no-break space ("京 avait")
-    // stays whole too, as in wrapTokens: units drop whitespace, so the per-unit wrap would
-    // delete it and cut where it holds.
+    // One token: a spaced-script word pushed over only by the prefix, or one holding a no-break
+    // space ("京 avait" — units drop whitespace, so a per-unit wrap would delete it and cut where
+    // it holds), stays whole as in wrapTokens; an unspaced run wraps per unit.
     const u = tokenUnits(t, hyphen);
     return u.length < 2 || (t.length <= cpl && (/\s/.test(t) || (!UNSPACED.test(t) && !BRK_SYL.test(t))))
       ? [t]
