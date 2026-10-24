@@ -1,17 +1,14 @@
 // Unsaved-work guard for in-app navigation.
 //
 // The editor screens (Profiles / Backends / App rules / Dictionary) hold their
-// draft in local state, so clicking a sidebar entry mid-edit used to throw the
-// work away in silence. React Router's own `useBlocker` is data/framework-mode
+// draft in local state. React Router's own `useBlocker` is data/framework-mode
 // only and the app runs a declarative <HashRouter>, so the interception happens
 // where the navigation is ISSUED instead: every route change reachable while an
 // editor is mounted asks here first — the sidebar links, the overlay's
 // app://navigate bridge (App.tsx NavigationBridge) and the failure doorway's
 // "View logs" button (App.tsx LogsDoorwayBanner). A new in-app link must too.
-// History traversal (mouse back/forward buttons, Alt+Left/Right, a swipe) is
-// not issued by the app, so App.tsx HistoryTraversalGuard asks here on its
-// popstate, puts the editor's location back before the router can leave it, and
-// steps back onto the traversal's target if the user then chooses to leave.
+// History traversal (back/forward buttons, Alt+Left/Right, a swipe) is not
+// issued by the app, so App.tsx HistoryTraversalGuard asks here on its popstate.
 //
 // One guard at a time — only one editor screen is ever mounted, since each one
 // is its own route (and a list's editor replaces the list it belongs to).
