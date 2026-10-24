@@ -65,7 +65,7 @@ const EVDEV_STATUS_WAIT_MS = 2_000;
 let flushPendingSave: (() => Promise<void>) | null = null;
 
 /** Land the debounced config save now (the quit handshake / session end): a pending 400 ms
- *  timer runs at once, else an in-flight save is awaited, and a held save (failed write) is
+ *  timer runs at once, else an in-flight save is awaited, else a held save (failed write) is
  *  retried once — a disk that recovered with no edit since still gets the store written. A
  *  conflict freeze stays frozen (the retry re-raises its banner, nothing is written). Never
  *  rejects — a failed save keeps its banner. Resolves at once outside Tauri and before
