@@ -10,9 +10,9 @@
 // trigger opens it. A short list (`search={false}`, ui/form.tsx's Select)
 // has no search field: the listbox itself takes focus and the same keys, Space included.
 //
-// The popover is PORTALED to <body> and fixed-positioned at the trigger (useAnchoredRect, shared
-// with Combobox), so a card's `overflow-hidden` can't crop it; it opens upward when the room
-// below is short. Which rows exist and in what order is the caller's pure `sections(query)`.
+// The popover is PORTALED to <body> and fixed-positioned at the trigger (useAnchoredRect), so a
+// card's `overflow-hidden` can't crop it; it opens upward when the room below is short. Which
+// rows exist and in what order is the caller's pure `sections(query)`.
 
 import {
   useEffect,
