@@ -59,8 +59,6 @@ impl Meter {
     }
 }
 
-/// Appends captured mono samples to the shared clip, dropping the oldest so it
-/// never holds more than `cap` samples.
 struct Recorder {
     clip: Arc<Mutex<MicClip>>,
     cap: usize,
