@@ -31,6 +31,9 @@ function caps(patch: Partial<Capabilities>): Capabilities {
 }
 
 describe("translationWarm", () => {
+  // The default (listed first) is cold, a non-default is resident.
+  const coldDefault = caps({ translation_models: [{ id: "a", loaded: false }, { id: "b", loaded: true }] });
+
   it("is null when there are no caps at all", () => {
     expect(translationWarm(null)).toBe(null);
   });
@@ -48,16 +51,7 @@ describe("translationWarm", () => {
 
   it("answers for the default (listed first) when no model is named", () => {
     // A resident non-default model must not make a cold default look warm.
-    expect(
-      translationWarm(
-        caps({
-          translation_models: [
-            { id: "a", loaded: false },
-            { id: "b", loaded: true },
-          ],
-        }),
-      ),
-    ).toBe(false);
+    expect(translationWarm(coldDefault)).toBe(false);
     expect(
       translationWarm(
         caps({
@@ -71,14 +65,8 @@ describe("translationWarm", () => {
   });
 
   it("answers for the named model, not the set", () => {
-    const c = caps({
-      translation_models: [
-        { id: "a", loaded: false },
-        { id: "b", loaded: true },
-      ],
-    });
-    expect(translationWarm(c, "b")).toBe(true);
-    expect(translationWarm(c, "a")).toBe(false);
+    expect(translationWarm(coldDefault, "b")).toBe(true);
+    expect(translationWarm(coldDefault, "a")).toBe(false);
   });
 
   it("is false for a model the server does not list", () => {
@@ -91,17 +79,7 @@ describe("translationWarm", () => {
     expect(
       translationWarm(caps({ translation_models: [{ id: "a", loaded: true }] }), "  "),
     ).toBe(true);
-    expect(
-      translationWarm(
-        caps({
-          translation_models: [
-            { id: "a", loaded: false },
-            { id: "b", loaded: true },
-          ],
-        }),
-        "  ",
-      ),
-    ).toBe(false);
+    expect(translationWarm(coldDefault, "  ")).toBe(false);
   });
 
   it("is empty-list false, not null", () => {
