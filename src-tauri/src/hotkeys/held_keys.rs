@@ -7,7 +7,7 @@
 //! the *second* chord press, with every key still down).
 //!
 //! Refcounted by keycode so multiple keyboards compose correctly. When the backend isn't running
-//! the map stays empty, so the gate is a no-op and injection behaves exactly as before.
+//! the map stays empty, so the gate is a no-op and injection proceeds ungated.
 //!
 //! A leaked count is not benign: with the divert-on-still-held branch on the primary hotkey paths,
 //! a stuck count silently sends every phrase to the clipboard for the process lifetime.
@@ -68,10 +68,11 @@ pub fn arm_chord_lost() {
 /// for it. Without this the latch is a dud that the NEXT, unrelated session drains.
 ///
 /// It exists because a manufactured stop arms the latch whenever the OS still reports the chord
-/// down, and a manufactured stop does not guarantee an injection follows: a live-mode hold profile coerces every per-phrase insert to
-/// clipboard-only (which returns before the consume), and a stop with no speech yet returns without
-/// injecting at all. Either leaves the latch set for the whole TTL, and the user's very next
-/// reflex — release, re-press, dictate — would have had its first phrase diverted.
+/// down, and a manufactured stop does not guarantee an injection follows: a live-mode hold profile
+/// coerces every per-phrase insert to clipboard-only (which returns before the consume), and a stop
+/// with no speech yet returns without injecting at all. Either leaves the latch set for the whole
+/// TTL, and the user's very next reflex — release, re-press, dictate — would have had its first
+/// phrase diverted.
 ///
 /// Cannot produce a false negative: a chord held continuously across the wipe emits no rising edge
 /// by definition, which is the entire situation the latch is for. Deliberately NOT cleared on a
@@ -132,12 +133,11 @@ pub const SHORTCUT_MOD_CODES: [u16; 8] = [
     54,  // KEY_RIGHTSHIFT
 ];
 
-/// A binding's `event.code` → the evdev keycode of that SHORTCUT modifier, or None
-/// for any non-modifier key. Non-modifiers are dropped for cross-backend parity, not
-/// because they are unobservable: `windows::commit` mirrors only the eight modifiers
-/// (via `vk_to_evdev_mod`), while `evdev::commit` feeds `HeldKeys` every key code
-/// it sees. Projects a chord onto its portable subset, so the
-/// queued-start held check tests THE CHORD's modifiers rather than any modifier
+/// A binding's `event.code` → the evdev keycode of that SHORTCUT modifier, or None for any
+/// non-modifier key. Non-modifiers are dropped for cross-backend parity, not because they are
+/// unobservable: `windows::commit` mirrors only the eight modifiers (via `vk_to_evdev_mod`), while
+/// `evdev::commit` feeds `HeldKeys` every key code it sees. Projects a chord onto its portable
+/// subset, so the queued-start held check tests THE CHORD's modifiers rather than any modifier
 /// (holding an unrelated Shift must not read as "chord still held").
 pub fn modifier_code(code: &str) -> Option<u16> {
     Some(match code {
@@ -310,8 +310,8 @@ mod tests {
         let new = held.writer();
         new.set(CTRL, true);
         assert!(held.all_held(&[CTRL]));
-        // The old worker's late post-loop decrement — the race that read "nothing held" and
-        // typed into a live Ctrl — is dropped, and so is a late increment from its backlog.
+        // The old worker's late post-loop decrement — which would read "nothing held" and type
+        // into a live Ctrl — is dropped, and so is a late increment from its backlog.
         old.set(CTRL, false);
         assert!(held.all_held(&[CTRL]));
         old.set(CTRL, true);
