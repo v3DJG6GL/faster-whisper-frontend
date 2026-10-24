@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, type ComponentProps } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Check, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -391,6 +391,19 @@ export default function Settings() {
         {deletingKind === kind ? "Deleting…" : "Delete…"}
       </Button>
     );
+  // One chip-visibility row: the Off / Always / On-hover tri-state, greyed with the chip like its row.
+  const chipVisRow = ({
+    title,
+    desc,
+    ...seg
+  }: { title: string; desc: string } & Pick<
+    ComponentProps<typeof HoverModeSegmented>,
+    "ariaLabel" | "visibleKey" | "hoverKey"
+  >) => (
+    <SettingRow title={title} desc={desc} disabled={chipOff}>
+      <HoverModeSegmented {...seg} disabled={chipOff} />
+    </SettingRow>
+  );
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
   // both on change. Rust enforces the same value on both sweeps
@@ -1142,54 +1155,34 @@ export default function Settings() {
                 disabled={chipOff}
               />
             </SettingRow>
-            <SettingRow
-              title={SETTING.liveTranscript.label}
-              desc="Show words in the chip as you speak — always, or only while you hover it (streaming backends only)."
-              disabled={chipOff}
-            >
-              <HoverModeSegmented
-                ariaLabel="Live transcript visibility"
-                visibleKey="realtimePreview"
-                hoverKey="realtimePreviewOnHover"
-                disabled={chipOff}
-              />
-            </SettingRow>
-            <SettingRow
-              title={SETTING.showActiveProfile.label}
-              desc="Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode."
-              disabled={chipOff}
-            >
-              <HoverModeSegmented
-                ariaLabel="Active-profile visibility"
-                visibleKey="showProfileOnOverlay"
-                hoverKey="showProfileOnHover"
-                disabled={chipOff}
-              />
-            </SettingRow>
-            <SettingRow
-              title={SETTING.showTranslationRoute.label}
-              desc="Show which languages dictation is being translated into (→ FR IT) on the chip — always, or only while you hover it. Shown on its own when the profile tag is off."
-              disabled={chipOff}
-            >
-              <HoverModeSegmented
-                ariaLabel="Translation-route visibility"
-                visibleKey="showRouteOnOverlay"
-                hoverKey="showRouteOnHover"
-                disabled={chipOff}
-              />
-            </SettingRow>
-            <SettingRow
-              title={SETTING.showUsageOnChip.label}
-              desc="Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server."
-              disabled={chipOff}
-            >
-              <HoverModeSegmented
-                ariaLabel="Usage-on-chip visibility"
-                visibleKey="showStatsOnOverlay"
-                hoverKey="overlayStatsOnHover"
-                disabled={chipOff}
-              />
-            </SettingRow>
+            {chipVisRow({
+              title: SETTING.liveTranscript.label,
+              desc: "Show words in the chip as you speak — always, or only while you hover it (streaming backends only).",
+              ariaLabel: "Live transcript visibility",
+              visibleKey: "realtimePreview",
+              hoverKey: "realtimePreviewOnHover",
+            })}
+            {chipVisRow({
+              title: SETTING.showActiveProfile.label,
+              desc: "Label the chip with the running profile's tag — always, or only while you hover it; hover always reveals language and mode.",
+              ariaLabel: "Active-profile visibility",
+              visibleKey: "showProfileOnOverlay",
+              hoverKey: "showProfileOnHover",
+            })}
+            {chipVisRow({
+              title: SETTING.showTranslationRoute.label,
+              desc: "Show which languages dictation is being translated into (→ FR IT) on the chip — always, or only while you hover it. Shown on its own when the profile tag is off.",
+              ariaLabel: "Translation-route visibility",
+              visibleKey: "showRouteOnOverlay",
+              hoverKey: "showRouteOnHover",
+            })}
+            {chipVisRow({
+              title: SETTING.showUsageOnChip.label,
+              desc: "Add a tiny usage readout (today's totals) to the chip — always, or only while you hover it. Needs the faster-whisper-backend; hidden on a standard server.",
+              ariaLabel: "Usage-on-chip visibility",
+              visibleKey: "showStatsOnOverlay",
+              hoverKey: "overlayStatsOnHover",
+            })}
             <SettingRow
               title={SETTING.chipMetric.label}
               desc="Which usage figure the chip shows."
@@ -1206,18 +1199,13 @@ export default function Settings() {
                 disabled={chipOff || !s.recording.showStatsOnOverlay}
               />
             </SettingRow>
-            <SettingRow
-              title={SETTING.showInjectionTarget.label}
-              desc="Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field."
-              disabled={chipOff}
-            >
-              <HoverModeSegmented
-                ariaLabel="Injection-target visibility"
-                visibleKey="showTargetOnOverlay"
-                hoverKey="showTargetOnHover"
-                disabled={chipOff}
-              />
-            </SettingRow>
+            {chipVisRow({
+              title: SETTING.showInjectionTarget.label,
+              desc: "Show which app dictation is typing into (→ app) on the chip — always, or only while you hover it — and warn when it isn't a text field.",
+              ariaLabel: "Injection-target visibility",
+              visibleKey: "showTargetOnOverlay",
+              hoverKey: "showTargetOnHover",
+            })}
             <SettingRow
               title={SETTING.onlyWhileSpeaking.label}
               desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
