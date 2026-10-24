@@ -244,7 +244,7 @@ describe("buildCues", () => {
   });
 
   it("own timing: a quote whose partner lies in the next cue of its segment opens forward", () => {
-    // Its cue (or line) was tokenized alone, where the partner is missing: it ended on 说".
+    // Tokenized alone, its cue (or line) lacks the partner and would end on 说".
     const zh = '今天下午他终于对我说"我今天真的很累很累，想早点回家休息一下"然后就走了';
     const short: CueOptions = { length: "short", timing: "own" };
     const L = limitsFor(short, "zh");
@@ -288,8 +288,8 @@ describe("buildCues", () => {
   });
 
   it("a pause after a glued 」\" lands on the seam before the split-off opener", () => {
-    // The opener's clock sat at the end of 」": the pause fell on the seam after it (never cut),
-    // a cue ran over the silence and own timing lost the gap.
+    // Clocked at the end of 」", the opener puts the pause on the seam after it (never cut): a cue
+    // runs over the silence and own timing loses the gap.
     const ws = ["他说", "今天", "天气", "很好", "「真的", '」"', '再见"', "然后", "我们", "一起", "走了", "很远", "很远", "的路", "回家"];
     let t = 0;
     const words = ws.map((word, i) => {
@@ -375,8 +375,8 @@ describe("buildCues", () => {
 
   it("own timing: a cue whose glued quote pairs with the next cue stays in its line cap as its export wraps it", () => {
     // The " after 好 opens a quotation the next cue closes: wrapped with the cue's quotes (Cue.q,
-    // as the export and the Subtitles view do) it rides forward, judged without them it joined
-    // backward, and the cue the splitter accepted took a third line.
+    // as the export and the Subtitles view do) it rides forward; judged without them it joins
+    // backward, and the cue the splitter accepted takes a third line.
     const zh = '园他，的天"好说去起们气他好"OKiPhone公"天"天，今气OK们我天好"公OK"很的的';
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { zh } }] });
     const o: CueOptions = { ...STD, timing: "own" };
@@ -481,7 +481,7 @@ describe("wrapLines", () => {
       "今日は朝から雨が降ってい", "て、駅までの道はとても混ん", "でいました。電車も遅れていた", "ので、会社に着いたのは十時過",
       "ぎでした。🎉それでも午後に", "は晴れて、皆で外に出ました。",
     ]);
-    // 1200 words used to take seconds (every candidate rejoined both halves).
+    // Rejoining both halves for every candidate takes seconds on 1200 words.
     const big = Array.from({ length: 1200 }, (_, i) => `word${i % 17}${i % 9 ? "" : ","}`).join(" ");
     const t0 = performance.now();
     const lines = wrapLines(big, 42, 2);
@@ -541,8 +541,8 @@ describe("wrapLines", () => {
     expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
   it("a no-break space is no word break, and a line keeps it as written", () => {
-    // /\s/ matches U+00A0, U+202F and U+2007: "25 000" was cut and wrapped across its
-    // no-break space, and a wrapped line rewrote "viens ?" with a plain space.
+    // /\s/ matches U+00A0, U+202F and U+2007: split by it, "25 000" is cut and wrapped across its
+    // no-break space, and a wrapped line rewrites "viens ?" with a plain space.
     const parts = cutByShare("Le prix est de 1 250 000 euros", [1, 1], "fr");
     expect(parts.some((p) => p.includes("1 250 000")), JSON.stringify(parts)).toBe(true);
     expect(parts.join(" ")).toBe("Le prix est de 1 250 000 euros");
@@ -559,8 +559,8 @@ describe("wrapLines", () => {
     expect(wrapLines(run, 13, 2).join(" ").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
   });
   it("an own-timed translation and a line with a CJK run keep a no-break space too", () => {
-    // Their tokens (mixedTokens) split at every \s: an own-timed cue ended on "25" and the next
-    // opened with "000", and a line of mixed text broke there and wrote it back as a plain space.
+    // Were their tokens (mixedTokens) split at every \s, an own-timed cue would end on "25" and the
+    // next open with "000", and a line of mixed text would break there and write it back as a plain space.
     const en = "The glacier behind me has lost almost forty percent of its volume since 1980, and twenty five thousand people live in the valley below it today.";
     const W = "les gens du village voisin ont vu".split(" ");
     for (const length of ["short", "standard"] as const) {
@@ -593,8 +593,8 @@ describe("wrapLines", () => {
     expect(wrapLines(run, 13, 2).join("").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
   });
   it("a word with a no-break space beside a CJK character, pushed over only by a speaker name, keeps it", () => {
-    // The per-character fallback for the prefixed first line dropped the no-break space and
-    // cut where it holds: "京a" / "vaitxx", a line opening on "!".
+    // A per-character fallback for the prefixed first line would drop the no-break space and cut
+    // where it holds: "京a" / "vaitxx", a line opening on "!".
     for (const [t, cpl, reserve] of [
       ["京 avaitxx 東京", 10, 4],
       ["さ !今日はいい天気です", 8, 7],
@@ -606,8 +606,8 @@ describe("wrapLines", () => {
     }
   });
   it("a whole cue that is one such no-break-joined word keeps it whole under a speaker name", () => {
-    // As the only token, it took wrapWith's own one-token branch, which still wrapped per unit:
-    // "京a" / "vaitxx", the no-break space deleted and the word cut where it holds.
+    // As the only token it takes wrapWith's one-token branch, where a per-unit wrap would give
+    // "京a" / "vaitxx", deleting the no-break space and cutting the word where it holds.
     expect(wrapLines("京 avaitxx", 10, 2, 4)).toEqual(["京 avaitxx"]);
   });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
@@ -716,7 +716,8 @@ describe("wrapLines", () => {
     ]);
   });
   it("shape matrix: a typographic “ glued to a Latin word or number in CJK text rides with what it opens", () => {
-    // Only the ASCII spelling (iPhone"新機能") was split off the word: a line or part ended on “.
+    // The “ splits off the word as the ASCII spelling (iPhone"新機能") does; left on it, a line
+    // or part ends on “.
     const chun = "他们在2024“春晚”上表演了节目";
     expect(cutByShare(chun, [1, 2], "zh")).toEqual(["他们在2024", "“春晚”上表演了节目"]);
     // At an even share the cut lands inside the quotation, as it does after an opening bracket.
@@ -732,7 +733,7 @@ describe("wrapLines", () => {
     expect(cutByShare(gpt, [1, 1], "zh")).toEqual(["我们都用了ChatGPT", "“写作”模式来完成作业"]);
     expect(wrapLines(gpt, 8, 2, 0, undefined, "zh")).toEqual(["我们都用了", "ChatGPT", "“写作”模", "式来完成作业"]);
     for (const cpl of [12, 13, 14, 16]) expect(wrapLines(gpt, cpl, 2, 0, undefined, "zh")).toEqual(["我们都用了ChatGPT", "“写作”模式来完成作业"]);
-    // Unchanged: a German “ closes („Hallo“), an ASCII opener, a “ after a space, and a “ no ”
+    // Controls: a German “ closes („Hallo“), an ASCII opener, a “ after a space, and a “ no ”
     // closes later in the text.
     expect(cutByShare("„Hallo“東京", [1, 1], "de")).toEqual(["„Hallo“", "東京"]);
     expect(wrapLines("„Hallo“東京", 8, 2, 0, undefined, "de")).toEqual(["„Hallo“", "東京"]);
@@ -749,7 +750,7 @@ describe("wrapLines", () => {
     expect(wrapLines(unclosed, 8, 2, 0, undefined, "zh")).toEqual(["他们在2024“", "春晚上表演了", "节目和很多东西"]);
   });
   it("shape matrix: a typographic ‘ glued to a Latin word or number in CJK text rides with what it opens when a ’ closes it", () => {
-    // Only “ moved off the word: Chinese nests a quotation in ‘…’, and a line or part ended on "iPhone‘".
+    // Chinese nests a quotation in ‘…’: left on the word, a ‘ ends a line or part on "iPhone‘".
     for (const [t, lang, shares, cpl, cut, wrap] of [
       ["他说iPhone‘灵动岛’很好用我们都喜欢", "zh", [1, 2], 8, ["他说iPhone", "‘灵动岛’很好用我们都喜欢"],
         ["他说iPhone", "‘灵动岛’很", "好用我们都喜欢"]],
@@ -757,7 +758,7 @@ describe("wrapLines", () => {
         ["他说：“我买了", "iPhone", "‘灵动岛’功能", "真的很好用啊。”"]],
       ["2024‘春晚’节目真的很精彩大家都在看", "zh", [1, 1, 1, 1], 6, ["2024", "‘春晚’节目", "真的很精彩", "大家都在看"],
         ["2024", "‘春晚’节", "目真的很精", "彩大家都在看"]],
-      // Unchanged: the “ arm, a ‘ no ’ closes, a German ‚…‘ or „…‚…‘, a ‘ after a space, and an
+      // Controls: the “ arm, a ‘ no ’ closes, a German ‚…‘ or „…‚…‘, a ‘ after a space, and an
       // apostrophe between Latin letters, which closes nothing (it’s, iPhone’s).
       ["他用iPhone“灵动岛”功能真的很好用啊", "zh", [1, 2], 8, ["他用iPhone", "“灵动岛”功能真的很好用啊"],
         ["他用iPhone", "“灵动岛”功", "能真的很好用啊"]],
@@ -808,8 +809,8 @@ describe("wrapLines", () => {
     });
   };
   it("a typographic “ or ‘ glued to a Latin word rides with the quotation its closer ends in a later cue (QuoteCtx.closes)", () => {
-    // The closer was looked for in the cue's own text only: cut inside the quotation, the cue's
-    // line ended on "iPhone“" although the segment closes it.
+    // Looked for in the cue's own text only, the closer is missed when the cut lands inside the
+    // quotation: the cue's line ends on "iPhone“" although the segment closes it.
     for (const [o, c] of [["“", "”"], ["‘", "’"]]) {
       const r = zhSeg(`他|说|我|买|了|iPhone|${o}灵|动|岛|功|能|真|的|非|常|好|用|而|且|很|方|便|它${c}|然|后|走|了`, 16);
       expect(cueWraps(r, 8)[0]).toBe(`他说我买了 / iPhone / ${o}灵动岛功能 / 真的非常好用`);
@@ -818,7 +819,7 @@ describe("wrapLines", () => {
     }
   });
   it("a translation part cut inside a typographic “…” or ‘…’ quotation wraps its opener with it (QuoteCtx.closes)", () => {
-    // cutByShare (same timing) or an own-timed stretch: the part's lines ended on "iPhone“" alike.
+    // cutByShare (same timing) or an own-timed stretch: without the closer, the part's lines end on "iPhone“" alike.
     for (const [o, c] of [["“", "”"], ["‘", "’"]]) {
       const en = "The glacier behind me has lost almost forty percent of its volume since nineteen eighty and the scientists say so";
       const zh = `我们讨论的是新出的iPhone${o}灵动岛功能真的很好用这个设计大家都很喜欢${c}然后我们继续聊天了`;
@@ -852,10 +853,10 @@ describe("wrapLines", () => {
       .toBe("Er / sagte / ‚Hallo‘ / 東京ist / schön / und dann / gingen");
   });
   it("a “ or ‘ closing an open German „ or ‚ never opens, though a ” or ’ comes later (QuoteCtx.lowOpen)", () => {
-    // The ‚ in an earlier cue: the ‘ read the ’ in its own cue as its closer.
+    // The ‚ in an earlier cue: the ‘ must not read the ’ in its own cue as its closer.
     const de = "他|说|‚|你|好|朋|友|们|大|家|都|很|好|我|们|Hallo‘|东|京|很|好";
     expect(cueWraps(zhSeg(de + "|ok’|然|后|走|了", 14), 8)[1]).toBe("Hallo‘ / 东京很好 / ok’然后走了");
-    // In one text: the “ closing „ read a later ” as its closer.
+    // In one text: the “ closing „ must not read a later ” as its closer.
     expect(wrapLines("Er sagte „Hallo“東京に行きました und dann ”ok” sagte er", 8, 3, 0, undefined, "de"))
       .toEqual(["Er sagte", "„Hallo“", "東京に行きました", "und dann", "”ok”", "sagte er"]);
   });
@@ -863,7 +864,7 @@ describe("wrapLines", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
   it("an ASCII quote opening a quotation in CJK text rides with what it opens", () => {
-    // As a stop by class it joined the character before it: a line or part ended on the opening ".
+    // Classed as a stop it would join the character before it, ending a line or part on the opening ".
     expect(wrapLines('他说我们明天一起去北京"看看那"里的风景然后回家', 13, 2)).toEqual(["他说我们明天一起去北京", '"看看那"里的风景然后回家']);
     expect(wrapLines('彼は"東京"と言いました', 13, 2, 6)).toEqual(["彼は", '"東京"と言いました']);
     expect(wrapLines('我说"好"，他说"不"。然后走了', 4, 2)).toEqual(["我说", '"好"，', "他说", '"不"。', "然后走了"]);
@@ -918,7 +919,7 @@ describe("wrapLines", () => {
         expect(parts.join("")).toBe(t);
       }
     }
-    // At an odd count a quote after a digit closes, as before: the pair after it still opens.
+    // At an odd count a quote after a digit closes: the pair after it still opens.
     expect(wrapLines('他说"是2024"然后"好"了', 6, 2)).toEqual(['他说"是', '2024"', '然后"好"了']);
     expect(cutByShare('他说"是2024"然后"好"了', [1, 1, 1, 1])).toEqual(['他说"是', '2024"', "然后", '"好"了']);
   });
@@ -941,7 +942,7 @@ describe("wrapLines", () => {
     }
   });
   it("two quotations glued back to back: the second one's opening quote rides with what it opens", () => {
-    // `""` is one run: judged as one, the quote opening "再见朋友" joined the one closing "你好朋友".
+    // `""` is one run: judged as one, the quote opening "再见朋友" would join the one closing "你好朋友".
     const t = '他说"你好朋友""再见朋友"然后走了';
     expect(wrapLines(t, 10, 2)).toEqual(['他说"你好朋友"', '"再见朋友"然后走了']);
     for (let cpl = 4; cpl <= 16; cpl++) {
@@ -981,8 +982,8 @@ describe("wrapLines", () => {
     }
   });
   it("a closing quote glued to the next quotation's typographic opener: the opener rides with what it opens", () => {
-    // ”“ (or "“, »«, ’‘) was one glued match judged as one: it joined the text before it, and a
-    // line or part ended on the next quotation's opening mark.
+    // Judged as one glued match, ”“ (or "“, »«, ’‘) joins the text before it, and a line or part
+    // ends on the next quotation's opening mark.
     const endsOnOpener = (l: string) => /[“‘«]$/.test(l) || /[\p{Pe}\p{Pf}"']["']$/u.test(l);
     for (const m of ["他说：“你好。”“我很好。”然后他们走了回家吧", "坚持“四个全面”“五位一体”的总体布局", "他说“Hello”“再见”然后回家吃饭了",
       '他说"Hello""再见朋友"然后走了很远', '他说“你好朋友”"再见朋友"然后走了', '他说"你好朋友"“再见朋友”然后走了', "他说«东京»«你好»的然后走了",
@@ -1001,14 +1002,14 @@ describe("wrapLines", () => {
     expect(cutByShare("他说：“你好。”“我很好。”然后我们一起回家了", [1, 2])[0]).toBe("他说：“你好。”");
     // A quoted brand name is never torn to keep the opener off the line end.
     expect(wrapLines("我们看到了“Microsoft”“Google”两个牌子", 16, 2)).toEqual(["我们看到了“Microsoft”", "“Google”两个牌子"]);
-    // A German or Scandinavian closer is no opener of the next quotation: those stay as they were.
+    // A German or Scandinavian closer is no opener of the next quotation: it stays on what it closes.
     expect(wrapLines("„Hallo“東京です", 8, 2)).toEqual(["„Hallo“", "東京です"]);
     expect(wrapLines("”Ja””Nej”東京", 6, 2)).toEqual(["”Ja””", "Nej”東京"]);
     expect(wrapLines("»Ja«»Nej«東京", 10, 2)).toEqual(["»Ja«»Nej«", "東京"]);
   });
   it("a cue right after an inch mark counts its quotes as its segment does", () => {
     // The cue starts on the " after the 6 of the cue before: an inch mark in the segment, but
-    // counted alone the cue took it for a quote and the opening one of "很好" ended a line.
+    // counted alone the cue takes it for a quote, and the opening one of "很好" ends a line.
     const ws = ["屏幕有6", '"大的手机', "他说", '"很好"', "然后", "走了"];
     const text = ws.join("");
     let t = 0;
@@ -1141,10 +1142,10 @@ describe("wrapLines", () => {
       expect(lines.every((l) => l.length > 0 && l.length <= cpl)).toBe(true);
       expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
     };
-    // Kept whole, the word took lines of its own: four lines under a two-line cap.
+    // Kept whole, the word takes lines of its own: four lines under a two-line cap.
     expect(wrapLines("明日はMicrosoftTeamsAccountで会議をします", 16, 2)).toEqual(["明日はMicrosoftTea", "msAccountで会議をします"]);
     fits("请发邮件到someone.name@example.com联系我们", 16, 3);
-    // A lone word or run with nothing to break at came back as one line over the cap.
+    // A lone word or run with nothing to break at must not come back as one line over the cap.
     fits("Donaudampfschifffahrtsgesellschaftskapitän", 28, 2);
     fits("あ" + "・".repeat(28), 13, 3);
     fits("え" + "？".repeat(18), 13, 2);
@@ -1169,7 +1170,7 @@ describe("wrapLines", () => {
     expect(wrapLines("ｶﾞ。", 4, 2, 3)).toEqual(["ｶﾞ。"]);
     // A quote that ends the token closes it; an opener rides with what it opens.
     expect(wrapLines("„Hallo“", 4, 2)).toEqual(["„Ha", "llo“"]);
-    // So does one followed by a comma or stop: “ was glued onto the "," and opened a line.
+    // So does one followed by a comma or stop: glued onto the ",", the “ would open a line.
     const quoted = "Please look at „Rechtsschutzversicherungsgesellschaften“, before the meeting starts";
     const q28 = wrapLines(quoted, 28, 2);
     expect(q28.some((l) => l.startsWith("“"))).toBe(false);
@@ -1186,7 +1187,7 @@ describe("wrapLines", () => {
       }
     }
     expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
-    // A “ glued to a letter closes mid-token too: „…“-Verband opened a line with “.
+    // A “ glued to a letter closes mid-token too, or „…“-Verband opens a line with “.
     const verband = "Laut „Rechtsschutzversicherungsgesellschaften“-Verband Laut dem neuen";
     const v28 = wrapLines(verband, 28, 3);
     expect(v28.some((l) => l.startsWith("“")), v28.join(" | ")).toBe(false);
@@ -1203,7 +1204,7 @@ describe("wrapLines", () => {
       expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
     }
     // So does the comma or stop after that closer: the stop cap counts only stops, not the
-    // closer that rode (a "," after "…...\"" or "?\")" started the next line).
+    // closer that rode (else a "," after "…...\"" or "?\")" starts the next line).
     for (const [t, cpl] of [
       ['She said "Supercalifragilisticexpialidocious...", and left', 10],
       ['She said "Supercalifragilisticexpialidocious...", and left', 14],
@@ -1230,7 +1231,7 @@ describe("wrapLines", () => {
     for (const q of ["\"", "'"]) {
       expect(wrapLines(`He said ${q}Supercalifragilisticexpialidocious${q} and left`, 10, 2)[0]).toBe("He said");
     }
-    // A hallucinated run of quotes or closers still wraps three to a piece, as before.
+    // A hallucinated run of quotes or closers still wraps three to a piece.
     for (const [t, cpl, n] of [[`He said ${'"'.repeat(40)} ok`, 28, 2], [`He said ${")".repeat(40)} ok`, 28, 2], [`東京${"」".repeat(30)}`, 13, 3], [`他说${"”".repeat(30)}`, 13, 3]] as const) {
       const lines = wrapLines(t, cpl, 2);
       expect(lines.length, lines.join(" | ")).toBe(n);
@@ -1913,8 +1914,8 @@ describe("cutByShare", () => {
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
   });
   it("a title or number abbreviation and a dotted ordinal stay with the word after them in the cut and the wrap", () => {
-    // Not only the "Mr." "Mrs." "Dr." of NOBREAK: every title and number abbreviation isSentenceEnd
-    // holds no sentence end, and a German ordinal, dangle as they do.
+    // Not only NOBREAK's "Mr." "Mrs." "Dr." dangle: so do every German ordinal and every title or
+    // number abbreviation at which isSentenceEnd holds no sentence end.
     const ms = "Yesterday I met Ms. Johnson at the station";
     expect(cutByShare(ms, [19, 23], "en")).toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
     expect(wrapLines(ms, 30, 2, 0, undefined, "en")).toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
