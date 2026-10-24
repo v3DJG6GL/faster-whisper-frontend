@@ -175,6 +175,13 @@ describe("a push superseded while composing", () => {
   });
 });
 
+/** Clear the fake keyring answer, the queued GET answer and any unanswered 409s. */
+function resetPeerFakes(): void {
+  api.keys = null;
+  api.pulled = null;
+  api.conflicts = [];
+}
+
 // A locked keyring makes composeBlob re-send the SNAPSHOT's backends category (never a keyless
 // list). Merged against that, "local unchanged" kept the remote list, and the pull hydrated it
 // over the store — silently deleting a backend added here. The category must stay out of the
@@ -199,11 +206,6 @@ describe("a sync composed with a degraded keyring", () => {
     if (renameB1) remote.backends!.list = remote.backends!.list.map((b) => ({ ...b, name: "renamed-by-peer" }));
     return remote;
   }
-  const cleanup = () => {
-    api.keys = null;
-    api.pulled = null;
-    api.conflicts = [];
-  };
 
   it("a pull that left backends alone keeps this device's list and adopts the base", async () => {
     try {
@@ -221,7 +223,7 @@ describe("a sync composed with a degraded keyring", () => {
       expect(api.pushedBase).toBe(2);
       expect((api.pushed as SyncBlob).backends?.list.map((b) => b.id)).toEqual(["b1", "b2"]);
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -239,7 +241,7 @@ describe("a sync composed with a degraded keyring", () => {
       await pushNow(true);
       expect(api.pushedBase).toBe(1); // still the seeded base
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -258,7 +260,7 @@ describe("a sync composed with a degraded keyring", () => {
       expect(st.settings.general.typeAsISpeak).toBe(!before);
       expect(st.syncStatus).toBe("ok");
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -279,7 +281,7 @@ describe("a sync composed with a degraded keyring", () => {
       expect(st.settings.general.typeAsISpeak).toBe(!before);
       expect(st.syncStatus).toBe("ok");
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -304,7 +306,7 @@ describe("a sync composed with a degraded keyring", () => {
       await pushNow(true);
       expect(api.pushedBase).toBe(1); // still the seeded base
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -330,7 +332,7 @@ describe("a sync composed with a degraded keyring", () => {
       await pushNow(true);
       expect(api.pushedBase).toBe(2); // the peer's version became the base
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -370,7 +372,7 @@ describe("a sync composed with a degraded keyring", () => {
           expect((api.pushed as SyncBlob).backends?.list.map((b) => b.id)).toEqual(["b1", "b2"]);
         }
       } finally {
-        cleanup();
+        resetPeerFakes();
       }
     }
   });
@@ -387,7 +389,7 @@ describe("a sync composed with a degraded keyring", () => {
       expect(st.syncStatus).toBe("error");
       expect(st.syncError).toContain("keyring");
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 });
@@ -746,9 +748,7 @@ describe("a pending review when the server copy is gone", () => {
       await approvePendingReview();
       expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
     } finally {
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
   // The push composed before it learned the document was re-created: its gated-off fields were
@@ -775,9 +775,7 @@ describe("a pending review when the server copy is gone", () => {
       expect(api.pushedBase).toBe(1);
       expect((api.pushed as SyncBlob).general).not.toHaveProperty("soundEffects");
     } finally {
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
   // The forget clears the stash itself; its state write then saw the old stash ids still set and
@@ -803,9 +801,7 @@ describe("a pending review when the server copy is gone", () => {
       expect(getPendingReview()).toBeNull();
       expect(useApp.getState().syncStatus).toBe("ok");
     } finally {
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
 });
@@ -1046,11 +1042,6 @@ describe("approving a review after editing a category the peer changed", () => {
     useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: next } } });
     return next;
   };
-  const cleanup = () => {
-    api.keys = null;
-    api.pulled = null;
-    api.conflicts = [];
-  };
 
   it("keeps the edit, adopts the peer's version and pushes the edit", async () => {
     try {
@@ -1068,7 +1059,7 @@ describe("approving a review after editing a category the peer changed", () => {
       expect(api.pushedBase).toBe(2);
       expect((api.pushed as SyncBlob).general?.startMinimized).toBe(mine);
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -1093,7 +1084,7 @@ describe("approving a review after editing a category the peer changed", () => {
       expect(getPendingReview()).toBeNull();
       expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -1117,7 +1108,7 @@ describe("approving a review after editing a category the peer changed", () => {
       expect((api.pushed as SyncBlob).general?.startMinimized).toBe(mine);
       expect(useApp.getState().syncStatus).toBe("ok");
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 });
@@ -1174,11 +1165,6 @@ describe("approving a review after turning a sync gate on", () => {
     expect(useApp.getState().backends[0].serverUrl).toBe(localUrl);
     return localUrl;
   }
-  const cleanup = () => {
-    api.keys = null;
-    api.pulled = null;
-    api.conflicts = [];
-  };
 
   it("relists the repoint instead of pushing this device's address over it", async () => {
     try {
@@ -1198,7 +1184,7 @@ describe("approving a review after turning a sync gate on", () => {
       expect(useApp.getState().backends[0].serverUrl).toBe("http://evil:9");
       expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 
@@ -1218,7 +1204,7 @@ describe("approving a review after turning a sync gate on", () => {
       expect(st.backends[0].serverUrl).toBe(localUrl);
       expect(api.pushes).toBe(pushesBefore);
     } finally {
-      cleanup();
+      resetPeerFakes();
     }
   });
 });
@@ -1331,9 +1317,7 @@ describe("approving a relisted review after an ordinary edit", () => {
       expect(st.backends[0].serverUrl).toBe("http://evil:9");
       expect(st.settings.transcribe?.dictationRetentionDays).toBe(1);
     } finally {
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
 });
@@ -1418,9 +1402,7 @@ describe("an edit landing during an approval's keyring wait", () => {
     } finally {
       release({ b1: "sk-secret" });
       api.park = null;
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
   // The signature is read before the compose, so the same edit lands in the compose only: an
@@ -1456,9 +1438,7 @@ describe("an edit landing during an approval's keyring wait", () => {
     } finally {
       release({ b1: "sk-secret" });
       api.park = null;
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
 });
@@ -1496,9 +1476,7 @@ describe("approving a review raised while dictating", () => {
       expect(useApp.getState().settings.general.startMinimized).toBe(mine);
       expect(api.pushes).toBe(pushesBefore);
     } finally {
-      api.keys = null;
-      api.pulled = null;
-      api.conflicts = [];
+      resetPeerFakes();
     }
   });
 });
