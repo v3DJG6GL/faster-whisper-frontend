@@ -49,26 +49,23 @@ function slice(over: Partial<{ settings: AppSettings; backends: Backend[]; profi
   return { settings: settings(), backends: [backend()], profiles: [profile()], appRules: [], ...over };
 }
 
+/** composeBlob over every category, keys not asked for, legacy sub-toggles on, under `gates`. */
+function composeGated(cfg: Parameters<typeof composeBlob>[0], snapshot: SyncBlob, gates: typeof GATES_ALL) {
+  return composeBlob(cfg, CATS_ALL, snapshot, { includeSecrets: false, sub: SUB_ALL, gates });
+}
+
 describe("compose: scalar gate passthrough", () => {
   it("a gated-off general setting ships the snapshot's value, not this device's edit", async () => {
     const cfg = slice();
     cfg.settings.general.soundEffects = false; // local edit, gate off
     const snapshot: SyncBlob = { general: { soundEffects: true } as never };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, soundCues: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, soundCues: false });
     expect(blob.general?.soundEffects).toBe(true);
   });
 
   it("gated-off with no snapshot value: the field is omitted (absent ≠ delete)", async () => {
     const cfg = slice();
-    const blob = await composeBlob(cfg, CATS_ALL, {}, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, soundCues: false },
-    });
+    const blob = await composeGated(cfg, {}, { ...GATES_ALL, soundCues: false });
     expect("soundEffects" in (blob.general as object)).toBe(false);
   });
 
@@ -79,11 +76,7 @@ describe("compose: scalar gate passthrough", () => {
     const snapshot: SyncBlob = {
       chip: { realtimePreview: true, realtimePreviewOnHover: false } as never,
     };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, liveTranscript: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, liveTranscript: false });
     expect((blob.chip as Record<string, unknown>).realtimePreview).toBe(true);
     expect((blob.chip as Record<string, unknown>).realtimePreviewOnHover).toBe(false);
   });
@@ -92,11 +85,7 @@ describe("compose: scalar gate passthrough", () => {
     const cfg = slice();
     cfg.settings.transcribe = { diarize: true, model: "small" };
     const snapshot: SyncBlob = { general: { soundEffects: true } as never };
-    const gated = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: GATES_ALL,
-    });
+    const gated = await composeGated(cfg, snapshot, GATES_ALL);
     const ungated = await composeBlob(cfg, CATS_ALL, snapshot, {
       includeSecrets: false,
       sub: SUB_ALL,
@@ -118,11 +107,7 @@ describe("compose: list arms", () => {
       backends: [backend({ serverUrl: "http://192.168.1.5:8000" }), backend({ id: "b2", serverUrl: "http://new:1" })],
     });
     const snapshot: SyncBlob = { backends: { list: [backend({ serverUrl: "http://peer:9" })] } };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, serverAddresses: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, serverAddresses: false });
     const byId = new Map(blob.backends!.list.map((b) => [b.id, b]));
     expect(byId.get("b1")!.serverUrl).toBe("http://peer:9");
     expect(byId.get("b2")!.serverUrl).toBe("http://new:1");
@@ -130,22 +115,14 @@ describe("compose: list arms", () => {
 
   it("apiKeys off: the snapshot's secrets travel (or stay absent) — never a keyless overwrite", async () => {
     const snapshot: SyncBlob = { backends: { list: [backend()], secrets: { b1: "sk-peer" } } };
-    const blob = await composeBlob(slice(), CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, apiKeys: false },
-    });
+    const blob = await composeGated(slice(), snapshot, { ...GATES_ALL, apiKeys: false });
     expect(blob.backends?.secrets).toEqual({ b1: "sk-peer" });
   });
 
   it("enabledPerProfile off: enabled states come from the snapshot", async () => {
     const cfg = slice({ profiles: [profile({ enabled: false })] });
     const snapshot: SyncBlob = { profiles: { list: [profile({ enabled: true })], homeProfileId: null } };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, enabledPerProfile: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, enabledPerProfile: false });
     expect(blob.profiles!.list[0].enabled).toBe(true);
   });
 
@@ -155,11 +132,7 @@ describe("compose: list arms", () => {
     const snapshot: SyncBlob = {
       appRules: { linux: [{ id: "r1", appId: "mstsc", name: "mstsc", block: false } as never], windows: [{ id: "r1", appId: "mstsc", name: "mstsc", block: false } as never] },
     };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, perAppOverrides: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, perAppOverrides: false });
     const bucket = blob.appRules!.linux.length ? blob.appRules!.linux : blob.appRules!.windows;
     const mine = bucket[0] as unknown as Record<string, unknown>;
     expect("remoteDesktop" in mine).toBe(false);
@@ -171,11 +144,7 @@ describe("compose: list arms", () => {
     const snapshot: SyncBlob = {
       appRules: { linux: [{ id: "r1", appId: "konsole", name: "Konsole", block: false } as never], windows: [] },
     };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: SUB_ALL,
-      gates: { ...GATES_ALL, perAppPasteShortcuts: false },
-    });
+    const blob = await composeGated(cfg, snapshot, { ...GATES_ALL, perAppPasteShortcuts: false });
     const mine = blob.appRules!.linux[0] as unknown as Record<string, unknown>;
     expect("pasteShortcut" in mine).toBe(false); // local chord did not travel
   });
@@ -568,11 +537,10 @@ describe("pure helpers", () => {
 describe("forward-compat: unknown categories carry through", () => {
   it("composeBlob keeps a snapshot category this version doesn't know", async () => {
     const snapshot = { futureCategory: { someFlag: true } } as unknown as SyncBlob;
-    const blob = await composeBlob(
+    const blob = await composeGated(
       { settings: structuredClone(DEFAULT_SETTINGS), backends: [], profiles: [], appRules: [] },
-      CATS_ALL,
       snapshot,
-      { includeSecrets: false, sub: SUB_ALL, gates: GATES_ALL },
+      GATES_ALL,
     );
     expect((blob as Record<string, unknown>).futureCategory).toEqual({ someFlag: true });
   });
