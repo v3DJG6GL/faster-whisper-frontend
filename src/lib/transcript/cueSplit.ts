@@ -47,8 +47,9 @@ export interface Cue {
   speaker?: string;
   /** Translations cut onto this cue (same timing only). */
   tr: Record<string, string>;
-  /** The quote context of its segment around `text` (absent when empty): wrapLines needs it
-   *  to pair a quote whose partner lies in the next cue of the same segment. */
+  /** The quote context of its segment around `text` (absent when nothing there bears on a quote
+   *  at its edge — quotesIn): wrapLines needs it to pair a quote whose partner lies in the next
+   *  cue of the same segment. */
   q?: QuoteCtx;
   /** The same per translation in `tr`. */
   trq?: Record<string, QuoteCtx>;
@@ -117,7 +118,7 @@ const BREAKS_ANYWHERE =
  *  base character judges the seam. */
 export function edgeChar(s: string, end: boolean): string {
   if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
-  // Anchored to a run's first mark: unanchored, every mark of a long run restarted the scan.
+  // Anchored to a run's first mark: unanchored, every mark of a long run would restart the scan.
   const t = s.replace(/(?<!\p{M})\p{M}+$/u, "");
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
@@ -176,13 +177,12 @@ function evidenceMark(l: string, marks: RegExp): number {
  *  judged on its lines: at least one in eight of the lines holding CJK text carry a phrase mark
  *  (。， or a ja 、) with more CJK text after it, or at least a quarter carry one anywhere (、
  *  ending a line too) — sentences may end on ？！」, and a wrap rarely lands right after a
- *  mark — and no line holds a phrase space (unpunctuated
- *  subtitles drop 。，、 and separate phrases with the break; Whisper's phrase-spaced text and
- *  our exports of it wrap at a space and drop it). ？！：； do not count: the unpunctuated
- *  convention keeps them. A credit, note or title line ("翻译：小明。字幕：小红", "（注：……。）")
- *  is no evidence at all, and one other stray mark does not flip a file of more than a few
- *  cues. Judged on the whole file (import) or the whole edited segment — a rule per line
- *  would read one file both ways. */
+ *  mark — and no line holds a phrase space (unpunctuated subtitles drop 。，、 and separate
+ *  phrases with the break; Whisper's phrase-spaced text and our exports of it wrap at a space
+ *  and drop it). ？！：； do not count: the unpunctuated convention keeps them. A credit, note
+ *  or title line ("翻译：小明。字幕：小红", "（注：……。）") is no evidence at all, and one other
+ *  stray mark does not flip a file of more than a few cues. Judged on the whole file (import)
+ *  or the whole edited segment — a rule per line would read one file both ways. */
 export function cjkWrapsLines(lines: Iterable<string>): boolean {
   let cjk = 0;
   let marked = 0;
@@ -192,8 +192,8 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
     if (!l || !UNSPACED.test(l)) continue;
     if (PHRASE_SPACE.test(l)) return false;
     cjk++;
-    // A mark with more CJK text after it on the same line: the unpunctuated convention never
-    // writes one, so one line in eight suffices — yet a single stray aside does not flip a file.
+    // The unpunctuated convention never writes a mark with CJK text after it, so one line in
+    // eight suffices.
     if (markInside(l, CJK_PHRASE_MARK) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
     if (
       evidenceMark(l, CJK_PHRASE_MARK) >= 0 ||
@@ -548,8 +548,8 @@ function breakScore(prev: string, next: string, lang?: string, before?: string, 
   const cut = { next, lang, prev: before };
   if (!quoted && isSentenceEnd(prev, cut)) s += 100;
   else if (!quoted && CLAUSE.test(prev)) s += 40;
-  // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
-  // drops its comma, so only a word running on into the next one counts ("Mr." still does).
+  // Only a word running on into the next one dangles ("Mr." still does), hence the else: bare()
+  // drops a clause comma, so "turn the lights on," would otherwise count as a dangling "on".
   else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next, after, lang) || beforeUnit(prev, next)) s -= 80;
   // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
   if (CONJ.has(bare(next)) || next === "&") s += 20;
@@ -684,10 +684,10 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  bracket with nothing after it is its own token, so no character falls out of the spans.
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
  *  variation selector) — they are Script=Inherited and would otherwise split off.
- *  A fullwidth letter or digit, a halfwidth kana (with its voicing mark), a 〜 and the
- *  ideographic space are such characters too, as CJK_UNIT has them: swallowed into the
- *  token before them, "〜〜〜…" could neither wrap nor cut. A run of fullwidth letters and
- *  digits (with ，．： only between two digits) is one word, as its halfwidth spelling is:
+ *  A fullwidth letter or digit, a halfwidth kana (with its voicing mark) and a 〜 are such
+ *  characters too, as CJK_UNIT has them: swallowed into the token before them, "〜〜〜…" could
+ *  neither wrap nor cut. A run of fullwidth letters and digits (with ，．： only between two
+ *  digits) is one word, as its halfwidth spelling is:
  *  "２０２６", "１２３，４５６" and "１２：３０" never break in the middle, while the ， of
  *  "ＣＰＵ，ＧＰＵ" or the ： of "ＵＲＬ：" stays a clause seam; a run longer than a line still wraps per
  *  character through `tokenUnits`. Glued to ASCII letters or digits ("ＰＳ5", "ＮＨＫnews")
@@ -706,8 +706,8 @@ const MIXED_TOKEN = new RegExp(
 );
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
 /** A word break: whitespace but the no-break spaces (U+00A0, U+202F, U+2007) — French sets
- *  them inside "25 000" and before ? ! : ; », and a cut or line break there split the number
- *  or opened a line with the mark. */
+ *  them inside "25 000" and before ? ! : ; », and a cut or line break there would split the
+ *  number or open a line with the mark. */
 const BREAK_SPACE = /[^\S\u00a0\u202f\u2007]/;
 const NO_BREAK_RUN = /^[\u00a0\u202f\u2007]+$/;
 const BREAK_SPACES = /[^\S\u00a0\u202f\u2007]+/;
@@ -719,8 +719,8 @@ const BREAK_SPACES = /[^\S\u00a0\u202f\u2007]+/;
  *  consonant after it and a following vowel with the one before, and a Burmese/Khmer
  *  stacked consonant stays with the virama above it. At most three closers ride along,
  *  as one ー does: a hallucinated "え？？？？…" glued into one unit could not wrap. At most
- *  three openers ride along, as three closers do: a hallucinated wall of 「 before a
- *  character was one unit and ran a line far over the cap. */
+ *  three openers ride along, as three closers do: uncapped, a hallucinated wall of 「
+ *  before a character would be one unit running a line far over the cap. */
 const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]{0,3}[${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]{0,3}`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** The units a token longer than a line wraps by (a URL, an e-mail address, a German
@@ -730,8 +730,8 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
  *  punctuation, or a quote glued to a letter or digit, closes it („Hallo“ / „Hallo“, /
  *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote or a » ” that starts the
  *  token opens it (»…« / ”…”), as Spanish ¿ ¡ do (¿…? / ¡¡…!!), so no line starts with “ ” ) or
- *  ends on „ » " or ¿. `hyphen` false
- *  leaves a compound's hyphen a unit of its own (wrapLines, when ending the line costs one). */
+ *  ends on „ » " or ¿. `hyphen` false leaves a compound's hyphen a unit of its own (wrapLines,
+ *  when ending the line costs one). */
 function tokenUnits(w: string, hyphen = true): string[] {
   const out: string[] = [];
   let open = "";
@@ -897,7 +897,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     // token, so a "word" can be a lone tone mark, following vowel or killed consonant, and a
     // cue opened on a bare mark (a dotted circle) or ended on a leading vowel.
     if (splitsUnit(text, at)) s -= 1000;
-    // Both sides read by index: slicing the token array per candidate made every level O(n²).
+    // Both sides read by index: slicing the token array per candidate would make every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
     s -= (30 * Math.abs(leftLen - rightLen)) / total;
@@ -977,7 +977,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   if (!spaced && !BREAKS_ANYWHERE.test(text)) return [text.trim(), ...shares.slice(1).map(() => "")];
   // Unspaced text cuts only between the tokens wrapLines wraps by (mixedTokens), so a
   // glued number, version, e-mail or URL ("3.14159", "1,234,567", "foo@bar.com") stays
-  // whole here as it does on a line — its "." or "," used to draw the cut into it.
+  // whole here as it does on a line — its "." or "," would otherwise draw the cut into it.
   let seams: Set<number> | null = null;
   if (!spaced) {
     const m = mixedTokens(text);
@@ -1018,13 +1018,13 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   const tot = shares.reduce((a, b) => a + b, 0) || 1;
   const cuts: number[] = [];
   // Every cut after this one still needs a seam of its own: a greedy pick near its target
-  // used to spend the last seam before a glued word and leave the trailing parts empty
+  // could spend the last seam before a glued word and leave the trailing parts empty
   // ("これは|iPhoneProMax|"). A part stays empty only when the text has fewer seams than cuts.
   const nCuts = Math.min(shares.length - 1, cand.length);
   let done = 0;
   let prev = 0;
   /** text[a..b) trimmed holds fewer than two code points — counted in place: slicing and
-   *  spreading the part per candidate made a long text with many shares quadratic per cut. */
+   *  spreading the part per candidate would make a long text with many shares quadratic per cut. */
   const oneCp = (a: number, b: number): boolean => {
     while (a < b && /\s/.test(text[a])) a++;
     while (b > a && /\s/.test(text[b - 1])) b--;
@@ -1039,8 +1039,8 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     for (let j = 0; j < cand.length - (nCuts - 1 - k); j++) {
       const i = cand[j];
       if (i <= prev) continue;
-      // Bounded look-back (NOBREAK words are under 9 chars): unspaced CJK text
-      // used to slice and fold the whole prefix per candidate.
+      // Bounded look-back (NOBREAK words are under 9 chars): slicing and folding the whole
+      // prefix per candidate would make unspaced CJK text quadratic.
       const back = text.slice(Math.max(0, i - 9), i);
       const sp = back.lastIndexOf(" ");
       // Past any opening brackets and quotes, so "(Dr." dangles as "Dr." does. Its case kept for
@@ -1125,18 +1125,18 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
   // stays whole, as in wrapTokens; a word longer than cpl by itself still wraps per character.
   if (!spaced && t.length <= cpl && !BREAKS_ANYWHERE.test(t)) return [t];
   // Spaced text holding a CJK/Thai-like run (one Latin word in a Japanese line) wraps
-  // between that run's characters too; as one token the run took whole lines of its own,
-  // past the line cap fits() had judged. Unspaced text wraps by the same tokens, so a Latin
+  // between that run's characters too; as one token the run would take whole lines of its
+  // own, past the line cap fits() had judged. Unspaced text wraps by the same tokens, so a Latin
   // word or number glued into it ("明日はMicrosoftの", "333メートル") stays whole and ASCII
   // punctuation stays on its character; no gaps, so every seam is a plain character seam.
   // A token longer than cpl (a URL, e-mail or compound) wraps per unit (tokenUnits); kept
-  // whole it took a line of its own or ran over the cap.
+  // whole it would take a line of its own or run over the cap.
   const toks: string[] = [];
   const gaps: boolean[] = [];
   if (spaced && !BREAKS_ANYWHERE.test(t)) {
-    // Split at word breaks only, so a no-break space stays inside its word as written (it was
-    // rejoined as a plain space); a no-break run longer than a line still splits at its spaces,
-    // since tokenUnits would drop them.
+    // Split at word breaks only, so a no-break space stays inside its word as written (a split
+    // at every space would rejoin it as a plain space); a no-break run longer than a line still
+    // splits at its spaces, since tokenUnits would drop them.
     const words = t.split(BREAK_SPACES)
       .flatMap((w) => (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]));
     words.forEach((w, k) => {
@@ -1166,8 +1166,8 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
   if (toks.length < 2) {
     // One token: a spaced-script word pushed over only by the prefix stays whole, as in
     // wrapTokens; an unspaced run wraps per unit. A token holding a no-break space ("京 avait")
-    // stays whole too, as in wrapTokens: units drop whitespace, so the per-unit wrap deleted it
-    // and cut where it holds.
+    // stays whole too, as in wrapTokens: units drop whitespace, so the per-unit wrap would
+    // delete it and cut where it holds.
     const u = tokenUnits(t, hyphen);
     return u.length < 2 || (t.length <= cpl && (/\s/.test(t) || (!UNSPACED.test(t) && !BRK_SYL.test(t))))
       ? [t]
@@ -1178,10 +1178,10 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
 
 /** Which characters of `t` are counted ASCII quotes, `q` = its segment's quotes and characters
  *  around it when `t` is a cue of it (QuoteCtx), so a cue counts its quotes as its segment does.
- *  A " or ' between two ASCII letters or digits is
- *  none (it's, rock'n'roll), and neither is an inch or foot mark: one glued right after an
- *  ASCII digit while the count of its kind so far is even (6.1", 27") — counted, it flipped
- *  the pairing of every quote after it. At an odd count the same quote closes (他说"是2024"). */
+ *  A " or ' between two ASCII letters or digits is none (it's, rock'n'roll), and neither is an
+ *  inch or foot mark: one glued right after an ASCII digit while the count of its kind so far
+ *  is even (6.1", 27") — counted, it would flip the pairing of every quote after it. At an odd
+ *  count the same quote closes (他说"是2024"). */
 function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
   const n: QuoteCount = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
   const out: boolean[] = [];
@@ -1302,8 +1302,8 @@ function lowOpenAt(t: string, j: number, low: string, open: true | undefined): b
  *  after a letter or digit: iPhone"新機能", unless it may close an uncounted one: skippedOpener;
  *  a typographic “ or ‘ there too when a ” or ’ closes it later: iPhone“灵动岛”, iPhone‘灵动岛’)
  *  and only when it opens (an even count of its kind so far and a later partner). Either
- *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
- *  before it and a line or part ended on it. */
+ *  needs a letter, digit or opener glued after it. Uncut, the opener would ride on the text
+ *  before it and a line or part could end on it. */
 function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
   const n: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
   let pos = 0;
@@ -1356,9 +1356,9 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
  *  would be an odd-numbered one of its kind AND a later one of its kind follows to close it
  *  — both counted over the whole segment (`q`, the quotes around `t` when it is one cue of
  *  it) — and in every case a letter, digit or opener must follow. A quote between two ASCII
- *  letters or digits (it's) and an inch or foot mark after a digit (6.1") are no quotes
- *  (quoteFlags). The last unpaired one — a single quote, or a closer whose opener was in
- *  the previous segment — is ambiguous and joins the text before it. A match where a
+ *  letters or digits (it's) and an inch or foot mark after a digit at an even count (6.1") are
+ *  no quotes (quoteFlags). The last unpaired one — a single quote, or a closer whose opener
+ *  was in the previous segment — is ambiguous and joins the text before it. A match where a
  *  closing quote is glued to the next quotation's opener
  *  (他说：“你好。”“我很好。”, "Hello""再见) is first cut between the two (quoteSeams), so the
  *  closer stays with what it closes and the opener rides forward with what it opens. */
@@ -1500,11 +1500,12 @@ function wrapTokens(
     let past = -1;
     for (let i = lo + 1; i < T; i++) {
       const a = width(lo, i) + reserve;
-      // Past the first over-cpl candidate every later one carries the -2000 and a larger
-      // overflow term (its b is then under cpl*(n-1) by construction), breakScore*0.3 +
-      // bottom-heavy can add at most 64, and |a - target| (target <= cpl < a) grows with a at
-      // 0.6/char too — so a candidate more than 107 chars further cannot win (a loose bound).
-      // Stops a long paragraph costing O(lines x T).
+      // Past the first over-cpl candidate every later one carries the -2000 and loses 50.6 per
+      // char further (overflow term + |a - target|, target <= cpl < a); its b is under
+      // cpl*(n-1) by construction, and the seam-dependent terms (breakScore*0.3, the -100
+      // fallback, the hyphen and bottom-heavy bonuses) differ by at most 140 — so a candidate
+      // more than 107 chars further cannot win (a loose bound). Stops a long paragraph costing
+      // O(lines x T).
       if (a > cpl) {
         if (past < 0) past = a;
         else if (a - past > 107) break;
