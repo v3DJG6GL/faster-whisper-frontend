@@ -100,7 +100,6 @@ export function DecodeFields({
     onChange(next);
   };
 
-  // The inherited (baseline) value as a short string, or undefined if none.
   const fmtInherited = (k: DecodeKey): string | undefined => {
     const iv = inherited?.[k];
     if (iv === undefined || iv === null || iv === "") return undefined;
