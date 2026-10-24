@@ -5,8 +5,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent,
 } from "react";
 
-/* ── cell tooltip: instant, follows the cursor or the focused cell ───────── */
-
 export interface CellTipState { i: number; x: number; y: number }
 
 /** Delegated hover + focus for a grid of level cells. Cells carry `data-i`; the wrapper is
@@ -23,7 +21,7 @@ export function useCellTip() {
     at(e.currentTarget, el, e.clientX, e.clientY);
   }, []);
   const onLeave = useCallback(() => setTip(null), []);
-  // Keyboard (D34): the tooltip sits over the focused cell's centre.
+  // Keyboard: the tooltip sits over the focused cell's centre.
   const onFocus = useCallback((e: ReactFocusEvent<HTMLDivElement>) => {
     const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
     if (!el?.dataset.i) return;
@@ -37,7 +35,7 @@ export function useCellTip() {
 }
 
 
-/** Roving tabindex for a grid of `data-i` cells (D34): one tab stop, the arrow keys move by
+/** Roving tabindex for a grid of `data-i` cells: one tab stop, the arrow keys move by
  *  `dx` (left/right) and `dy` (up/down) indexes (a step off the grid does nothing),
  *  Home/End jump. */
 export function useRovingGrid(count: number, dx: number, dy: number) {
