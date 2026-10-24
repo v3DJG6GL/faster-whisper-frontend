@@ -277,9 +277,9 @@ function CostNotice({ cost }: { cost: ReturnType<typeof motionCostNote> }) {
 }
 
 /** Motion of the Signal colour: tier dropdown, the custom log-scale speed, the range
- *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
- *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
- *  hue you picked above is the base every turn starts from. */
+ *  (whole wheel / a breath between two picked swatches) and a live "Right now" readout fed
+ *  by this window's drift driver (theme.ts). The engine itself never touches `accentHue`:
+ *  the hue you picked above is where every whole-wheel turn starts. */
 function MotionRows({
   dark, motion, reduced, baseHue,
 }: { dark: boolean; motion: AccentMotion; reduced: boolean; baseHue: number }) {
