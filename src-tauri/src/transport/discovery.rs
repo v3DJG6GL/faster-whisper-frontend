@@ -1,4 +1,5 @@
-//! Connection test + model discovery against `/v1/models` and `/auth/whoami`.
+//! Connection test (`/v1/models`, `/auth/whoami`) plus the per-server reads: capabilities
+//! (`/v1/me`), override profiles, usage stats (`/v1/usage`) and request default settings.
 
 use super::{
     base_url, client, friendly_err, get_json, get_json_status, with_auth, with_legacy_path,
@@ -343,7 +344,8 @@ const MAX_DOM_HOURS: usize = 744;
 const USAGE_STAGES: [&str; 4] = ["translating", "diarizing", "separating", "vad"];
 
 /// The Statistics page's query (`GET /v1/usage`): one window form — `days`, `from`/`to`
-/// (days-since-epoch), or `all` — plus the `with=` stage filter. Mirrors TS `UsageQuery`.
+/// (days-since-epoch), or `all` — plus the `with=` stage filter and the `tz` zone. Mirrors TS
+/// `UsageQuery`.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct UsageQuery {
     #[serde(default)]
