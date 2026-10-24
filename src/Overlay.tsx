@@ -121,13 +121,14 @@ interface ChipState {
   // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
   quickLaunch: OverlayQuickAction[];
-  // False when the main window's dictate action has nothing to start (no enabled Profile, or
-  // no Backend); `startHint` then says why, in the Home button's words.
-  // Absent from an older core = treat as startable.
+  // False when the main window's dictate action has nothing to start (no enabled Profile, no
+  // Backend, or the target picker is still open); `startHint` then says why, in the Home
+  // button's words. Absent from an older core = treat as startable.
   canStart: boolean;
   startHint?: string;
-  // The cycle-profile action's own flag: it needs an enabled Profile but no Backend, so it is
-  // never dimmed for (or explained by) a missing Backend. Absent from an older core = true.
+  // The cycle-profile action's own flag: it needs an enabled Profile (and no open picker) but no
+  // Backend, so it is never dimmed for (or explained by) a missing Backend. Absent from an older
+  // core = true.
   canCycle: boolean;
   cycleHint?: string;
   // False while the payload is built from the store's defaults (the saved config has not
@@ -1189,7 +1190,7 @@ export default function Overlay() {
   const peekRestY = state.position === "bottom" ? 8 : -8;
   const slideY = peeked ? tuckY : peekRestoring ? peekRestY : restY;
 
-  // Identity-row groups: the active-Profile tag (hover reveals "· language · mode"), the usage
+  // Identity-row groups: the active-Profile tag (hover reveals its "language · mode"), the usage
   // readout, and the injection target. They're rendered as DISTINCT groups joined by thin
   // vertical rules — a tier below the body divider — so each reads as its own fact instead of one
   // run-on interpunct chain. The interpunct stays for true peers WITHIN a group ("en · stream").
@@ -1504,8 +1505,8 @@ export default function Overlay() {
                               )}
                             >
                               <span className="shrink-0 whitespace-nowrap font-mono text-[12.5px]">
-                                {/* Tail only: the chip is right-pinned and ~800px wide, so this is
-                                    what was visible anyway. */}
+                                {/* Tail only: the words are right-pinned in a pill capped at ~820px,
+                                    so this is what was visible anyway. */}
                                 {/* `transport::stream` bounds the transcript with `bounded`, NOT
                                     `bounded_server_text` (a transcript legitimately contains
                                     newlines), so Cf/bidi reach here. This preview is how the user
