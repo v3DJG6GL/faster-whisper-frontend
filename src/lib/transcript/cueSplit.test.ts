@@ -3,7 +3,7 @@ import {
   CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
-import type { BatchResult, TranscriptWord } from "../types";
+import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
 
 /** Words for `text` spread over [a, b]; `pauses` adds silence after the word index. */
 function wordsOf(text: string, a: number, b: number, pauses: Record<number, number> = {}): TranscriptWord[] {
@@ -18,14 +18,18 @@ function wordsOf(text: string, a: number, b: number, pauses: Record<number, numb
   });
 }
 
-function seg1(text: string, a: number, b: number, extra: Partial<BatchResult> = {}, pauses = {}): BatchResult {
-  const { segments: segX, ...rest } = extra;
+/** One timed segment of `text` over [a, b]; `extra.seg` adds fields to that segment (translations, speaker…). */
+function seg1(
+  text: string, a: number, b: number,
+  extra: Omit<Partial<BatchResult>, "segments"> & { seg?: Partial<TranscriptSegment> } = {}, pauses = {},
+): BatchResult {
+  const { seg, ...rest } = extra;
   return {
     text,
     language: "en",
     words: wordsOf(text, a, b, pauses),
     ...rest,
-    segments: [{ start: a, end: b, text: " " + text, ...(segX?.[0] ?? {}) }],
+    segments: [{ start: a, end: b, text: " " + text, ...seg }],
   };
 }
 
@@ -196,7 +200,7 @@ describe("buildCues", () => {
       "Der Gletscher hinter mir hat seit 1980 fast vierzig Prozent seines Volumens verloren. " +
       "Die Forscher, die ihn jeden Sommer messen, sagen, dass es immer schneller geht, " +
       "und so wird das Tal unter uns in einer Generation ganz anders aussehen.";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { de, fr: "x" }, translationsKept: ["fr"] }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { de, fr: "x" }, translationsKept: ["fr"] } });
     const grid = buildCues(r, STD, ["orig", "de", "fr"]);
     const parts = grid.cues.map((c) => c.tr.de);
     expect(parts.every(Boolean)).toBe(true);
@@ -206,7 +210,7 @@ describe("buildCues", () => {
   });
 
   it("same timing: a translation lane keeps the segment's speaker", () => {
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, speaker: "SPEAKER_00", translations: { de: "Hallo." } }] });
+    const r = seg1(LONG, 10, 30, { seg: { speaker: "SPEAKER_00", translations: { de: "Hallo." } } });
     const grid = buildCues(r, STD, ["orig", "de"]);
     expect(trackCues(grid, "de").every((c) => c.speaker === "SPEAKER_00")).toBe(true);
     expect(trackCues(grid, "orig").every((c) => c.speaker === "SPEAKER_00")).toBe(true);
@@ -214,7 +218,7 @@ describe("buildCues", () => {
 
   it("own timing: each translation gets its own split with its own limits", () => {
     const de = "Der Gletscher hinter mir hat seit 1980 fast vierzig Prozent seines Volumens verloren, sagen alle.";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { de } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { de } } });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "de"]);
     expect(grid.cues.every((c) => !c.tr.de)).toBe(true);
     expect(grid.own.de.length).toBeGreaterThan(1);
@@ -226,7 +230,7 @@ describe("buildCues", () => {
   it("own timing: a translation stays in the spoken stretches, never over a pause", () => {
     const es = "Ocurrió hace medio siglo. Durante casi mil días, estos paisajes se vieron asolados por una cruel guerra civil.";
     const de = "Es geschah vor einem halben Jahrhundert. Fast tausend Tage lang wurden diese Landschaften von einem grausamen Bürgerkrieg verwüstet.";
-    const r = seg1(es, 152.5, 188.8, { segments: [{ start: 152.5, end: 188.8, text: " " + es, translations: { de } }] }, { 3: 30 });
+    const r = seg1(es, 152.5, 188.8, { seg: { translations: { de } } }, { 3: 30 });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["de"]);
     const pause = [r.words![3].end, r.words![4].start];
     expect(grid.own.de.every((c) => c.end <= pause[0] || c.start >= pause[1])).toBe(true);
@@ -237,7 +241,7 @@ describe("buildCues", () => {
 
   it("own timing: spaceless text splits per code point, never inside an emoji", () => {
     const ja = "🎉".repeat(4) + "今日は朝から雨が降っていて🎉駅までの道はとても混んでいました🎉電車も遅れていました🎉";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
     expect(grid.own.ja.length).toBeGreaterThan(1);
     expect(grid.own.ja.every((c) => wellFormed(c.text))).toBe(true);
@@ -247,7 +251,7 @@ describe("buildCues", () => {
   it("a one-word translation of a split segment stays one word, never cut into letters", () => {
     const text = "We walked along the river for hours and nobody said a word";
     for (const timing of ["same", "own"] as const) {
-      const r = seg1(text, 0, 18, { segments: [{ start: 0, end: 18, text: " " + text, translations: { de: "Ja." } }] });
+      const r = seg1(text, 0, 18, { seg: { translations: { de: "Ja." } } });
       const grid = buildCues(r, { ...STD, timing }, ["orig", "de"]);
       expect(trackCues(grid, "orig").length).toBeGreaterThan(1);
       expect(trackCues(grid, "de").map((c) => c.text)).toEqual(["Ja."]);
@@ -256,7 +260,7 @@ describe("buildCues", () => {
 
   it("own timing: a CJK translation with one Latin word still splits between its characters", () => {
     const ja = "今日は朝から iPhone の新しい機能について説明しますが駅までの道はとても混んでいて電車も遅れていました";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
     const L = limitsFor(STD, "ja");
     expect(grid.own.ja.length).toBeGreaterThan(2);
@@ -270,7 +274,7 @@ describe("buildCues", () => {
     const short: CueOptions = { length: "short", timing: "own" };
     const L = limitsFor(short, "zh");
     for (const pause of [3, 8, 13, 20, 25]) {
-      const r = seg1(LONG, 0, 20, { segments: [{ start: 0, end: 20, text: " " + LONG, translations: { zh } }] }, { [pause]: 1.5 });
+      const r = seg1(LONG, 0, 20, { seg: { translations: { zh } } }, { [pause]: 1.5 });
       const own = buildCues(r, short, ["orig", "zh"]).own.zh;
       expect(own.map((c) => c.text).join("")).toBe(zh);
       for (const c of own) {
@@ -332,7 +336,7 @@ describe("buildCues", () => {
 
   it("own timing: an opening bracket stays with the character it opens", () => {
     const ja = "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
     expect(grid.own.ja.length).toBeGreaterThan(1);
     expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
@@ -343,7 +347,7 @@ describe("buildCues", () => {
   it("own timing: an opening bracket stays with its character in space-free text too", () => {
     const ja = "彼は「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
     for (const length of ["standard", "short"] as const) {
-      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
       const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
       expect(grid.own.ja.length).toBeGreaterThan(1);
       expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
@@ -356,7 +360,7 @@ describe("buildCues", () => {
   it("own timing: a Latin word or number before an opening bracket never ends a cue on it", () => {
     const ja = "iOS 18「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
     for (const length of ["standard", "short"] as const) {
-      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
       const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
       expect(grid.own.ja.length).toBeGreaterThan(1);
       expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
@@ -368,7 +372,7 @@ describe("buildCues", () => {
     for (const w of ["ＰＳ5", "ＮＨＫnews"]) {
       for (let p = 0; p < 30; p++) {
         const ja = "新しい " + "あ".repeat(p) + w + "を 買いました 今日は とても 楽しかったです";
-        const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+        const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
         const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
         expect(grid.own.ja.some((c) => /(ＰＳ|ＮＨＫ)$/.test(c.text.trim()))).toBe(false);
         expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
@@ -379,7 +383,7 @@ describe("buildCues", () => {
   it("own timing: a Latin word glued into a CJK translation is never split across cues", () => {
     const ja = "今日は朝から新しいiPhoneProMaxを買いに行きましたが駅までの道はとても混んでいて電車も遅れていました";
     for (const length of ["standard", "short"] as const) {
-      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
       const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
       expect(grid.own.ja.length).toBeGreaterThan(1);
       expect(grid.own.ja.some((c) => c.text.includes("iPhoneProMax"))).toBe(true);
@@ -392,7 +396,7 @@ describe("buildCues", () => {
     // as the export and the Subtitles view do) it rides forward; judged without them it joins
     // backward, and the cue the splitter accepted takes a third line.
     const zh = '园他，的天"好说去起们气他好"OKiPhone公"天"天，今气OK们我天好"公OK"很的的';
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { zh } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { zh } } });
     const o: CueOptions = { ...STD, timing: "own" };
     const L = trackLimits(r, o, "zh")!;
     const cues = buildCues(r, o, ["orig", "zh"], () => 9).own.zh;
@@ -437,7 +441,7 @@ describe("buildCues", () => {
   });
 
   it("cueResult renders cues as segments for the existing generators", () => {
-    const r = seg1(LONG, 10, 30, { speakers: ["S0"], segments: [{ start: 10, end: 30, text: " " + LONG, speaker: "S0" }] });
+    const r = seg1(LONG, 10, 30, { speakers: ["S0"], seg: { speaker: "S0" } });
     const grid = buildCues(r, STD, ["orig"]);
     const out = cueResult(r, grid);
     expect(out.segments!.length).toBe(grid.cues.length);
@@ -581,7 +585,7 @@ describe("wrapLines", () => {
       for (let a = 0; a <= W.length; a++) {
         for (let b = 0; b <= 3; b++) {
           const fr = `${W.slice(0, a).join(" ")} 25 000 ${"mots ".repeat(b)}personnes sont venues voir le glacier hier soir avec nous tous.`.trim();
-          const r = seg1(en, 10, 30, { segments: [{ start: 10, end: 30, text: " " + en, translations: { fr } }] });
+          const r = seg1(en, 10, 30, { seg: { translations: { fr } } });
           const own = buildCues(r, { length, timing: "own" }, ["orig", "fr"]).own.fr.map((c) => c.text);
           expect(own.join(" "), JSON.stringify(own)).toBe(fr);
         }
@@ -1428,7 +1432,7 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
   // Two Thai sentences joined by one space: spaced text, but each sentence is still one run.
   const THAI2 = THAI + " " + "พรุ่งนี้ฝนจะตกหนักมากดังนั้นเราควรอยู่บ้านและดูหนังด้วยกันทั้งวันเลยนะครับ";
   it("own timing: a spaced multi-sentence Thai translation splits inside its sentences", () => {
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { th: THAI2 } }] });
+    const r = seg1(LONG, 10, 30, { seg: { translations: { th: THAI2 } } });
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "th"]);
     const L = limitsFor(STD, "th");
     expect(grid.own.th.length).toBeGreaterThan(2);
@@ -1450,7 +1454,7 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
   it("own timing: a spaced Thai line breaks at its phrase spaces before any syllable seam", () => {
     const en = Array(18).fill("w").join(" ");
     const phrases = ["ขอบคุณมากครับสำหรับทุกอย่าง", "วันนี้อากาศดีมากเลยนะครับ", "เราไปเที่ยวทะเลกันดีไหม"];
-    const r = seg1(en, 0, 9, { segments: [{ start: 0, end: 9, text: " " + en, translations: { th: phrases.join(" ") } }] });
+    const r = seg1(en, 0, 9, { seg: { translations: { th: phrases.join(" ") } } });
     const grid = buildCues(r, { length: "short", timing: "own" }, ["orig", "th"]);
     expect(trackCues(grid, "th").map((c) => c.text)).toEqual(phrases);
   });
@@ -1851,7 +1855,7 @@ describe("skin tones and flags stay whole", () => {
     // Slide the marked characters across the cut so one lands right where it falls.
     for (let n = 0; n < 30; n++) {
       const ja = "iOS の" + "あ".repeat(n) + "か\u3099葛\u{E0100}" + "い".repeat(40 - n);
-      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const r = seg1(LONG, 10, 30, { seg: { translations: { ja } } });
       const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
       expect(grid.own.ja.length).toBeGreaterThan(1);
       expect(grid.own.ja.every((c) => !/^\p{M}/u.test(c.text.trim()))).toBe(true);
@@ -2432,7 +2436,7 @@ describe("cutByShare", () => {
     // An own-timed English translation of a German original splits at its sentence end too.
     const orig = "Als der Krieg begann, war er gerade einmal zwölf Jahre alt. Dann zog die ganze Familie weit weg in eine neue Stadt.";
     const en = "When the war began he was barely 12. Then the whole family moved to a new city far away from home.";
-    const r = seg1(orig, 0, 9, { language: "de", segments: [{ start: 0, end: 9, text: " " + orig, translations: { en } }] });
+    const r = seg1(orig, 0, 9, { language: "de", seg: { translations: { en } } });
     expect(buildCues(r, { ...STD, timing: "own" }, ["orig", "en"]).own.en[0].text).toBe("When the war began he was barely 12.");
     // The line wrap prefers the seam after the sentence-final number or "no." in English.
     for (const x of ["12.", "no."]) {
@@ -2447,7 +2451,7 @@ describe("cutByShare", () => {
   it("a same-timed translation's cut knows its track's language", () => {
     const orig = "Ich habe ihr gestern ganz klar nein gesagt. Aber morgen fahren wir trotzdem alle zusammen an den Strand.";
     const en = "Yesterday I told her no. But tomorrow we all drive together to the beach and swim.";
-    const r = seg1(orig, 0, 7.2, { language: "de", segments: [{ start: 0, end: 7.2, text: " " + orig, translations: { en } }] });
+    const r = seg1(orig, 0, 7.2, { language: "de", seg: { translations: { en } } });
     expect(buildCues(r, STD, ["orig", "en"]).cues.map((c) => c.tr.en))
       .toEqual(["Yesterday I told her no.", "But tomorrow we all drive together to the beach and swim."]);
     // An ellipsis ends a sentence; a fullwidth colon and a dash end a clause.
