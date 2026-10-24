@@ -26,8 +26,7 @@ function TranscribeRunBadge() {
 
 /** Live percentage of in-flight retro-translate run(s) — same idiom as the
  *  transcribe badge, in the translate accent, so a run started from the
- *  viewer stays visible from every tab. Max pct across in-flight runs; a lone
- *  finished run shows its 100% receipt. */
+ *  viewer stays visible from every tab. */
 function TranslateRunBadge() {
   const runs = useApp((s) => s.trRuns);
   const entries = Object.values(runs);
