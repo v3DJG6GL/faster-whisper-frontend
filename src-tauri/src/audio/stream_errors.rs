@@ -125,7 +125,8 @@ impl ErrorGate {
     }
 }
 
-/// A cpal error callback that runs `on_terminal` once the gate calls the error terminal.
+/// A cpal error callback that runs `on_terminal` on every Terminal verdict — the gate latches, so
+/// it repeats for each later error and must be idempotent.
 pub fn error_callback(
     tag: &'static str,
     on_terminal: impl Fn() + Send + 'static,
