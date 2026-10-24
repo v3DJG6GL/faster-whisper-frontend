@@ -84,7 +84,7 @@ describe("deriveAccent", () => {
     const near = (a: string, b: string) => Math.abs(lum(a) - lum(b)) < 0.03;
     expect(["#4a3418", "#7a4f14", "#ad6b0c", "#e0900e"].every((hex, i) => near(hex, dark[i]))).toBe(true);
     expect(["#e9c7a0", "#d9a061", "#c37a2a", "#9a4f00"].every((hex, i) => near(hex, light[i]))).toBe(true);
-    // Another hue keeps the same lightness order with different hexes.
+    // Another hue gives different hexes.
     expect(deriveAccent(185, true).cal).not.toEqual(dark);
   });
 });
