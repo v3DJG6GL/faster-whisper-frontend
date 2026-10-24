@@ -27,9 +27,8 @@ const QA_TITLE: &str = "fwf-quick-add";
 /// `get_quickadd_seed` (reader: an async command). Generation-stamped: every summon
 /// starts a new generation, and a reader only ever receives the generation that was
 /// current when it started waiting — so it can never observe another summon's value.
-/// The predecessor (a `take()`-once `Mutex<Option<String>>` stash) served a PREVIOUS
-/// summon's leftover whenever a `quickadd://shown` emit was lost or a grab was still
-/// in flight, and could not represent "the grab is still running, wait for it" at all.
+/// A plain `take()`-once stash would serve a PREVIOUS summon's leftover whenever a
+/// `quickadd://shown` emit is lost, and cannot represent "still running, wait for it".
 ///
 /// Writer and reader are both Windows-only; off Windows the managed state sits unread
 /// (`clear` still runs on hide, harmlessly).
@@ -182,10 +181,10 @@ pub fn show(app: &AppHandle) {
                 show_now(app);
             }
             // A summon grab is already running (second press while the first still waits on
-            // the modifier gate / clipboard). Showing at once put the window up BEFORE that
-            // grab's copy chord went out, with a stale or empty seed; wait for it to settle
-            // instead — normally milliseconds after the first press's own show, the 5 s only
-            // backstops a wedged clipboard. Skipped if the window was hidden meanwhile.
+            // the modifier gate / clipboard). Showing at once would put the window up BEFORE
+            // that grab's copy chord went out, with a stale or empty seed; wait for it to
+            // settle instead, capped at 5 s (a no-selection grab runs to its copy deadline,
+            // the remote-desktop one past this cap). Skipped if the window was hidden meanwhile.
             Summon::AlreadyInFlight(generation) => {
                 let handle = app.clone();
                 std::thread::spawn(move || {
@@ -269,8 +268,8 @@ fn show_now(app: &AppHandle) {
 /// the close-to-hide guard in `lib.rs` keeps it from being destroyed.
 pub fn hide(app: &AppHandle) {
     // Invalidate the summon's seed generation: a grab still settling after the user
-    // already closed the window must not be readable by any later summon. (No-op off
-    // Windows, where the state is never written.)
+    // already closed the window must not be readable by any later summon. (Harmless off
+    // Windows, where nothing reads the state.)
     app.state::<SeedRendezvous>().clear();
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -280,8 +279,8 @@ pub fn hide(app: &AppHandle) {
     });
 }
 
-/// Open (or re-focus) the quick-add window — invoked by the chip quick-launch
-/// action and, later, the global shortcut path.
+/// Open (or re-focus) the quick-add window — invoked by the webview's chip
+/// quick-launch action (the shortcut and CLI paths call `show` directly).
 #[tauri::command]
 pub fn show_quick_add(app: AppHandle) {
     show(&app);
@@ -326,21 +325,19 @@ pub(crate) mod win_seed {
 
     /// How long the source app gets for its copy to land. Word delay-renders its
     /// clipboard text and can't even take clipboard OWNERSHIP until its UI thread
-    /// drains (add-ins, AutoSave, big documents — hundreds of ms is routine), which
-    /// is why the old 400 ms deadline read real selections as "nothing selected".
-    /// The headroom is cheap now that the window shows at injection time rather
-    /// than after this wait: only the LATE "no selection → open the recent-words
-    /// dropdown" fallback pays the full deadline.
+    /// drains (add-ins, AutoSave, big documents — hundreds of ms is routine), so a
+    /// 400 ms deadline reads real selections as "nothing selected". The headroom is
+    /// cheap because the window shows at injection time, not after this wait: only the
+    /// LATE "no selection → open the recent-words dropdown" fallback pays it in full.
     const COPY_DEADLINE_MS: u64 = 2500;
 
     /// The copy deadline when the selection lives in a remote-desktop session. Every
     /// leg crosses the network: the chord is forwarded to the remote, the remote app
     /// copies into the REMOTE clipboard, and rdpclip announces it back over the
     /// redirection channel asynchronously — routinely several hundred ms to seconds
-    /// on a loaded link, which is what kept blowing the shared deadline and reading
-    /// real RDP selections as "nothing selected". Costs nothing off RDP; over RDP the
-    /// no-selection dropdown fallback arrives this late, but the field itself is
-    /// usable the moment the window shows.
+    /// on a loaded link. Costs nothing off RDP; over RDP the no-selection dropdown
+    /// fallback arrives this late, but the field itself is usable the moment the
+    /// window shows.
     const COPY_DEADLINE_RDP_MS: u64 = 6000;
 
     /// How long `grab` keeps our window UNSHOWN after injecting the chord into a
@@ -465,18 +462,13 @@ pub(crate) mod win_seed {
     /// with `KEYEVENTF_EXTENDEDKEY` standing in for the E0 prefix) alongside the
     /// virtual keys. Locally focused apps act on the VK — but a focused RDP client
     /// forwards ONLY the scan code + extended bit ([MS-RDPBCGR]: keyboard input is
-    /// restricted to scancodes; no VK crosses the wire), which is where the enigo path
-    /// this replaces was malformed: it mapped VK→scan with `MAPVK_VK_TO_VSC_EX` under
-    /// the foreground window's layout and stored the result unmasked, so Insert went
-    /// out with wScan=0xE052 (the E0 prefix INSIDE the 8-bit-scan field low-level
-    /// consumers read) — or wScan=0 when the map failed, the classic works-locally/
-    /// dies-remotely event. And a forwarded 0x52 WITHOUT the extended bit is
+    /// restricted to scancodes; no VK crosses the wire). An unmasked
+    /// `MAPVK_VK_TO_VSC_EX` result puts Insert out as wScan=0xE052 (the E0 prefix INSIDE
+    /// the 8-bit scan field low-level consumers read), or wScan=0 when the map fails —
+    /// works locally, dies remotely. And a forwarded 0x52 WITHOUT the extended bit is
     /// numpad-0/Ins on the remote: NumLock on turns the "copy" into Ctrl+0 (reset zoom
-    /// in browsers) — why RDP selections never seeded while local ones always did.
-    /// Hardcoded scans are layout-proof; one batch keeps a concurrent user keystroke
-    /// from interleaving mid-chord (enigo issued three separate `SendInput`s). The
-    /// events carry enigo's `dwExtraInfo` marker so our own LL hook / raw-input feed
-    /// keeps ignoring our injections exactly as before.
+    /// in browsers). Hardcoded scans are layout-proof; one batch keeps a concurrent user
+    /// keystroke from interleaving mid-chord.
     #[cfg(windows)]
     fn send_copy_chord() -> bool {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -612,14 +604,12 @@ pub(crate) mod win_seed {
                 .as_ref()
                 .is_some_and(|(rdv, generation)| !rdv.is_current(*generation))
         };
-        // The single-flight lives HERE, not in `show`, because `show` is only one of two callers:
-        // `commands::get_focused_selection` (the correct-on-close re-grab, which runs ~400ms after
-        // the window hides and can last SECONDS: the ≤3 s modifier release gate, an un-timed
-        // clipboard prologue, then COPY_DEADLINE_MS / COPY_DEADLINE_RDP_MS of polling — and,
-        // passing `cancel: None`, it is never superseded) calls straight through. A summon landing in that
-        // window used to start a second concurrent grab and produce exactly the interleave
-        // described on SEED_GRAB_ACTIVE. Owning it here also means it is held for as long as the
-        // grab actually runs, rather than until some caller's timeout fires.
+        // The single-flight lives HERE, not in `show`: `commands::get_focused_selection` (the
+        // correct-on-close re-grab, ~400ms after the window hides) calls straight through and can
+        // last SECONDS (the ≤3 s release gate, an un-timed clipboard prologue, then the copy
+        // deadline) without ever being superseded (`cancel: None`) — a summon in that window must
+        // not start a second grab (the interleave described on SEED_GRAB_ACTIVE). Owning it here
+        // also holds it for as long as the grab runs, not until some caller's timeout fires.
         if SEED_GRAB_ACTIVE
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
@@ -672,14 +662,12 @@ pub(crate) mod win_seed {
         // entirely — a seed is optional, firing a mutated chord into the source app
         // is not worth the risk. The `hotkeys::windows` worker feeds this held-set.
         //
-        // The wait is GENEROUS (3s, was 500ms): the default chord is Alt+Win — pure
-        // modifiers, physically down at the instant the chord fires — and with no
-        // window on screen yet, holding the chord while waiting for one is the natural
-        // first-press behaviour. The old 500ms gate read exactly that as "skip the
-        // grab", which is why the first press seeded nothing and the retry (a quick
-        // tap by then) worked. Waiting longer is free — the copy fires the moment the
-        // keys lift, and the window follows immediately after — only INJECTING with
-        // modifiers down is dangerous.
+        // The wait is GENEROUS (3s): the default chord is Alt+Win — pure modifiers,
+        // physically down when the chord fires — and with no window on screen yet,
+        // holding the chord while waiting for one is natural first-press behaviour; a
+        // short gate skips the seed on exactly that press. Waiting longer is free (the
+        // copy fires the moment the keys lift); only INJECTING with modifiers down is
+        // dangerous.
         let deadline = Instant::now() + Duration::from_millis(3000);
         while held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
             if Instant::now() >= deadline {
@@ -811,18 +799,15 @@ pub(crate) mod win_seed {
         };
         #[cfg(windows)]
         let seq0 = clipboard_seq();
-        // Third read, at the SINK. The authoritative check above runs before `Clipboard::new()`
-        // and an explicitly UN-timed blocking `get_text()` (over RDP that read can stall for
-        // seconds: the local clipboard may be delay-rendered by the client, so reading it pulls
-        // the bytes across the channel) — so the gate that decides "no modifier is down" is
-        // separated from the chord it guards by an unbounded wait, and a second chord press in
-        // that gap is likely, not exotic. With Shift physically down, the Ctrl+Insert below
-        // becomes Ctrl+Shift+Insert, which is PASTE in most terminals and many editors: it would
-        // dump the user's clipboard into the focused source app, the exact mutation the gate's
-        // own comment names. Same rule as the injection sinks — re-ask at the sink, not only
-        // before the prologue. OR-ed with the hook-fed mirror (same reason as the menu mask:
-        // under RDP capture the OS reads swallowed keys UP while our hook still records them);
-        // the release gate just waited the mirror empty, so a hit here is a fresh press.
+        // Third read, at the SINK: the check above runs before `Clipboard::new()` and an
+        // UN-timed blocking `get_text()` (over RDP it can stall for seconds pulling the
+        // client's delay-rendered clipboard across the channel), so a second chord press in
+        // that gap is likely, not exotic. With Shift down, the Ctrl+Insert below becomes
+        // Ctrl+Shift+Insert — PASTE in most terminals and many editors, dumping the user's
+        // clipboard into the source app. OR-ed with the hook-fed mirror (same reason as the
+        // menu mask: under RDP capture the OS reads swallowed keys UP while our hook still
+        // records them); the release gate just waited the mirror empty, so a hit here is a
+        // fresh press.
         if modifier_physically_down()
             || held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES)
         {
@@ -921,8 +906,8 @@ pub(crate) mod win_seed {
             // Phase 1: wait for the copy to LAND by watching the sequence number — NOT by
             // re-reading the text. Every arboard read OPENS the clipboard, and a poll that
             // holds it open at the moment the source app writes makes the COPY ITSELF fail
-            // (Office's classic "cannot empty the clipboard"), which this grab then
-            // misreported as "nothing selected". No bump by the deadline ⇒ no selection.
+            // (Office's classic "cannot empty the clipboard"), which would read as "nothing
+            // selected". No bump by the deadline ⇒ no selection.
             let grace = injected_at + Duration::from_millis(RDP_FORWARD_GRACE_MS);
             loop {
                 std::thread::sleep(Duration::from_millis(15));
@@ -1002,11 +987,9 @@ pub(crate) mod win_seed {
                     Ok(text) => {
                         match &prev {
                             // A sequence bump proves a copy HAPPENED, so text equal to the
-                            // prior clipboard is a real selection too (the old text-diff
-                            // detector had to read that as "no selection") — and the
-                            // clipboard already holds it, so there's nothing to restore.
+                            // prior clipboard is a real selection too — and the clipboard
+                            // already holds it, so there's nothing to restore.
                             Some(p) if *p == text => {}
-                            // Put the user's clipboard back.
                             Some(p) => {
                                 put_back(&mut cb, Some(p.as_str()));
                             }
@@ -1067,7 +1050,7 @@ pub(crate) mod win_seed {
             if now != prev {
                 match prev {
                     Some(prev) => {
-                        let _ = cb.set_text(prev); // put the user's clipboard back
+                        let _ = cb.set_text(prev);
                     }
                     None => tracing::info!(
                         "[quickadd-seed] clipboard held no text before the grab (empty or non-text); left the copied selection"
