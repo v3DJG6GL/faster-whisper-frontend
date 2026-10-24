@@ -1312,9 +1312,8 @@ mod imp {
 
                 // Before the job, not just between characters: the paste branch and a bare auto-Enter job
                 // never reach the per-character check, so a cancel landing while the job waited (or during
-                // the keymap build, after the queue check) would still fire Ctrl+V or Enter. `sink_gate`
-                // reads it AFTER the own-window probe: the paste chord has no later check, so a cancel
-                // landing during that round trip would otherwise still paste.
+                // the keymap build, after the queue check) would still fire Ctrl+V or Enter. See
+                // `sink_gate` for why the cancel is read after the own-window probe.
                 //
                 // Own-window re-check at the SINK too: between `inject_text`'s last check and here sit the latch
                 // consume, the `focused_app_now` snapshot, on the fallback path a failed virtual-keyboard
@@ -2530,7 +2529,7 @@ mod imp {
                     })
                     .collect()
             };
-            // vn has a U+0323 key but no U+0302 one: NFD ệ typed ẹ.
+            // vn has a U+0323 key but no U+0302 one: looked up mark by mark, NFD ệ would type ẹ.
             let vn = latin_with(&[
                 ('\u{ea}', spec(3, false, None)),
                 ('\u{323}', spec(6, false, None)),
@@ -2592,7 +2591,7 @@ mod imp {
                 ));
             }
             if let Some(vn) = real_charmap("vn") {
-                // Vietnamese ệ ọ: a combining-mark key or a dead key after the base letter.
+                // Vietnamese ệ ọ: a combining-mark key after the base letter, or a dead key before it.
                 assert!(key_sequence('\u{1ec7}', &vn).is_some());
                 assert!(!divert_unreachable(
                     "Vi\u{1ec7}t Nam h\u{1ecd}c",
