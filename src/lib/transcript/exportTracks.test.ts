@@ -30,7 +30,7 @@ describe("source words", () => {
   });
 });
 
-// The D88 scenario: Whisper German, machine-translated to English, YouTube's German + English.
+// Whisper German, machine-translated to English, YouTube's German + English.
 const LINK: BatchResult = {
   text: "", language: "de",
   timedTracks: [site("de-x-site", "de"), site("en-x-site", "en"), site("de-x-site-auto", "de", { kind: "auto" })],
