@@ -4,13 +4,12 @@
  * `utterancePending.ts` and `captureIds.ts` live on their own).
  *
  * Live dictation is append-only: the server re-sends the WHOLE document on every `final`, and
- * the client types only what lies beyond `injectedText`, the part it has already delivered. Three
- * questions come up around that baseline, and each used to be open-coded or not asked at all:
+ * the client types only what lies beyond `injectedText`, the part it has already delivered:
  *
  *  • how much of a document is already typed (`commonPrefixLen`) — the diff itself;
  *  • what of a document was NEVER typed when the server throws it away at a hard break
  *    (`untypedRemainder`) — a phrase the own-window guard skipped, or a paste Rust refused to
- *    attempt, used to vanish with the document; it is now carried into the next one;
+ *    attempt, is carried into the next document rather than lost;
  *  • where, if anywhere, the document stopped EXTENDING what was typed (`baselineDivergence`) —
  *    a seam rewrite the server should no longer produce, logged by position and character
  *    class only, never by text (the log ends up in bug reports).
