@@ -1,7 +1,7 @@
 // The trigger tile: how a profile (or quick add) is started from any app — its shortcut and, for
-// dictation, whether the keys are held or pressed twice — as one bordered object. Design "Shortcut
-// Field" (D80 B, D81 K1, D82 R1). Shared by every rebind surface: the Profiles editor, the
-// onboarding starters, and QuickAddShortcutField (Dictionary + onboarding quick-add step).
+// dictation, whether the keys are held or pressed twice — as one bordered object. Shared by every
+// rebind surface: the Profiles editor, the onboarding starters, and QuickAddShortcutField
+// (Dictionary + onboarding quick-add step).
 //
 // Presentation only: the capture logic (held-modifier tracking, validation, clash detection,
 // suspend/reregister) lives in useHotkeyCapture, which the parent drives and passes in as `capture`.
