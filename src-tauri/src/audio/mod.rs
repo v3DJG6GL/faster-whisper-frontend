@@ -141,9 +141,10 @@ pub fn into_wav_pcm16(pcm: Vec<u8>, sample_rate: u32, channels: u16) -> Vec<u8> 
 }
 
 /// Ceiling on one session's in-memory recording: 4 h of 16 kHz mono s16le (32,000 B/s). A
-/// forgotten hands-free session otherwise grows its buffer without bound (~115 MB/h). Neither
-/// output copies it: the save writes header and PCM separately, and the batch POST grows the buffer
-/// in place by its 44-byte header. Shared by the batch buffer and the streaming saved copy.
+/// forgotten hands-free session otherwise grows its buffer without bound (~115 MB/h). The save
+/// writes header and PCM separately (only "Trim silence" builds a second, spoken-only buffer), and
+/// the batch POST grows the buffer in place by its 44-byte header. Shared by the batch buffer and
+/// the streaming saved copy.
 pub const MAX_RECORD_PCM_BYTES: usize = 4 * 60 * 60 * 32_000;
 
 /// Append PCM to a recording buffer without ever passing MAX_RECORD_PCM_BYTES. Returns false when
@@ -280,7 +281,7 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
 ///
 /// For files that arrive by copy (`std::fs::copy` keeps the source's mode on Unix; on Windows the
 /// copy takes the destination folder's inherited DACL, and `create_dir_private` leaves a folder
-/// that already existed alone). Best-effort like `write_new_private`'s DACL: logged, not fatal.
+/// that already existed alone). Best-effort like `create_new_private`'s DACL: logged, not fatal.
 pub(crate) fn restrict_file_private(path: &Path) {
     #[cfg(unix)]
     {
