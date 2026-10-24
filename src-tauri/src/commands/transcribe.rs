@@ -1,5 +1,5 @@
 //! Batch transcription and translation of files and links, link media fetches,
-//! and media export (both share the cancel epochs below).
+//! and media export, each cancelled through its own epoch below.
 
 use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS, HEAL_STAMP};
 use crate::transport;
@@ -27,11 +27,6 @@ pub async fn transcribe_file(
     // cancel that lands during the D-Bus round-trip is never missed.
     let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let key = resolve_key_async(api_key, backend_id).await;
-    // Cancellation: cancel_file_transcription bumps the epoch; this select
-    // polls it and DROPS the reqwest future on a change, which closes the
-    // connection (the server cancels its handler task on the disconnect —
-    // the in-flight decode thread finishes server-side, but the request,
-    // its semaphore slot and its progress entry all end).
     let fut = transport::batch::transcribe(
         &server_url,
         key.as_deref(),
@@ -328,8 +323,9 @@ pub async fn url_language_check(
     .map_err(|e| format!("{e:#}"))
 }
 
-/// Epoch for aborting in-flight `transcribe_file` calls (see above). The same
-/// idea as session.rs's DETACHED_BATCH_EPOCH / CANCELLED_BATCHES for dictation clips.
+/// Epoch `cancel_file_transcription` bumps to abort every request waiting in
+/// `until_file_epoch_bumps`. The same idea as session.rs's DETACHED_BATCH_EPOCH /
+/// CANCELLED_BATCHES for dictation clips.
 static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Drive `fut` to completion unless `cancel_file_transcription` bumps the epoch captured as
@@ -473,8 +469,7 @@ pub async fn package_media(
     audio_base: Option<String>,
 ) -> Result<transport::media::PackageOutcome, String> {
     use transport::media::{self as media, PackageOutcome, UploadOutcome};
-    // Capture the epoch BEFORE the (potentially slow) keyring resolve so a
-    // cancel that lands during the D-Bus round-trip is never missed.
+    // Captured BEFORE the keyring resolve, as in `transcribe_file`.
     let epoch = MEDIA_EXPORT_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     if !job_id.is_empty() && !transport::is_progress_id(&job_id) {
         return Err("malformed job id".into());
