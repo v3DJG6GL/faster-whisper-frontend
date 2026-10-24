@@ -689,11 +689,13 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  part of it: "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
+/** The no-break spaces: U+00A0, U+202F, U+2007. */
+const NBSP = "\\u00a0\\u202f\\u2007";
 const WORD_CHAR = `[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]`;
 const MIXED_TOKEN = new RegExp(
   `[${OPEN_PUNCT}]*[${FW_ALNUM}]${UNIT_TAIL}(?:[${FW_ALNUM}]${UNIT_TAIL}|(?<=[０-９])[，．：](?=[０-９]))*[${CLOSE_PUNCT}]*`
     + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`
-    + `|[${OPEN_PUNCT}]*${WORD_CHAR}+(?:[\\u00a0\\u202f\\u2007]+${WORD_CHAR}+)*`
+    + `|[${OPEN_PUNCT}]*${WORD_CHAR}+(?:[${NBSP}]+${WORD_CHAR}+)*`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
@@ -701,9 +703,10 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
 /** A word break: whitespace but the no-break spaces (U+00A0, U+202F, U+2007) — French sets
  *  them inside "25 000" and before ? ! : ; », and a cut or line break there would split the
  *  number or open a line with the mark. */
-const BREAK_SPACE = /[^\S\u00a0\u202f\u2007]/;
-const NO_BREAK_RUN = /^[\u00a0\u202f\u2007]+$/;
-const BREAK_SPACES = /[^\S\u00a0\u202f\u2007]+/;
+const BREAK_SPACE = new RegExp(`[^\\S${NBSP}]`);
+const NO_BREAK_RUN = new RegExp(`^[${NBSP}]+$`);
+const BREAK_SPACES = new RegExp(`[^\\S${NBSP}]+`);
+const NBSP_END = new RegExp(`[${NBSP}]$`, "u");
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
  *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors,
@@ -1411,7 +1414,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
     // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
     // off, the line would end on the no-break space.
-    const held = !!open && /[\u00a0\u202f\u2007]$/u.test(toks[k].slice(0, open.index));
+    const held = !!open && NBSP_END.test(toks[k].slice(0, open.index));
     let from = idx;
     if (open && open.index > 0 && !held) {
       toks[k] = toks[k].slice(0, open.index);
