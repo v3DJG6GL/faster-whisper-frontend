@@ -263,7 +263,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("tells subscribers when the stamped theme flips, and only then", () => {
-    // A canvas meter reads its colour token once; without this it kept the old theme's grey.
+    // A canvas meter reads its colour token once, so it keeps the old theme's grey unless told.
     vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
     delete dataset.theme;
