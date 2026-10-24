@@ -225,7 +225,6 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
             false
         }
     };
-    // Size before position: the centring reads the window size.
     if sizes_from_window_monitor(kde, SIZED_W.load(Ordering::Relaxed)) {
         size_window(&win, window_size(monitor_logical_w(&win)));
     }
@@ -360,14 +359,10 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
     let (x, y, w, h) = (x * s, y * s, w * s, h * s);
     #[cfg(target_os = "linux")]
     {
-        // Remember the latest requested region so a later (re)show can restore it: show_overlay
-        // re-applies set_ignore_cursor_events(true), which REPLACES the input shape with an empty
-        // one (whole window click-through) and would otherwise leave the chip unhoverable until
-        // the webview happens to re-report. See reapply_last_hit_region / show_overlay.
-        // persist=false is the TRANSIENT full-window hover hold (applied to keep the cursor inside
-        // the shape through the body morph) — NOT the chip's real bounds, so we must NOT remember
-        // it: a re-show that reapplied a full-window region would make the whole transparent strip
-        // swallow clicks until the webview re-reports precise bounds.
+        // Remembered for reapply_last_hit_region. persist=false is the TRANSIENT full-window hover
+        // hold (keeps the cursor inside the shape through the body morph), not the chip's bounds:
+        // a re-show that reapplied it would make the whole transparent strip swallow clicks until
+        // the webview re-reports precise bounds.
         if persist {
             if let Ok(mut last) = LAST_HIT_REGION.lock() {
                 *last = Some((x, y, w, h));
@@ -686,7 +681,7 @@ mod win_hover {
         }
     }
 
-    /// Is the global cursor inside the chip rect? Webview-logical rect → physical px
+    /// Is the global cursor inside the chip rect? Window-logical rect → physical px
     /// (same 10 px forgiveness pad as the GDK shape). `None` = no confident answer (no rect
     /// yet, or a getter failed); each caller picks its own safe default — the hover poller
     /// reads it as "outside" (stay click-through), `chip_pointer_over` reads it as "inside"
