@@ -8,16 +8,16 @@ const saveTranscriptRecord = vi.fn(
 );
 // Unset = the real outside-Tauri command; the lost-request tests make it reject.
 const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
-// Unset = the real outside-Tauri command; the text-source join test answers it.
+// Unset = the real outside-Tauri command; the text-source translate tests answer it.
 const translateText = vi.fn<(args: Parameters<typeof import("./api").translateText>[0]) => Promise<import("./api").TextTranslationResult>>();
 // Unset = the real outside-Tauri commands; the site-transcript fallback test answers them.
 const transcribeUrl = vi.fn<(args: Parameters<typeof import("./api").transcribeUrl>[0]) => Promise<never>>();
 const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<import("./api").UrlSubtitles>>();
 // Unset = the real outside-Tauri command; the site-transcript audio-expiry test answers it.
 const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
-// Unset = the real outside-Tauri command; the video-poll cadence test answers it.
+// Unset = the real outside-Tauri command; the video-poll tests answer it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
-// Unset = the real outside-Tauri commands; the on-demand video completion tests answer them.
+// Unset = the real outside-Tauri commands; the video-download tests answer them.
 const fetchUrlVideoOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideoOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideo>[0]) => Promise<string | null>>();
 // Unset = the real outside-Tauri command; the run-video "entry gone" tests answer it.
