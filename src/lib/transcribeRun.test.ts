@@ -92,6 +92,9 @@ import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
 import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/transcriptHistory";
 
+// One macrotask: lets a poll's promise chain settle.
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
     expect(railOf("downloading")).toBe("downloading");
@@ -1881,7 +1884,6 @@ describe("an on-demand video that finishes is pulled once", () => {
   const url = "https://youtu.be/ondemand";
   const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
   const dl = { mediaId: "v1", expiresAt: 123, height: 720, container: "mp4", bytes: 1000 };
-  const flush = () => new Promise((r) => setTimeout(r, 0));
   let tick: (() => void) | null = null;
   let cleared = 0;
   beforeEach(() => {
@@ -2012,7 +2014,6 @@ describe("an on-demand video whose request fails stays failed", () => {
   // server keeps downloading) must not fold "downloading" back over it and hide Try again.
   const url = "https://youtu.be/ondemand-fail";
   const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
-  const flush = () => new Promise((r) => setTimeout(r, 0));
   let tick: (() => void) | null = null;
   let cleared = 0;
   beforeEach(() => {
@@ -2116,7 +2117,6 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     // The on-demand request is still out (a failed one ends the poll).
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence";
-    const flush = () => new Promise((r) => setTimeout(r, 0));
     try {
       openHistoryRecord({
         schemaVersion: 1, kind: "url", id: "rec-cadence", createdAt: "2026-10-05T12:00:00Z",
@@ -2159,7 +2159,6 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     } as import("./types").BatchProgress));
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence-hidden";
-    const flush = () => new Promise((r) => setTimeout(r, 0));
     try {
       openHistoryRecord({
         schemaVersion: 1, kind: "url", id: "rec-cadence-hidden", createdAt: "2026-10-05T12:00:00Z",
@@ -2203,7 +2202,6 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     getTranscribeProgress.mockImplementation(() => answer());
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence-show";
-    const flush = () => new Promise((r) => setTimeout(r, 0));
     const before = hiddenListeners.size;
     const show = () => { windowHidden = false; for (const fn of [...hiddenListeners]) fn(false); };
     try {
@@ -2264,7 +2262,6 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/retry";
     const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
-    const flush = () => new Promise((r) => setTimeout(r, 0));
     try {
       openHistoryRecord({
         schemaVersion: 1, kind: "url", id: "rec-retry", createdAt: "2026-10-05T12:00:00Z",
@@ -2307,7 +2304,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
     v: 1 as const, jobId, backendId: "b1", serverUrl: "http://x", path: url, kind: "url" as const,
     title: "Talk", options: {}, ctx, urlMeta: { title: "Talk" }, startedAt: 1_000,
   };
-  const flush = () => new Promise((r) => setTimeout(r, 0));
   let tick: (() => void) | null = null;
   let polls = 0;
   beforeEach(async () => {
@@ -2443,7 +2439,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
 describe("a jobs-off server's run whose video entry closed between two polls", () => {
   // No job row exists to read the outcome from: the Video row must not claim a failed download.
   const url = "https://youtu.be/no-jobs";
-  const flush = () => new Promise((r) => setTimeout(r, 0));
   afterEach(() => {
     getTranscribeProgress.mockReset();
     getJobResult.mockReset();
