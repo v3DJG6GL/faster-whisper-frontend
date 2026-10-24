@@ -9,7 +9,8 @@
 // or All), fetched for whatever range / custom span / stage filter the page has set
 // (`usageViewQuery`) and refetched when that changes or the poll ticks. The kind filter
 // is client-side and never refetches. Best-effort throughout: a standard/old server (no
-// /v1/usage) or any error yields null and the stats surfaces simply hide.
+// /v1/usage) yields null (Home and the chip hide it, the Statistics page shows an empty
+// state), and a transient miss keeps the last-known numbers.
 //
 // The outcome queue (lib/usageOutcome.ts) is flushed from here too: at launch, on
 // every poll, and — crucially — BEFORE the post-session refetch, so the numbers
