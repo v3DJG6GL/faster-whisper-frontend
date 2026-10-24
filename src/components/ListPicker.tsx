@@ -1,4 +1,4 @@
-// A searchable, grouped list in a popover — the shell of the language pickers (D87).
+// A searchable, grouped list in a popover — the shell of the language pickers.
 //
 // The trigger is the caller's (renderTrigger), so a chip row's "+ language", a form field and a
 // table's "Add language" row can all open the same list. Inside, focus never leaves the search
@@ -238,12 +238,10 @@ export function ListPicker<R>({
   useEffect(() => {
     if (placed && !search) document.getElementById(listId)?.focus({ preventScroll: true });
   }, [placed, search, listId]);
-  // A `fit` popover's width as it first rendered (every row, no query yet), held from then on:
-  // left at max-content, each search keystroke would resize it to the rows that still match and
-  // move the search field under the caret (leftward-growing, its whole left edge). Measuring
-  // the width it already shows changes nothing on screen. The computed width, not the bounding
-  // box: the opening animation scales the panel, and a box read mid-pop is a few px short, which
-  // would cut the longest row. Rounded up for the same reason.
+  // A `fit` popover holds the width it first rendered at (every row, no query): left at
+  // max-content, each search keystroke would resize it to the matching rows and move the search
+  // field under the caret. The computed width, rounded up, not the bounding box: the opening
+  // animation scales the panel, and a box read mid-pop is a few px short of the longest row.
   const [fitWidth, setFitWidth] = useState<number | null>(null);
   useEffect(() => {
     if (!fit) return;
@@ -367,15 +365,13 @@ export function ListPicker<R>({
             // A press on the panel's chrome (search bar padding, magnifier, a section header, the
             // hint line) must not move focus: it would land on <body> with the list still open,
             // and every key after it — Esc included — would miss onListKey and reach the window
-            // (an editor's Esc closes the editor under the list). The search field keeps its own
-            // press for the caret and selection — and so does the listbox itself (its rows are
-            // children, so a press on IT is its padding or scrollbar): WebKit hands a press to an
-            // element's scrollbar only when the mousedown was not prevented, so the scrollbar
-            // could not be dragged. That press moves focus off the search field (to <body>, or to
-            // the listbox where a scroller takes focus), so the release puts it back — wherever it
-            // lands: a scrollbar drag often ends outside the panel, where no panel handler hears it.
-            // Only a primary press arms that: a right-click's context menu can swallow its mouseup
-            // (WebKitGTK), and the armed release would then pull focus back from the next field.
+            // (an editor's Esc closes the editor under the list). The search field keeps its press
+            // (caret, selection), and so does the listbox itself — a press on IT is its padding or
+            // scrollbar, and WebKit drags a scrollbar only on an unprevented mousedown. That press
+            // moves focus off the search field, so a document-level release puts it back: a
+            // scrollbar drag often ends outside the panel. Only a primary press arms that: a
+            // right-click's context menu can swallow its mouseup (WebKitGTK), and the armed
+            // release would then pull focus back from the next field.
             onMouseDown={(e) => {
               if (e.target === searchRef.current) return;
               if (e.button !== 0 || (e.target as Element).id !== listId) {
