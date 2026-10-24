@@ -172,7 +172,7 @@ export interface TranslationOverrides {
    *  `translation_glossary=""`, so no inherited glossary applies), value = use it. */
   glossary?: string;
   /** "fluent" (sentence-merged) or "faithful" (per-cue); undefined = server default. */
-  mode?: "fluent" | "faithful";
+  mode?: TranslationMode;
   /** Dictation only: also inject the untranslated original, before the
    *  translations (blank-line separated). Batch/viewer runs always keep the
    *  original as its own track, so this has no effect there. */
@@ -224,6 +224,9 @@ export interface FocusedApp {
 }
 
 export type InsertMethod = "paste" | "direct" | "clipboard";
+
+/** The T2T translation mode: "fluent" (sentence-merged, the server default) or "faithful" (per-cue). */
+export type TranslationMode = "fluent" | "faithful";
 
 /** The insertion fields a Profile may override. Every one optional: absent = inherit the
  *  layer below. Its own shape rather than `Partial<Profile>`, because the SAME four are
@@ -435,7 +438,7 @@ export interface TranscribeSettings {
    *  "" = the server's default translation model. */
   translationModel?: string;
   /** Sticky T2T mode pick; absent = "fluent" (the server's default). */
-  translationMode?: "fluent" | "faithful";
+  translationMode?: TranslationMode;
   /** Viewer track visibility ("orig", language codes, site track ids). LOCAL
    *  view state — never synced, like layout. Absent = the default pick (the
    *  original + one track per other language, three at most). */
@@ -1136,7 +1139,7 @@ export interface TranscribeOptions {
   /** Per-run T2T model override (gated by the server's allowlist). */
   translationModel?: string;
   /** "fluent" (sentence-merged, default) or "faithful" (strictly per-cue). */
-  translationMode?: "fluent" | "faithful";
+  translationMode?: TranslationMode;
   /** Glossary — "source = target" lines injected into the MT prompt. */
   translationGlossary?: string;
   /** Previous segments the translator sees (0–10, wire `context_segments`); absent = the

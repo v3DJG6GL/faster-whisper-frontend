@@ -26,6 +26,7 @@ import type {
   RecentWords,
   DecodeDefaults,
   TranscribeOptions,
+  TranslationMode,
   UsageOutcome,
   UsageOutcomePostResult,
   UsageStats,
@@ -259,7 +260,7 @@ export async function translateText(args: ServerTarget & {
   targets: string[];
   source?: string | null;
   model?: string | null;
-  mode?: "fluent" | "faithful" | null;
+  mode?: TranslationMode | null;
   glossary?: string | null;
   contextSegments?: number | null;
   /** Keys the server-side progress entry (getTranscribeProgress polls it,

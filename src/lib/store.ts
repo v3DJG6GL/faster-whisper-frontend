@@ -18,6 +18,7 @@ import type {
   SyncSettings,
   SyncSubSettings,
   ThemeName,
+  TranslationMode,
   UsageStats,
 } from "./types";
 import type { TranslateRunUi } from "./retroTranslate";
@@ -459,11 +460,11 @@ interface AppState {
    *  STORE (not viewer state) on purpose: the chunk loop keeps running
    *  when the viewer unmounts (page switch), and a remounted viewer must
    *  re-attach to the live card instead of losing it. */
-  trRuns: Record<string, { run: TranslateRunUi; mode?: "fluent" | "faithful" }>;
+  trRuns: Record<string, { run: TranslateRunUi; mode?: TranslationMode }>;
   setTrRun: (
     okey: string,
     run: TranslateRunUi | null,
-    mode?: "fluent" | "faithful",
+    mode?: TranslationMode,
   ) => void;
 
   /** Runtime sync status (never persisted): what the Sync tab's status
