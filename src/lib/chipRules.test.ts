@@ -1,6 +1,5 @@
-// The chip's expand / tuck / cancel decisions. There is no jsdom and no component
-// test in this repo, so these matrices are the ONLY coverage the chip's behaviour
-// gets — which is why the rules were extracted from Overlay.tsx in the first place.
+// The chip's expand / tuck / cancel decisions, kept pure (outside Overlay.tsx) because
+// there is no jsdom here — these matrices are their behavioural coverage.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -164,8 +163,8 @@ describe("chipTuckHold", () => {
 
 describe("chipLabelHoldOpens", () => {
   it("opens a collapsed chip while an end-of-session label's hold is up", () => {
-    // The pill collapsed when the user went quiet; the translate then failed fast at idle. The
-    // linger only ever held an OPEN pill, so the 2.6 s reason pulsed as a bare dot.
+    // The pill collapsed when the user went quiet, then the translate failed fast at idle: the
+    // 2.6 s reason must still open it rather than pulse as a bare dot.
     expect(chipExpansion({ status: "idle", speaking: false, expanded: false, now: NOW })).toBe(false);
     expect(chipLabelHoldOpens({ holdUntil: NOW + 2600, peeked: false, now: NOW })).toBe(true);
   });
