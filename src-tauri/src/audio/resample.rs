@@ -9,6 +9,9 @@ use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 
+/// The rate every capture path resamples to and every recording/upload header declares.
+pub const TARGET_RATE: u32 = 16_000;
+
 pub struct Resampler16k {
     inner: Option<SincFixedIn<f32>>,
     acc: Vec<f32>,
@@ -20,7 +23,7 @@ pub struct Resampler16k {
 
 impl Resampler16k {
     pub fn new(in_rate: u32) -> anyhow::Result<Self> {
-        if in_rate == 16_000 {
+        if in_rate == TARGET_RATE {
             return Ok(Self {
                 inner: None,
                 acc: Vec::new(),
@@ -35,7 +38,8 @@ impl Resampler16k {
             oversampling_factor: 128,
             window: WindowFunction::BlackmanHarris2,
         };
-        let inner = SincFixedIn::<f32>::new(16_000.0 / in_rate as f64, 2.0, params, 1024, 1)?;
+        let ratio = f64::from(TARGET_RATE) / in_rate as f64;
+        let inner = SincFixedIn::<f32>::new(ratio, 2.0, params, 1024, 1)?;
         let needed = inner.input_frames_next();
         let out = inner.output_buffer_allocate(true);
         Ok(Self {

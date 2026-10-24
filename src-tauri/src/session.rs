@@ -7,7 +7,7 @@
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
 use crate::audio::capture::{CaptureHandle, Meter};
-use crate::audio::resample::Resampler16k;
+use crate::audio::resample::{Resampler16k, TARGET_RATE};
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -1176,10 +1176,10 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                     crate::audio::save_recording(
                         &dir,
                         &crate::audio::trim_silence_16k(&pcm),
-                        16_000,
+                        TARGET_RATE,
                     )
                 } else {
-                    crate::audio::save_recording(&dir, &pcm, 16_000)
+                    crate::audio::save_recording(&dir, &pcm, TARGET_RATE)
                 };
                 (pcm, path)
             });
@@ -1221,7 +1221,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     }
     // Wrapped in place (the buffer grows by the header), so the clip is never held twice across
     // the POST.
-    let wav = crate::audio::into_wav_pcm16(pcm, 16_000, 1);
+    let wav = crate::audio::into_wav_pcm16(pcm, TARGET_RATE, 1);
     match batch::transcribe_wav_bytes(
         &params.server_url,
         params.api_key.as_deref(),
