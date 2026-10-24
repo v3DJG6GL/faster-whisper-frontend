@@ -1,6 +1,5 @@
-// Pure default values for settings + sync, extracted from store.ts as pure
-// data: any module can read a default without pulling in the store. Imports
-// only types and the (equally pure) settings manifest.
+// Pure default values for settings + sync: any module can read a default without
+// pulling in the store. Imports only types and the (equally pure) settings manifest.
 
 import type { AppSettings, SyncSettings } from "./types";
 import { DEFAULT_SETTING_SYNC, withLegacySubKeys } from "./settingsManifest";
@@ -55,9 +54,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     soundEffects: true,
     evdevEnabled: false,
     deepFieldDetection: false,
-    // Super+Alt (user-set 2026-07-13; mirrors Rust default_quick_add_hotkey) —
-    // inert until a quick-add list is designated (apply_bindings skips it), so
-    // the default is harmless out of the box.
+    // Super+Alt (mirrors Rust default_quick_add_hotkey) — inert until a quick-add
+    // list is designated (apply_bindings skips it), so the default is harmless.
     quickAddHotkey: ["AltLeft", "MetaLeft"],
   },
   recording: {
