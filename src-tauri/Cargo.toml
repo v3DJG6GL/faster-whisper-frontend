@@ -8,9 +8,8 @@ edition = "2021"
 rust-version = "1.90"
 
 [lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+# `_lib` keeps the lib name distinct from the bin's (they collide on Windows:
+# https://github.com/rust-lang/cargo/issues/8519).
 name = "faster_whisper_frontend_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -77,7 +76,6 @@ futures-util = "0.3"
 # Human-readable local timestamps for saved-recording filenames.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
-# Errors / logging
 anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
@@ -86,7 +84,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # log ring records the real target of `log`-crate lines (tauri/tao/wry) instead of "log".
 tracing-log = "0.2"
 
-# Config + identifiers + concurrency
 uuid = { version = "1", features = ["v4", "serde"] }
 parking_lot = "0.12"
 
@@ -110,8 +107,7 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
-# Linux-only. `ashpd`: the XDG RemoteDesktop portal for native Wayland text injection
-# (KWin accepts NotifyKeyboardKeysym directly — no libei/EIS needed).
+# Linux-only.
 [target.'cfg(target_os = "linux")'.dependencies]
 # cpal's PulseAudio host + the same pure-Rust protocol client (no libpulse, no build-time C deps)
 # for the mic list: cpal's own device description lacks the source props we need (monitor flag,
@@ -120,6 +116,8 @@ cpal = { version = "0.18", features = ["pulseaudio"] }
 pulseaudio = "0.3"
 # Drives the `pulseaudio` client's futures from plain threads (already in the tree via cpal).
 futures-executor = "0.3"
+# The XDG RemoteDesktop portal for native Wayland text injection (KWin accepts
+# NotifyKeyboardKeysym directly — no libei/EIS needed).
 ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 xkbcommon = "0.9.0"
 # NFD/NFC splits for direct typing: a letter the layout has no key for may still be typeable as a
