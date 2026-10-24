@@ -1,9 +1,9 @@
 // Hold this window's accent drift while nobody can see it (theme.ts `setAccentDriftPaused`).
 //
 // Every webview lives for the whole app lifetime and is only ever hidden, so without this a
-// hidden quick-add or picker would keep restamping the accent 4× a second — a steady CPU cost,
-// and memory the hidden page builds up and never releases. Two independent reasons, either of
-// which pauses:
+// hidden quick-add or picker would keep restamping the accent (up to 4× a second) — a steady CPU
+// cost, and memory the hidden page builds up and never releases. Two independent reasons, either
+// of which pauses:
 //   "window"   — Rust's own show/hide (`window://visibility`, aux_windows/visibility.rs). Exact, and the one
 //                that also works where the page is never told (WebView2 on a hidden HWND).
 //   "document" — the page's `visibilitychange` (WebKitGTK reports an unmapped or minimized
