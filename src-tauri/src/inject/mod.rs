@@ -268,12 +268,12 @@ pub fn take_delivered_on_clipboard() -> bool {
 }
 
 /// "Keep dictated text out of clipboard history & cloud clipboard" (settings.general
-/// `excludeFromClipboardHistory`). A process-wide switch rather than an IPC argument, applied at
-/// startup and by `apply_live_switches` on every save (`save_config` included, and a save the
-/// webview holds back), so EVERY transcript write honours it
-/// — paste, clipboard-only, the diverts, the error-abort recovery, Quick-Add — without each call
-/// site having to carry it. 0 = off, 1 = on, 2 = not applied yet (treated as on: private is the
-/// default, and the startup apply follows within milliseconds).
+/// `excludeFromClipboardHistory`). A process-wide switch rather than an IPC argument, applied by
+/// `commands::set_live_switches` at startup and on every save (written, or held back by the
+/// webview), so EVERY transcript write honours it — paste, clipboard-only, the diverts, the
+/// error-abort recovery, Quick-Add — without each call site having to carry it. 0 = off, 1 = on,
+/// 2 = not applied yet (treated as on: private is the default, and the startup apply follows
+/// within milliseconds).
 static CLIP_PRIVATE: AtomicU8 = AtomicU8::new(2);
 
 /// Apply the setting. Logged on change only (it is re-applied on every autosave).
@@ -528,8 +528,9 @@ pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
 /// poll and the read retries; the clipboard prologue before it and each single read are un-timed
 /// and can stall over RDP. 8 s covers the usual grab; a stalled one still ends the wait mid-grab
 /// (`NothingWritten`, or for an error abort its recovery). Only a USER cancel ends the
-/// wait early: an error abort waits too, so its clipboard recovery (`inject_text`) cannot land
-/// mid-grab, where the grab would read it as the copy or put the user's old text over it. Where a
+/// wait early (or any cancel of a withheld insert, which has nothing to recover): an error abort
+/// waits too, so its clipboard recovery (`inject_text`) cannot land mid-grab, where the grab
+/// would read it as the copy or put the user's old text over it. Where a
 /// phrase that waited lands: the summon grab shows and focuses the quick-add window, so the
 /// own-window check below skips the phrase (as it does for any focus moved into our windows) and it
 /// is re-sent with the next insert; the correct-on-close re-grab runs with quick-add hidden and the
@@ -1026,8 +1027,9 @@ fn write_transcript(cb: &mut arboard::Clipboard, text: &str) -> Result<(), arboa
 /// Hold `text` on the clipboard as a LIVE owner, blocking the calling thread until the
 /// selection is replaced. On Wayland a selection only persists while its source app stays
 /// alive to serve it (arboard's `set().wait()`) — a plain `set_text` that returns and drops
-/// doesn't stick — so this is needed BOTH for clipboard-only insertion AND for restoring the
-/// user's previous clipboard after a paste. Always run this on a detached thread.
+/// doesn't stick — so this backs BOTH every transcript write that must outlive its call
+/// (`persist_transcript`) AND the restore of the user's previous clipboard after a paste. Always
+/// run this on a detached thread.
 /// `what` names the operation for the failure log. Failures MUST be visible: a silently failed
 /// RESTORE leaves our transcript on the clipboard (`is_own_injected` keeps later captures from
 /// adopting it as the user's content, but the failure still has to show in the log).
@@ -1096,8 +1098,8 @@ fn serve_clipboard_blocking(
 }
 
 /// Put `text` on the clipboard and KEEP it there for the user to paste later. Used by the
-/// clipboard-only insert method, where (unlike paste) nothing consumes the clipboard
-/// immediately, so it must persist via a live owner.
+/// clipboard-only insert method and `inject_text`'s divert and recovery arms, where (unlike paste)
+/// nothing consumes the clipboard immediately, so it must persist via a live owner.
 /// Returns whether the text actually reached the clipboard, as far as that is knowable.
 ///
 /// The answer matters on the DIVERT path: `streaming.ts` treats a landed divert as delivered —
@@ -1301,8 +1303,9 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
 
 /// Whether a paste writes the transcript through the live owner (`persist_transcript`) rather than
 /// a function-local `Clipboard` — for `paste` (X11/Windows/macOS; the Wayland portal paste always
-/// does, through `set_clipboard`). A remote target always does (its fetch is
-/// deferred — see the comment at `paste`'s write). So does every local paste on Linux: the target
+/// does, through `set_clipboard`). A remote target always needs a write that outlives the call (its
+/// fetch is deferred — see the comment at `paste`'s write, which routes it before asking, through
+/// `windows_clipboard` on Windows). So does every local paste on Linux: the target
 /// reads the selection asynchronously, after the synthesized chord and possibly after the writer
 /// has returned and dropped its `Clipboard`. arboard's X11 drop of the last instance hands
 /// the data to a clipboard manager if one runs and otherwise destroys the selection — and with
@@ -1743,8 +1746,7 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
             Err(e) => result = Err(e.to_string()),
         }
     }
-    // Release exactly the modifiers we pressed, in reverse, regardless of the outcome
-    // above (best-effort: we're already unwinding, so don't mask the original error).
+    // Best-effort: we're already unwinding, so a release error must not mask the original one.
     for m in mods[..pressed].iter().rev() {
         let _ = enigo.key(*m, Direction::Release);
     }
@@ -1961,10 +1963,10 @@ mod tests {
         ] {
             assert_eq!(sanitize_injected(&format!("a{c}b")), "ab", "{c:?} survived");
         }
-        // Zero-width characters that no CATEGORY rule reaches: the Hangul fillers are category Lo
-        // (letters), and the line/paragraph separators are Zl/Zp — `is_control()` returns false
-        // for all of them, yet U+2028/U+2029 are UAX#14 mandatory breaks, so on the typing paths
-        // they land as a real Enter.
+        // Zero-width characters `is_control()` misses: the Hangul fillers are category Lo
+        // (letters) and the line/paragraph separators Zl/Zp — yet U+2028/U+2029 are UAX#14
+        // mandatory breaks, so on the typing paths they land as a real Enter. The rest are further
+        // invisible Cf controls (deprecated format controls, Duployan shorthand, musical beams).
         for c in [
             '\u{115f}',
             '\u{1160}',
@@ -2013,7 +2015,7 @@ mod tests {
     }
 
     /// An empty prior read is a stalled delayed render, not the user's clipboard: restoring ""
-    /// would erase their remote copy (and, on Wayland, supersede a real pending restore).
+    /// would erase their remote copy (and supersede a real pending restore).
     #[test]
     fn empty_prior_read_is_not_worth_restoring() {
         assert!(!super::worth_restoring(""));
