@@ -750,7 +750,7 @@ describe("site subtitle cleanup", () => {
     expect(vtt("<c.mt.mt-en>I was going to-</c>", "<c.spk1>ich wollte</c>")).toEqual(["I was going to- ich wollte"]);
     // A translation wrapped over two lines closes its span on the second.
     expect(vtt("<c.mt>so I was really", "going to-</c>", "ich wollte")).toEqual(["so I was really going to- ich wollte"]);
-    // Shape matrix, unchanged: original first, a span still open on the line, plain text.
+    // Original first, a span still open on the line, plain text: these still rejoin.
     expect(vtt("Ich wollte gera-", "<c.mt>i wanted to</c>")).toEqual(["Ich wollte gera- i wanted to"]);
     expect(vtt("Hallo", "<c.mt>a journa-", "listic text</c>")).toEqual(["Hallo a journalistic text"]);
     expect(vtt("<c.mt>Hallo</c>", "Ein journa-", "listischer Text")).toEqual(["Hallo Ein journalistischer Text"]);
@@ -764,7 +764,7 @@ describe("site subtitle cleanup", () => {
       ["pré-", "ou post-opératoire"],
       ["pre-", "vs. post-war"],
       ["pre-", "vs post-war"],
-      // The conjunctions already listed, unchanged.
+      // und / oder keep it too.
       ["Ein-", "und Ausgang"],
       ["Vor-", "oder Nachteil"],
     ];
@@ -841,13 +841,13 @@ describe("site subtitle cleanup", () => {
     const kept = [
       "Я б в лётчики пошёл, пусть меня научат", "Ну я ж и говорю", "Я б с тобой", "Я б и сам пошёл", "А я б с тобой",
       "Я ж в шоке", "Ти ж і я", "Вось я б у горад", "Ή ο ένας ή ο άλλος", "ο ή η υπεύθυνος", "Ο Η Ή",
-      // Unchanged from before: every letter a word of one language.
+      // Every lone letter a word of one language.
       "Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s", "Мама і я з дітьми", "Я є у тебе", "О К О",
     ];
     expect(fixBroadcasterText(kept)).toEqual(kept);
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v A J Smith>Я б в рабочие пошёл</v>\n";
     expect(parseImportedText("vtt", vtt).segments[0]).toMatchObject({ speaker: "A J Smith", text: "Я б в рабочие пошёл" });
-    // A run with a letter outside every set still glues, as before — Cyrillic, Greek and Latin.
+    // A run with a letter outside every set still glues — Cyrillic, Greek and Latin.
     expect(
       fixBroadcasterText([
         "Б О Ж Е", "Б Ы Л О", "Ж Д И", "ж и в о й", "В Н И М А Н И Е", "У В А Г А", "С Л А В А",
@@ -1071,9 +1071,9 @@ describe("site subtitle cleanup", () => {
 });
 
 describe("markup shape matrix", () => {
-  // Real subtitle markup strips; a literal comparison or an unknown <word> is the line's own
-  // text. Only b/i/u/s/c/ruby/rt/… with a space after the name were tags before — and a voice
-  // tag past the 64th character leaked when it was not the cue's first.
+  // Real subtitle markup strips, attributes and all (`<font …>`, `<span …>`, `<i class=…>`),
+  // as does a voice tag past the 64th character that is not the cue's first; a literal
+  // comparison or an unknown <word> is the line's own text.
   const N70 = "N".repeat(70);
   const cue = (fmt: "srt" | "vtt", text: string) =>
     fmt === "srt" ? `1\n00:00:01,000 --> 00:00:02,000\n${text}\n` : `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`;
