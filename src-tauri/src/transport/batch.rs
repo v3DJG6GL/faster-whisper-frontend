@@ -10,16 +10,13 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 
-/// Generous per-request ceiling for the Transcribe screen's file upload: an hour-long
-/// recording on a CPU-only / slow backend can legitimately decode for many minutes — far
-/// longer than the shared client's 120 s default, which is sized for short dictation clips
-/// and the status polls. Without this, a long file failed with a spurious "Timed out" while
-/// the server was still working, losing the result. Still bounded so a black-holed server
-/// can't hang the screen forever. The dictation batch path keeps the 120 s default (its only
-/// stuck-session backstop).
+/// Per-request ceiling for the Transcribe screen's file upload: an hour-long recording on a
+/// CPU-only / slow backend can decode for many minutes, far past the shared client's 120 s
+/// default (sized for dictation clips and status polls), and a timeout loses the result while
+/// the server is still working. Still bounded so a black-holed server can't hang the screen.
+/// The dictation batch path keeps the 120 s default (its only stuck-session backstop).
 pub(crate) const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
-/// Mirrors `session.rs`'s cap on the same list from the dictation path.
 /// A BCP-47 tag; the longest real ones are ~35 characters.
 const LANGUAGE_MAX: usize = 64;
 /// Speaker labels are identity-adjacent server strings ("SPEAKER_00" or
@@ -146,7 +143,7 @@ pub struct BatchResult {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     /// Client decode overrides the server refused because the field is
-    /// admin-locked (verbose_json only). Empty ⇒ omitted to the frontend.
+    /// admin-locked (verbose_json only).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides_ignored: Vec<String>,
     /// URL flow only: id of the server-retained downloaded audio (fetch once
@@ -261,8 +258,8 @@ pub(crate) struct VerboseJson {
 /// `Some(csv)` = translate into exactly these (screened, at most 8).
 ///
 /// The client's target list is authoritative — an empty one means the user switched the
-/// stage off — so it has to be said out loud. Omitting it (what an empty list used to do)
-/// let the server put the stage back.
+/// stage off — so it has to be said out loud: omitting it would let the server put the stage
+/// back.
 fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
     let requested = requested?;
     let targets: Vec<&str> = requested
@@ -769,8 +766,8 @@ mod wire_field_tests {
 
     #[test]
     fn absent_is_omitted_but_an_empty_list_is_sent_empty() {
-        // The distinction the whole change exists for: absent = inherit the server
-        // profile's TRANSLATE_TO, empty = explicitly no translation.
+        // Absent = inherit the server profile's TRANSLATE_TO, empty = explicitly no
+        // translation.
         assert_eq!(translate_to_field(None), None);
         assert_eq!(translate_to_field(Some(&[])), Some(String::new()));
     }
@@ -802,8 +799,7 @@ mod wire_field_tests {
     }
 }
 
-/// One translation target inside the run plan's translating stage. The server
-/// speaks snake_case (`est_s`); we re-emit camelCase to the webview.
+/// One translation target inside the run plan's translating stage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanUnit {
@@ -924,8 +920,7 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
 }
 
 /// The progress entry's `video` sub-object (keep_video runs): the secondary
-/// video fetch's state, reported beside the audio download. Snake_case on
-/// the wire, camelCase to the webview.
+/// video fetch's state, reported beside the audio download.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoProgress {
@@ -998,8 +993,7 @@ pub struct BatchProgress {
     /// Diarization pipeline's current step name.
     #[serde(default)]
     pub step: Option<String>,
-    /// The last decoded segment's text (transcribe stage live tail). The
-    /// server speaks snake_case; we re-emit camelCase to the webview.
+    /// The last decoded segment's text (transcribe stage live tail).
     #[serde(default, alias = "last_text")]
     pub last_text: Option<String>,
     /// Active stage's model / device / compute type.
@@ -1010,7 +1004,7 @@ pub struct BatchProgress {
     #[serde(default)]
     pub compute: Option<String>,
     /// Fraction of the audio the VAD kept (0..1), once decoding starts; null
-    /// when the filter was off. snake_case on the wire like `last_text`.
+    /// when the filter was off.
     #[serde(default, alias = "vad_retained")]
     pub vad_retained: Option<f64>,
     /// Requested pipeline stages the server declined to run (feature disabled
@@ -1019,8 +1013,7 @@ pub struct BatchProgress {
     #[serde(default)]
     pub skipped: Option<Vec<String>>,
     /// URL flow, downloading stage: bytes expected (progress is then the
-    /// downloaded fraction; null on fragmented streams). snake_case on the
-    /// wire like `last_text`.
+    /// downloaded fraction; null on fragmented streams).
     #[serde(default, alias = "total_bytes")]
     pub total_bytes: Option<u64>,
     /// Translating stage: the language being translated and how far along
@@ -1079,11 +1072,10 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
 
 /// A progress poll fires every second from an unguarded interval, so it must fail well
 /// under the shared client's 120 s default: against a server that accepts and then stalls,
-/// each tick otherwise left a live GET behind — ~120 concurrent sockets per run.
+/// each tick would otherwise leave a live GET behind — ~120 concurrent sockets per run.
 const PROGRESS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Poll the server-side progress entry for `progress_id`. Cheap and frequent —
-/// capped at `PROGRESS_TIMEOUT`, and bounded like every other metadata route.
+/// Poll the server-side progress entry for `progress_id`.
 pub async fn progress(
     server_url: &str,
     api_key: Option<&str>,
@@ -1200,9 +1192,8 @@ pub async fn transcribe(
         .to_string();
     let mime = mime_for(path);
     // Streamed, never resident: the media cap is 10 GB, and reading a file
-    // that size into a Vec would take the app down with it. Async reads
-    // off tokio's file pool, 1 MiB at a time, with the length declared so
-    // the server's early 413 fires before a byte is sent.
+    // that size into a Vec would take the app down with it. The length is
+    // declared so the server's early 413 fires before a byte is sent.
     let file = tokio::fs::File::open(path)
         .await
         .with_context(|| format!("opening {file_path}"))?;
@@ -1375,8 +1366,7 @@ async fn post(
         form = form.text("timestamp_granularities[]", *g);
     }
 
-    // Computed once, up here, so the `task` exclusivity below reads the exact value that
-    // goes on the wire instead of a second screening pass that had to agree by hand.
+    // Computed once, so the `task` exclusivity below reads the exact value that goes on the wire.
     let translate_to = translate_to_field(opts.translate_to.as_deref());
     let has_targets = translate_to.as_deref().is_some_and(|c| !c.is_empty());
     if translate && !use_translations_route && !has_targets {
@@ -1473,7 +1463,7 @@ async fn post(
     // language sentinel (see `transport::wire_language` for the three states): "auto" is
     // said out loud as an EMPTY value on the full backend, where it overrides an override
     // profile's DEFAULT_LANGUAGE. A STANDARD server has no profile to inherit from, and an
-    // empty `language` is not a valid code there — keep the old omit-on-auto for it.
+    // empty `language` is not a valid code there, so auto is omitted for it.
     if !use_translations_route {
         if let Some(wire) = super::wire_language_for(opts.standard.unwrap_or(false), language) {
             form = form.text("language", wire.to_string());
@@ -1485,7 +1475,6 @@ async fn post(
     if let Some(p) = prompt {
         form = form.text("prompt", p.to_string());
     }
-    // Per-request decode overrides as a JSON Form field (only when non-empty).
     if let Some(s) = overrides.and_then(batch_decode_overrides) {
         form = form.text("decode_overrides", s);
     }
@@ -1496,7 +1485,6 @@ async fn post(
             form = form.text("temperature", t);
         }
     }
-    // Per-request server override-profile name (only when non-empty).
     if let Some(p) = override_profile {
         if !p.is_empty() {
             form = form.text("override_profile", p.to_string());
@@ -1523,11 +1511,9 @@ async fn post(
     Ok(to_batch_result(parsed))
 }
 
-/// Bound a parsed payload into the record the webview stores. The dictation sibling caps this
-/// same pair on the way out (session.rs); the file-upload arm once returned them straight off
-/// the wire, so the Transcribe screen rendered a server string bounded only by the 32 MiB body
-/// cap. `text` is deliberately untouched — that IS the output. Shared with `transport::jobs`
-/// (the stored result of a run the app lost the connection to).
+/// Bound a parsed payload into the record the webview stores (every batch arm, dictation
+/// included). `text` is deliberately untouched — that IS the output. Shared with
+/// `transport::jobs` (the stored result of a run the app lost the connection to).
 pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
     BatchResult {
         text: parsed.text,
@@ -2358,12 +2344,8 @@ pub async fn download_result_media(
         std::process::id(),
         TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    // Async file I/O: up to MAX_MEDIA_BYTES lands here, and a synchronous write per chunk
-    // parked a runtime worker (the same contract `save_transcript_media` documents by
-    // running on a blocking thread) while the run's progress polls share that runtime.
-    // Typed, not a substring match on the error text: `Ok(None)` ("no local copy, run is
-    // fine") and `Err` ("failed fetch") are opposite outcomes, and a `.context()` added
-    // around the block would have silently flipped the over-cap case into the latter.
+    // A typed flag, not a match on the error text: `Ok(None)` (no local copy, run fine) and
+    // `Err` (failed fetch) are opposite outcomes, and a `.context()` would blur them.
     let mut over_cap = false;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
@@ -2392,9 +2374,9 @@ pub async fn download_result_media(
         if total == 0 {
             bail!("the server sent no media");
         }
-        // tokio::fs::File defers writes to a blocking op — a late ENOSPC/EIO
-        // surfaces here, not on the write_all that queued it. Swallowing it
-        // renamed truncated media into place as the run's mediaPath.
+        // tokio::fs::File defers writes to a blocking op: a late ENOSPC/EIO surfaces
+        // here, not on the write_all that queued it, and ignoring it would rename
+        // truncated media into place.
         f.flush().await.context("writing the media file")?;
         Ok(())
     }
