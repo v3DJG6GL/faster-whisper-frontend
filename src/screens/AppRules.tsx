@@ -143,7 +143,6 @@ function Editor({
     return true;
   };
 
-  // Unsaved-work guard, shared with the Profiles and Backends editors.
   // `null` and absent both mean "inherit" for the five override keys (types.ts), and the
   // controls write `null` on every change — so compare with both spellings pruned, or a
   // set-then-revert reads as unsaved forever.
