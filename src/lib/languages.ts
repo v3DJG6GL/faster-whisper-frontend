@@ -301,7 +301,7 @@ export function spokenSections(args: {
 
 /** The translation-target picker's groups. With the model's list known: Recent, "Supported by
  *  <model>", then every other language as "Not officially supported" (tagged "not tested").
- *  Unknown (null): one untagged group of all languages. The source language is left out. */
+ *  Unknown (null): Recent, then one untagged group of all languages. The source language is left out. */
 export function targetSections(args: {
   query: string;
   recent: readonly string[];
