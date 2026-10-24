@@ -262,8 +262,7 @@ function ambiguous(ctx: Ctx): boolean {
  *  Target codes come from user-editable settings and a synced backend, so they
  *  are not guaranteed to be well-formed BCP-47 — and a class name lands inside
  *  `<c.…>` markup and a STYLE block, where a stray `.`, `>` or space would
- *  break the cue rather than merely look wrong. Lowercased alphanumerics and
- *  hyphens only, bounded; an unusable code degrades to a positional `x`
+ *  break the cue rather than merely look wrong. An unusable code degrades to `x`
  *  instead of emitting broken markup. */
 function vttClass(lang: string): string {
   return codeSlug(lang.toLowerCase(), 12, "x");
@@ -890,9 +889,8 @@ export function previewExport(
   grid ??= cueGrid(result, opts, tracks);
   // Count what the file writes. JSON, LRC and timestamped TXT carrying the original: every
   // segment, even a blank one (a bare stamp). A subtitle file, or TXT/LRC without the original:
-  // what writtenCues counts (a single own-timed track its own cues, else the shared cues a
-  // picked translation cleans to a line in). Timestamps-off TXT with the original: a segment
-  // where the original or a picked translation cleans to a line (txtExport's trOf/clean rule).
+  // what writtenCues counts. Timestamps-off TXT with the original: a segment where the original
+  // or a picked translation cleans to a line (txtExport's trOf/clean rule).
   const every = opts.format === "json"
     || (tracks.includes("orig") && (opts.format === "lrc" || (opts.format === "txt" && !!opts.timestamps)));
   const list = every
