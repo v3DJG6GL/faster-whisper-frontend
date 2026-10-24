@@ -818,7 +818,7 @@ pub struct Config {
     /// push-to-talk liveness gate). `#[serde(default, skip…)]` so older configs load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_rules: Vec<serde_json::Value>,
-    /// Schema version (absent/legacy ⇒ 1; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Orders future migrations.
+    /// Schema version (absent = pre-versioning; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Gates the TS loader's one-shot migrations.
     #[serde(default)]
     pub version: Option<u32>,
 }
