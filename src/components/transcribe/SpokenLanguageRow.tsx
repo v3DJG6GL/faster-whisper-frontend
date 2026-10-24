@@ -1,8 +1,8 @@
-// The link card's "Spoken language" row (D86): the spoken picker, where the value comes from
+// The link card's "Spoken language" row: the spoken picker, where the value comes from
 // (from YouTube / detected in 3 of 3 pieces / detected · also English / edited), the sampled
 // pieces once the check is done, and two fixed icon buttons — ⟳ check the audio with Whisper
-// (■ stop, while a check runs), ↺ back to what the link speaks. The check runs on its own after the preview when the site
-// names no language; it downloads the audio, which the run then reuses.
+// (■ stop, while a check runs), ↺ back to what the link speaks. The check downloads the audio,
+// which the run then reuses.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, RotateCcw, Square } from "lucide-react";
@@ -112,7 +112,7 @@ export function useLinkLanguage(args: {
     recheck: start,
     stop: () => {
       if (check.state !== "running") return;
-      cancel(); // bumps the sequence (the answer never lands) and cancels the server-side work
+      cancel();
       setCheck({ state: "idle" });
     },
     prefetchMediaId: check.state === "done" ? check.result?.mediaId ?? null : null,
@@ -194,9 +194,8 @@ export function SpokenLanguageRow({
         </span>
       )}
       <span className="ml-auto flex gap-1">
-        {/* While a check runs, the same slot stops it: the check can take as long as the link
-            (up to an hour) and Add waits on it. Stopping is harmless during a run, so it is
-            not gated on `disabled`. */}
+        {/* Stop is not gated on `disabled`: stopping is harmless during a run, and the check
+            can take as long as the link (up to an hour) with Add waiting on it. */}
         <IconButton
           label={checkLabel}
           className={cn(!lang.enabled && !running && "invisible")}
