@@ -493,8 +493,8 @@ pub struct GeneralSettings {
     pub deep_field_detection: bool,
     /// Global chord (KeyboardEvent.code list) that opens the quick-add window. Empty =
     /// unset. Factory default = Super+Alt, inert until a quick-add list is designated (see
-    /// apply_bindings). Registered via the same paths as Profile hotkeys (evdev / plugin /
-    /// the `--quick-add` CLI flag). Deserialized through `de_hotkey` like `Profile.hotkey`:
+    /// apply_bindings). Registered via the same paths as Profile hotkeys (Windows hook / evdev /
+    /// plugin / the `--quick-add` CLI flag). Deserialized through `de_hotkey` like `Profile.hotkey`:
     /// its dedup bounds the chord's length, which `Engine::step` walks on every system-wide
     /// key transition.
     #[serde(default = "default_quick_add_hotkey", deserialize_with = "de_hotkey")]
@@ -713,8 +713,7 @@ pub struct AppSettings {
     /// enabled). Pure storage; the frontend resolves it.
     #[serde(default)]
     pub home_profile_id: Option<String>,
-    /// The pinned quick-add word-mapping list (Backend id + callback:map rule slug)
-    /// the QuickAdd window targets. None = not chosen yet.
+    /// The pinned quick-add list (see `QuickAddTarget`). None = not chosen yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_add_list: Option<QuickAddTarget>,
     pub general: GeneralSettings,
