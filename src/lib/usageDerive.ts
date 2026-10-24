@@ -935,9 +935,9 @@ export interface StageRowMeta {
   emptyCopy: string;
 }
 
-/** The four optional stages the panel always lists, in the mockup's order. Other stages
- *  the server may report (transcribing, downloading) are not "optional processing" and
- *  are not rows. */
+/** The four optional stages the panel always lists, in display order. Other stages the
+ *  server may report (transcribing, downloading) are not "optional processing" and are
+ *  not rows. */
 export const STAGE_ROWS: readonly StageRowMeta[] = [
   {
     key: "translating",
@@ -1011,7 +1011,7 @@ export interface FacetRow {
   /** Hover text when the label alone does not say it all (a language row's kept count). */
   title?: string;
   value: number;
-  /** Width as a share of the facet's largest row (the mockup scales bars to the max). */
+  /** Width as a share of the facet's scale (see facetRows' `scaleTo`), capped at 100. */
   pct: number;
   /** Rendered in the faint tone (an outcome that is not a success story). */
   dim?: boolean;
@@ -1040,11 +1040,9 @@ export function facetRows(
 }
 
 /** The "Translated into" facet: one row per target code (upper-case, the picker's codes),
- *  then the outcomes that were not a translation, dim. Codes come from the server and are
- *  shown as codes only, through langCode — sanitized, so a bidi or control character
- *  cannot reach the label or its title, and clipped to 12 code points — the bound the
- *  dictation targets themselves carry (chipController.ts), so two regional variants such as
- *  zh-Hant-TW and zh-Hant-HK stay apart. */
+ *  then the outcomes that were not a translation, dim. Codes go through targetCode, whose
+ *  12-code-point clip is the bound the dictation targets themselves carry (chipController.ts),
+ *  so two regional variants such as zh-Hant-TW and zh-Hant-HK stay apart. */
 export function translationRows(d: {
   targets?: readonly { code: string; runs: number; kept_original: number }[];
   translation?: { kept_original: number; not_asked: number; aborted: number; unreported: number };
