@@ -231,6 +231,14 @@ describe("applyTheme + setAccentHue", () => {
       },
     },
   };
+  // The drift tests' prologue: a fake clock at 0, the stand-in document, and a window whose
+  // matchMedia answers "dark OS, motion allowed" unless a test passes its own.
+  const bootDriftClock = (matchMedia: (q: string) => unknown = () => ({ matches: false })) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia });
+  };
   afterEach(() => {
     _resetThemeEngineForTests();
     vi.unstubAllGlobals();
@@ -286,10 +294,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("the driver restamps from the clock and leaves the base hue alone", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) }); // dark, motion allowed
+    bootDriftClock();
     const seen: number[] = [];
     subscribeAccentHue((h) => seen.push(h));
     setAccentHue(65);
@@ -310,12 +315,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("reduced motion keeps the driver Still", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", {
-      matchMedia: (q: string) => ({ matches: q.includes("reduced-motion") }),
-    });
+    bootDriftClock((q: string) => ({ matches: q.includes("reduced-motion") }));
     setAccentHue(65);
     setAccentMotion({ period: 360, range: "wheel" });
     applyTheme("dark");
@@ -326,18 +326,13 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("starting twice runs one clock", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
     let adds = 0;
     let removes = 0;
-    vi.stubGlobal("window", {
-      matchMedia: () => ({
-        matches: false,
-        addEventListener: () => { adds++; },
-        removeEventListener: () => { removes++; },
-      }),
-    });
+    bootDriftClock(() => ({
+      matches: false,
+      addEventListener: () => { adds++; },
+      removeEventListener: () => { removes++; },
+    }));
     let ticks = 0;
     subscribeAccentHue(() => ticks++);
     setAccentMotion({ period: 360, range: "wheel" });
@@ -357,10 +352,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("a tick that lands on the same whole degree stamps nothing", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    bootDriftClock();
     let stamps = 0;
     subscribeAccentHue(() => stamps++);
     setAccentHue(100);
@@ -376,10 +368,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("a paused driver arms no timer and catches up from the clock on resume", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    bootDriftClock();
     setAccentHue(65);
     setAccentMotion({ period: 360, range: "wheel" });
     applyTheme("dark");
@@ -396,10 +385,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("a window that boots paused never arms the timer", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    bootDriftClock();
     setAccentDriftPaused("window", true);
     setAccentMotion({ period: 60, range: "wheel" });
     applyTheme("dark");
@@ -408,10 +394,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("a theme flip or a new motion while paused stamps once and stays paused", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    bootDriftClock();
     let stamps = 0;
     subscribeAccentHue(() => stamps++);
     setAccentHue(275);
@@ -428,10 +411,7 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("the drift runs only once every pause reason is lifted", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    bootDriftClock();
     setAccentMotion({ period: 360, range: "wheel" });
     applyTheme("dark");
     startAccentDrift();
@@ -444,15 +424,10 @@ describe("applyTheme + setAccentHue", () => {
   });
 
   it("the driver asks for the reduced-motion query once, not once per tick", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    vi.stubGlobal("document", fakeDocument);
     let reducedQueries = 0;
-    vi.stubGlobal("window", {
-      matchMedia: (q: string) => {
-        if (q.includes("reduced-motion")) reducedQueries++;
-        return { matches: false };
-      },
+    bootDriftClock((q: string) => {
+      if (q.includes("reduced-motion")) reducedQueries++;
+      return { matches: false };
     });
     setAccentMotion({ period: 60, range: "wheel" });
     applyTheme("dark");
