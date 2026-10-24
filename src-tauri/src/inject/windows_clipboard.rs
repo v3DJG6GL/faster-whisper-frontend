@@ -1,8 +1,8 @@
 //! The Windows clipboard owner for pastes into a remote-desktop client (mstsc & co).
 //!
-//! **Why this exists.** Live dictation into a windowed mstsc session sometimes wrote a phrase
-//! twice. The logs proved the mechanism: we pasted only the new suffix, and the extra text was
-//! exactly what the REMOTE clipboard had cached from the previous paste. RDP's clipboard channel
+//! **Why this exists.** Live dictation into a windowed mstsc session can write a phrase twice:
+//! we paste only the new suffix, and the extra text is exactly what the REMOTE clipboard cached
+//! from the previous paste. RDP's clipboard channel
 //! and its input channel are not ordered against each other (MS-RDPECLIP delayed rendering): we
 //! write the clipboard, mstsc announces a new format list to the server, and our forwarded Ctrl+V
 //! can overtake that announcement — the remote app then pastes its cached copy of the PREVIOUS
@@ -17,8 +17,8 @@
 //! remote never keeps a rendered cache: a premature next Ctrl+V then fetches live from us instead
 //! of pasting stale text.
 //!
-//! **Modes** (env `FWF_RDP_CLIP`, read once): `legacy` = today's arboard write, owner never
-//! started; `diag` (the default in this batch) = the owner writes and logs, behaviour otherwise
+//! **Modes** (env `FWF_RDP_CLIP`, read once): `legacy` = the plain arboard write, owner never
+//! started; `diag` (the default) = the owner writes and logs, behaviour otherwise
 //! unchanged; `enforce` = diag + the one-shot re-announce + the caller waits (≤1.5 s) for the
 //! target's fetch before returning, which orders the NEXT offer after this fetch. `FWF_RDP_SETTLE_MS`
 //! (default 300) is the pre-chord settle for remote targets, so the user can measure with 0.
@@ -53,7 +53,7 @@ impl Mode {
 }
 
 /// `FWF_RDP_CLIP` → mode. Anything unrecognised (or unset) is `diag`: the owner path with
-/// logging, which is this batch's default while the user's RDP protocol runs.
+/// logging.
 fn parse_mode(v: Option<&str>) -> Mode {
     match v.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
         Some("legacy") => Mode::Legacy,
@@ -62,7 +62,7 @@ fn parse_mode(v: Option<&str>) -> Mode {
     }
 }
 
-/// Default pre-chord settle for a remote target — what the fixed sleep was before this module.
+/// Default pre-chord settle for a remote target.
 const DEFAULT_SETTLE_MS: u64 = 300;
 /// Upper bound on `FWF_RDP_SETTLE_MS`: a typo must not park every remote paste for minutes.
 const MAX_SETTLE_MS: u64 = 3000;
@@ -1160,8 +1160,6 @@ mod imp {
             NoFetchVerdict::Fetched | NoFetchVerdict::Stale => {}
         }
     }
-
-    // ---- caller side ----
 
     /// Offer `text_lf` (LF line endings; the owner renders CRLF) as the clipboard's text via
     /// delayed rendering. Blocks ≤750ms. See [`OfferError`] for what each failure means.
