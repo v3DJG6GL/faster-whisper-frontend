@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(d.on_event(K, true, false, t), Some((K, true))); // press commits
         assert_eq!(d.on_event(K, false, true, at(t, 10)), None); // phantom up deferred
         assert_eq!(d.on_event(K, true, true, at(t, 14)), None); // re-press cancels it
-        assert_eq!(d.next_deadline(), None); // nothing pending
+        assert_eq!(d.next_deadline(), None);
         assert!(d.expire(at(t, 1000)).is_empty()); // and nothing ever commits
     }
 
