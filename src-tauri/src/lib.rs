@@ -279,11 +279,10 @@ pub fn run() {
                 }
                 // Same for the language picker: its asker in the main webview awaits
                 // `langpick://commit`, `langpick://abort` or `langpick://unavailable` and nothing
-                // else settles it. An Alt+F4 that only hid the window left that promise pending
-                // for the rest of the process — hands-free latched its "picker open" gate and
-                // refused every later dictation; push-to-talk stalled the inject queue and never
-                // inserted the text. A closed window means the same as Esc: abort the action
-                // (don't start / don't insert), not "quietly use the Profile's preset".
+                // else settles it. Left pending, hands-free's "picker open" gate stays latched
+                // (every later dictation refused) and push-to-talk's inject queue stalls. A closed
+                // window means the same as Esc: abort the action (don't start / don't insert), not
+                // "quietly use the Profile's preset".
                 if window.label() == "langpick" {
                     use tauri::{Emitter, Manager};
                     let _ = window.app_handle().emit("langpick://abort", ());
@@ -550,7 +549,7 @@ enum ClosePolicy {
     /// Hide it (main quits instead when there is no tray to come back through).
     Hide,
     /// Ignore the request. The overlay chip: on Linux outside KDE-Wayland it takes focus when
-    /// clicked, and a destroyed chip silently stayed gone for the session (every overlay command
+    /// clicked, and a destroyed chip would stay gone for the session (every overlay command
     /// bails on a missing window). Not hidden either — chipController owns its visibility.
     Keep,
     /// Let it close.
