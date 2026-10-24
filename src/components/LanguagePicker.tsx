@@ -1,9 +1,9 @@
-// The two language pickers (D87) on the ListPicker shell: the spoken language (one value — a
+// The two language pickers on the ListPicker shell: the spoken language (one value — a
 // language, Auto-detect, Multiple languages, or the inherit row of an override field) and the
 // translation targets (several, grouped by what the translation model supports). Rows, groups
 // and search come from lib/languages; Recent lives in the settings and re-sorts only when a
-// picker closes, so rows never move under the pointer. Both take a renderTrigger, so a chip
-// row, a form field or a table's "Add language" row opens the same list.
+// picker closes, so rows never move under the pointer. The target picker takes a renderTrigger,
+// so its chip row and a table's "Add language" row open the same list.
 
 import { useRef, type ReactNode } from "react";
 import { Check } from "lucide-react";
@@ -56,7 +56,6 @@ export function TargetRow({ row, on, mark }: { row: LangRow; on: boolean; mark?:
   );
 }
 
-/** The hint line of a multi-select list. */
 const MULTI_KEYS = (
   <>
     <KeyHint k="↑↓">move</KeyHint>
