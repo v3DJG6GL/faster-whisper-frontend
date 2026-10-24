@@ -612,7 +612,6 @@ describe("wrapLines", () => {
   });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
     const t = "We met the people from Procter & Gamble at the big conference yesterday";
-    // At 38 the only seam keeping both lines within the cap is after the "&".
     expect(wrapLines(t, 42, 2)).toEqual(["We met the people from Procter", "& Gamble at the big conference yesterday"]);
     let s = 0;
     const words = t.split(/(?= )/).map((word) => ({ word, start: s, end: (s += 0.4) }));
