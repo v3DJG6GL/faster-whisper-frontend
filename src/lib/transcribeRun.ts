@@ -47,8 +47,8 @@ export interface QueueItem {
   /** Identity key: a filesystem path, or (URL items) the normalized link
    *  itself — the two can't collide (isSourceUrl). */
   path: string;
-  /** Absent = "file" (pre-URL rows). Display and transport dispatch branch
-   *  on this; every path-keyed structure works unchanged. */
+  /** Display and transport dispatch branch on this (via itemSourceKind). Absent
+   *  on rows from before the field: itemSourceKind then classifies by path. */
   kind?: "file" | "url" | "text";
   /** When this transcript was made (ISO) — the viewer's identity stamp.
    *  Same-URL records share the path key, so the timestamp is the only
@@ -126,9 +126,10 @@ export function videoTerminal(st: VideoProgress["state"] | undefined): boolean {
   return st === "done" || st === "failed" || st === "cancelled";
 }
 
-/** Canonical pipeline order — used to close seeded clocks of stages the server
- *  jumped over (e.g. a seeded "separating" clock when the backend declines BGM
- *  separation and jumps straight to "transcribing"). */
+/** Canonical pipeline order, whatever stages the run requested — it closes seeded
+ *  clocks of stages the server jumped over (e.g. a seeded "separating" clock when the
+ *  backend declines BGM separation and jumps straight to "transcribing") and finds
+ *  the latest observed stage still open. */
 const RAIL_ORDER: RailStage[] = ["downloading", "separating", "transcribing", "diarizing", "translating"];
 
 /** A stage switch (diarization, music separation) as the run sends it: the screen's own pick
@@ -184,9 +185,9 @@ export function railIndex(stage: string | undefined, stages: RailStage[]): numbe
 /** The rail row that is actually active. "waiting" is the server queued on a
  *  semaphore — it says nothing about WHICH stage runs next (the registry is
  *  seeded "waiting" at request entry, seconds before a URL run even starts
- *  resolving). Mapping it straight onto the transcribe row painted every
- *  earlier stage as done before the download began; instead, trust the stage
- *  clocks — the active row is the first stage whose clock hasn't closed. */
+ *  resolving), so mapping it onto the transcribe row would paint every earlier
+ *  stage done before the download began. On "waiting" the stage clocks decide:
+ *  the active row is the first stage whose clock hasn't closed. */
 export function activeRailIndex(
   progress: BatchProgress | null,
   stageTimes: Partial<Record<RailStage, StageTime>>,
@@ -229,13 +230,13 @@ export function activeRailIndex(
  *  reports it) must not read as done. */
 export type StepState = "pending" | "active" | "done" | "skipped" | "failed";
 
-/** Requested stages the server won't run. Two sources, authoritative first:
- *  the progress payload's `skipped` list (newer backends name the stages they
- *  declined the moment they decline them), else inference — a genuine
- *  pipeline stage past them has been observed while they never were.
- *  "waiting" convicts nothing in the inference: the semaphore queue runs both
- *  before separation and before the decode, so it maps onto the transcribe
- *  row without proving the earlier stage won't still happen. */
+/** Requested stages the server won't run. Sources, authoritative first: the
+ *  server plan's skipped stages; else the progress payload's `skipped` list
+ *  (newer backends name the stages they declined the moment they decline them);
+ *  else inference — a genuine pipeline stage past them has been observed while
+ *  they never were. "waiting" convicts nothing in the inference: the semaphore
+ *  queue runs both before separation and before the decode, so it maps onto the
+ *  transcribe row without proving the earlier stage won't still happen. */
 export function skippedStages(s: {
   progress: BatchProgress | null;
   stageTimes: Partial<Record<RailStage, StageTime>>;
@@ -257,7 +258,7 @@ export function skippedStages(s: {
     if ((stages as string[]).includes(r)) out.add(r as RailStage);
   }
   // A backend that names its skipped stages is authoritative — including an empty list:
-  // inference on top of it convicted stages that ran between two polls.
+  // inference on top of it would convict stages that ran between two polls.
   if (Array.isArray(s.progress?.skipped)) return out;
   const stage = s.progress?.stage;
   if (!stage || stage === "waiting" || stage === "unknown") return out;
@@ -580,8 +581,7 @@ function lanesOf(p: PlanStage | undefined, done: boolean): TimelineLane[] | unde
   return lanes.length ? lanes : undefined;
 }
 
-/** Everything the pump needs from the screen, captured once per run (frozen at
- *  start). */
+/** Everything the pump needs from the screen, frozen once at run start. */
 export interface RunContext {
   backendId: string;
   serverUrl: string;
@@ -796,8 +796,8 @@ export function patchItem(path: string, patch: Partial<QueueItem>) {
  *  completion can't land), but SETTLED results stay on view — they are in
  *  the history already. */
 export function resetForInputChange() {
-  // Also reached mid-run (addFiles/removeFile): stop the running file's server job rather
-  // than leave the server transcribing for a queue we already threw away.
+  // Also reached mid-run: stop the running file's server job rather than leave the server
+  // transcribing for a queue we already threw away.
   abandonActiveRun();
   set((s) => {
     const settled = s.queue.filter(
@@ -906,8 +906,8 @@ const registeredIds = new Set<string>();
 // reopened record re-registers, so later corrections re-save under the SAME id instead of
 // forking a new entry.
 const idByPath: Record<string, string> = {};
-// One timer PER overlay key: a single handle let an edit to record B (opened from
-// History inside the debounce window) cancel a pending write for record A.
+// One timer PER overlay key: a single shared handle would let an edit to record B (opened
+// from History inside the debounce window) cancel a pending write for record A.
 const persistTimers = new Map<string, number>();
 
 function registerRecord(rec: TranscriptRecord) {
@@ -966,8 +966,8 @@ setRecordForgetHook(forgetRecord);
 /** After a storage move (Rust rewrote every record's media paths; loadHistory(true) reloaded
  *  them): point each queue row at its record's moved copy. A row keeps the path its run or the
  *  opened record stamped, and the viewer and the export prefer it over the record's, so they
- *  went on playing and exporting a file no longer there. A row follows the open record when it
- *  shows it, else its path's latest registered record. */
+ *  would go on playing and exporting a file no longer there. A row follows the open record when
+ *  it shows it, else its path's latest registered record. */
 export function refreshRowMediaPaths(): void {
   const s = get();
   const open = s.openRecordId ? registered(s.openRecordId) : undefined;
@@ -994,7 +994,7 @@ setRecordRepointHook(repointRowMediaPath);
 /** After "Delete audio from link transcriptions" (`wiped`: the copy paths the wipe deleted,
  *  already stripped from their records): drop a queue row's copy that is one of them while its
  *  record no longer holds one. The row's path wins over the record's in the viewer and the
- *  export, so an open link transcript went on playing and exporting the deleted file, and
+ *  export, so an open link transcript would go on playing and exporting the deleted file, and
  *  refreshRowMediaPaths only re-points a row, never clears it. A record that still holds a copy
  *  (one stamped during the wipe) or a row not resolving to a record keeps its path. */
 export function clearWipedRowMediaPaths(wiped: ReadonlySet<string>): void {
@@ -1082,8 +1082,9 @@ function recordRun(
     language: outcome.result?.language ?? undefined,
     options,
     result: outcome.result,
-    // No overlays: a fresh run starts clean. Overlay slots are keyed by
-    // record id, and this record's id is minted right here.
+    // No overlays: a fresh run starts clean. Overlay slots are keyed by record
+    // id: a minted id has none, and an ingested job's id names at most its lost
+    // request's failed record, which has no transcript to overlay.
   };
   registerRecord(rec);
   upsertRecord(rec);
@@ -1099,8 +1100,8 @@ function recordRun(
 
 /** Patch a record's own queue row. The row is keyed by PATH, and two records of one source
  *  share it: while record A's late work (a chunk merge, an audio copy) is still in flight, the
- *  user may open record B of the same file or link from History — patching by path then
- *  painted A's data under B's header (A's segments, or A's audio played and exported as B's).
+ *  user may open record B of the same file or link from History — patching by path would then
+ *  paint A's data under B's header (A's segments, or A's audio played and exported as B's).
  *  Only THAT collision is suppressed: an open record of a different path leaves A's own row
  *  updated. */
 function patchOwnRow(rec: TranscriptRecord, patch: Partial<QueueItem>) {
@@ -1152,9 +1153,10 @@ function fetchRunUrlMedia(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
 }
 
 /** Pull the server-retained VIDEO of a link run into the local video store
- *  (keepUrlVideoCopies gate is the run's own keep_video choice — the server
- *  only holds a video the user asked for) and stamp it on the record as
- *  `videoPath`, merged onto the record's latest copy like the audio copy. */
+ *  (no keepUrlVideoCopies check here: that setting already fed the run's
+ *  keep_video, and the server only holds a video the user asked for) and stamp
+ *  it on the record as `videoPath`, merged onto the record's latest copy like
+ *  the audio copy. */
 function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
   // A record deleted meanwhile: downloading its video would only leave an orphan file.
   if (!registeredIds.has(rec.id)) return;
@@ -1240,7 +1242,7 @@ function awaitRunUrlVideo(
       // the first answer would then paint "done" over the new attempt.
       if (request) return;
       // Settle the row like a closed entry does: left on its last "downloading"/"queued", its
-      // clock ran on and Try again never showed. A run's own id may have finished meanwhile.
+      // clock would run on and Try again never show. A run's own id may have finished meanwhile.
       if (jobRow) settleFromJob(1, TOOK_TOO_LONG);
       else paintSettled(null, TOOK_TOO_LONG);
       return;
@@ -1730,9 +1732,9 @@ function foldVideo(dl: StageMeta | undefined, video: VideoProgress, now: number)
 
 /** Fold a progress poll into the store. "unknown" is the server saying "no
  *  such entry" — before the handler registers the id, and again after the
- *  response pops it — so it never overwrites a real stage (that flashed the
- *  rail to "Transcribe" at t=0 and back). Stage transitions stamp the
- *  wall-clock spans the rail shows as elapsed time. */
+ *  response pops it — so it never overwrites a real stage (it would flash the
+ *  rail to "Transcribe" and back). Stage transitions stamp the wall-clock
+ *  spans the rail shows as elapsed time. */
 export function foldProgress(p: BatchProgress) {
   if (!p.stage || p.stage === "unknown") return;
   set((s) => {
@@ -1749,8 +1751,8 @@ export function foldProgress(p: BatchProgress) {
     // phantom span would read as the stage having run.
     const obs = p.stage !== "waiting";
     let stageTimes = s.stageTimes;
-    // Every poll marks its stage observed — a stage whose clock only ever got
-    // seeded (never polled) is one the server jumped over.
+    // Every non-"waiting" poll marks its stage observed — a stage whose clock only
+    // ever got seeded (never polled) is one the server jumped over.
     if (prev !== cur) {
       stageTimes = { ...stageTimes };
       const pc = prev ? stageTimes[prev] : undefined;
@@ -1866,8 +1868,8 @@ let activeCancel: {
  *  server's pipeline (separate → transcribe → diarize, minutes of GPU) runs to
  *  completion regardless: dropping the HTTP request does not stop it. So every
  *  path that bumps the epoch calls this, not just the explicit Cancel button.
- *  Take-and-null makes it idempotent, and the API swallows a 404 for an id the
- *  server already retired. */
+ *  Take-and-null makes it idempotent, and the cancel's error (a 404 for an id
+ *  the server already retired) is swallowed here. */
 function abandonActiveRun(): void {
   // A re-attached run has no pump; its watcher (lib/jobsReconcile.ts) is
   // what must stop, synchronously, before the cancel goes out — startRun's
@@ -2056,8 +2058,7 @@ export function failJob(row: LedgerRow, error: string, opts: { attached: boolean
   return rec;
 }
 
-/** The pump's last-file settle, for a run that has no pump: close the open
- *  clocks, release the cancel handle, mark the store idle. */
+/** The pump's last-file settle, for a re-attached run (it has no pump). */
 function settleReattached(): void {
   activeCancel = null;
   reattachStop = null;
@@ -2070,8 +2071,7 @@ function settleReattached(): void {
   }));
 }
 
-/** Translate-only run for a subtitle/text source: read + parse locally, then
- *  translateParsed. */
+/** Translate-only run for a subtitle/text source. */
 async function translateTextSource(
   path: string,
   options: TranscribeOptions,
@@ -2630,12 +2630,10 @@ async function pump(
         } else {
           failFile(next.path, uploadTooLargeText(e) ?? String(e));
         }
-        // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
-        // queue item keeps the raw error; the doorway gets the truthful
-        // template (cause + backend + one fix). A text source only ran the
-        // translate stage, so it toasts as a translation failure. A run handed
-        // to its headless watcher gets no "try again": a retry stops that
-        // watcher and deletes the server job that would land in History.
+        // The queue item keeps the raw error; the doorway gets the templated one.
+        // A text source only ran the translate stage, so it toasts as a translation
+        // failure. A run handed to its headless watcher gets no "try again": a retry
+        // stops that watcher and deletes the server job that would land in History.
         const backendLabel = configuredBackendLabel(ctx.backendId) ?? "the backend";
         const kind = isText ? "translate" : "transcribe";
         useApp.getState().setLogsDoorway(
@@ -2655,8 +2653,7 @@ async function pump(
             set({ progress: null, stageTimes: {}, stageMeta: {} });
           } else {
             // Last file of the run: KEEP the rail data — the panel settles
-            // into its completed-receipts state until the input changes. Just
-            // close any still-open clocks.
+            // into its completed-receipts state until the input changes.
             const doneAt = Date.now();
             set((s) => ({
               stageTimes: Object.fromEntries(
@@ -2683,8 +2680,7 @@ export function startRun(options: TranscribeOptions | undefined,
   // that never reached its `finally`); the epoch bump below orphans it, so
   // stop it before the new run competes with it for the same GPU.
   abandonActiveRun();
-  // A lost request's job for a file this run re-queues would transcribe it twice: stop
-  // those watchers first. Other files' orphans keep landing in History.
+  // Only this run's files: other files' orphans keep landing in History.
   stopOrphans(s.files);
   const epoch = s.epoch + 1;
   set({
@@ -2713,8 +2709,8 @@ export function runBadgeFraction(s: TranscribeRunState): number | null {
 }
 
 /** The item the completed run panel describes: the file the PUMP ran last (it stamps
- *  `selectedPath` on finish), not the last row in queue order — a retry of a non-final
- *  file makes those diverge, and the rail's clocks belong to the retried one. */
+ *  `selectedPath` when a file succeeds), not the last row in queue order — a retry of a
+ *  non-final file makes those diverge, and the rail's clocks belong to the retried one. */
 export function settledPanelItem(queue: QueueItem[], selectedPath: string | null): QueueItem | null {
   const settled = (it: QueueItem) => it.status === "done" || it.status === "failed";
   return (
