@@ -5,7 +5,6 @@ import { cn } from "@/lib/cn";
 import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { routeParts } from "@/lib/routeParts";
 
-/* ── Badge ────────────────────────────────────────────────────────────── */
 // The pill's shape, shared with RouteBadge below. Exported as a STRING rather than
 // widening Badge with a className/tone: Badge has neither by design, it is used on
 // nearly every screen, and a per-site escape hatch on it would be the end of that.
@@ -33,8 +32,6 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: "accent"
     </span>
   );
 }
-
-/* ── LangTag ──────────────────────────────────────────────────────────── */
 
 /** Leading language tag on a track line (original neutral; MT takes the
  *  line's resolved color — dimmed speaker accent, or an accent-mixed fallback:
@@ -69,11 +66,9 @@ export function LangTag({ code, orig, color }: { code: string; orig?: boolean; c
   );
 }
 
-/* ── RouteBadge ───────────────────────────────────────────────────────── */
 /** The dictation ROUTE as one badge: the spoken language, and — when the profile
- *  translates — the languages its output is turned into. With no targets it renders
- *  exactly the plain language badge it replaced, so a profile without translation
- *  looks unchanged. */
+ *  translates — the languages its output is turned into. With no targets it looks like
+ *  a plain language badge. */
 export function RouteBadge({ source, targets }: { source: string; targets?: string[] | null }) {
   const r = routeParts(source, targets);
   if (!r.source && r.targets.length === 0) return null;
@@ -95,11 +90,8 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
   );
 }
 
-/* ── Notice ───────────────────────────────────────────────────────────── */
 /** An inline status banner: a tinted, rounded box with a leading icon and content.
- *  `warn` (default) = caution amber + AlertTriangle; `ok` = success + Check. Pass
- *  `className` for per-site spacing (e.g. `mt-3`). Single-sources the inline banner
- *  that recurred across the Backends / Transcribe / Dictionary / Home screens. */
+ *  `warn` (default) = caution amber + AlertTriangle; `ok` = success + Check. */
 export function Notice({
   tone = "warn",
   className,
@@ -129,8 +121,6 @@ export function Notice({
     </div>
   );
 }
-
-/* ── Toast (transient, with optional action) ──────────────────────────── */
 
 /** A bottom-center transient notice with an optional action ("Undo"). Portaled
  *  to <body>: Card's backdrop-blur makes it a containing block for fixed
@@ -188,7 +178,6 @@ export function Toast({
   );
 }
 
-/* ── Status dot ───────────────────────────────────────────────────────── */
 // The dictation tones plus the generic ones. Typed so a tone added to DictationTone (the
 // sidebar hands `vis.tone` straight through) fails to compile until DOT_BG styles it.
 type StatusTone = DictationTone | "ok" | "warn" | "idle" | "accent";
@@ -207,8 +196,8 @@ const DOT_BG: Record<StatusTone, string> = {
 };
 /** A small state dot. The dictation surfaces drive `tone`/`filled`/`pulse` from
  *  `dictationVisual()` so colour + shape + motion all match the overlay chip; off
- *  renders HOLLOW (the hue-independent cue). The generic `ok/warn/rec` tones stay
- *  for non-dictation uses (e.g. the backend-connection dot). */
+ *  renders HOLLOW (the hue-independent cue). The generic `ok/warn/idle/accent` tones
+ *  are for non-dictation uses (e.g. the backend-connection dot). */
 export function StatusDot({
   tone = "ok",
   pulse,
