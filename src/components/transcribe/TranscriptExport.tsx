@@ -120,7 +120,6 @@ export function TranscriptExport({
   /** History's "Save audio…/Save video…" opens the panel on that media for this visit only
    *  (initialExport): never persisted, dropped on the user's own pick and on a record switch. */
   const [mediaOverride, setMediaOverride] = useState<MediaChoice | null>(null);
-  // Media section (none / audio / video), from the persisted picks.
   const mediaChoice: MediaChoice = mediaOverride ?? settings.transcribe?.exportMedia ?? "none";
   const container: MediaContainer = settings.transcribe?.exportContainer ?? "mkv";
   const subtitleMode: SubtitleMode = settings.transcribe?.exportSubtitleMode ?? "embedded";
@@ -270,7 +269,7 @@ export function TranscriptExport({
     // Track picks belong to the previous file's tracks.
     setExportTracks(null);
     // A "permission denied" line (or a still-ticking "Saved") must not sit
-    // next to B's button.
+    // next to the new record's button.
     setSaveError(null);
     setSaved(false);
     setAudioSavedAs(null);
@@ -680,12 +679,11 @@ export function TranscriptExport({
     }
     if (outcome.kind === "ok") return true;
     if (outcome.kind === "expired") {
-      // Only the server that issued a STORED id may say it is gone (as Save audio's guard):
-      // trBackend falls back to the first backend for a record whose own one is missing or
-      // unrecorded, and that server's "expired" says nothing about an id its issuer may
-      // still hold. A foreign server only gets the stored id when no other source exists
-      // (above), so there is nothing to suggest. An id this call fetched or uploaded is
-      // trBackend's own (storedId is null then), so it may still be forgotten below.
+      // Only the server that issued a STORED id may say it is gone (as Save audio's guard): a
+      // fallback trBackend's (see storedId above) "expired" says nothing about its issuer's copy.
+      // A foreign server only gets the stored id when no other source exists, so there is
+      // nothing to suggest. An id this call fetched or uploaded is trBackend's own (storedId is
+      // null then), so it may still be forgotten below.
       if (storedId && serverVideoIssuer !== issuer) {
         const msg = "The selected server doesn't have this video.";
         if (mine()) setMediaError({ kind: "expired", msg });
@@ -873,12 +871,12 @@ export function TranscriptExport({
   };
   useEffect(() => () => window.clearTimeout(saveTimer.current), []);
 
-  // The panel's width bands (two columns from 860 px, Tracks beside Media
-  // from 560 px), MEASURED rather than CSS container queries: WebKit(GTK)
-  // first lays a query container out with its content unsized, and the page
-  // scroller clamps its scrollTop on that collapsed pass — opening Export or
-  // expanding the preview would yank the page up until the panel's top sat at
-  // the bottom of the window. Measured before paint; kept while closed.
+  // The panel's two-column band (from 860 px), MEASURED rather than a CSS
+  // container query: WebKit(GTK) first lays a query container out with its
+  // content unsized, and the page scroller clamps its scrollTop on that
+  // collapsed pass — opening Export or expanding the preview would yank the
+  // page up until the panel's top sat at the bottom of the window. Measured
+  // before paint; kept while closed.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelW, setPanelW] = useState(0);
   useResizeObserver(panelRef, (el) => setPanelW(el.clientWidth), open);
@@ -987,9 +985,9 @@ export function TranscriptExport({
     </PanelBox>
   );
 
-  // Media: what the Save also writes. Audio = the app's copy of a link's
-  // audio; Video = the kept/uploaded video, with the chosen tracks muxed in
-  // as subtitle streams (server-side), as sidecars, or both.
+  // Media: what the Save also writes. Audio = a link's audio (the app's copy,
+  // else the server's); Video = the kept/uploaded video, with the chosen tracks
+  // muxed in as subtitle streams (server-side), as sidecars, or both.
   const media = showMedia && (() => {
     // The chips say what the plan writes (`copyExt`): the source's own extension, which may
     // be neither chip (webm, mov) — then both sit out and the real one shows beside them.
@@ -1062,8 +1060,6 @@ export function TranscriptExport({
     </PanelBox>
   );
 
-  // Track names: what each track is called inside the video, its
-  // sidecar's name and its flags. Only with a video.
   // planTracks already read the name own-only and cleaned it (blank = the default), so a
   // title off its default IS a rename.
   const renamed = (t: (typeof planned)[number]) => t.title !== t.defaultTitle;
