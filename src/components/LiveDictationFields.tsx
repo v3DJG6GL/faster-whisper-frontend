@@ -244,7 +244,7 @@ export function LiveDictationFields({
         );
       }
       default: {
-        // STREAMING_VAD_THRESHOLD: a slider, ↺ back to the inherited value.
+        // STREAMING_VAD_THRESHOLD, the one live key not named above.
         const v = num(eff(k));
         const base = num(inh(k)) ?? 0.5;
         return (
