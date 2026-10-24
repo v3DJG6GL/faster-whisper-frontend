@@ -1,4 +1,4 @@
-// First-run onboarding — "connect first, branch after" (design v4).
+// First-run onboarding — "connect first, branch after".
 //
 // Mounted by App INSTEAD of the shell when a loaded config has no backends AND
 // no profiles (fresh install; seeds are gone). One gate screen asks the only
@@ -126,10 +126,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   };
 
   const testAndContinue = async () => {
-    // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
-    // busy, but both text inputs still fire this on Enter and stay editable — and a second run
-    // mints a fresh id, writes the API key to a SECOND keyring account, and upserts a duplicate
-    // backend, leaving one of the two keys orphaned in the OS wallet.
+    // As on the Backends screen: the submit Button is disabled while busy, but Enter in either
+    // input still fires this, and a second run would mint a duplicate backend and leave one of two
+    // keyring accounts orphaned in the OS wallet.
     if (busy) return;
     const serverUrl = typedServerUrl(url);
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
@@ -159,14 +158,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setError(null);
     try {
       const res = await testConnection({ serverUrl, apiKey: key || undefined });
-      // Live-target guard, the twin of the one `Backends.ConnectStep.testAndContinue` already has
-      // for exactly this reason. Both inputs stay editable for the whole (unbounded,
-      // network-timeout-length) test while `busy` blocks a re-run, so a user who mistypes a host,
-      // presses Enter and corrects the field is FORCED to wait — and the stale result then won
-      // unconditionally: a backend for the ABANDONED url was minted, the typed API key written to
-      // the keyring under it, `syncPull` run against it, and its restore offer presented while the
-      // on-screen field showed the corrected host. Accepting that restore runs
-      // `applyBlob(blob, ALL_ON)` and binds sync to that server.
+      // Live-target guard, twin of `Backends.ConnectStep.testAndContinue`'s: both inputs stay
+      // editable for the whole network-timeout-length test, so a result for a target the user has
+      // since corrected must not mint a backend, write its key, pull sync or offer a restore (whose
+      // acceptance would bind sync to the abandoned server).
       if (!stillLive()) return;
       if (!res.ok) {
         setError(res.error || "Couldn’t reach the server.");
@@ -208,8 +203,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           return;
         }
         // Gate on what the blob can RESTORE, not on its truthiness: a `{}` (a peer syncing with
-        // every category off) or a blob of unknown future keys opened an empty offer whose
-        // "Restore everything" applied nothing and still turned sync on.
+        // every category off) or a blob of only unknown future keys would open an empty offer
+        // whose "Restore everything" applies nothing yet turns sync on.
         if (p.ok && p.state?.blob && restorableCategories(p.state.blob).length > 0) {
           setPull(p);
           setStep("restore");
@@ -264,27 +259,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
       const gateUrl = typedServerUrl(url);
-      // Re-add the gate's own backend when the restore replaced the list without it, exactly as
-      // the Backends screen's restore does. `?? s.backends[0]` bound sync — and therefore every
-      // future push of every backend's plaintext key — to the FIRST entry of a list the server
-      // wrote, chosen by position, with nothing on screen saying so. It also orphaned the keyring
-      // entry written at the gate, since no backend referenced that id any more.
+      // Re-add the gate's own backend when the restore replaced the list without it, as the
+      // Backends screen's restore does. Never fall back to the first entry of the server-written
+      // list: sync, and with it every push of every backend's plaintext key, would bind to a
+      // backend chosen by position, and the gate's keyring entry would be orphaned.
       let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
       if (!match && gateBackend.current) {
         s.upsertBackend(gateBackend.current);
         match = gateBackend.current;
       }
-      // Write the API key the user proved at the gate to the matched backend's keyring
-      // entry — `applyBlob` may have replaced the backends list, orphaning the key that
-      // was written under `gateBackend.id`. Mirrors Backends.RestoreOffer.finishRestore, the
-      // flag lift, the rotation eviction and the verdict re-install included: a restored backend
-      // whose peer synced no secret comes back keyless (hasApiKey false), and sync bound to it
-      // showed the Sync tab's "has no API key" warning over a key that was saved and works. A key
+      // Write the key the user proved at the gate under the matched backend — `applyBlob` may have
+      // replaced the list, orphaning the key under `gateBackend.id`. As in
+      // Backends.RestoreOffer.finishRestore: a restored backend whose peer synced no secret arrives
+      // keyless (the Sync tab would warn "has no API key" over a working key), so its flag is
+      // lifted — only after the write succeeded; a throw reaches the catch with sync unbound. A key
       // written over an EXISTING keyed backend is a rotation upsertBackend can't see, so the old
-      // caller's caps/usage/connection are dropped. The gate's own backend (kept by a copy with
-      // no backends section) already holds this very key from the gate: no rewrite (a keyring
-      // prompt for nothing) and no rotation. A setBackendKey throw still reaches the catch below
-      // (sync not bound); the flag lifts only after the write succeeded.
+      // caller's caps/usage/connection are dropped. The gate's own backend already holds this key:
+      // no rewrite (a keyring prompt for nothing) and no rotation.
       if (match && key) {
         const isGate = match.id === gateBackend.current?.id;
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
@@ -579,8 +570,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   );
 }
 
-// ── Step 2b: editable starter profiles ─────────────────────────────────────
-
 type StartersIntro = "fresh" | "empty" | "none";
 
 const STARTERS_INTRO: Record<StartersIntro, string> = {
@@ -603,8 +592,8 @@ function StartersStep({
   const updateGeneral = useApp((s) => s.updateGeneral);
   // A starter whose fixed chord is the quick-add chord starts unbound (its card asks for one), as
   // the Profiles screen's "Keep these" commits it: Confirm has no conflict check of its own, and a
-  // colliding pair would hold every later save. Sides collapsed until evdevStatus answers — the
-  // conservative reading.
+  // colliding pair would hold every later save. Sides collapsed off Windows: evdevStatus has not
+  // answered at mount — the conservative reading.
   const [drafts, setDrafts] = useState<Profile[]>(() => startersClearOf(backendId, quickAddHotkey, !IS_WINDOWS));
   const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
   // The evdev note waits for evdevStatus's answer (no flash of it on a permitted setup).
@@ -714,8 +703,6 @@ function StarterCard({
   );
 }
 
-// ── Step 3: quick add & word mappings (full backends only) ─────────────────
-
 function QuickAddStep({
   serverUrl,
   backendId,
@@ -754,9 +741,8 @@ function QuickAddStep({
   }, [serverUrl, backendId]);
 
   const options = useMemo(
-    // First-run screen, fired from a mount effect against a server the user has just met.
-    // `ruleListOf` coerces these to strings but bounds no length and strips no bidi marks.
-    // `value` stays RAW on purpose: it is the slug PATCHed back and stored in
+    // `ruleListOf` coerces a just-met server's names to strings but bounds no length and strips
+    // no bidi marks. `value` stays RAW on purpose: it is the slug PATCHed back and stored in
     // `quickAddList.slug`, so defanging it would pin quick-add to a list that does not exist.
     () =>
       (rules ?? []).map((r) => ({
