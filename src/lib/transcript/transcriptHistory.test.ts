@@ -58,6 +58,11 @@ const storedFile = (id: string, file: string, createdAt: string, over: Record<st
   schemaVersion: 1, kind: "file", id, createdAt, sourcePath: `/${file}`, sourceName: file, status: "done", ...over,
 });
 
+/** A done dictation record as the listing reads it from disk: untyped, so a repair test can damage any field. */
+const storedDictation = (id: string, createdAt: string, over: Record<string, unknown> = {}) => ({
+  schemaVersion: 1, kind: "dictation", id, createdAt, sourcePath: "", sourceName: "Dictation", status: "done", ...over,
+});
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -110,15 +115,7 @@ describe("recordDictation", () => {
 
 describe("loadHistory", () => {
   it("keeps the listing alive when a file on disk is malformed", async () => {
-    const good: TranscriptRecord = {
-      schemaVersion: 1,
-      kind: "dictation",
-      id: "keep-me",
-      createdAt: "2026-01-02T03:04:05.000Z",
-      sourcePath: "",
-      sourceName: "Kate",
-      status: "done",
-    };
+    const good = storedDictation("keep-me", "2026-01-02T03:04:05.000Z", { sourceName: "Kate" });
     listTranscriptRecords.mockResolvedValue([
       good,
       null,
@@ -157,18 +154,7 @@ describe("loadHistory", () => {
   });
 
   it("keeps a record with a non-string appId, dropping only that field", async () => {
-    listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "dictation",
-        id: "bad-app",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "",
-        sourceName: "Dictation",
-        status: "done",
-        appId: 123,
-      },
-    ]);
+    listTranscriptRecords.mockResolvedValue([storedDictation("bad-app", "2026-01-02T03:04:05.000Z", { appId: 123 })]);
     await loadHistory(true);
     const [r] = useTranscriptHistory.getState().records;
     expect(r?.id).toBe("bad-app");
@@ -178,17 +164,9 @@ describe("loadHistory", () => {
   });
 
   it("keeps a record with non-array target lists, repairing only those fields", async () => {
-    const base = {
-      schemaVersion: 1,
-      kind: "dictation",
-      createdAt: "2026-01-02T03:04:05.000Z",
-      sourcePath: "",
-      sourceName: "Dictation",
-      status: "done",
-    };
     listTranscriptRecords.mockResolvedValue([
-      { ...base, id: "str-targets", translationTargets: "de", result: { text: "x", translation: { targets: "de", model: "m" } } },
-      { ...base, id: "mixed-targets", translationTargets: ["fr", 7, null], result: { text: "x", translation: { targets: ["it", {}] } } },
+      storedDictation("str-targets", "2026-01-02T03:04:05.000Z", { translationTargets: "de", result: { text: "x", translation: { targets: "de", model: "m" } } }),
+      storedDictation("mixed-targets", "2026-01-02T03:04:05.000Z", { translationTargets: ["fr", 7, null], result: { text: "x", translation: { targets: ["it", {}] } } }),
     ]);
     await loadHistory(true);
     const s = saved("str-targets");
@@ -399,18 +377,11 @@ describe("loadHistory", () => {
   });
 
   it("drops an unknown or non-string insertMethod so the expanded row cannot render an object", async () => {
-    const base = {
-      schemaVersion: 1,
-      kind: "dictation",
-      sourcePath: "",
-      sourceName: "Dictation",
-      status: "done",
-      result: { text: "hi" },
-    };
+    const hi = { result: { text: "hi" } };
     listTranscriptRecords.mockResolvedValue([
-      { ...base, id: "im-obj", createdAt: "2026-01-02T03:04:05.000Z", insertMethod: {} },
-      { ...base, id: "im-str", createdAt: "2026-01-02T03:04:06.000Z", insertMethod: "x".repeat(500) },
-      { ...base, id: "im-ok", createdAt: "2026-01-02T03:04:07.000Z", insertMethod: "clipboard" },
+      storedDictation("im-obj", "2026-01-02T03:04:05.000Z", { ...hi, insertMethod: {} }),
+      storedDictation("im-str", "2026-01-02T03:04:06.000Z", { ...hi, insertMethod: "x".repeat(500) }),
+      storedDictation("im-ok", "2026-01-02T03:04:07.000Z", { ...hi, insertMethod: "clipboard" }),
     ]);
     await loadHistory(true);
     for (const id of ["im-obj", "im-str"]) {
@@ -423,19 +394,12 @@ describe("loadHistory", () => {
   });
 
   it("maps the legacy \"latch\" activation to handsfree and drops an unknown one", async () => {
-    const base = {
-      schemaVersion: 1,
-      kind: "dictation",
-      sourcePath: "",
-      sourceName: "Dictation",
-      status: "done",
-      result: { text: "hi" },
-    };
+    const hi = { result: { text: "hi" } };
     listTranscriptRecords.mockResolvedValue([
-      { ...base, id: "act-obj", createdAt: "2026-01-02T03:04:05.000Z", activation: {} },
-      { ...base, id: "act-str", createdAt: "2026-01-02T03:04:06.000Z", activation: "x".repeat(500) },
-      { ...base, id: "act-latch", createdAt: "2026-01-02T03:04:07.000Z", activation: "latch" },
-      { ...base, id: "act-hold", createdAt: "2026-01-02T03:04:08.000Z", activation: "hold" },
+      storedDictation("act-obj", "2026-01-02T03:04:05.000Z", { ...hi, activation: {} }),
+      storedDictation("act-str", "2026-01-02T03:04:06.000Z", { ...hi, activation: "x".repeat(500) }),
+      storedDictation("act-latch", "2026-01-02T03:04:07.000Z", { ...hi, activation: "latch" }),
+      storedDictation("act-hold", "2026-01-02T03:04:08.000Z", { ...hi, activation: "hold" }),
     ]);
     await loadHistory(true);
     for (const id of ["act-obj", "act-str"]) {
