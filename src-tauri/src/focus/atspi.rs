@@ -609,7 +609,7 @@ pub(super) fn replay_parked(
 
 /// Fold a focused app into the snapshot. `current` tracks the latest; `last_other` captures the
 /// app focused immediately BEFORE our own window or a shell surface (set only at that transition,
-/// so it can't get stuck on a stale app). Sync; the caller holds the lock.
+/// so it can't get stuck on a stale app).
 fn set_current(
     snap: &mut super::Snapshot,
     app_id: String,
