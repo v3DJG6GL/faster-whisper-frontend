@@ -184,7 +184,7 @@ pub fn run() {
     logging::init(log_ring.clone(), log_writer.clone());
     tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
 
-    // Every app folder is named after the identifier (now org.fasterwhisper.frontend). Move an
+    // Every app folder is named after the identifier (org.fasterwhisper.frontend). Move an
     // older install's folders across BEFORE the builder: before single-instance, before the
     // webview opens a profile, before any path is resolved. A no-op on every launch after the
     // first. See migrate_identifier.rs.
