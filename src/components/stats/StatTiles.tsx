@@ -20,8 +20,8 @@ function Sparkline({ vals, color }: { vals: number[]; color: string }) {
   );
 }
 
-// "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
-// Signal colour like the chip's readout. Kind series keep --c-chart-* (kindFill).
+// "dict" is every tile but Errors: a figure about you, not about the Dictation kind, so it wears
+// the Signal colour like the chip's readout. Kind series keep --c-chart-* (kindFill).
 const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
 
 // The split legend counts sessions per kind, so it takes a counted noun ("1 file", "2 links"),
