@@ -744,7 +744,7 @@ function ownTimed(result: BatchResult, opts: ExportOptions, track: string): bool
 
 /** What the generators render: the segments themselves, or — for SRT/VTT
  *  with cue options, and for a single own-timed track — the cues projected
- *  as segments (cueResult), so every generator below stays cue-agnostic. */
+ *  as segments (cueResult), so every generator stays cue-agnostic. */
 function projected(result: BatchResult, opts: ExportOptions): BatchResult {
   if (opts.format === "json") return result;
   const tracks = tracksOf(opts);
@@ -963,7 +963,7 @@ export function cpsWarnings(
   opts: Omit<ExportOptions, "format">,
   grid?: CueGrid,
 ): { lang: string; index: number; cps: number }[] {
-  // Synthesized 1 s clocks (plain-text source) would flag every line over 20 chars.
+  // Synthesized 1 s clocks (plain-text source) would flag every line longer than the cps limit.
   if (result.timingSynthesized) return [];
   const tracks = opts.tracks?.length ? opts.tracks : ["orig"];
   grid ??= cueGrid(result, { ...opts, format: "srt" }, tracks);
