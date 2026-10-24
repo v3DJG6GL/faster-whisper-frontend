@@ -9,8 +9,8 @@ import {
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 
-/** The slider's rainbow track: fixed OKLCH lightness/chroma, hue sweeping 0→360 —
- *  the same cut the swatches are derived from, so the track predicts the result. */
+/** The slider's rainbow track: hue sweeping 0→360 at one fixed OKLCH lightness/chroma
+ *  (between the two themes' accent cuts), so it previews the hue, not the exact shade. */
 const HUE_TRACK = `linear-gradient(90deg, ${[0, 60, 120, 180, 240, 300, 360]
   .map((h) => `oklch(0.7 0.15 ${h})`)
   .join(", ")})`;
@@ -350,8 +350,8 @@ function MotionRows({
   // palette shows is what breathes).
   const arcTo = motion.arcHue ?? DEFAULT_ARC_HUE;
   const arcFrom = motion.arcFrom ?? nearestPreset(baseHue, arcTo);
-  // Two-of-six: a new pick becomes end 2 and the old end 2 becomes end 1, so two clicks
-  // in a row set the pair in reading order and a single click swaps the far end.
+  // Two-of-six: a pick shifts in as end 2 (the old end 1 drops), so two clicks in a row
+  // set the pair in reading order.
   const pickArc = (h: number) => {
     if (h === arcFrom || h === arcTo) return;
     commit({ arcFrom: arcTo, arcHue: h });
