@@ -30,6 +30,16 @@ pub struct VkError {
     pub after_typing: bool,
 }
 
+impl VkError {
+    /// A failure before any key was transmitted: safe to fall back to the portal.
+    fn before_typing(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            after_typing: false,
+        }
+    }
+}
+
 /// One typing request handed to the virtual-keyboard thread.
 #[cfg_attr(windows, allow(dead_code))] // the consuming worker is Linux-only (zwp_virtual_keyboard)
 pub struct VkJob {
@@ -71,10 +81,7 @@ pub async fn type_text(
     epoch: u64,
     own_window_focused: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 ) -> Result<crate::inject::Landed, VkError> {
-    let tx = ensure_started(vk).await.map_err(|message| VkError {
-        message,
-        after_typing: false,
-    })?;
+    let tx = ensure_started(vk).await.map_err(VkError::before_typing)?;
     let (reply, reply_rx) = oneshot::channel();
     tx.send(VkJob {
         text: text.to_string(),
@@ -83,14 +90,10 @@ pub async fn type_text(
         epoch,
         own_window_focused,
     })
-    .map_err(|_| VkError {
-        message: "virtual keyboard thread gone".into(),
-        after_typing: false,
-    })?;
-    reply_rx.await.map_err(|_| VkError {
-        message: "virtual keyboard dropped the job".into(),
-        after_typing: false,
-    })?
+    .map_err(|_| VkError::before_typing("virtual keyboard thread gone"))?;
+    reply_rx
+        .await
+        .map_err(|_| VkError::before_typing("virtual keyboard dropped the job"))?
 }
 
 async fn ensure_started(vk: &VirtualKeyboard) -> Result<mpsc::UnboundedSender<VkJob>, String> {
@@ -245,13 +248,6 @@ mod imp {
             epoch: u64,
             own_window_focused: &(dyn Fn() -> bool + Send + Sync),
         ) -> Result<crate::inject::Landed, VkError> {
-            // Helper: an error raised BEFORE any key was transmitted (the size limit below) is safe
-            // to fall back to the portal. `before` builds those; the per-batch keymap upload
-            // decides by `emitted` instead.
-            let before = |e: String| VkError {
-                message: e,
-                after_typing: false,
-            };
             // Bound the input BEFORE the per-character allocation below. `order` is one heap
             // `String` per input character, ~50-60 bytes each against 1 byte of ASCII input — so
             // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the per-keymap
@@ -260,8 +256,8 @@ mod imp {
             // 8ms/key — no real dictation approaches it.
             const MAX_VK_TEXT_BYTES: usize = 1 << 20;
             if text.len() > MAX_VK_TEXT_BYTES {
-                return Err(before(
-                    "transcript too large for the virtual keyboard".into(),
+                return Err(VkError::before_typing(
+                    "transcript too large for the virtual keyboard",
                 ));
             }
             // Control chars dropped, Enter/Tab named: the same mapping as the portal path.
