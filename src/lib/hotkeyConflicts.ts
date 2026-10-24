@@ -12,7 +12,7 @@
 //   • a HOLD chord ⊂ a HANDS-FREE chord  — completing the superset UPGRADES the
 //     running push-to-talk session to hands-free (reclassify, no restart) — or, when
 //     the two Profiles need different sessions (backend, language, …), discards it and
-//     starts the hands-free Profile instead (dictation.ts `sessionShape`).
+//     starts the hands-free Profile instead (dictation/sessionShape.ts).
 // Everything else nested (hands-free ⊂ hands-free, hold ⊂ hold, anything ⊂/⊃ quick-add…)
 // is a hard "shadow" conflict. This MUST stay in lockstep with the engine's
 // semantics — and with the registration filter in both hotkey backends — so
@@ -51,7 +51,6 @@ export function withQuickAddPeer(peers: Profile[], qa: string[]): Profile[] {
   return qa.length > 0 ? [...peers, quickAddPeer(qa)] : peers;
 }
 
-/** Is `a` a strict subset of `b` (fewer keys, all contained in `b`)? */
 function isStrictSubset(a: string[], b: string[]): boolean {
   return a.length < b.length && a.every((c) => b.includes(c));
 }
