@@ -90,10 +90,8 @@ export default function LangPick() {
       setSeed(s);
       themeRef.current = s.theme ?? "auto";
       applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
-      // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
-      // what would have happened without the picker. Anything else makes the prompt a
-      // trap — confirming it by habit would silently change the outcome. (Esc is the
-      // other habit, and it aborts loudly rather than changing anything.)
+      // Preselect the preset: anything else makes the prompt a trap — confirming it by
+      // habit would silently change the outcome. (Esc, the other habit, aborts loudly instead.)
       setChosen(cleanRecent(s.preset, targetCap(s.max)));
       setQuery("");
       setActive(0);
@@ -304,8 +302,7 @@ export default function LangPick() {
       />
 
       {/* The three answers as real buttons (mouse users), each carrying the key that gives
-          the same answer. The abort is red-tinted: it is the one that throws work away
-          (hands-free: nothing starts; push-to-talk: the transcript is not inserted). */}
+          the same answer. The abort is red-tinted: it is the one that throws work away. */}
       <div className="flex flex-wrap items-center gap-2 border-t border-line bg-surface px-4 py-2.5 text-[11.5px] text-faint">
         <KeyHint k="1–9">pick</KeyHint>
         {query.length > 0 && <KeyHint k="↵">pick filtered</KeyHint>}
