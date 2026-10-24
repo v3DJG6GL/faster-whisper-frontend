@@ -15,12 +15,10 @@ import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
 import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { navKey, pickerKeyActsOnce } from "@/lib/listNav";
-import { buildMicView, isSelectable, micFootKey, type MicRow, type SelectableRow } from "@/lib/micOptions";
+import { buildMicView, isSelectable, MIC_LABEL_MAX, micFootKey, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { MicInventory } from "@/lib/types";
-
-const LABEL_MAX = 80;
 
 export function MicPicker({
   inv,
@@ -133,7 +131,7 @@ export function MicPicker({
     if (r.type === "group") {
       return (
         <li key={`g${i}`} role="presentation" className="px-2.5 pb-1 pt-3 text-[11px] text-faint">
-          {safeDisplayText(r.label, LABEL_MAX)}
+          {safeDisplayText(r.label, MIC_LABEL_MAX)}
         </li>
       );
     }
@@ -177,7 +175,7 @@ export function MicPicker({
         </span>
         <span className="min-w-0 flex-1">
           <span className={cn("block truncate text-[13px]", r.type === "mic" && r.missing ? "text-dim" : "text-text")}>
-            {safeDisplayText(r.label, LABEL_MAX)}
+            {safeDisplayText(r.label, MIC_LABEL_MAX)}
           </span>
           {r.type === "default" && <span className="block text-[11.5px] text-dim">{r.sub}</span>}
           {r.type === "mic" && r.missing && (
@@ -188,7 +186,7 @@ export function MicPicker({
             </span>
           )}
           {r.type === "path" && (
-            <span className="block truncate font-mono text-[11px] text-dim">{safeDisplayText(r.techId, LABEL_MAX)}</span>
+            <span className="block truncate font-mono text-[11px] text-dim">{safeDisplayText(r.techId, MIC_LABEL_MAX)}</span>
           )}
         </span>
         {r.type === "mic" && r.bluetooth && <Badge>Bluetooth</Badge>}
@@ -222,7 +220,7 @@ export function MicPicker({
         }}
         muted={view.missing}
       >
-        {safeDisplayText(view.triggerLabel, LABEL_MAX)}
+        {safeDisplayText(view.triggerLabel, MIC_LABEL_MAX)}
       </FieldTrigger>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-[420px] max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-panel p-1.5 shadow-lg">

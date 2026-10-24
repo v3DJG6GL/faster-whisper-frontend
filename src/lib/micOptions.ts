@@ -8,6 +8,9 @@
 import { IS_LINUX } from "./platform";
 import type { MicInventory, MicPath, MicPathKind } from "./types";
 
+/** Display cap for a mic / path label (picker rows, trigger, and the Audio tab's notices). */
+export const MIC_LABEL_MAX = 80;
+
 /** cpal host names a saved pin starts with ("<host>:<device>"). Anything else is a display
  *  name saved before pins were device ids. */
 const HOSTS = ["pulseaudio", "pipewire", "alsa", "jack", "wasapi", "asio", "coreaudio", "aaudio"];

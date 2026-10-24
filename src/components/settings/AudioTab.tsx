@@ -9,7 +9,7 @@ import {
 } from "@/lib/api";
 import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
-import { buildMicView, isAlsaPin, isLegacyPin, labelForPick } from "@/lib/micOptions";
+import { buildMicView, isAlsaPin, isLegacyPin, labelForPick, MIC_LABEL_MAX } from "@/lib/micOptions";
 import { retryLegacyMicPin } from "@/lib/micMigration";
 import { safeDisplayText } from "@/lib/sanitize";
 import { everyWhileVisible } from "@/lib/windowVisibility";
@@ -299,15 +299,15 @@ export function AudioTab() {
         expand={
           view.legacy ? (
             <Notice className="mb-3">
-              {safeDisplayText(view.pinnedLabel ?? "", 80)} isn't offered by{" "}
+              {safeDisplayText(view.pinnedLabel ?? "", MIC_LABEL_MAX)} isn't offered by{" "}
               {safeDisplayText(inv?.server ?? "", 40)}. Dictation opens it through its
               sound card while it is plugged in, otherwise it uses System default
-              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""}.
+              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, MIC_LABEL_MAX)})` : ""}.
             </Notice>
           ) : view.missing ? (
             <Notice className="mb-3">
-              {safeDisplayText(view.pinnedLabel ?? "", 80)} is not connected. Dictation uses System default
-              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""} until it is plugged back in.
+              {safeDisplayText(view.pinnedLabel ?? "", MIC_LABEL_MAX)} is not connected. Dictation uses System default
+              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, MIC_LABEL_MAX)})` : ""} until it is plugged back in.
             </Notice>
           ) : undefined
         }
