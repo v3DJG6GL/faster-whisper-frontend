@@ -1,5 +1,5 @@
-// The transcript viewer's export panel: format, tracks, media, the "in this
-// file" contract, the live preview and Save. It stays mounted with the viewer
+// The transcript viewer's export panel: format, tracks, media, the Content and
+// Summary boxes, the live preview and Save. It stays mounted with the viewer
 // (hidden while closed), so its picks and a running media export survive
 // closing the panel.
 
