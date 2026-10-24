@@ -1,5 +1,6 @@
 // Bridge to the Rust core. Every call is guarded so the UI still runs in a plain
-// browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
+// browser (`pnpm dev`) — outside Tauri the calls no-op, return safe defaults, or throw a
+// "requires the desktop app" error.
 
 import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS, dialogFilterExts } from "./transcript/subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
