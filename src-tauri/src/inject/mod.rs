@@ -70,7 +70,6 @@ pub fn cancel_injection() {
 /// Same abandonment, but for a session that died rather than one the user cancelled: the text
 /// still being typed is left on the clipboard so it is recoverable.
 pub fn abort_injection_for_error() {
-    // `fetch_add` returns the PREVIOUS value, so the epoch this bump produces is prev + 1.
     let produced = INJECT_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     RECOVER_AT_EPOCH.store(produced, Ordering::SeqCst);
 }
