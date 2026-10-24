@@ -171,9 +171,7 @@ export function Waveform({
         colorDirtyRef.current = false;
       }
 
-      // Pride flag-mix: only while the meter is GREEN (actively speaking) — never at idle
-      // or while armed-but-silent. While hovered, flicker between the normal colour and the
-      // rainbow, settling on it; fade back out on leave or when you stop speaking.
+      // Pride flag-mix: only while the meter is GREEN (see the component note).
       const prideEligible = prideOnRef.current && toneRef.current === "live";
       // Becoming active while already hovering should still play the flicker from the top.
       if (prideEligible && !prevEligible && hoverRef.current) hoverStartRef.current = performance.now();
