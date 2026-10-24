@@ -19,7 +19,6 @@ describe("inheritLabel", () => {
     expect(inheritLabel("  ", "Default")).toBe("Default · ␠␠");
     expect(inheritLabel(" ")).toBe("Inherit · ␠");
     expect(inheritLabel("\t", "Set by server")).toBe("Set by server · ⇥");
-    // Padding around a real value still goes.
     expect(inheritLabel(" on ")).toBe("Inherit · on");
   });
   it("maps booleans to on/off", () => {
@@ -156,7 +155,6 @@ describe("serverInherited", () => {
     const fromBackend = serverInherited(null, { output_suffix: " " }, "batch", "Backend default");
     expect(inheritLabel(String(fromBackend.values.output_suffix))).toBe("Inherit · ␠");
     expect(fromBackend.sources.output_suffix).toBe("Backend default");
-    // An empty one keeps its "none".
     expect(serverInherited(null, { output_suffix: "" }).values.output_suffix).toBe("none");
   });
   it("lets the backend beat the server, except where the server locks", () => {
