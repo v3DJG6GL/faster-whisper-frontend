@@ -39,8 +39,8 @@ const deps = (translate: TranslateDeps["translate"]) => ({
 
 describe("pricedMs", () => {
   // The server translates every submitted segment for every target; pricing one
-  // pass over the phrase alone gave a 4-word phrase with 2 targets 1.95 s for
-  // 2.4 s of real work, so short phrases lost the race deterministically.
+  // pass over the phrase alone would make short multi-target phrases lose the
+  // race deterministically.
   it("scales with the target count, not just the text", () => {
     expect(pricedMs(100, 1)).toBe(900);
     expect(pricedMs(100, 2)).toBe(1_800);
