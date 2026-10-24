@@ -148,10 +148,10 @@ export function noteRoute(path: string): void {
 }
 
 /** One line into the core's log file (`frontend_log` → `tracing` with the user's log
- *  level), for diagnostics that only the webview can see — the typed-baseline divergence
- *  and carry notes of live dictation. Rust keeps printable ASCII, caps `msg` at 300 chars
- *  and rejects a `tag` outside [a-z]{1,16}, so keep both plain. NEVER pass transcript text:
- *  the log is shared in bug reports. Fire and forget. */
+ *  level), for diagnostics that only the webview can see (e.g. live dictation's
+ *  typed-baseline divergence and carry notes). Rust keeps printable ASCII, caps `msg` at 300
+ *  chars and logs a `tag` outside [a-z]{1,16} as `frontend`, so keep both plain. NEVER pass
+ *  transcript text: the log is shared in bug reports. Fire and forget. */
 export function logLine(level: "info" | "warn", tag: string, msg: string): void {
   if (!isTauri) return;
   void invoke("frontend_log", { level, tag, msg }).catch(() => {});
