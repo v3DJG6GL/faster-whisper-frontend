@@ -1,13 +1,11 @@
 // History records are the app's only durable account of what a dictation session
 // actually did with the user's words — and they are read back from FILES that may be
-// hand-edited, foreign, or written by an older build. This pins the two properties
-// that matter for that: the dictation capture round-trips every field the UI branches
-// on, and a malformed file never breaks the listing.
+// hand-edited, foreign, or written by an older build.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The Tauri commands are no-ops outside Tauri (api.ts guards each on `isTauri`), except
-// the disk listing, which we drive here to exercise the malformed-record filter.
+// The Tauri commands are no-ops outside Tauri (api.ts guards each on `isTauri`), so the
+// disk ones are mocked here to drive and observe them.
 const listTranscriptRecords = vi.fn<() => Promise<unknown[]>>();
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
 const deleteTranscriptRecord = vi.fn((_id: string, _audioBase: string | null) => Promise.resolve());
@@ -93,8 +91,8 @@ describe("recordDictation", () => {
     expect(rec.translationAttempted).toBeUndefined();
     expect(rec.translationFailure).toBeUndefined();
     expect(rec.translatedText).toBeUndefined();
-    // The new fields are additive + optional, so the schema does NOT move: old records
-    // (which have neither) stay readable and mean exactly this case.
+    // The translation fields are optional, so the schema does NOT move: old records
+    // (which have none) stay readable and mean exactly this case.
     expect(rec.schemaVersion).toBe(1);
   });
 });
@@ -771,8 +769,8 @@ describe("per-language tracks", () => {
   });
 
   it("normalises includeOriginal:false to absent", () => {
-    // Matches how TranslationFields stores the flag, so a record written with
-    // it off compares equal to one written before the field existed.
+    // So a record written with it off compares equal to one written before the
+    // field existed.
     const id = recordDictation({ ...CAPTURE, includeOriginal: false });
     const rec = useTranscriptHistory
       .getState()
@@ -1437,14 +1435,9 @@ describe("selectRecord (useRecord's selector)", () => {
   });
 });
 
-// The duplicate-original bug, pinned.
-//
-// A dictation translated to EN+FR rendered the INJECTED blob (which, with
-// "include original" on, already begins with the original) and then rendered
-// result.text again beneath it under an "original" label — so the source
-// language appeared twice, under a heading naming only the targets. recordTracks
-// is the decision that fixes it, extracted so it can be tested: there is no
-// jsdom, so the rendering itself cannot be.
+// With "include original" on, the INJECTED blob already begins with the original, so
+// rendering it plus result.text showed the source language twice. recordTracks is that
+// render decision, extracted so it can be tested: there is no jsdom.
 describe("history record display", () => {
   const base = {
     schemaVersion: 1 as const,
@@ -1525,8 +1518,8 @@ describe("history record display", () => {
     });
 
     it("returns null rather than throwing on a hand-edited record", () => {
-      // Records are read back from FILES: nothing validates the shape of an
-      // optional field on load.
+      // Records are read back from hand-editable FILES: recordTracks must not
+      // trust an optional field's shape.
       expect(recordTracks(rec({ translations: "nope" as never }))).toBeNull();
       expect(recordTracks(rec({ translations: {} }))).toBeNull();
       // A string where the target list belongs, a number where a track belongs.
