@@ -249,10 +249,8 @@ export function Waveform({
           ctx.fill();
         }
       }
-      // Keep animating only while there's something to animate — a live level meter,
-      // the processing sweep, or a Pride flicker/fade in progress. Once idle and visually
-      // settled, park the loop: a static silhouette costs the renderer nothing, and leaving
-      // a canvas repainting every frame for hours is exactly what bloated WebKitGTK.
+      // Once idle and visually settled, park the loop: a static silhouette costs the renderer
+      // nothing, and a canvas repainting every frame for hours is exactly what bloated WebKitGTK.
       const needsAnimation = (!reduce && (isActive || isProcessing)) || prideAnimating;
       if (!needsAnimation && maxStep < 0.001) {
         running = false;
