@@ -62,8 +62,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // synced, or neither is known (standard server, failed pull) — its copy must not lie.
   const [startersIntro, setStartersIntro] = useState<StartersIntro>("none");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  // Every exit marks setup handled so the gate never re-opens; later gaps
-  // (deleted backends, skipped steps) fall to the Home checklist instead.
   const finish = () => {
     // The component unmounts, but an in-flight testAndContinue keeps running —
     // without this latch it would pull sync and offer a restore against a server
