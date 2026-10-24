@@ -171,10 +171,7 @@ pub(crate) async fn inject_text(
         // event-loop round trip) must not install the transcript over the user's clipboard.
         // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept,
         // unless the caller withheld it (nothing in it to recover).
-        let discarded = move || {
-            crate::inject::injection_cancelled(epoch)
-                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
-        };
+        let discarded = move || crate::inject::cancel_discards(epoch, withhold_on_divert);
         if discarded() {
             tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
             return Ok(InjectOutcome {
@@ -208,9 +205,7 @@ pub(crate) async fn inject_text(
             // A recovery write too when an error abort fell through the gate above: arm the
             // session-restore guard, as the mid-function divert below does, so the error
             // teardown's `end_injection` does not serve the session snapshot over the transcript.
-            if crate::inject::injection_cancelled(epoch)
-                && crate::inject::cancel_wants_recovery(epoch)
-            {
+            if crate::inject::error_aborted(epoch) {
                 crate::inject::note_recovery_on_clipboard();
             }
         }
@@ -367,10 +362,7 @@ pub(crate) async fn inject_text(
         // letting the write happen IS that recovery. Unless the caller withheld it: a withheld
         // insert has nothing to recover, so any cancel stops it here with `landed: true`, as the
         // clipboard-only arm and the paste write gate do.
-        let discarded = move || {
-            crate::inject::injection_cancelled(epoch)
-                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
-        };
+        let discarded = move || crate::inject::cancel_discards(epoch, withhold_on_divert);
         if discarded() {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
             return Ok(InjectOutcome {
@@ -416,9 +408,7 @@ pub(crate) async fn inject_text(
             // the transcript on the clipboard; arm the session-restore guard like the two
             // paste-path writes so end_injection does not serve `prev` over it. Not armed on a
             // plain divert — that session is still live.
-            if crate::inject::injection_cancelled(epoch)
-                && crate::inject::cancel_wants_recovery(epoch)
-            {
+            if crate::inject::error_aborted(epoch) {
                 crate::inject::note_recovery_on_clipboard();
             }
         }
@@ -622,8 +612,7 @@ pub(crate) async fn inject_text(
                 // `!cancel_wants_recovery`), and a bare skip would bypass the recovery block at the
                 // end of this function, losing a died session's transcript — so recover here. A
                 // withheld insert has nothing to recover: it falls through to the plain skip.
-                if crate::inject::injection_cancelled(epoch)
-                    && crate::inject::cancel_wants_recovery(epoch)
+                if crate::inject::error_aborted(epoch)
                     && !recovery_text.is_empty()
                     && !withhold_on_divert
                 {
@@ -782,11 +771,7 @@ pub(crate) async fn inject_text(
             // text neither typed nor recoverable. A plain user cancel still restores: the clobbered
             // clipboard IS the thing to put back. So does a withheld insert in every case: the
             // recovery block skips it, and there is nothing in it to paste manually.
-            if withhold_on_divert
-                || (r.is_ok()
-                    && !(crate::inject::injection_cancelled(epoch)
-                        && crate::inject::cancel_wants_recovery(epoch)))
-            {
+            if withhold_on_divert || (r.is_ok() && !crate::inject::error_aborted(epoch)) {
                 crate::inject::restore_clipboard_later(prev);
             } else if r.is_err() && clip_text != text {
                 // The transcript stays on a live owner to paste manually — in its clipboard form,
@@ -848,10 +833,8 @@ pub(crate) async fn inject_text(
     // stop-mode path extends. A user-initiated cancel deliberately does not land here, and neither
     // does a withheld insert: it has nothing to recover, so the error teardown's snapshot restore
     // (and the sink's own restore, scheduled above) is left alone.
-    let mut recovered = crate::inject::injection_cancelled(epoch)
-        && crate::inject::cancel_wants_recovery(epoch)
-        && !recovery_text.is_empty()
-        && !withhold_on_divert;
+    let mut recovered =
+        crate::inject::error_aborted(epoch) && !recovery_text.is_empty() && !withhold_on_divert;
     if recovered {
         // `recovered` upgrades `NothingWritten` to `landed: true, diverted: true` below ("the text
         // IS somewhere the user can reach"), so it follows the write: on failure the outcome falls

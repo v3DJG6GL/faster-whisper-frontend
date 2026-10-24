@@ -86,15 +86,25 @@ pub fn injection_cancelled(epoch: u64) -> bool {
     INJECT_EPOCH.load(Ordering::SeqCst) != epoch
 }
 
+/// Was the job started at `epoch` stopped by an ERROR abort (its text is to be recovered)?
+pub fn error_aborted(epoch: u64) -> bool {
+    injection_cancelled(epoch) && cancel_wants_recovery(epoch)
+}
+
+/// Does a cancel of the job started at `epoch` discard its insert? A user cancel always does; an
+/// error abort only for a withheld insert (nothing in it to recover).
+pub fn cancel_discards(epoch: u64, withhold_on_divert: bool) -> bool {
+    injection_cancelled(epoch) && (!cancel_wants_recovery(epoch) || withhold_on_divert)
+}
+
 /// Set when an error-abort recovery has just put an abandoned transcript on the clipboard, so
 /// the SESSION-level restore does not erase it.
 ///
-/// `inject_text`'s own per-paste restore already asks this question via
-/// `injection_cancelled(epoch) && cancel_wants_recovery(epoch)`, but that guard needs the job's
-/// epoch and `end_injection` has none — it runs after the job is gone, chained on the same
-/// `stream://error` teardown that armed the recovery, and would serve the user's old clipboard
-/// 400ms later over the top. That leaves the transcript neither typed nor recoverable while both
-/// layers log success.
+/// `inject_text`'s own per-paste restore already asks this question via `error_aborted(epoch)`,
+/// but that guard needs the job's epoch and `end_injection` has none — it runs after the job is
+/// gone, chained on the same `stream://error` teardown that armed the recovery, and would serve
+/// the user's old clipboard 400ms later over the top. That leaves the transcript neither typed
+/// nor recoverable while both layers log success.
 ///
 /// A one-shot flag rather than an epoch comparison: `INJECT_EPOCH` only ever advances on a
 /// cancel or an abort, so `RECOVER_AT_EPOCH == INJECT_EPOCH` stays true indefinitely after one
@@ -1376,9 +1386,9 @@ fn paste(
     // on any cancel, error abort included, as the cancel check below does: it has nothing to
     // recover. Only a grab stuck past that bails. Nothing has been read or written yet, so
     // `NothingWritten` is truthful and the caller's re-send cannot duplicate text.
-    let Some(_clip_job) = wait_clip_job(CLIP_JOB_WAIT, || {
-        injection_cancelled(epoch) && (!cancel_wants_recovery(epoch) || withhold_on_divert)
-    }) else {
+    let Some(_clip_job) =
+        wait_clip_job(CLIP_JOB_WAIT, || cancel_discards(epoch, withhold_on_divert))
+    else {
         if injection_cancelled(epoch) {
             // Answered as the cancel check below answers (see there). An error abort only gets
             // here once the whole wait ran out (unless withheld), so its line names the wait and
