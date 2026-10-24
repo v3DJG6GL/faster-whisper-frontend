@@ -1,17 +1,13 @@
 import type { AppRule } from "./types";
 
-// TS mirror of the Rust `sanitize_injected` (src-tauri/src/inject/mod.rs). Strips C0/C1 control
-// characters (except Tab and LF) and normalizes CR/CRLF -> LF, so a malicious / compromised /
-// garbled transcription server can't smuggle terminal-escape or other control sequences onto
-// the clipboard. Tab and newline are kept (legitimate text); CR is normalized to LF first.
-//
-// Used by the manual "Copy" surfaces (which write a raw server response to the clipboard) to match
-// the same posture every automatic injection path already has via inject_text -> sanitize_injected.
+// `stripControlChars` (below) is the TS mirror of the Rust `sanitize_injected`
+// (src-tauri/src/inject/mod.rs), so a malicious or garbled server can't smuggle terminal-escape or
+// other control sequences onto the clipboard through the manual "Copy" surfaces, which write a raw
+// server response there — the same posture every automatic injection path has.
 /** Mirror of `is_deceptive_format_char` in src-tauri/src/inject/mod.rs: Unicode FORMAT characters
  *  (category Cf) that change how text READS without being visible. `char::is_control()` — and the
  *  Cc test below — cover none of them, so a bidi override lets the server make the text that lands
- *  on the clipboard differ from the text the user watched appear. Trojan-Source, via dictation.
- *  The automatic injection paths have dropped these since B13; the manual Copy surfaces did not. */
+ *  on the clipboard differ from the text the user watched appear. Trojan-Source, via dictation. */
 function isDeceptiveFormatChar(code: number): boolean {
   return (
     code === 0x00ad || // SOFT HYPHEN
@@ -24,10 +20,7 @@ function isDeceptiveFormatChar(code: number): boolean {
     code === 0x200b || code === 0x200e || code === 0x200f || // ZWSP/LRM/RLM (NOT ZWNJ/ZWJ — see Rust twin)
     code === 0x2028 || code === 0x2029 || // LINE/PARAGRAPH SEPARATOR — Zl/Zp, so the Cc test in
                                           // the callers misses them, yet both are UAX#14 mandatory
-                                          // breaks. Rust's twin has had them since H12; here they
-                                          // were added only to safeDisplayText's own inline test,
-                                          // so the manual Copy surface still let them onto the
-                                          // clipboard while every injection path dropped them.
+                                          // breaks.
     (code >= 0x202a && code <= 0x202e) || // bidi embeddings + overrides
     (code >= 0x2060 && code <= 0x2064) || // word joiner + invisible operators
     (code >= 0x2066 && code <= 0x2069) || // directional isolates
@@ -53,11 +46,10 @@ function isCc(code: number): boolean {
 /** A server- or peer-authored string on its way into the UI: control characters and the
  *  deceptive-format set removed, length bounded.
  *
- *  The security-review dialog has done this since B17, on the reasoning that a string shown next
- *  to a trust decision must not be able to reorder the text around it or push it off screen. Every
- *  sibling surface that renders remote-authored identity — device names, usernames, server
- *  versions, imported backend names — needs the same treatment, so it lives here rather than in
- *  one screen. Unlike `stripControlChars` this also drops Tab and newline: these are single-line
+ *  A string shown next to a trust decision must not be able to reorder the text around it or push
+ *  it off screen. Every surface that renders remote-authored identity — device names, usernames,
+ *  server versions, imported backend names — needs that, so it lives here rather than in one
+ *  screen. Unlike `stripControlChars` this also drops Tab and newline: these are single-line
  *  labels, and a newline in one is a layout break, not content. */
 export function safeDisplayText(s: unknown, max = 200): string {
   if (typeof s !== "string") return "";
@@ -65,10 +57,8 @@ export function safeDisplayText(s: unknown, max = 200): string {
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
     if (isCc(code)) continue;
-    // U+2028/U+2029 now live in the shared denylist above (they belong to both callers, not
-    // just this one): Zl/Zp, so the Cc range test misses them, yet both are UAX#14 mandatory
-    // breaks that no CSS collapses. In a label capped at 60 code points that is up to 60
-    // forced breaks — the "push the buttons off screen" failure the cap exists to prevent.
+    // isDeceptiveFormatChar also drops U+2028/U+2029: UAX#14 mandatory breaks no CSS collapses,
+    // so a 60-code-point label could carry 60 forced breaks and push the buttons off screen.
     if (isDeceptiveFormatChar(code)) continue;
     out.push(ch);
     if (out.length >= max) break;
@@ -79,18 +69,15 @@ export function safeDisplayText(s: unknown, max = 200): string {
 /** The stored key of an `AppRule` — the string the injection-target matcher compares against a
  *  live window's app id.
  *
- *  It has to go through the SAME filter the audit screen renders it with. `safeDisplayText`
+ *  It has to go through the SAME filter the audit screen renders it with: `safeDisplayText`
  *  DELETES zero-width and bidi characters, so a rule whose `appId` is `"konsole​"` displayed
- *  as exactly `konsole`, still read "Blocked — never typed here", and never matched: the display
- *  sanitizer erased the one character that broke the comparison. The editor is no help either —
- *  the mark is invisible in a text input, and `trim()` does not remove it, so opening the rule and
- *  re-saving it did not repair it. App rules have no consent gate and raise no security-review
- *  prompt, so such a rule arrives on an unattended pull.
+ *  as exactly `konsole`, read "Blocked — never typed here", and never matched. The mark is
+ *  invisible in a text input and `trim()` keeps it, so re-saving the rule did not repair it, and
+ *  app rules have no consent gate, so such a rule arrives on an unattended pull.
  *
- *  The producer side is normalized to match: `focus::atspi` runs the AT-SPI application name
- *  through `bounded_server_text` (which calls `is_deceptive_format_char`), and
- *  `focus::windows::exe_basename` does too — normalizing only the rule would invert the bug on
- *  Windows, where a filename legitimately may carry those characters. */
+ *  The producer side is normalized to match (`focus::atspi` and `focus::exe_name` run the app id
+ *  through `bounded_server_text`); normalizing only the rule would invert the bug on Windows,
+ *  where a filename legitimately may carry those characters. */
 export function normalizeAppId(s: unknown): string {
   let out = "";
   for (const ch of safeDisplayText(s, 200)) {
@@ -112,12 +99,11 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
         typeof (r as AppRule).id === "string" &&
         typeof (r as AppRule).appId === "string",
     )
-    // The one normalization this floor DOES apply, and the exception to the shape-only rule.
-    // `appId` is the rule's matching key, and the audit screen renders it through a filter that
-    // deletes invisible characters — so an un-normalized key displays as armed and matches
-    // nothing. On a legitimate rule (already trimmed by the editor, no invisible characters) this
-    // is a no-op, so it is not the silent rewrite the rule warns about. Rules whose key is
-    // entirely invisible are dropped: they could never match and could never be read.
+    // The one normalization this floor applies (the exception to shape-only): `appId` is the
+    // matching key and the audit screen renders it through a filter that deletes invisible
+    // characters, so an un-normalized key displays as armed and matches nothing. A no-op on a
+    // legitimate rule. Rules whose key is entirely invisible are dropped: they could never match
+    // and could never be read.
     .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
     // On the COMPARISON key: a joiner-only appId keeps its stored joiner but keys to "".
     .filter((r) => appRuleKey(r.appId).length > 0);
@@ -130,11 +116,9 @@ export const dropJoiners = (s: string): string => s.replace(/[\u200c\u200d]/g, "
 /** Characters that render as NOTHING but are neither in the deceptive-format denylist above nor
  *  `WhiteSpace` (so `trim()` misses them too).
  *
- *  This is the same bug `normalizeAppId` exists for, through a class the display filter does not
- *  reach. The zero-width fix made `"konsole​"` normalize to `konsole`; `"konsole️"` still
- *  stores whole, still draws as exactly `konsole` beside "Blocked — never typed here", and still
- *  matches nothing. Verified: U+034F, U+17B4-B5, U+2800 and the variation selectors all survive
- *  `safeDisplayText` and all render empty.
+ *  The same bug `normalizeAppId` exists for, through a class the display filter does not reach:
+ *  U+034F, U+17B4-B5, U+2800 and the variation selectors all survive `safeDisplayText` and render
+ *  empty, so `"konsole️"` stores whole, draws as exactly `konsole`, and matches nothing.
  *
  *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
  *  Arabic/Syriac format characters that one deliberately excludes and minus ZWNJ/ZWJ (U+200C/D),
@@ -190,9 +174,9 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // one-space runs that collapse to nothing, then lose their separators to the display filter, and
   // the padded name renders as exactly `konsole` again.
   //
-  // The invisible HEAD goes first (`trimLeadingInvisible`, hoisted below): a leading ZWNJ/ZWJ joins
-  // nothing and renders as nothing, yet the fold keeps joiners (interior ones shape scripts and
-  // emoji), so a joiner-only name read as content and a joiner run padded the name past the cut.
+  // The invisible HEAD goes first (`trimLeadingInvisible`): a leading ZWNJ/ZWJ renders as nothing,
+  // but the fold keeps joiners (interior ones shape scripts and emoji), so a joiner-only name would
+  // read as content and a leading joiner run would pad the name past the cut.
   //
   // Interior joiners pad too: `"Work" + " \u200d"×100 + " Evil"` is a hundred one-space runs the
   // collapse cannot merge, so the cut lands in the padding exactly as the U+2800 case did. A joiner
@@ -217,9 +201,9 @@ export function safeIdentityText(s: unknown, max = 80): string {
       /\s/.test(str[off - 1] ?? "") || /\s/.test(str[off + m.length] ?? "") ? " " : m[0],
     )
     .replace(/\s+/g, " ");
-  // Trim BEFORE the cut, and trim what precedes the marker: a cut at `max + 1` that lands on the
-  // collapsed space used to be trimmed away before the length test, so `"a"×80 + " evil"`
-  // rendered as its own 80-char prefix with no ellipsis.
+  // Trim BEFORE the cut, and trim what precedes the marker: trimming after the cut would drop a
+  // collapsed space landing at `max + 1` before the length test, so `"a"×80 + " evil"` would
+  // render as its own 80-char prefix with no ellipsis.
   const t = safeDisplayText(collapsed.trim(), max + 1);
   const chars = [...t];
   return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
@@ -227,11 +211,10 @@ export function safeIdentityText(s: unknown, max = 80): string {
 
 /** `s` without the leading characters that render as nothing — whitespace, the invisible class
  *  `.trim()` keeps (U+2800, variation selectors, …), ZWNJ/ZWJ and the characters the display filter
- *  deletes —
- *  so a display cut that follows starts at the first visible one. Only the head: a trailing
- *  variation selector belongs to the emoji before it. */
+ *  deletes — so a display cut that follows starts at the first visible one. Only the head: a
+ *  trailing variation selector belongs to the emoji before it. */
 export function trimLeadingInvisible(s: string): string {
-  // Walk the head only and cut by UTF-16 offset: spreading the whole name copied an unbounded
+  // Walk the head only and cut by UTF-16 offset: spreading the whole name would copy an unbounded
   // synced string twice per render before the display cap applied.
   let off = 0;
   for (const ch of s) {
@@ -266,10 +249,9 @@ export const deviceDisplayName = (name: unknown, max = 60): string =>
  *  it would read as this device's own label (`localLabel`) — the caller then renders its neutral
  *  fallback or omits the clause. The name is server-supplied, so it must never be able to read as
  *  this device: one calling itself "This device" would produce two identical buttons on the control
- *  that decides whose settings win, and the conflict sentence, the restore header, the sync status
- *  line and the restore offers (Backends, Onboarding) would credit this device with the peer's
- *  copy. Compared as the name renders — case-insensitively, with ALL whitespace, the invisible
- *  class (U+2800, variation selectors, …) and ZWNJ/ZWJ removed, since `"This\u2800device"`,
+ *  that decides whose settings win, and every sync sentence would credit this device with the
+ *  peer's copy. Compared as the name renders — case-insensitively, with ALL whitespace, the
+ *  invisible class (U+2800, variation selectors, …) and ZWNJ/ZWJ removed, since `"This\u2800device"`,
  *  `"This device\uFE0F"`, `"This \u200Ddevice"` and `"Th\u034Fis device"` all draw as "This
  *  device" (the invisible class becomes a space here, but its zero-width members draw nothing, so
  *  a space inside a word cannot be told from none). "Thisdevice" then falls back too — acceptable. */
@@ -281,10 +263,9 @@ export function peerDeviceName(device: unknown, localLabel = "This device"): str
 }
 
 /** The name a dictionary rule list is shown under — the one render rule for every site that names
- *  a list (the Dictionary card header and pinned readout, Quick add, Onboarding): its label, else
- *  its rule name, each through `deviceDisplayName` (invisible head dropped, display-filtered,
- *  trimmed), so a label of only spaces or invisible characters falls through to the name instead of
- *  rendering blank. "" when both are blank; the caller picks its own last fallback. */
+ *  a list: its label, else its rule name, each through `deviceDisplayName`, so a label of only
+ *  spaces or invisible characters falls through to the name instead of rendering blank. "" when
+ *  both are blank; the caller picks its own last fallback. */
 export const ruleListLabel = (label: unknown, name: unknown, max = 80): string =>
   deviceDisplayName(label, max) || deviceDisplayName(name, max);
 
@@ -294,10 +275,10 @@ export const ruleListLabel = (label: unknown, name: unknown, max = 80): string =
  *  shadows the other. */
 export function appRuleKey(appId: unknown): string {
   // ZWNJ/ZWJ leave the COMPARISON key only (the stored key keeps them, see isInvisibleKeyChar):
-  // `"kon\u200dsole"` renders as exactly `konsole` in the audit row yet never equalled the live id.
+  // `"kon\u200dsole"` renders as exactly `konsole` in the audit row, so it must match that id.
   // Trimmed again: `"\u200d konsole"` leaves a leading space once the joiner goes. Whitespace
   // runs fold to one ASCII space, as `safeIdentityText` draws them: `"Google\u00a0Chrome"` or a
-  // double space showed as exactly `Google Chrome` in the audit row yet never matched it.
+  // double space shows as exactly `Google Chrome` in the audit row, so it must match it.
   return dropJoiners(normalizeAppId(appId)).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
@@ -340,8 +321,8 @@ export function capEdit(prev: string, next: string, max: number): string {
 export function stripControlChars(text: string, max = Infinity): string {
   let out = "";
   if (max <= 0) return out;
-  // CR normalisation folded into the bounded loop — two whole-string `replace` passes up
-  // front copied a full transcript twice per row per keystroke before the bound applied.
+  // CR normalisation lives in the bounded loop: two whole-string `replace` passes up front
+  // would copy a full transcript twice per row per keystroke before the bound applied.
   let prevCR = false;
   for (const raw of text) {
     let ch = raw;
