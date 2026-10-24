@@ -158,10 +158,9 @@ export function beginChunk(
     // On the first chunk a later poll still corrects to downloading/loading.
     // Past it, any chunk having answered proves the model is up (and the network back):
     // whatever the card read — "loading"/"downloading" from a model phase no translating
-    // poll outlived (a fast chunk inside the poll gap), or "reconnecting" against that same
-    // 404 server where no successful poll ever would clear it — it now reads "translating"
-    // with a full model lane, as foldTranslatePoll's translating arm sets it. On the first
-    // chunk "reconnecting" settles on the busiest safe guess.
+    // poll outlived (a fast chunk inside the poll gap), or "reconnecting" — it now reads
+    // "translating" with a full model lane, as foldTranslatePoll's translating arm sets it.
+    // On the first chunk "reconnecting" settles on the busiest safe guess.
     phase:
       s.phase === "starting"
         ? "translating"
@@ -266,9 +265,8 @@ export function foldTranslatePoll(
  *  keeps going — the chunk request has its own long timeout, and polling
  *  continues until it recovers. Terminal phases are sticky here too.
  *  `sentAt` as in foldTranslatePoll: a poll sent before the current chunk began failing late
- *  says nothing about now (the chunk that just left proves the network), and against a
- *  server whose polls all 404 nothing would clear the flag until the next chunk. Likewise a
- *  poll sent before the newest one already folded (`pollAt`): a newer poll answered, so the
+ *  says nothing about now (the chunk that just left proves the network). Likewise a poll
+ *  sent before the newest one already folded (`pollAt`): a newer poll answered, so the
  *  network was back by then. */
 export function foldPollFailure(s: TranslateRunUi, sentAt?: number): TranslateRunUi {
   if (s.phase === "done") return s;
