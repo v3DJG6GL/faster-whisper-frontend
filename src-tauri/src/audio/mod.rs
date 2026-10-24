@@ -601,14 +601,8 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) -> bool {
     }
 }
 
-/// An empty `fwf-<tag>-<pid>` dir under the OS temp dir, wiped first so a crashed earlier run leaves nothing behind.
 #[cfg(test)]
-fn scratch_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("fwf-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
-}
+use crate::config::fresh_test_dir as scratch_dir;
 
 #[cfg(test)]
 mod retention_tests {
@@ -616,8 +610,7 @@ mod retention_tests {
     #[test]
     fn private_dir_locks_down_the_leaf_only() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("fwf-private-dir-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = super::scratch_dir("private-dir");
         let leaf = root.join("a").join("b").join("leaf");
         super::create_dir_private(&leaf).unwrap();
         let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -661,8 +654,7 @@ mod retention_tests {
     /// to the single-buffer `wav_from_pcm16`.
     #[test]
     fn saved_recording_matches_the_full_wrapper() {
-        let dir = std::env::temp_dir().join(format!("fwf-save-wav-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = scratch_dir("save-wav");
         let pcm: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
         let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
         assert_eq!(

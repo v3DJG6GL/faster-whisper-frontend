@@ -1750,8 +1750,7 @@ mod tests {
 
     #[test]
     fn a_discarded_recording_takes_its_sidecar_along() {
-        let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("discard");
         let wav = dir.join("dictation-1.wav");
         std::fs::write(&wav, b"RIFF").unwrap();
         std::fs::write(wav.with_extension("txt"), b"text\n").unwrap();
