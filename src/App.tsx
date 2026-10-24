@@ -41,12 +41,10 @@ function flushPendingWrites(): Promise<PromiseSettledResult<void>[]> {
   return Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
 }
 
-// Subscribe to a Tauri event for the component's lifetime via the StrictMode-safe cancelled-guard.
-// React StrictMode (dev) mounts → unmounts → remounts and runs the cleanup BEFORE the listen()
-// promise resolves; without the guard the first listener is never removed and a second is added, so
-// every event fires its handler twice (double sound + duplicate sessions). `subscribe` returns the
-// unlisten fn; re-subscribes when `deps` change. (deps drive the effect; `subscribe` is recreated
-// each render so it's intentionally excluded.)
+// Subscribe to a Tauri event for the component's lifetime. React StrictMode (dev) runs the cleanup
+// BEFORE the listen() promise resolves; without the cancelled-guard the first listener is never
+// removed, so every event fires its handler twice (double sound + duplicate sessions). `subscribe`
+// is recreated each render, so only `deps` drive the effect.
 function useTauriListener(subscribe: () => Promise<() => void>, deps: DependencyList) {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -65,9 +63,8 @@ function useTauriListener(subscribe: () => Promise<() => void>, deps: Dependency
   }, deps);
 }
 
-// Each page opens at its top: <main> is one persistent scroll container, so
-// without this a route change kept whatever scroll offset the previous page
-// left ("History opened mid-list"). History is exempt — it restores its own
+// Each page opens at its top: <main> is one persistent scroll container that would
+// otherwise keep the previous page's offset. History is exempt — it restores its own
 // remembered position instead.
 function ScrollReset() {
   const { pathname } = useLocation();
@@ -175,13 +172,12 @@ function HistoryTraversalGuard() {
   return null;
 }
 
-// Surfaces a config auto-save failure (disk full / read-only / IPC) OR a refused save (two
-// profiles share a shortcut, so the conflicting set is held back) — kind "save". Also carries the
-// startup load-time notices (config reset from a corrupt file, or a failed load) — kind "load" —
-// which are self-contained and must NOT wear the save-failure framing (they'd read as a lie: nothing
-// failed to save). The app otherwise saves settings/backends/profiles silently (debounced), so
-// without this a non-write is invisible. A save-kind notice self-heals — the next successful save
-// clears it; a load notice stays until dismissed. Dismissible.
+// Surfaces a config auto-save failure (disk full / read-only / IPC) or a refused save (two
+// bindings share a shortcut, so the conflicting set is held back) — kind "save", cleared by the
+// next successful save. Also the startup load notices (config reset from a corrupt file, or a
+// failed load) — kind "load", which must NOT wear the save-failure framing (nothing failed to
+// save) and stays until dismissed. Saves are otherwise silent, so without this a non-write is
+// invisible.
 function SaveErrorBanner() {
   const saveError = useApp((s) => s.saveError);
   const saveErrorKind = useApp((s) => s.saveErrorKind);
@@ -195,7 +191,6 @@ function SaveErrorBanner() {
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <div className="flex-1">
         {saveErrorKind === "load" ? (
-          // Load-time notice — self-contained; no "Couldn't save / changes lost on restart" framing.
           saveError
         ) : (
           <>
@@ -219,10 +214,8 @@ function SaveErrorBanner() {
 
 // The failure doorway: "Transcription failed — View logs". Set by the dictation
 // and batch-transcription error paths; "View logs" lands on /logs pre-filtered
-// to warnings+errors. Shares one bottom-center BottomBanners column with
-// SaveErrorBanner (rendered first, so it stacks above it when both are up — a
-// wrapped save banner grows the column instead of covering these buttons). Must
-// live inside <HashRouter> for useNavigate.
+// to warnings+errors. Rendered before SaveErrorBanner in BottomBanners, so it
+// stacks above it. Must live inside <HashRouter> for useNavigate.
 function LogsDoorwayBanner() {
   const doorway = useApp((s) => s.logsDoorway);
   const setLogsDoorway = useApp((s) => s.setLogsDoorway);
@@ -326,9 +319,8 @@ export default function App() {
     initLogStatus();
     // A retention sweep that removed History records reloads the History mirror.
     listenRetentionSweeps();
-    // A reload lands the same four writes as a quit (History edits, History writes, config save,
-    // usage-outcome queue save). A real quit never fires beforeunload — that goes through the
-    // `app://before-quit` handshake below.
+    // A reload lands the same writes as a quit. A real quit never fires beforeunload — that goes
+    // through the `app://before-quit` handshake below.
     const onUnload = () => {
       void flushPendingWrites();
     };
@@ -336,10 +328,8 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", onUnload);
   }, []);
 
-  // Quit handshake (tray Quit / the trayless close): land the debounced History edits, the
-  // coalesced History writes, the debounced config save and the debounced usage-outcome queue
-  // save, then let Rust exit. It waits at most
-  // ~1.5 s for this, so a slow or failed save can't block quit.
+  // Quit handshake (tray Quit / the trayless close): land every pending write, then let Rust
+  // exit. Rust waits at most ~1.5 s for this, so a slow or failed save can't block quit.
   useTauriListener(
     () =>
       onBeforeQuit(() => {
@@ -378,9 +368,9 @@ export default function App() {
   useTauriListener(
     () =>
       onSystemResumed(() => {
-        // A live session's mic/WS is dead after resume → reset it. A session still mid-START
-        // (status not yet "listening") reads "idle", so cancelLive wouldn't catch it; mark it to
-        // tear down on go-live instead, else its prologue completes against the dead mic and wedges.
+        // A session still mid-START (status not yet "listening") reads "idle", so cancelLive
+        // wouldn't catch it; mark it to tear down on go-live instead, else its prologue completes
+        // against the dead mic and wedges.
         if (useApp.getState().status !== "idle") void cancelLive({ keepRecording: true });
         else requestStopIfStarting();
       }),
