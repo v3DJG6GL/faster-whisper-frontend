@@ -147,7 +147,6 @@ function Editor({
   const reportApp = useApp((s) => s.settings.recording.reportTargetApp);
   const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Backend>) => setB((x) => ({ ...x, ...patch }));
-  // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
   const promptOverride = backendPrompt(b);
   const promptOverridden = promptOverride !== undefined;
   // The freshest verdict for the top card and the model list: this editor's test, else the
@@ -439,11 +438,11 @@ function Editor({
     return true;
   };
 
-  // Unsaved-work guard, shared with the Profiles and Per-app rules editors. A
-  // typed API key counts as unsaved work; "Address on this device" does not —
-  // it applies live and needs no save. A draft arriving with a connect-step
-  // result is the connect-first add path: the user has already paid for a
-  // connection test, so leaving would throw away real work even untouched.
+  // Unsaved-work guard, shared with the other editors. A typed API key counts as
+  // unsaved work; "Address on this device" does not — it applies live and needs no
+  // save. A draft arriving with a connect-step result is the connect-first add path:
+  // the user has already paid for a connection test, so leaving would throw away
+  // real work even untouched.
   const dirty = isDirty(b, initial) || key !== (initialKey ?? "") || initialResult != null;
   const guard = useUnsavedGuard(dirty);
   useEffect(() => {
