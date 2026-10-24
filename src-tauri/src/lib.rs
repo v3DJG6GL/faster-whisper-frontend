@@ -184,9 +184,10 @@ pub fn run() {
     logging::init(log_ring.clone(), log_writer.clone());
     tracing::info!("faster-whisper-frontend v{}", env!("CARGO_PKG_VERSION"));
 
-    // The identifier was renamed (to org.fasterwhisper.frontend) and every app folder is named after it. Move an existing install's folders across BEFORE the
-    // builder: before single-instance, before the webview opens a profile, before any path
-    // is resolved. A no-op on every launch after the first. See migrate_identifier.rs.
+    // Every app folder is named after the identifier (now org.fasterwhisper.frontend). Move an
+    // older install's folders across BEFORE the builder: before single-instance, before the
+    // webview opens a profile, before any path is resolved. A no-op on every launch after the
+    // first. See migrate_identifier.rs.
     if let migrate_identifier::Verdict::Stop(msg) = migrate_identifier::run() {
         tracing::error!("[migrate] not starting: {msg}");
         migrate_identifier::tell_user(&msg);
@@ -411,10 +412,10 @@ pub fn run() {
             commands::save_sync_state,
             commands::sync_device_info,
             commands::read_backend_keys, // bulk keyring read (export/sync)
-            commands::export_settings_file, // settings export to file
-            commands::save_text_file,    // transcript exports (Transcribe screen)
-            commands::read_text_file,    // subtitle/text sources for translate-only runs
-            commands::reveal_in_folder,  // show a saved export in the file manager
+            commands::export_settings_file,
+            commands::save_text_file, // transcript exports (Transcribe screen)
+            commands::read_text_file, // subtitle/text sources for translate-only runs
+            commands::reveal_in_folder, // show a saved export in the file manager
             store::transcripts::save_transcript_record, // transcription history (local store)
             store::transcripts::list_transcript_records,
             store::transcripts::delete_transcript_record,
