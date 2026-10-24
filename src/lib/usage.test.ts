@@ -58,6 +58,13 @@ async function restoreSingleBackend() {
   useApp.setState({ backends: [B1], usageViewBackendId: null });
   await tick(30_000);
 }
+/** A case's teardown: the getUsageStats implementation it replaced back, the page closed, and
+ *  the suite's page query restored. */
+function leavePage(ok: NonNullable<ReturnType<typeof getUsageStats.getMockImplementation>>, close: () => void) {
+  getUsageStats.mockImplementation(ok);
+  close();
+  useApp.setState({ usageViewQuery: suiteQuery() });
+}
 /** Open the page, then hide the window for `ticks` ticks, settling the hidden pass that
  *  skips the page's documents. Returns the page's cleanup. */
 async function openPageThenHiddenPass(ticks: number) {
@@ -606,9 +613,7 @@ describe("usage poll gates", () => {
     } finally {
       b2.release?.(null);
       await settle();
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
     }
     await restoreSingleBackend();
   });
@@ -643,9 +648,7 @@ describe("usage poll gates", () => {
       await settle();
       expect(useApp.getState().usageYear).toEqual({ sig: view.sig, stats: view.stats, failed: true });
     } finally {
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
     }
   });
 
@@ -664,9 +667,7 @@ describe("usage poll gates", () => {
       await settle();
       expect(calls().page).toBe(2); // the view AND the year: the kept 1 year view was not confirmed
     } finally {
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
     }
   });
 
@@ -686,9 +687,7 @@ describe("usage poll gates", () => {
       expect(calls().page).toBe(2); // the view AND the year: the missed 1 year view was not seeded
       expect(useApp.getState().usageYear?.failed).toBe(true);
     } finally {
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
     }
   });
 
@@ -718,9 +717,7 @@ describe("usage poll gates", () => {
       expect(useApp.getState().usageView).toEqual({ sig: usageView!.sig, stats: usageView!.stats, failed: true });
       expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
     } finally {
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
       await settle();
     }
   });
@@ -750,9 +747,7 @@ describe("usage poll gates", () => {
       expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
     } finally {
       pending.splice(0).forEach((r) => r(null));
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
       await settle();
     }
   });
@@ -774,9 +769,7 @@ describe("usage poll gates", () => {
       expect(calls().page).toBe(1); // the view only: the year was confirmed this visit
       expect(useApp.getState().usageYear).toBe(usageYear);
     } finally {
-      getUsageStats.mockImplementation(ok);
-      close();
-      useApp.setState({ usageViewQuery: suiteQuery() });
+      leavePage(ok, close);
       await settle();
     }
   });
