@@ -85,8 +85,7 @@ impl Drop for Running {
 #[derive(Default)]
 pub struct WinHookState(pub std::sync::Mutex<Option<Running>>);
 
-/// Stop the listener (drops Running → stops the worker + the raw-input window).
-/// No-op off Windows.
+/// Stop the listener by dropping its `Running`. No-op off Windows.
 pub fn stop(state: &WinHookState) {
     if let Ok(mut g) = state.0.lock() {
         *g = None;
@@ -712,9 +711,6 @@ mod imp {
         static HOOK_FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
-    /// One timer tick — a burst re-arm after a recent foreground change, else the
-    /// slow watchdog re-arm; either way it re-arms. The last burst tick puts the
-    /// timer back on the watchdog period.
     fn on_rearm_tick() {
         arm_ll_hook();
         let burst_ended = BURST.with(|b| {
@@ -847,9 +843,10 @@ mod imp {
 
     /// KBDLLHOOKSTRUCT → the same chord id space as `key_id` (the raw decoder).
     /// The hook layer already reports left/right-resolved modifier VKs and
-    /// NumLock-translated numpad VKs; only the kbd-layer phantoms and the
-    /// Enter/NumpadEnter split need handling (plus a defensive generic-VK
-    /// resolve, mirroring the raw path, in case a driver reports them).
+    /// NumLock-translated numpad VKs; beyond the shared `physical_key_id`
+    /// fallback, only the kbd-layer phantoms and the Enter/NumpadEnter split need
+    /// handling (plus a defensive generic-VK resolve, mirroring the raw path, in
+    /// case a driver reports them).
     fn ll_key_id(vk: u32, scan: u32, flags: u32) -> Option<u16> {
         // Keyboard-layer PHANTOMS carry the kbd.h SCANCODE_SIMULATED bit (0x200):
         // AltGr's fake LCtrl (0x21D, German/Swiss layouts — must never read as
@@ -1211,8 +1208,7 @@ mod imp {
                 // release the teardown bookkeeping, emit no "stop".
                 Fire::ReleaseHold(pid) => forget_hold(&pid),
                 Fire::Toggle(pid) => {
-                    // A fresh rising edge: this press IS in the map, so the still-held check
-                    // works normally for it and any pending loss latch is now a dud.
+                    // A fresh rising edge, as for Start above: any pending loss latch is a dud.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
@@ -1474,9 +1470,8 @@ mod imp {
         }
         // Channel closed (backend stopped or replaced). First commit every release still parked
         // in the debouncer: those keys ARE released, so their holds end through the engine as
-        // real releases rather than reading as still active below. `commit` in teardown mode
-        // CLAIMS the Stop via take_hold — stop_held_sessions runs before this listener is
-        // dropped on the rebind/sync-pull path and may already have emitted it.
+        // real releases rather than reading as still active below (teardown mode claims the
+        // Stop — see `commit`).
         for key in deb.drain() {
             commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
         }
