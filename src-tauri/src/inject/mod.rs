@@ -530,8 +530,8 @@ pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
 /// wait early (or any cancel of a withheld insert, which has nothing to recover): an error abort
 /// waits too, so its clipboard recovery (`inject_text`) cannot land mid-grab, where the grab
 /// would read it as the copy or put the user's old text over it. Where a
-/// phrase that waited lands: the summon grab shows and focuses the quick-add window, so the
-/// own-window check below skips the phrase (as it does for any focus moved into our windows) and it
+/// phrase that waited lands: the summon grab shows and focuses the quick-add window, so `paste`'s
+/// own-window check skips the phrase (as it does for any focus moved into our windows) and it
 /// is re-sent with the next insert; the correct-on-close re-grab runs with quick-add hidden and the
 /// source app focused, so the phrase IS pasted there once the grab ends, ahead of the correction.
 /// Accepted: the lock only orders the two, and the alternative is a paste in the middle of the
@@ -716,8 +716,8 @@ pub fn is_wayland() -> bool {
 /// Strip C0/C1 control characters (except Tab and LF) from text bound for injection, so a
 /// malicious / compromised / garbled transcription server can't smuggle terminal-escape or
 /// other control sequences onto the clipboard or into a typed paste. Tab and newline are kept
-/// (legitimate keystrokes); CR is first normalized to LF. The Wayland direct-typing paths already
-/// drop controls; this brings the paste / clipboard / X11-direct paths to the same posture.
+/// (legitimate keystrokes); CR is first normalized to LF. Applies to every path; the Wayland
+/// typing backends also drop controls themselves.
 pub fn sanitize_injected(text: &str) -> String {
     // Collapse CRLF and a lone CR to LF so every path sees one '\n' per line break: the Wayland
     // typing paths map both '\r' and '\n' to an Enter keypress (`wayland`'s KeySpec, the virtual
@@ -1459,15 +1459,12 @@ fn paste(
     ) {
         return Ok(landed);
     }
-    // A remote target's clipboard fetch is DEFERRED: the client requests the data only when
-    // the remote app actually pastes — after the forwarded chord, i.e. after this function
-    // returns and the local `clipboard` binding is dropped. On X11 with no clipboard manager,
-    // arboard tears the selection down on that drop, so the remote would paste nothing AND the
-    // "transcript stays on the clipboard" consolation above would be false. Same rule as the
-    // chord-divert guard: data that must outlive the call goes through the live owner.
-    //
-    // On Windows the remote write goes through the delayed-rendering owner instead (`windows_clipboard`),
-    // which is what makes the remote's fetch observable — and, in enforce mode, orderable.
+    // A remote target's clipboard fetch is DEFERRED until the remote app pastes — after this
+    // function returns and drops `clipboard` — so its write must outlive the call, or the remote
+    // pastes nothing and the "transcript stays on the clipboard" fallback above is false (see
+    // `paste_write_via_live_owner`). On Windows that write is the delayed-rendering owner
+    // (`windows_clipboard`), which makes the remote's fetch observable — and, in enforce mode,
+    // orderable.
     #[cfg(windows)]
     let mut offer_id: Option<u64> = None;
     // Did the write go through an owner that outlives this function? Read by the divert/failure
