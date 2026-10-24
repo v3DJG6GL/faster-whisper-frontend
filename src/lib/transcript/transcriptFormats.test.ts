@@ -361,8 +361,6 @@ describe("display-toggle model (speakerNames / timestamps)", () => {
   });
 });
 
-// ── T2T multi-track exports ─────────────────────────────────────────────────
-
 const TRANSLATED: BatchResult = {
   ...RESULT,
   segments: RESULT.segments!.map((s, i) => ({
@@ -485,10 +483,8 @@ describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", (
   });
 
   it("viewer var(--spk-N) index and export hex agree for the same picks", () => {
-    // The regression: a saved pick {"SPEAKER_01": 5} exported teal but
-    // rendered amber (viewer read picks under a different key). With one
-    // resolver, the viewer's palette index and the hex colorOf emits for the
-    // SAME order+picks must always point at the same palette slot.
+    // The viewer's palette index and the hex colorOf emits for the SAME order+picks must
+    // point at the same palette slot.
     const picks = { SPEAKER_01: 5 };
     const idx = speakerColorIndex(order, picks, "SPEAKER_01");
     expect(speakerHex(order, picks, "SPEAKER_01")).toBe(DEFAULT_SPEAKER_COLORS[idx]);
@@ -573,13 +569,8 @@ describe("kept-original translations (quality guard)", () => {
   });
 });
 
-// ── multi-target: the flattening bug ────────────────────────────────────────
-//
-// Every format emitted translated lines with no language marker, because
-// cueLines dropped `lang` between two maps. With ONE target that is merely
-// redundant; with two it makes the output unusable — VTT gave EN and FR the
-// same cue class, TXT concatenated every language into one sentence stream,
-// and the file name carried no language at all.
+// With ONE target a language marker is redundant; with two, every format (VTT cue class,
+// SRT/TXT tag, TXT block) and the file name must say which language each line is.
 
 const TWO_TARGETS: BatchResult = {
   ...RESULT,
@@ -650,8 +641,6 @@ describe("multi-target language tagging", () => {
     const out = generateExport(TWO_TARGETS, {
       format: "txt", tracks: ["de", "fr"], speakerNames: false,
     });
-    // The bug: "Hallo zusammen. Salut à tous. Allgemeine…" — every language
-    // interleaved into a single paragraph that is no language at all.
     expect(out).not.toMatch(/Hallo zusammen\. Salut/);
     expect(out).toContain("[DE]");
     expect(out).toContain("[FR]");
@@ -676,8 +665,6 @@ describe("multi-target language tagging", () => {
   });
 
   it("file name carries every language, not just a lone one", () => {
-    // A 2+ target export returned "" here, so the one case where the name
-    // matters most produced a file with no language in it at all.
     expect(exportStemSuffix(["de", "fr"])).toBe(".de+fr");
     expect(exportStemSuffix(["de"])).toBe(".de");
     expect(exportStemSuffix(["orig", "de"])).toBe("");
@@ -842,8 +829,6 @@ describe("joinSegmentTexts", () => {
   });
 });
 
-// ── subtitle cues (D83/D84) ─────────────────────────────────────────────────
-
 const GLACIER =
   "The glacier behind me has lost almost forty percent of its volume since 1980. " +
   "The scientists who measure it every summer say the pace is still accelerating.";
@@ -868,8 +853,8 @@ const STANDARD = { length: "standard", timing: "same" } as const;
 
 describe("subtitle cues", () => {
   it("a cue's lines pair a quote with its partner in the next cue of the segment", () => {
-    // Wrapped alone (after its "Speaker 1: "), the cue's opening quote had no partner: the line
-    // ended on 说".
+    // Wrapped alone (after its "Speaker 1: "), a cue's opening quote would lose its partner and
+    // end the line on 说".
     for (const zh of ['今天下午他终于对我说"我今天真的很累很累，想早点回家休息一下"然后就走了', '冰川失去了四成体积，科学家们说"速度还在加快"然后离开了']) {
       const r: BatchResult = { ...CUED, segments: [{ ...CUED.segments![0], translations: { zh } }] };
       for (const format of ["srt", "vtt"] as const) {
