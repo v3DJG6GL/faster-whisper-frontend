@@ -536,10 +536,9 @@ pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, S
     .map_err(|e| e.to_string())?
 }
 
-/// Write a plain text file (transcript exports) to the path the user picked
-/// in the save dialog. Same atomic tmp+rename + cleanup-on-both-failures shape
-/// as `export_settings_file`, minus the 0600 secrecy (a transcript is what the
-/// user is deliberately exporting — plain permissions are correct).
+/// Write a plain text file (transcript exports) atomically (`write_text_atomic`) to the path
+/// the user picked in the save dialog. Plain permissions, not `export_settings_file`'s 0600: a
+/// transcript is what the user is deliberately exporting.
 /// async + spawn_blocking: a sync command runs on the main thread and this fsyncs into a
 /// user-picked sink (USB stick, network share).
 #[tauri::command]
@@ -638,7 +637,7 @@ fn decode_text_source(bytes: &[u8]) -> String {
             // Valid multi-byte UTF-8 outnumbers the bad runs: a UTF-8 file with a stray invalid
             // byte, which must not block (or mojibake) the whole file. A plain "any valid
             // multi-byte char" test is not enough: Windows-1252 pairs like "ß…" (DF 85) happen
-            // to be valid UTF-8, and one of them flipped a whole German file to U+FFFD umlauts.
+            // to be valid UTF-8, so one of them would flip a whole German file to U+FFFD umlauts.
             let (mut good, mut bad) = (0usize, 0usize);
             for chunk in bytes.utf8_chunks() {
                 good += chunk.valid().chars().filter(|c| !c.is_ascii()).count();
