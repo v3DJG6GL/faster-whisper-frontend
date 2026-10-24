@@ -4,9 +4,9 @@ import { backendKeyFates } from "./sync/sync";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { backend } from "./sync/syncTestFixtures";
 
-// Run #76 F10-1: the connect-first restore writes the key the user just typed over the stored
-// key of the backend for the server it connected to, so the dialog must not say that backend
-// keeps this device's key and sends it to the new address.
+// The connect-first restore writes the key the user just typed over the stored key of the
+// backend for the server it connected to, so the dialog must not say that backend keeps this
+// device's key and sends it to the new address.
 describe("fatesAfterSuppliedKey — the restore dialog's moved-key notice", () => {
   const local = [backend({ id: "A", name: "Home", hasApiKey: true, serverUrl: "http://old:8000" })];
   const incoming = [backend({ id: "A", name: "Home", hasApiKey: true, serverUrl: "http://new:8000" })];
