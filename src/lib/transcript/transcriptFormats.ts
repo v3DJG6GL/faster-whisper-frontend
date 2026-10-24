@@ -257,6 +257,11 @@ function ambiguous(ctx: Ctx): boolean {
   return ctx.visLangs.length > 1;
 }
 
+/** The "[DE] " prefix that names a translated line's language (TXT and SRT; VTT uses its .mt class). */
+function langTag(lang: string): string {
+  return `[${lang.toUpperCase()}] `;
+}
+
 /** A language code reduced to something safe inside a WebVTT cue class.
  *
  *  Target codes come from user-editable settings and a synced backend, so they
@@ -387,7 +392,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
             ctx,
             seg,
             `${o ? prefix : ""}${o}`,
-            (t, _s, lang) => `${ambiguous(ctx) || orphan ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+            (t, _s, lang) => `${ambiguous(ctx) || orphan ? langTag(lang) : ""}${prefix}${t}`,
             ctx.lineTracks[0] === "orig",
           ).map((line, i) => ((i && ctx.origIncluded ? "        " : time) + line).trimEnd());
         })
@@ -412,7 +417,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
         bufs.forEach((b, i) => {
           if (!b.length) return;
           const lang = slotLangs[i];
-          const tag = lang && (ambiguous(ctx) || origBlank) ? `[${lang.toUpperCase()}] ` : "";
+          const tag = lang && (ambiguous(ctx) || origBlank) ? langTag(lang) : "";
           paras.push(tag + prefix + joinSegmentTexts(b));
         });
       }
@@ -506,7 +511,7 @@ function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string)
   // original was dropped (cueLines) stands alone like an untranslated original's cue, so it
   // is tagged too (as the TXT export does).
   const orphan = ctx.origIncluded && !clean(seg.text);
-  const tag = ambiguous(ctx) || orphan ? `[${lang.toUpperCase()}] ` : "";
+  const tag = ambiguous(ctx) || orphan ? langTag(lang) : "";
   return srtStyled(ctx, seg, tag + ctx.wrap(text, lang, tag.length + nameReserve(ctx, seg), cueQuoteCtx(seg, lang)));
 }
 
