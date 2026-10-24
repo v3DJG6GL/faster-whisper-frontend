@@ -544,6 +544,15 @@ function promote(input: SiteSubsInput, m: ReturnType<typeof model>, ch: SiteChan
   return { ...ch, state: { ...ch.state, promoted } };
 }
 
+/** The model with a click's Custom pick `next` and target map `tg` in place — what flipWith
+ *  would commit, for asking the caps before it does. */
+function trialModel(
+  input: SiteSubsInput, st: SiteSubsState, next: Record<string, boolean>, tg: Record<string, boolean>,
+): ReturnType<typeof model> {
+  const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+  return model({ ...input, targets: trial.targets }, trial.state);
+}
+
 /** Would this click strand a language under the translation limit? Asks the limit with the
  *  change in place: `c`'s machine translation greyed, or another language newly greyed while it
  *  stays wanted with no source at all (every badge off — a dead MT click). A language the limit
@@ -553,8 +562,7 @@ function strands(
   next: Record<string, boolean>, tg: Record<string, boolean>, c: string,
 ): boolean {
   if (input.maxTargets === undefined) return false;
-  const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-  const a = model({ ...input, targets: trial.targets }, trial.state);
+  const a = trialModel(input, st, next, tg);
   if (a.mtCapped.has(c)) return true;
   return [...a.mtCapped].some((x) =>
     !m.mtCapped.has(x)
@@ -623,8 +631,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   if (tid && next[key] && run && run.fetch.length >= MAX_SITE_FETCH && !run.fetch.includes(tid)) return unchanged(input, st);
   // Below a full download, ask the cap with the change (and the twin) in place.
   if (tid && next[key]) {
-    const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(tid)) return unchanged(input, st);
+    if (trialModel(input, st, next, tg).capped.has(tid)) return unchanged(input, st);
   }
   // Machine translation switched on past a full translation limit would be greyed by it (or
   // grey another language's only source): the click would only flip to Custom and leave the
@@ -643,8 +650,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
     // language's only source is not freed (strands).
     let left = leftIn(m);
     if (!left) {
-      const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-      const a = model({ ...input, targets: trial.targets }, trial.state);
+      const a = trialModel(input, st, next, tg);
       left = leftIn(a, false) || (leftIn(a) && !strands(input, st, m, next, tg, c));
     }
     if (!left) {
