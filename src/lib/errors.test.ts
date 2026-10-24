@@ -249,7 +249,7 @@ describe("isAnsweredError", () => {
       "expected value at line 1 column 1", "invalid type: string \"x\", expected f64",
       "missing field `stage`",
     ]) expect(isAnsweredError(m)).toBe(true);
-    // friendly_err: connect, timeout, and reqwest's own text for a dropped connection.
+    // friendly_err's connect and timeout, reqwest's own text for a dropped connection, and api.ts's no-desktop-app guard.
     for (const m of [
       "Could not connect — is the server running and the URL correct?",
       "Timed out waiting for the server.", "error sending request", "error decoding response body",
