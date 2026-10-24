@@ -13,7 +13,8 @@ import type { ExportEnvelope, ImportResult, SyncBlob } from "./syncTypes";
  *  import); `includeSecrets` gates the plaintext API keys (default off). The
  *  sub-toggle set is fixed to the export contract, independent of this
  *  device's sync sub-toggles: chords travel (a backup without them restores
- *  chord-less profiles), the machine-specific recordings folder never does. */
+ *  chord-less profiles), the machine-specific folders (recordings, audio base,
+ *  logs) never do. */
 export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnvelope> {
   const s = useApp.getState();
   const allOn = categorySelection(true);
@@ -81,8 +82,8 @@ export function stripMachineFolders(blob: SyncBlob): SyncBlob {
  *  inside the blob (applyBlob writes them to the keyring and re-derives
  *  hasApiKey from keyring truth). Throws "dictating" if a session is live —
  *  the preview dialog blocks on that instead of a bare refusal. Returns
- *  false when applyBlob refused (dictation live) or its retries exhausted
- *  (nothing was applied). */
+ *  false when nothing was applied: applyBlob refused (dictation live), its
+ *  retries ran out, or a supersede dropped it. */
 export async function applyImport(
   selection: Record<SyncCategory, boolean>,
   result: ImportResult,
