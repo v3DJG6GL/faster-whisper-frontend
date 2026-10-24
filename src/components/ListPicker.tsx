@@ -234,7 +234,6 @@ export function ListPicker<R>({
   const popRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const rect = useAnchoredRect(triggerRef, open);
-  // Without a search field the listbox takes focus once the popover is placed.
   const placed = open && rect !== null;
   useEffect(() => {
     if (placed && !search) document.getElementById(listId)?.focus({ preventScroll: true });
