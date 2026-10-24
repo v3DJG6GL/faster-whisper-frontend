@@ -1,4 +1,4 @@
-// P30: settings export/import to a file. Reuses the sync engine's extract +
+// Settings export/import to a file. Reuses the sync engine's extract +
 // apply core so a file round-trip and a server sync agree on exactly what
 // travels (same categories, same machine-local exclusions).
 
@@ -21,8 +21,8 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     allOn,
     undefined,
-    // The Transcribe picks are portable (the backends list travels in the same
-    // envelope); only the machine-specific recordings folder stays behind.
+    // The Transcribe picks are portable: the backends list they name travels in
+    // the same envelope.
     { includeSecrets, sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: true } },
   );
   const device = await syncDeviceInfo();
