@@ -50,7 +50,6 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
-/* ── friendly, on-voice labels for the wire rule types ─────────────────── */
 const TYPE_LABEL: Record<RuleType, string> = {
   "regex-list": "Find & replace",
   "callback:map": "Word mappings",
@@ -60,11 +59,9 @@ const TYPE_LABEL: Record<RuleType, string> = {
   terminal: "Trim",
 };
 
-/* ── editor-friendly working copy of a rule's editable body ────────────── */
 const mkId = nextRowId;
 
-// Deep-clone an edit snapshot (plain JSON — strings/arrays/objects). Mirrors the prior inline
-// JSON round-trip, which intentionally drops undefined fields, so behaviour is unchanged.
+// Deep-clone an edit snapshot (plain JSON); the round-trip intentionally drops undefined fields.
 const cloneEdits = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
 
 type EntryRow = { id: number; pattern: string; replacement: string; label?: string; note?: string };
@@ -163,21 +160,18 @@ function FieldLabel({ children }: { children: ReactNode }) {
   return <label className="mb-1.5 block text-[11.5px] font-medium text-dim">{children}</label>;
 }
 
-// Render ceilings on the pipeline-rules payload. Every list below is 100% server-authored, and
-// QuickAdd already caps its copies of the same two (`MAX_SHOWN_ROWS` / `MAX_RECENT_WORDS`) — this
-// screen renders the SAME data and had no ceiling at all. The cb:map bound was worse than absent:
-// it came from the server's own `map_collapse_after`, so the payload chose its own limit.
-// RENDER-ONLY, never applied to `edit.pairs` / `edit.entries` — the save path PATCHes those back
-// as the ENTIRE map, so capping the state would delete every server entry past the cap.
-// The rule list itself needs none here: `ruleListOf` already caps it, so the "first N of M"
-// note counts the server's rules BEFORE that cap (ruleCountOf).
+// Render ceilings on the server-authored pipeline-rules payload (QuickAdd caps the same lists:
+// `MAX_SHOWN_ROWS` / `MAX_RECENT_WORDS`). The server's `map_collapse_after` can't be the bound —
+// the payload would choose its own limit.
+// RENDER-ONLY, never applied to `edit.pairs` / `edit.entries`: the save PATCHes those back whole,
+// so capping the state would delete every server entry past the cap.
+// The rule list needs none here: `ruleListOf` already caps it (ruleCountOf counts before the cap).
 const MAX_SHOWN_MAP_ROWS = 500;
 // A regex list's entries: the server's own cap (RegexListRule.entries max_length in settings/schema.py),
 // so Add stops where a Save would 422. Also the render bound for a payload that ignores it.
 const MAX_REGEX_ENTRIES = 200;
 const MAX_RECENT_WORDS = 500;
 
-/* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
   rule, edit, editable, dirty, expanded, mapCollapseAfter, recentWords, recentMax,
   pinned, saving, readOnlyLock, onTogglePin, onToggleExpand, onPatch, onReset,
@@ -208,15 +202,13 @@ function RuleCard({
   // keystroke typed during the network round-trip. The show/hide below keeps using bodyEditable so
   // controls gray in place rather than vanishing for the brief save.
   const inputsDisabled = !bodyEditable || saving;
-  // `RuleCard` is unmemoized and the parent passes inline arrow props, so EVERY card
-  // re-renders on every keystroke in ANY rule on the screen. Counting the words meant a
-  // split+map+filter over the whole server-supplied wordlist each time. (Its sibling at the
-  // top of the screen was already memoized; this one was not.) Do NOT instead cap the list —
-  // `emitBody` PATCHes the whole `wordlist` back from `e.words`, so a cap would delete the
-  // user's server-side words on the next save.
+  // Memoized: RuleCard is unmemoized with inline arrow props, so every card re-renders on every
+  // keystroke anywhere on the screen, and the count splits the whole server-supplied wordlist.
+  // Do NOT cap the list instead — `emitBody` PATCHes the whole `wordlist` back from `e.words`,
+  // so a cap would delete the user's server-side words.
   const wordsCount = useMemo(() => wordCount(edit.words), [edit.words]);
-  // `dirty` is passed in (computed once, cached, in the parent) — recomputing buildPatch here
-  // re-ran a whole-map sort + JSON.stringify in every card on every keystroke.
+  // `dirty` comes from the parent's cache: buildPatch here would re-sort + stringify the whole map
+  // in every card on every keystroke.
   const dotHex = ruleDotColor(rule.color);
   // Per-entry note show/hide override. Default is open iff the entry already has
   // a note; a single toggle both reveals AND hides it (content is preserved).
@@ -273,8 +265,8 @@ function RuleCard({
   // Over every row, not just the shown ones: a twin can sit past the render cap. The parent holds
   // the Save while any remains (mapRowsProblem).
   const mapTwins = useMemo(() => mapRowTwinProblems(edit.pairs ?? []), [edit.pairs]);
-  // Clamped to what expanding actually reveals (MAX_SHOWN_MAP_ROWS): "▸ Show 4985 older"
-  // over a 5000-pair list promised 4485 rows the cap could never keep.
+  // Clamped to what expanding actually reveals (MAX_SHOWN_MAP_ROWS), so "Show N older" never
+  // promises rows past the render cap.
   const { hidden: mapHidden, unshown: mapUnshown } = collapseCounts(
     rule.type === "callback:map" ? mapPairs.length : 0,
     mapCollapseAfter,
@@ -289,7 +281,6 @@ function RuleCard({
 
   return (
     <Card edge={dirty ? "strong" : undefined} className="overflow-hidden transition-colors">
-      {/* header row */}
       <div className="flex items-center gap-3 px-4 py-3">
         <button
           type="button"
@@ -345,7 +336,6 @@ function RuleCard({
         />
       </div>
 
-      {/* expandable body */}
       {expanded && (
         <Stack gap={4} className="border-t border-line bg-surface-2/20 px-5 py-5">
           {readOnlyLock && (
@@ -355,7 +345,6 @@ function RuleCard({
             </div>
           )}
 
-          {/* regex-list: ordered find→replace entries — numbered card-rows with a left rail */}
           {rule.type === "regex-list" && (
             <Stack gap={3}>
               <p className="text-[12px] leading-snug text-faint">
@@ -388,9 +377,7 @@ function RuleCard({
                         />
                       )}
                     </div>
-                    {/* body */}
                     <Stack gap={3} className="min-w-0 flex-1 p-4">
-                      {/* row 1: label · note toggle · delete */}
                       <div className="flex items-center gap-2">
                         <input
                           value={row.label ?? ""}
@@ -423,7 +410,6 @@ function RuleCard({
                           </>
                         )}
                       </div>
-                      {/* find / → repl rows (inline mono gutter labels) */}
                       <Stack gap={2}>
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
@@ -438,7 +424,6 @@ function RuleCard({
                             onChange={(ev) => setRow({ replacement: ev.target.value })} />
                         </div>
                       </Stack>
-                      {/* note — collapsible, toggled by the row-1 button */}
                       {noteShown && (
                         <div className="flex items-start gap-3">
                           <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
@@ -480,13 +465,11 @@ function RuleCard({
             </Stack>
           )}
 
-          {/* callback:map: spoken phrase → symbol — HORIZONTAL rows (key beside value) */}
           {rule.type === "callback:map" && (
             <Stack gap={2}>
               <p className="text-[12px] leading-snug text-faint">
                 Say the phrase on the left; the symbol on the right is inserted in its place.
               </p>
-              {/* column header */}
               <div className="flex items-center gap-3 px-2.5 font-mono text-[10.5px] uppercase tracking-wider text-faint">
                 <span className="min-w-0 flex-1">When you say</span>
                 <span className="w-4 shrink-0" aria-hidden />
@@ -505,12 +488,10 @@ function RuleCard({
                 </Button>
               )}
               {mapShown.map((row) => {
-                // Own-property read: `map_meta` is forwarded from the pipeline-rules payload as an
-                // unvalidated object and `row.k` is server-authored on first load, so a mapping
-                // keyed `constructor`/`toString`/`valueOf` resolves to an inherited FUNCTION rather
-                // than undefined. That is truthy, so the falsy guard in the formatters below is
-                // bypassed and the "Added" column prints a fabricated date for a mapping that has
-                // no timestamp. Same fix as `connections` gets four hundred lines up.
+                // Own-property read: `map_meta` is an unvalidated server object and `row.k` is
+                // server-authored, so a key like `constructor`/`toString` would resolve to an inherited
+                // function — truthy, so the formatters' falsy guard passes and "Added" prints a
+                // fabricated date.
                 const ts = ownProp(rule.map_meta ?? {}, row.k);
                 const problem =
                   pairProblem?.id === row.id
@@ -572,7 +553,6 @@ function RuleCard({
             </Stack>
           )}
 
-          {/* lowercase-wordlist: a regex + a word list */}
           {rule.type === "callback:lowercase-wordlist" && (
             <Stack gap={3}>
               <div>
@@ -601,7 +581,6 @@ function RuleCard({
             </Stack>
           )}
 
-          {/* dedup / upper: a single regex */}
           {(rule.type === "callback:dedup" || rule.type === "callback:upper") && (
             <div>
               <FieldLabel>Match (regex)</FieldLabel>
@@ -616,7 +595,6 @@ function RuleCard({
             </div>
           )}
 
-          {/* read-only context + per-rule reset */}
           <div className="flex items-end justify-between gap-3 border-t border-line pt-3">
             <div className="min-w-0 space-y-1">
               {/* Both are server-authored and unbounded on the wire (the rules payload is an
@@ -671,7 +649,6 @@ function wordCount(words?: string): number {
   return (words ?? "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean).length;
 }
 
-/* ── screen ────────────────────────────────────────────────────────────── */
 export default function Dictionary() {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
@@ -714,7 +691,7 @@ export default function Dictionary() {
 
   // Start in the loading state so first paint shows the spinner, not the "No rules to manage" empty
   // card (the load effect only flips loading true post-paint; candidates.length===0 is still checked
-  // first, so a no-compatible-server boot still shows that). Mirrors QuickAdd's useState<Phase>("loading").
+  // first, so a no-compatible-server boot still shows that).
   const [loading, setLoading] = useState(true);
   const [fetchRes, setFetchRes] = useState<PipelineFetch | null>(null);
   const [rules, setRules] = useState<PipelineRule[]>([]);
@@ -782,13 +759,10 @@ export default function Dictionary() {
       try {
         res = await getPipelineRules({ serverUrl, backendId: b.id });
       } catch (err) {
-        // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
-        // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
-        // Refresh / FetchError-retry / SaveBanner-reload callers, which call load() without a .catch).
-        // Mirrors the load-on-change effect's .catch: reset the document and surface a status-0 fetch
-        // error. Clearing only `loading` left the pre-save edits/base/_fp on screen after a save whose
-        // follow-up reload failed — the saved rules read as unsaved, and a second Save sent stale
-        // fingerprints. If the backend switched, only clear loading (unless a newer load() won).
+        // get_pipeline_rules is a non-Result command: a transport-level reject must not strand the
+        // spinner or surface as an unhandled rejection (Refresh / FetchError Retry / SaveBanner reload
+        // call load() without a .catch). Reset the document like the load-on-change effect does — keeping
+        // the pre-save edits/base/_fp would show saved rules as unsaved and send stale fingerprints.
         if (myGen !== loadGen.current) return null;
         if (b.id === selectedIdRef.current) {
           const live = liveUrl();
@@ -812,7 +786,7 @@ export default function Dictionary() {
         setLoading(false);
         return null;
       }
-      if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return null; // backend switched OR a newer load() won
+      if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return null;
       // The address moved during the fetch: these are the old host's rules. A plain reload does not
       // commit them, and the hold notice (set by the load-on-change effect under unsaved edits) stays
       // truthful; without edits that effect is already loading the new address. A post-save reload
@@ -873,15 +847,10 @@ export default function Dictionary() {
       return;
     }
     let cancelled = false;
-    // Join the SAME generation counter `load()` uses. This effect fetches the same endpoint into
-    // the same store slice but had only its own `cancelled` flag, which is inert against a
-    // `load()` already in flight — and `loadGen`'s own comment states the invariant it was added
-    // for: "the backend-identity guard alone can't disambiguate two overlapping load() calls for
-    // the SAME backend". Its deps include the effective address, so repointing the SELECTED
-    // backend mid-Refresh let this effect commit the NEW server's rules and the older `load()`
-    // then overwrite `fetchRes`/`rules`/`edits`/`base`/`editableFields` with the OLD server's —
-    // after which `save()` PATCHes the new host with the old host's slugs and `_fp` fingerprints,
-    // under the write gate (`editable_fields`, `locked`, `role`) belonging to the other server.
+    // Join the SAME generation counter `load()` uses: a `cancelled` flag alone is inert against a
+    // `load()` already in flight. Repointing the selected backend mid-Refresh would otherwise let the
+    // older `load()` overwrite the new server's rules, and save() would PATCH the new host with the old
+    // host's slugs and `_fp` under the other server's write gate.
     loadGen.current += 1;
     const myGen = loadGen.current;
     const stale = () => cancelled || myGen !== loadGen.current;
@@ -906,12 +875,10 @@ export default function Dictionary() {
         setExpanded(new Set());
         setLoading(false);
       })
-      // A transport-level reject (rare; get_pipeline_rules is a non-Result command) would otherwise
-      // leave the screen stuck on `loading` + an unhandled rejection. The previous backend's
-      // document must NOT survive a failed switch either: clearing only `loading` left backend A's
-      // rules/edits/base on screen under backend B, and `save()` would then PATCH B with them.
-      // Reset the document and surface a status-0 fetch error so the FetchError branch (with a
-      // working Retry for B) renders instead of the ambiguous "No rules to manage".
+      // A transport-level reject (get_pipeline_rules is a non-Result command) must not strand the
+      // spinner, and the previous backend's document must not survive a failed switch (save() would
+      // PATCH the new backend with it): reset it and surface a status-0 error so FetchError (with a
+      // working Retry) renders instead of "No rules to manage".
       .catch((err) => {
         if (stale()) return;
         setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
@@ -936,11 +903,9 @@ export default function Dictionary() {
     };
   }, [backend?.id, backend?.serverUrl, backend && urlOverrides?.[backend.id]]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cache buildPatch by the (edit, base, editable) references so a keystroke only re-diffs the
-  // ONE rule that changed — not every rule. setEdits keeps other rules' edit values referentially
-  // stable, so they hit the cache; each cb:map diff is a whole-map sort + JSON.stringify, so this
-  // matters on large word-mapping lists. buildPatch is pure in (type, e, b, ed), so reference-equal
-  // inputs always yield the same patch.
+  // Cache buildPatch by the (edit, base, editable) references so a keystroke re-diffs only the rule
+  // that changed (setEdits keeps the others referentially stable) — each cb:map diff is a whole-map
+  // sort + JSON.stringify, which matters on large word-mapping lists.
   const patchCache = useRef(new Map<string, { e: EditState; b: EditState; ed: string[]; patch: Record<string, unknown> }>());
   const patchFor = useCallback(
     (r: PipelineRule): Record<string, unknown> => {
@@ -1022,10 +987,8 @@ export default function Dictionary() {
       if (r._fp) fingerprints[r.name] = r._fp;
     }
     setSaving(true);
-    // try/finally so setSaving(false) ALWAYS runs: savePipelineRules is a bare invoke that can reject
-    // on an IPC-level failure, and without this `saving` would stay true forever — freezing every rule
-    // control, the Save/Discard bar, AND the backend pills (all gated on saving), with no recovery but
-    // leaving the screen.
+    // savePipelineRules is a bare invoke that can reject on an IPC failure; without the finally,
+    // `saving` stays true and freezes every control gated on it until the screen is left.
     try {
       const savedTo = effectiveServerUrl(backend, useApp.getState().settings);
       const res = await savePipelineRules({
@@ -1097,7 +1060,6 @@ export default function Dictionary() {
         </div>
       </header>
 
-      {/* Backend picker (only when there's a choice) + role readout */}
       {candidates.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           {candidates.length > 1 &&
@@ -1158,12 +1120,9 @@ export default function Dictionary() {
         </div>
       )}
 
-      {/* Quick add: the global shortcut + which list it feeds — the feature's complete local
-          config, together (the pairing Onboarding's quick-add step already uses). Lives HERE
-          rather than Settings → General because the app already treats Dictionary as quick-add's
-          home (the setup checklist and the quick-add window's empty state both route here). Above
-          the server-gated states block on purpose: the shortcut stays configurable when no
-          compatible backend is reachable. */}
+      {/* Quick add lives here, not in Settings → General: the setup checklist and the quick-add
+          window's empty state both route here. Above the server-gated states so the shortcut stays
+          configurable when no compatible backend is reachable. */}
       <Card className="px-6 py-4">
         <SectionLabel>Quick add</SectionLabel>
         {/* Same split as the Profiles editor: the short setting takes a third, the trigger tile two. */}
@@ -1225,7 +1184,6 @@ export default function Dictionary() {
               )}
         </Notice>
       )}
-      {/* States */}
       {candidates.length === 0 ? (
         <EmptyCard
           title="No compatible server"
@@ -1249,10 +1207,8 @@ export default function Dictionary() {
         />
       ) : (
         <Stack gap={4}>
-          {/* result banner */}
           {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
 
-          {/* unsaved-changes bar */}
           {dirty.length > 0 && (
             <div className="sticky top-0 z-10 -mx-2 flex items-center gap-3 rounded-xl border border-line-strong bg-panel/95 px-4 py-2.5 backdrop-blur-sm">
               <span className="size-1.5 rounded-full bg-accent" aria-hidden />
@@ -1320,7 +1276,6 @@ export default function Dictionary() {
   );
 }
 
-/* ── state cards ───────────────────────────────────────────────────────── */
 function EmptyCard({ title, body }: { title: string; body: string }) {
   return (
     <Card className="px-6 py-10 text-center">
@@ -1388,19 +1343,13 @@ function SaveBanner({
   reloadDisabled: boolean;
   onReload: () => void;
 }) {
-  // Validation failure — keep the user's edits so they can fix them. `errors` is opaque server JSON:
-  // a non-array value (e.g. a bare string from a buggy/old/proxied server) passes a plain `.length`
-  // truthy check and then crashes `.slice().map()`, white-screening the route. Coerce to an array
-  // first — mirrors the GET-path rule coercion (ruleListOf). 422-without-errors falls through to the
-  // generic !ok banner below.
-  // ...and the same coercion has to reach the elements: a `null` member throws on `e.loc`, and an
-  // object-valued `msg` throws "Objects are not valid as a React child" — inside this render, so
-  // the whole window goes with the user's unsaved edits the moment they click Save.
+  // `errors` is opaque server JSON: coerce to an array (a bare string passes `.length` and crashes
+  // `.slice().map()`), then its elements (a null member throws on `e.loc`; an object `msg` is not a
+  // valid React child) — a throw here white-screens the window with the unsaved edits. A 422 without
+  // errors falls through to the generic !ok banner.
   const errors = (Array.isArray(result.errors) ? result.errors : [])
-    // Head-slice BEFORE the walk. Only six are ever shown, but the filter/map ran over the whole
-    // array and allocated an object per element — in a render body, in a banner that persists
-    // while the user edits (the edit handler doesn't clear `result`), so it re-ran on every
-    // keystroke. Every sibling list on this screen already has a ceiling.
+    // Head-slice before the walk: this banner stays up and re-renders on every keystroke while the
+    // user edits.
     .slice(0, 50)
     .filter((e) => !!e && typeof e === "object")
     .map((e) => ({
@@ -1439,9 +1388,7 @@ function SaveBanner({
       </Notice>
     );
   }
-  // `conflicts` is opaque server JSON (passed through verbatim, only null-coerced); a non-array
-  // value would make a plain `.length` produce a bogus count. Coerce to an array first — mirrors
-  // the `errors` sibling above and the GET-path rule coercion (ruleListOf).
+  // `conflicts` is opaque server JSON; a non-array would give `.length` a bogus count.
   const conflicts = (Array.isArray(result.conflicts) ? result.conflicts : []).length;
   // Settings an environment variable pins on the server were skipped. The rule list pinned means the
   // server ignored the whole save, so there is nothing "Saved" to report.
