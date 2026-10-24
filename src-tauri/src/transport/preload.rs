@@ -12,7 +12,7 @@ use std::time::Duration;
 /// The backend accepts 1..6 entries and rejects anything else with a 422, so
 /// clamp here rather than letting a caller's plan turn into a hard error.
 const MAX_ENTRIES: usize = 6;
-/// Bound on the `family` echoed back: it is one of four short literals (`whisper`,
+/// Bound on the outbound `family`: it is one of four short literals (`whisper`,
 /// `diarization`, `separation`, `translation`), so this only keeps a bogus value small.
 const FAMILY_MAX: usize = 120;
 /// The server's own bound on a preload id (`PreloadModel.id`, `Field(min_length=1,
@@ -49,8 +49,7 @@ struct PreloadReq {
 // deliberately NOT read: `deferred` is the backend's answer for a disallowed model,
 // a disabled stage and a disabled feature alike, and none of those is something the
 // user asked for or can act on here. The plan id is not read back either — the
-// client re-POSTs the whole plan on each renew tick (preload.ts), and a `plan_id`
-// that nothing could ever supply was dead plumbing across four layers.
+// client re-POSTs the whole plan on each renew tick (preload.ts).
 
 /// The request body for a plan, or None when no entry is left to send. Entries with an id past
 /// [`PRELOAD_ID_MAX`], or one that is blank once folded (an id of invisible characters only folds
