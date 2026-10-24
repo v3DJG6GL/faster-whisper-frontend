@@ -526,8 +526,8 @@ export function TranscriptViewer({
   const retroTranslateAvailable =
     !!trBackend &&
     trServerKind !== "standard" &&
-    // Only an explicit false hides it once caps are known — absent field
-    // (older backend) keeps the old kind-only behavior.
+    // Only an explicit false hides it — an older backend omits the field,
+    // and then the server-kind check above decides alone.
     trCaps?.translation_enabled !== false;
   const [showTranslate, setShowTranslate] = useState(false);
   // null = not touched yet → prefill from the defaults chain below.
@@ -1022,10 +1022,10 @@ export function TranscriptViewer({
     setActiveWordIdx(-1);
     setPassedWordIdx(-1);
     setPassedSegIdx(-1);
-    // The element survives a switch that keeps its src, and fires no loadedmetadata again: keep
-    // its known length. A changed src was reset to HAVE_NOTHING at commit and reports on its own;
-    // a fallback element (a blob or the decoded WAV — this render's blobSrc, before the reset
-    // below) is about to be remounted, so it never lends the old record's length.
+    // A kept src fires no loadedmetadata again: keep its known length. A changed src was reset
+    // to HAVE_NOTHING at commit and reports on its own; a fallback element (a blob or the decoded
+    // WAV — this render's blobSrc, before the reset below) is about to be remounted, so it never
+    // lends the old record's length.
     if (a && a.readyState >= 1 && blobSrc === null) takeDuration(a);
     else setAudioLen(0);
     setFollow(true);
@@ -1458,9 +1458,9 @@ export function TranscriptViewer({
     const from = box.scrollTop;
     const dist = target - from;
     // What the clamped box scroll can't cover falls to the page scroller, but only
-    // to reveal the box's hidden edge, never to centre a row: an unbounded shift
-    // walked the page up past the whole card, one line at a time. Bounded by how far
-    // the box edge sits outside the viewport, it is zero once the box is fully
+    // to reveal the box's hidden edge, never to centre a row: unbounded, the shift
+    // would walk the page up past the whole card, one line at a time. Bounded by how
+    // far the box edge sits outside the viewport, it is zero once the box is fully
     // visible and can never overshoot.
     const shortfall = visCenter - (rowCenter - dist);
     // Measure against the box's untransformed flow position: the sticky-shift
@@ -1511,9 +1511,9 @@ export function TranscriptViewer({
     };
   }, [followKey, follow, playing, editMode, reading]);
   // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
-  // re-arms); scrolling anywhere else on the page leaves it armed — a stray
-  // tick over the sidebar used to kill it. Listener-level, not onScroll:
-  // the follow scroll itself must never self-disarm.
+  // re-arms); scrolling anywhere else on the page (e.g. the sidebar) leaves it
+  // armed. Listener-level, not onScroll: the follow scroll itself must never
+  // self-disarm.
   useEffect(() => {
     if (!playing || !follow) return;
     const box = transcriptBoxRef.current;
@@ -1582,8 +1582,8 @@ export function TranscriptViewer({
         return;
       }
       // A focused control owns Space and the arrows: every switch/segment/chip in this
-      // app is a <button> that activates on Space, and preventDefault here cancelled that
-      // — Tab to "Speaker diarization", press Space, and the audio play/paused instead.
+      // app is a <button> that activates on Space, and preventDefault here would cancel
+      // that — Space on a focused "Speaker diarization" switch would toggle the audio.
       if (
         t?.closest(
           'button, [role="button"], [role="switch"], [role="radio"], [role="checkbox"], [role="tab"], [role="slider"], [role="option"], [role="combobox"]',
@@ -2285,7 +2285,7 @@ export function TranscriptViewer({
           // overscroll-contain only where the page has nowhere to scroll
           // (studio pane, focus). In the stacked card, hitting the box's top
           // must chain to the page — with contain, a page scrolled to the
-          // bottom left the first lines unreachable behind the stuck toolbar.
+          // bottom would leave the first lines unreachable behind the stuck toolbar.
           // Sideways too: Subtitles lanes that don't fit keep their width and
           // scroll inside the box, never the page.
           className={cn(
