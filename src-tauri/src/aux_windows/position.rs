@@ -4,8 +4,7 @@
 
 use tauri::{PhysicalPosition, WebviewWindow};
 
-/// The monitor a window lives on, falling back to the primary. Shared by every window
-/// placement in the app (chip edge placement, quick-add and picker centring).
+/// The monitor a window lives on, falling back to the primary.
 pub fn monitor_of(win: &WebviewWindow) -> Option<tauri::Monitor> {
     match win.current_monitor() {
         Ok(Some(m)) => Some(m),
