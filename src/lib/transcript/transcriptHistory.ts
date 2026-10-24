@@ -17,7 +17,7 @@ import { applyTextEdits } from "./wordAlign";
 
 export interface TranscriptRecord {
   schemaVersion: 1;
-  /** Absent (pre-v2 records) = "file". Dictation records reuse the same
+  /** Absent (older records) = "file". Dictation records reuse the same
    *  shape: sourceName carries the target-app label, sourcePath the saved
    *  recording's path ("" when recordings are off/expired), result.text the
    *  session text and result.duration its length in seconds — so search,
@@ -30,8 +30,9 @@ export interface TranscriptRecord {
   /** URL records only: the media title from the link preview/result — the
    *  display name (sourcePath holds the URL itself, which IS the identity). */
   title?: string;
-  /** App-managed audio copy (transcripts/media/<id>.<ext>) — playback falls
-   *  back to it when the original at sourcePath is gone. File records only. */
+  /** App-managed audio copy (`<base>/files/<id>.<ext>`, or a link run's download
+   *  in `<base>/links/`) — playback falls back to it when the original at sourcePath
+   *  is gone; a URL record (its sourcePath is the link) has no other local copy. */
   mediaPath?: string;
   /** Local VIDEO copy of a link run (`<base>/video/<id>.<ext>`) — kept for
    *  export; there is no in-app video playback yet. URL records only. */
@@ -76,22 +77,14 @@ export interface TranscriptRecord {
   translationTarget?: string;
   translationInjected?: boolean;
   /** Per-language transcripts, keyed the same way a batch run keys them
-   *  (`BatchResult.translations`). `translatedText` above is the FLATTENED
-   *  form that was actually injected — it is what went into the target app,
-   *  so it stays — but it cannot be taken apart again: the join is
-   *  blank-line separated and a transcript contains its own line breaks.
-   *  History rendered that blob under one label and then rendered
-   *  `result.text` again beneath it, which is why the original appeared
-   *  twice. With this map every track is addressable, so each renders once
-   *  under its own code.
-   *
-   *  Absent on records written before this existed; those still render as a
-   *  single untitled block, which is the most that can honestly be said
-   *  about them. */
+   *  (`BatchResult.translations`), so each track renders once under its own code.
+   *  `translatedText` above stays as the FLATTENED form that was actually injected,
+   *  but it cannot be taken apart again: the join is blank-line separated and a
+   *  transcript contains its own line breaks. Absent on older records, which render
+   *  as a single untitled block. */
   translations?: Record<string, string>;
-  /** Target codes as an ARRAY. `translationTarget` is the same list joined
-   *  with ", " for display, which loses the boundaries — `RouteBadge` needs
-   *  the parts, and a 3+ target list was being truncated mid-code. */
+  /** Target codes as an ARRAY: `translationTarget` is the same list joined
+   *  with ", " for display, which loses the boundaries `RouteBadge` needs. */
   translationTargets?: string[];
   /** Whether the untranslated original was injected alongside the
    *  translations. Without it the renderer cannot tell whether the first
@@ -429,11 +422,9 @@ export function loadHistory(force = false): Promise<void> {
   // back nothing; callers that must not bring a record back drop the parked writes first.
   const flushed = [...pendingWrite.values()];
   void flushRecordWrites();
-  // The first listing or a retry while the mirror holds only what this session made (its saves
-  // may still be landing or have failed): it is replayed over the snapshot like a change made
-  // during the listing — never dropped by it. After a success, or once a forced caller changed
-  // the disk, the mirror may hold records that caller just deleted or rewrote, so the listing
-  // replaces it.
+  // A session-only mirror is replayed over the snapshot like a change made during the listing;
+  // otherwise the listing replaces it — the mirror may hold records a forced caller just deleted
+  // or rewrote.
   const seed = !force && mirrorSessionOnly;
   touchedSinceListing = new Map(seed ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
   for (const r of flushed) touchedSinceListing.set(r.id, currentRecord(r.id) ?? r);
@@ -500,13 +491,10 @@ export function listenRetentionSweeps(): void {
   });
 }
 
-/** Insert or replace one record — in the mirror immediately, on disk
- *  best-effort (an I/O failure must never break the run that produced it). */
-// Rapid successive upserts of ONE record — a chunked retro-translate merges every
-// TRANSLATE_CHUNK (32) segments — each stringified and rewrote the whole record (all
-// segments, words and every translation merged so far): ~30 full rewrites for a
-// 900-segment transcript. The in-memory mirror updates immediately (live fill is the
-// point); the disk write is leading-edge, then coalesced.
+// A chunked retro-translate upserts one record every TRANSLATE_CHUNK (32) segments, and each
+// write is the whole record (all segments, words and every translation merged so far): ~30 full
+// rewrites for a 900-segment transcript. So the mirror updates immediately (live fill is the
+// point) and the disk write is leading-edge, then coalesced.
 const WRITE_COALESCE_MS = 2_000;
 const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingWrite = new Map<string, TranscriptRecord>();
@@ -622,6 +610,8 @@ export function flushRecordWrites(): Promise<void> {
   return Promise.allSettled([...inFlight]).then(() => undefined);
 }
 
+/** Insert or replace one record — in the mirror immediately, on disk
+ *  best-effort (an I/O failure must never break the run that produced it). */
 export function upsertRecord(rec: TranscriptRecord): void {
   touchedSinceListing?.set(rec.id, rec);
   useTranscriptHistory.setState((s) => ({
@@ -739,7 +729,7 @@ export function deleteRecord(id: string): void {
   // A coalesced write still pending for this record would land AFTER the delete and
   // resurrect the file on the next load — drop it first. The workbench's registries too:
   // its 800 ms edit debounce and the chunked translate merge re-read the record from there
-  // and called upsertRecord, resurrecting the file (with its media already gone).
+  // and re-save it.
   clearTimeout(writeTimers.get(id));
   writeTimers.delete(id);
   pendingWrite.delete(id);
@@ -771,17 +761,17 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
   // often leads with a space), no space between two CJK segments.
   const part = (i: number) => (rec.edits?.[i] ?? segs[i].text).trim();
   if (max === Infinity) return joinSegmentTexts(segs.map((_, i) => part(i)));
-  // Bounded: a History snippet keeps 160 chars, so joining a 900-segment transcript per row
-  // per keystroke defeated the sanitizer's own output bound. Joined once from just enough
-  // parts: a seam only ever adds (a CJK seam adds nothing), so once the parts alone reach
-  // `max` the joined text does too, and its prefix is the full join's prefix.
+  // Bounded: a History snippet keeps 160 chars, so join just enough parts instead of a whole
+  // 900-segment transcript per row per keystroke. A seam only ever adds (a CJK seam adds
+  // nothing), so once the parts alone reach `max` the joined text does too, and its prefix is
+  // the full join's prefix.
   const parts: string[] = [];
   let n = 0;
   for (let i = 0; i < segs.length && n < max; i++) {
     const p = part(i);
     parts.push(p);
     // Only a part the join keeps counts: a format-only part (a bare U+200E survives
-    // trim()) is dropped there, so counting it ended the loop short of `max`.
+    // trim()) is dropped there, and counting it would end the loop short of `max`.
     if (joinSegmentTexts([p])) n += p.length;
   }
   return joinSegmentTexts(parts).slice(0, max);
@@ -827,8 +817,7 @@ export function recordTranslationTexts(rec: TranscriptRecord, max = Infinity): s
  *  Returns null for records written before per-language tracks existed: their
  *  `translatedText` is a blank-line join and a transcript contains its own
  *  line breaks, so splitting it back apart would mislabel text rather than
- *  recover it. Those records render as one untitled block instead — the most
- *  that can honestly be said about them. */
+ *  recover it. Those records render as one untitled block instead. */
 export function recordTracks(
   rec: TranscriptRecord,
 ): { lang: string; text: string; orig?: boolean }[] | null {
@@ -843,13 +832,9 @@ export function recordTracks(
   );
   if (!langs.length) return null;
   const original = recordText(rec).trim();
-  // The original is a track like any other, dimmed and carrying its own code.
-  // Rendering it as a separate labelled section BELOW the blob is what showed
-  // it twice, because the blob already began with it.
-  // Always a track: `includeOriginal` says what was INJECTED, not what the record should
-  // show — gating on it hid the spoken transcript for the default configuration. The
-  // tracks come from the translations map, which never carries the source, so this
-  // cannot duplicate anything.
+  // The original is always a track, dimmed and carrying its own code: `includeOriginal` says
+  // what was INJECTED, not what the record should show, and the translations map never
+  // carries the source, so this cannot duplicate anything.
   // The code is judged on what History renders (sanitized), as the viewer's row tag does:
   // a format-only or non-string (file-borne) language would draw an empty tag.
   const shown = typeof rec.language === "string" ? langText(rec.language, 16).trim() : "";
