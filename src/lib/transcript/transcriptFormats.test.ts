@@ -10,7 +10,7 @@ import {
 } from "./transcriptFormats";
 import { parseImportedText } from "./subtitleImport";
 import { stripControlChars } from "../sanitize";
-import type { BatchResult } from "../types";
+import type { BatchResult, TimedTrack } from "../types";
 
 const RESULT: BatchResult = {
   text: "Hello there. General greeting.",
@@ -33,6 +33,9 @@ const PLAIN: BatchResult = {
   text: "Just one line of text.",
   segments: [{ start: 0.0, end: 2.0, text: "Just one line of text." }],
 };
+
+/** A manual German site subtitle track ("de-x-site") with these cues. */
+const deSiteTrack = (cues: TimedTrack["cues"]): TimedTrack => ({ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues });
 
 describe("prettySpeaker / speakerOrder", () => {
   it("maps pyannote labels to human names and keeps others verbatim", () => {
@@ -929,10 +932,7 @@ describe("subtitle cues", () => {
   it("a site track gets its own file, on its own cues, in every format", () => {
     const site: BatchResult = {
       ...CUED,
-      timedTracks: [{
-        id: "de-x-site", lang: "de", source: "site", kind: "manual",
-        cues: [{ start: 10.5, end: 12, text: "Hallo zusammen." }, { start: 12.5, end: 14, text: "Grüezi." }],
-      }],
+      timedTracks: [deSiteTrack([{ start: 10.5, end: 12, text: "Hallo zusammen." }, { start: 12.5, end: 14, text: "Grüezi." }])],
     };
     const srt = generateExports(site, { format: "srt", tracks: ["orig", "fr", "de-x-site"] });
     expect(srt.map((f) => f.name("s"))).toEqual(["s.srt", "s.de.srt"]);
@@ -959,10 +959,7 @@ describe("subtitle cues", () => {
   it("preview: the first n subtitles of one file, counted against that file", () => {
     const site: BatchResult = {
       ...CUED,
-      timedTracks: [{
-        id: "de-x-site", lang: "de", source: "site", kind: "manual",
-        cues: [1, 2, 3, 4].map((i) => ({ start: i, end: i + 0.5, text: `Satz ${i}` })),
-      }],
+      timedTracks: [deSiteTrack([1, 2, 3, 4].map((i) => ({ start: i, end: i + 0.5, text: `Satz ${i}` })))],
     };
     const orig = previewExport(site, { format: "srt", tracks: ["orig"], cues: STANDARD }, 2);
     const all = cueGrid(site, { format: "srt", cues: STANDARD }, ["orig"]).cues.length;
@@ -1108,10 +1105,7 @@ describe("subtitle cues", () => {
     const marks: BatchResult = {
       text: "x", language: "en",
       segments: [{ start: 0, end: 0.1, text: "Hi.", translations: { de: "\u200B\u200B\u200B" } }],
-      timedTracks: [{
-        id: "de-x-site", lang: "de", source: "site", kind: "manual",
-        cues: [{ start: 0, end: 0.1, text: "\u200B\u200B\u200B" }],
-      }],
+      timedTracks: [deSiteTrack([{ start: 0, end: 0.1, text: "\u200B\u200B\u200B" }])],
     };
     expect(cpsWarnings(marks, { tracks: ["de"] })).toEqual([]);
     expect(cpsWarnings(marks, { tracks: ["de-x-site"] })).toEqual([]);
@@ -1158,10 +1152,7 @@ describe("writesCue / writtenCues (what one subtitle file writes)", () => {
   it("a single own-timed track counts its own cues that clean to a line", () => {
     const site: BatchResult = {
       ...GAPPY,
-      timedTracks: [{
-        id: "de-x-site", lang: "de", source: "site", kind: "manual",
-        cues: [{ start: 0, end: 1, text: "Hallo." }, { start: 1, end: 2, text: "\u200E" }],
-      }],
+      timedTracks: [deSiteTrack([{ start: 0, end: 1, text: "Hallo." }, { start: 1, end: 2, text: "\u200E" }])],
     };
     const siteOpts: ExportOptions = { format: "srt", tracks: ["de-x-site"] };
     expect(writtenCues(cueGrid(site, siteOpts, ["de-x-site"]), ["de-x-site"]).map((c) => c.text)).toEqual(["Hallo."]);
