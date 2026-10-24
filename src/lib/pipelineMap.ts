@@ -52,12 +52,10 @@ export function ruleListOf(res: PipelineFetch): PipelineRule[] {
       wordlist: Array.isArray(rule.wordlist)
         ? rule.wordlist.filter((w) => typeof w === "string")
         : undefined,
-      // The two leaves the pass above had missed, and the ones that actually drive the
-      // editor. `mapRowsFromRule` runs `Object.entries` over `map` — which on a STRING
-      // expands per code point — allocating a row object each and then sorting them, all
-      // before any render cap (those bound the DOM, not this array). A 32 MiB string field
-      // is tens of millions of allocations plus an O(n log n) sort on the UI thread, and
-      // QuickAdd reaches it from a mount effect at startup with no user gesture.
+      // The leaves that drive the editor. `mapRowsFromRule` runs `Object.entries` over `map`,
+      // which on a STRING expands per code point — a row object each plus a sort on the UI
+      // thread, before any render cap (those bound the DOM, not this array): tens of millions
+      // for a 32 MiB field. QuickAdd reaches it from a mount effect at startup with no user gesture.
       map: plainMap(rule.map, (x): x is string => typeof x === "string"),
       map_meta: plainMap(rule.map_meta, (x): x is number => typeof x === "number" && Number.isFinite(x)),
     }));
@@ -134,18 +132,15 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
  *  VERBATIM, drops only unfilled rows, and key-sorts the result so reordering
  *  rows for display (newest-first) is never mistaken for an edit in a dirty diff.
  *
- *  Leading/trailing whitespace in a key is MEANINGFUL and must be preserved — the
- *  backend accepts it (the cb:map key pattern includes a space) and matches it
- *  literally at dictation time (`\b(re.escape(key))\b`), so " quote" and "quote "
- *  are distinct mappings. Trimming here collapsed them to one entry AND made a
- *  whitespace-only edit invisible to the dirty diff (no Save offered). We only
- *  skip rows the user never filled in (blank/whitespace-only key). */
+ *  Leading/trailing whitespace in a key is MEANINGFUL — the backend accepts it (the
+ *  cb:map key pattern includes a space) and matches it literally at dictation time
+ *  (`\b(re.escape(key))\b`), so " quote" and "quote " are distinct mappings; trimming
+ *  would merge them and hide a whitespace-only edit from the dirty diff. */
 export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> } {
   // Rows are newest-first; keep the FIRST occurrence of a duplicate key so the newest-shown mapping
-  // wins — adding a new mapping for a phrase that already has one now takes effect, instead of being
-  // silently overridden by the older (further-down) entry. A Map (not a plain object) so a key like
-  // "toString" isn't falsely treated as already-present and "__proto__" isn't swallowed by the
-  // inherited setter; Object.fromEntries then defines every key as an own property.
+  // wins over an older entry further down. A Map (not a plain object) so a key like "toString"
+  // isn't falsely treated as already-present and "__proto__" isn't swallowed by the inherited
+  // setter; Object.fromEntries then defines every key as an own property.
   const m = new Map<string, string>();
   for (const r of rows) {
     if (r.k.trim() && !m.has(r.k)) m.set(r.k, r.v);
@@ -333,7 +328,6 @@ export function applyMap(text: string, rows: MapRow[]): string {
     }
   }
   keys.sort((a, b) => b.length - a.length); // longest first → phrases win
-  // Each key's lowercase form is loop-invariant — compute it once, not once per text position.
   const lowered = keys.map((k) => [k, k.toLowerCase()] as const);
 
   let out = "";
@@ -349,10 +343,9 @@ export function applyMap(text: string, rows: MapRow[]): string {
       // an astral letter (CJK Ext-B, math alphanumerics) would not test as a word char.
       const before = cpBefore(text, i);
       const after = cpAt(text, i + key.length);
-      // \b on each side: a boundary sits where one neighbour is a word char and the other isn't.
       if (isBoundary(before, cpAt(key, 0)) && isBoundary(cpBefore(key, key.length), after)) {
         hit = key;
-        break; // first (longest) key that matches with boundaries wins
+        break;
       }
     }
     if (hit) {
