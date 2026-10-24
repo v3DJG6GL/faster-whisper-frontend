@@ -305,7 +305,6 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     configLoaded: state.configLoaded,
     // The shared default array is only serialized here, never mutated.
     quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
-    // Why the quick-launch dictate / cycle-profile buttons are off while idle, worded like Home's.
     canStart,
     startHint,
     canCycle,
@@ -313,7 +312,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // (or, while the target picker is open, to answer it first).
     cycleHint: canCycle ? "" : pickerHint || startOffHint(state.profiles, undefined, state.backends),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
-    // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
+    // warn-tinted hint.
     targetTitle: tgt?.title ?? "",
     targetSkip: tgt ? (state.targetSkip ?? "") : "",
     // Off in "On hover" mode: there the "Only while speaking" control is disabled, but a `true`
