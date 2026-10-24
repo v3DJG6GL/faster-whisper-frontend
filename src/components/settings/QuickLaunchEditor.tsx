@@ -62,8 +62,7 @@ export function QuickLaunchEditor({
             <span className="text-[13px] text-text">{label}</span>
             {/* `kind` is blob-authored: `withSettingsDefaults` type-checks it as a string but
                 bounds neither its length nor its character set, and Rust round-trips the block
-                without interpreting it. Its row-sibling `label` is already defanged by
-                `quickLaunchMeta`; this one is rendered as a child two elements over. */}
+                without interpreting it (`label` is already defanged by `quickLaunchMeta`). */}
             <span className="shrink-0 truncate font-mono text-[10px] uppercase tracking-label text-faint">
               {safeDisplayText(e.kind, 24)}
             </span>
