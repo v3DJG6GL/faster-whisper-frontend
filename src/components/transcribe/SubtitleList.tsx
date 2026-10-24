@@ -305,9 +305,7 @@ export const SubtitleList = memo(function SubtitleList({
       };
     };
     if (!lanes) {
-      // The cues the export writes (writesCue): translations alone skip a cue no picked
-      // translation cleans to a line (untranslated, or format characters only) — an original
-      // line, even blank, keeps it.
+      // Only the cues the export writes (writesCue), numbered as the file numbers them.
       const kept = grid.cues.flatMap((c, i) => {
         if (!writesCue(c, tracks)) return [];
         const cols = tracks.map((t): [string, string, QuoteCtx?] =>
