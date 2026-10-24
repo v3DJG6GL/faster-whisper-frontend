@@ -770,7 +770,6 @@ mod tests {
     /// release with one modifier still down / only the plain key down / the empty chord.
     #[test]
     fn the_teardown_latch_arms_on_any_modifier_still_down_and_never_on_a_plain_key() {
-        // Modifiers 1 and 2, plain key 9.
         let is_mod = |k: u16| k == 1 || k == 2;
         let chord = [1u16, 2, 9];
         let down_all = |_k: u16| true;
