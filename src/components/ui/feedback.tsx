@@ -137,7 +137,6 @@ export function Toast({
   actionLabel?: string;
   onAction?: () => void;
   onDismiss: () => void;
-  /** Auto-dismiss delay; 0 disables (sticky toast). */
   durationMs?: number;
 }) {
   useEffect(() => {
