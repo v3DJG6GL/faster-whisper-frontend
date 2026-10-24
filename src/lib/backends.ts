@@ -88,6 +88,11 @@ export function backendForAddress(list: Backend[], address: string): Backend | u
   return list.find((b) => normalizeUrl(b.serverUrl) === target);
 }
 
+/** Whether the saved backend `id` claims a stored key; false when it is not in the list. */
+export function storedKeyPresent(backends: readonly Backend[], id: string): boolean {
+  return backends.find((x) => x.id === id)?.hasApiKey ?? false;
+}
+
 /** The restore dialog's key fates (`backendKeyFates`) once the caller supplies a key for
  *  `keyFor`: the backend that key lands on (`backendForAddress` over the list the restore
  *  installs) neither needs one re-entered nor keeps this device's old key — the restore writes

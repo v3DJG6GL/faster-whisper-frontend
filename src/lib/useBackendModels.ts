@@ -6,7 +6,7 @@
 import { useEffect } from "react";
 import { useApp } from "@/lib/store";
 import { isTauri, testConnection } from "@/lib/api";
-import { effectiveServerUrl } from "@/lib/backends";
+import { effectiveServerUrl, storedKeyPresent } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { credentialGeneration } from "@/lib/capabilities";
 import type { Backend, ServerModel } from "@/lib/types";
@@ -46,7 +46,7 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
             if (retries++ < MAX_ROTATION_REPROBES) probe();
             return;
           }
-          if ((useApp.getState().backends.find((x) => x.id === backend.id)?.hasApiKey ?? false) !== hasKey) return;
+          if (storedKeyPresent(useApp.getState().backends, backend.id) !== hasKey) return;
           useApp.getState().setConnection(backend.id, info);
         })
         .catch(() => {});

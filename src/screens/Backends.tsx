@@ -28,7 +28,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedKeyPresent, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -74,7 +74,7 @@ function Editor({
   // removes one shows here at once. A connect-first add carries its typed key in `initialKey`
   // with `hasApiKey` already set, but that key only reaches the keyring on save — clearing the
   // field must not leave the "stored" placeholder or flag behind (doSave agrees).
-  const keyStoredNow = useApp((s) => s.backends.find((x) => x.id === b.id)?.hasApiKey ?? false);
+  const keyStoredNow = useApp((s) => storedKeyPresent(s.backends, b.id));
   const keyStored = keyStoredNow && !initialKey;
   // The draft's own key flag mirrors the flag the editor OPENED with, not the live one: `initial`
   // is mount-time, so typing a key and clearing it again must land back on it — with the live flag
@@ -124,7 +124,7 @@ function Editor({
   // rotates the STORED key (forgetCaps) changes neither the address nor the blank key field, so a
   // blank-key verdict is only still true while the generation is unchanged. `hadKey` = whether a
   // key was stored then: a pull that ADDS one to a keyless backend moves no generation.
-  const storedHasKey = (id: string) => useApp.getState().backends.find((x) => x.id === id)?.hasApiKey ?? false;
+  const storedHasKey = (id: string) => storedKeyPresent(useApp.getState().backends, id);
   const resultTarget = useRef({ url: effUrl, key, gen: credentialGeneration(initial.id), hadKey: storedHasKey(initial.id) });
   useEffect(() => {
     if (resultTarget.current.url === effUrl && resultTarget.current.key === key) return;
