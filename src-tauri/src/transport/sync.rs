@@ -20,28 +20,6 @@ use super::{
 const SYNC_PATH: &str = "/v1/synced-client-settings";
 const LEGACY_SYNC_PATH: &str = "/v1/client-settings";
 
-/// Status 0 = no answer (unreachable), as the sync outcomes already spell it.
-fn answered(status: u16) -> Option<u16> {
-    (status != 0).then_some(status)
-}
-
-impl Answered for SyncPull {
-    fn answered(&self) -> Option<u16> {
-        answered(self.status)
-    }
-}
-
-impl Answered for SyncPush {
-    fn answered(&self) -> Option<u16> {
-        answered(self.status)
-    }
-}
-
-impl Answered for SyncDelete {
-    fn answered(&self) -> Option<u16> {
-        answered(self.status)
-    }
-}
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -160,28 +138,6 @@ pub struct SyncPush {
     pub error: Option<String>,
 }
 
-impl SyncPull {
-    /// A failed pull: `status` 0 = no answer, else the HTTP status.
-    fn failed(status: u16, error: String) -> Self {
-        Self {
-            status,
-            error: Some(error),
-            ..Default::default()
-        }
-    }
-}
-
-impl SyncPush {
-    /// A failed push: no stored state, no conflict.
-    fn failed(status: u16, error: String) -> Self {
-        Self {
-            status,
-            error: Some(error),
-            ..Default::default()
-        }
-    }
-}
-
 /// DELETE outcome (the "Delete server copy" button).
 #[derive(Debug, Serialize, Default)]
 pub struct SyncDelete {
@@ -190,6 +146,30 @@ pub struct SyncDelete {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// The three outcomes share `status` (0 = no answer, unreachable) + `error`: the legacy-path probe
+/// reads the status, and a failure carries only the two (no state, no conflict, `ok` false).
+macro_rules! status_outcome {
+    ($($t:ty),+) => {$(
+        impl Answered for $t {
+            fn answered(&self) -> Option<u16> {
+                (self.status != 0).then_some(self.status)
+            }
+        }
+
+        impl $t {
+            fn failed(status: u16, error: String) -> Self {
+                Self {
+                    status,
+                    error: Some(error),
+                    ..Default::default()
+                }
+            }
+        }
+    )+};
+}
+
+status_outcome!(SyncPull, SyncPush, SyncDelete);
 
 /// GET /v1/synced-client-settings — the account's stored blob (or the zero-state).
 pub async fn pull(server_url: &str, api_key: Option<&str>) -> SyncPull {
@@ -340,18 +320,10 @@ async fn delete_at(url: String, api_key: Option<&str>) -> SyncDelete {
                 // Pure error arm: `detail_from` extracts at most 200 characters, so the
                 // error-body ceiling is enough.
                 let (_, detail) = super::error_detail(resp).await;
-                SyncDelete {
-                    ok: false,
-                    status: code,
-                    error: Some(detail),
-                }
+                SyncDelete::failed(code, detail)
             }
         }
-        Err(e) => SyncDelete {
-            ok: false,
-            status: 0,
-            error: Some(friendly_err(&e)),
-        },
+        Err(e) => SyncDelete::failed(0, friendly_err(&e)),
     }
 }
 
