@@ -98,8 +98,17 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
   cps: { min: 10, max: 25, step: 1 },
 };
 
+/** The CJK scripts (Han, Hiragana, Katakana). */
+const CJK_SCRIPTS = "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}";
+/** Scripts written without spaces between words that are no CJK (unspacedChar holds
+ *  only Han/Kana and CJK punctuation, as the LRC seams need): inside spaced text a run of
+ *  them still breaks between its syllables, like a CJK run — else a space-joined
+ *  multi-sentence Thai translation is a handful of unsplittable tokens. */
+const SYLLABIC = "\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}";
+/** CJK punctuation and fullwidth forms. */
+const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 /** Scripts written without spaces between words: a run of them can break anywhere. */
-export const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+export const UNSPACED = new RegExp(`[${CJK_SCRIPTS}]`, "u");
 /** CJK punctuation and fullwidth forms, and the kana marks ・ ー (Script=Common, so
  *  UNSPACED misses them): like the unspaced scripts, no space around them. */
 const UNSPACED_PUNCT = /[\u3000-\u303f\u30fb\u30fc\uff00-\uffef]/u;
@@ -109,8 +118,7 @@ export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED
 /** Scripts (and CJK punctuation) a line may break between any two characters of. Text
  *  without spaces and without any of these is one word ("Ja.", "Привет!"): it stays whole
  *  rather than being cut into letters. */
-const BREAKS_ANYWHERE =
-  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\u3000-\u303f\uff00-\uffef]/u;
+const BREAKS_ANYWHERE = new RegExp(`[${CJK_SCRIPTS}${SYLLABIC}${FULLWIDTH}]`, "u");
 /** The first (`end` false) or last code point of `s` — "" when empty. Seam tests go
  *  through it: a lone surrogate half is never unspaced, so a per-UTF-16-unit look
  *  misreads an astral (CJK Ext-B) character at the edge. At the end, trailing combining
@@ -663,11 +671,6 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
  *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks,
  *  a killed Burmese/Khmer consonant, then an optional repetition mark (REPEAT). */
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
-/** Scripts written without spaces between words that are no CJK (unspacedChar holds
- *  only Han/Kana and CJK punctuation, as the LRC seams need): inside spaced text a run of
- *  them still breaks between its syllables, like a CJK run — else a space-joined
- *  multi-sentence Thai translation is a handful of unsplittable tokens. */
-const SYLLABIC = "\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}";
 const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
  *  (CJK, Thai…) character with the opening brackets before it and its other punctuation
@@ -687,14 +690,13 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  it stays one word too (mixedTokens joins them): the seam between the two widths is no
  *  word break. A no-break space (one BREAK_SPACE excludes) between two characters of a word is
  *  part of it: "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
-const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
 /** The no-break spaces: U+00A0, U+202F, U+2007. */
 const NBSP = "\\u00a0\\u202f\\u2007";
-const WORD_CHAR = `[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]`;
+const WORD_CHAR = `[^\\s${OPEN_PUNCT}${CJK_SCRIPTS}ー${SYLLABIC}${FULLWIDTH}]`;
 const MIXED_TOKEN = new RegExp(
   `[${OPEN_PUNCT}]*[${FW_ALNUM}]${UNIT_TAIL}(?:[${FW_ALNUM}]${UNIT_TAIL}|(?<=[０-９])[，．：](?=[０-９]))*[${CLOSE_PUNCT}]*`
-    + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`
+    + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[${CJK_SCRIPTS}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`
     + `|[${OPEN_PUNCT}]*${WORD_CHAR}+(?:[${NBSP}]+${WORD_CHAR}+)*`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
