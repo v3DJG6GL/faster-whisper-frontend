@@ -494,7 +494,7 @@ pub(crate) async fn inject_text(
             crate::inject::wayland::type_text(&app, typer.inner(), "", "", true, epoch, false).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
-            // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
+            // to the portal keycode path when the protocol is unavailable (GNOME, KWin)
             // or a job fails.
             let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
                 std::sync::Arc::new(own_focused_probe.clone());
@@ -733,9 +733,9 @@ pub(crate) async fn inject_text(
             // `NothingWritten` here means our own window took focus before the chord — at the
             // chord-time probe above or at the portal job's pre-job probe (`wayland.rs`) — but by
             // then THIS arm has already written the transcript and noted the paste target.
-            // Treating it as a landed paste would schedule the `prev` restore over a phrase nobody
-            // pasted and report it as never written, with nothing keeping the session snapshot:
-            // hand the transcript to the persistent owner and report the divert.
+            // Falling through would schedule the `prev` restore over a phrase nobody pasted and
+            // report it as never written, with nothing keeping the session snapshot: hand the
+            // transcript to the persistent owner and report the divert.
             //
             // Unless the job was cancelled: a cancel can still land during the chord-time probe
             // (the epoch was read before it) or after the portal job's probe answered. A cancelled
