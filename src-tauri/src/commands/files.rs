@@ -240,8 +240,8 @@ pub(crate) fn wait_audio_layout_for(d: std::time::Duration) -> bool {
 /// One-time (idempotent) migration into the single-base layout: legacy saved
 /// recordings move into `<base>/dictations`, the old app-data media store
 /// splits into `<base>/files` + `<base>/links` by record kind. Run once per
-/// launch, off the main thread (`queue_audio_layout`); the retention sweeps
-/// wait for it. True when it rewrote or healed records' media paths.
+/// launch, off the main thread (`queue_audio_layout`, which lists who waits for
+/// it). True when it rewrote or healed records' media paths.
 fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     let pref = audio_base_pref(&config.settings);
     let Some(base) = resolve_audio_base(app, pref.clone()) else {
