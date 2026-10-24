@@ -1,13 +1,7 @@
 // The invariant every Logs.tsx memo silently depends on: what `visibleLines()`
-// returns must be a NEW array whenever the version bumps.
-//
-// It once wasn't. With no "Clear view" floor the accessor handed back the
-// module-level `buf` itself, which `append()` mutates in place — so the
-// reference never changed and `useMemo(..., [all])` kept its first result
-// forever. The screen rendered the snapshot it took at mount (empty, before
-// hydration): no lines, no subsystem chips, no live tail, no "N new lines"
-// pill, and a bug report that copied nothing. Only touching a filter — a
-// different dependency — brought the view back.
+// returns must be a NEW array whenever the version bumps. Handing back the
+// module-level `buf` (which `append()` mutates in place) would freeze every
+// `useMemo(..., [all])` on its empty mount snapshot; see visibleLines()'s doc.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogLine } from "./api";
@@ -182,8 +176,8 @@ describe("sessionLineCount", () => {
     detach();
   });
 
-  // Run #75 F10-2: with the live stream not attached neither source moves, so the header showed a
-  // frozen, understated count as if it were live.
+  // With the live stream not attached neither source moves, so any count would be frozen and
+  // understated while it looks live.
   it("has no count while the live log could not be attached", () => {
     expect(sessionLineCount(0, false)).toBeNull();
     expect(sessionLineCount(25_000, false)).toBeNull();
