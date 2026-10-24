@@ -1,6 +1,8 @@
 // Two-device fixtures for the per-setting sync gates: compose-side snapshot
 // passthrough, apply-side keep-local, the element-wise list arms, and the
-// wire-neutrality proof (all gates on ≡ ungated compose).
+// wire-neutrality proof (all gates on ≡ ungated compose); plus the gate helpers
+// and the blob predicates beside them (forward-compat merge, push refusal,
+// quick-add pin, group panel state).
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
