@@ -408,26 +408,38 @@ mod tests {
     const SUPER_L: u16 = 6;
     const ALT_L: u16 = 7;
 
+    fn hold(keys: &[u16], profile_id: &str) -> ChordSpec {
+        ChordSpec {
+            keys: keys.to_vec(),
+            kind: ChordKind::Hold {
+                profile_id: profile_id.into(),
+            },
+        }
+    }
+
+    fn hands_free(keys: &[u16], profile_id: &str) -> ChordSpec {
+        ChordSpec {
+            keys: keys.to_vec(),
+            kind: ChordKind::HandsFree {
+                profile_id: profile_id.into(),
+            },
+        }
+    }
+
+    fn quick_add(keys: &[u16]) -> ChordSpec {
+        ChordSpec {
+            keys: keys.to_vec(),
+            kind: ChordKind::QuickAdd,
+        }
+    }
+
     /// The designed family: a push-to-talk hold nested in a hands-free superset, with an
     /// independent quick-add chord beside them (the factory Alt+Super).
     fn family() -> Engine {
         Engine::new(vec![
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L],
-                kind: ChordKind::Hold {
-                    profile_id: "ptt".into(),
-                },
-            },
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L, SPACE],
-                kind: ChordKind::HandsFree {
-                    profile_id: "handsfree".into(),
-                },
-            },
-            ChordSpec {
-                keys: vec![ALT_L, SUPER_L],
-                kind: ChordKind::QuickAdd,
-            },
+            hold(&[CTRL_L, SHIFT_L], "ptt"),
+            hands_free(&[CTRL_L, SHIFT_L, SPACE], "handsfree"),
+            quick_add(&[ALT_L, SUPER_L]),
         ])
     }
 
@@ -436,22 +448,9 @@ mod tests {
     /// other fixture covers.
     fn overlapping() -> Engine {
         Engine::new(vec![
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L],
-                kind: ChordKind::Hold {
-                    profile_id: "ptt".into(),
-                },
-            },
-            ChordSpec {
-                keys: vec![CTRL_L, SUPER_L],
-                kind: ChordKind::HandsFree {
-                    profile_id: "hf".into(),
-                },
-            },
-            ChordSpec {
-                keys: vec![ALT_L, SUPER_L],
-                kind: ChordKind::QuickAdd,
-            },
+            hold(&[CTRL_L, SHIFT_L], "ptt"),
+            hands_free(&[CTRL_L, SUPER_L], "hf"),
+            quick_add(&[ALT_L, SUPER_L]),
         ])
     }
 
@@ -484,12 +483,7 @@ mod tests {
 
     #[test]
     fn plain_handsfree_toggle_and_rearm() {
-        let mut e = Engine::new(vec![ChordSpec {
-            keys: vec![CTRL_L, KEY_H],
-            kind: ChordKind::HandsFree {
-                profile_id: "l".into(),
-            },
-        }]);
+        let mut e = Engine::new(vec![hands_free(&[CTRL_L, KEY_H], "l")]);
         let t = Instant::now();
         let fires = run(
             &mut e,
@@ -607,16 +601,8 @@ mod tests {
         let t = Instant::now();
         // hands-free nested in quick-add: lifting the extra key must not toggle dictation.
         let mut e = Engine::new(vec![
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L],
-                kind: ChordKind::HandsFree {
-                    profile_id: "hf".into(),
-                },
-            },
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L, SPACE],
-                kind: ChordKind::QuickAdd,
-            },
+            hands_free(&[CTRL_L, SHIFT_L], "hf"),
+            quick_add(&[CTRL_L, SHIFT_L, SPACE]),
         ]);
         assert_eq!(
             run(
@@ -633,16 +619,8 @@ mod tests {
         );
         // quick-add nested in hands-free: lifting the extra key must not open the window.
         let mut e2 = Engine::new(vec![
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L, SPACE],
-                kind: ChordKind::QuickAdd,
-            },
-            ChordSpec {
-                keys: vec![CTRL_L, SHIFT_L, SPACE, KEY_H],
-                kind: ChordKind::HandsFree {
-                    profile_id: "hf".into(),
-                },
-            },
+            quick_add(&[CTRL_L, SHIFT_L, SPACE]),
+            hands_free(&[CTRL_L, SHIFT_L, SPACE, KEY_H], "hf"),
         ]);
         assert_eq!(
             run(
@@ -822,22 +800,9 @@ mod tests {
     /// the UI: exactly one nesting is allowed, a hold inside a hands-free superset.
     #[test]
     fn registration_allows_only_the_hold_in_handsfree_nesting() {
-        let hold = |k: &[u16]| ChordSpec {
-            keys: k.to_vec(),
-            kind: ChordKind::Hold {
-                profile_id: "h".into(),
-            },
-        };
-        let hf = |k: &[u16]| ChordSpec {
-            keys: k.to_vec(),
-            kind: ChordKind::HandsFree {
-                profile_id: "f".into(),
-            },
-        };
-        let qa = |k: &[u16]| ChordSpec {
-            keys: k.to_vec(),
-            kind: ChordKind::QuickAdd,
-        };
+        let hold = |k: &[u16]| hold(k, "h");
+        let hf = |k: &[u16]| hands_free(k, "f");
+        let qa = quick_add;
         // The designed family, in either config order.
         assert_eq!(
             registration_conflict(&hold(&[CTRL_L, SHIFT_L]), &hf(&[CTRL_L, SHIFT_L, SPACE])),
