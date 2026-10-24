@@ -78,8 +78,6 @@ export function TranslationTargetChips({
         if (!parts?.[code]) return chip;
         return <CompoundChip key={code} head={chip} parts={parts[code]} onPart={onPart} disabled={disabled} />;
       })}
-      {/* The picker hands its list back to onChange, which persists it: give it the wire-bound
-          codes (a seeded ca-ES-valencia must survive adding French). */}
       <TargetLanguagePicker
         value={wire}
         onChange={onChange}
