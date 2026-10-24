@@ -1401,10 +1401,9 @@ export function sanitizeBackends(list: unknown): Backend[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
-/** Drop inbound app rules that aren't shaped like rules. Rust never checks a rule's fields (the
- *  importer only checks each bucket is an array; the pull path not at all), yet every injection
- *  resolves through `rule.appId.toLowerCase()` — one malformed entry throws there and no
- *  transcript is ever inserted again, including in the editor the user would need to remove it. */
+/** Drop inbound app rules that aren't shaped like rules, and clamp the fields of the rest. Rust
+ *  never checks a rule's fields (the importer only checks each bucket is an array; the pull path
+ *  not at all), and app rules raise no consent prompt, so a malformed rule arrives silently. */
 export function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
   return rules
@@ -2108,8 +2107,8 @@ export async function applyBlob(
         backends: nextBackends,
         profiles: nextProfiles,
         appRules: nextAppRules,
-        // The blob's `general` block was validated field-by-field above (including the
-        // retired `insertTiming`), so no schema migration must run on it here.
+        // The blob's `general` block was validated field-by-field above (including
+        // `insertTiming`'s retired "off"), so no schema migration must run on it here.
         version: CONFIG_VERSION,
       });
     } finally {
@@ -3511,11 +3510,11 @@ function heldBack(
   return out;
 }
 
-/** The local side for `securityChanges`, with a truthful `backends` container: composeBlob
- *  deliberately omits the category when the keyring read degraded, and a MISSING container
- *  would read as "this device has no backends" — every server backend, even ones this device
- *  already holds byte-identically, would be reported as "new" and park sync on a review.
- *  `secrets: {}` keeps the api-key comparison fail-closed (an incoming key still raises a
+/** The local side for `securityChanges`, with a truthful `backends` container: a degraded-keyring
+ *  compose re-sends the snapshot's category, which is MISSING when the snapshot holds none, and a
+ *  missing container would read as "this device has no backends" — every server backend, even
+ *  ones this device already holds byte-identically, would be reported as "new" and park sync on a
+ *  review. `secrets: {}` keeps the api-key comparison fail-closed (an incoming key still raises a
  *  review). */
 function localForReview(local: SyncBlob): SyncBlob {
   if (local.backends) return local;
@@ -4176,8 +4175,8 @@ export function rejectPendingReview(): void {
 }
 
 /** Test seam: raise a minimal conflict so the id contract is pinnable without a transport. The
- *  default version is one past the current base, as a real conflict's is — one at or below it is
- *  moot (resolveLocked). */
+ *  default version is one past the current base, as a real conflict's is — one below it, or at it
+ *  with no fresh category waiting, is moot (resolveLocked). */
 export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void {
   raiseConflict({
     categories: ["general"],
