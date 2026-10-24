@@ -142,8 +142,8 @@ fn batch_cancelled(epoch: u64) -> bool {
 /// twin of [`DETACHED_BATCH_EPOCH`]. `finish()` detaches the WS drain, so a Cancel pressed while
 /// it finalizes finds no session; without this the drain would still write the `.wav` and its
 /// `.txt` behind a UI showing a clean cancel. One slot is enough: a cancel that finds a live
-/// session is aimed at that one and never reaches this, so only the newest detached drain can be
-/// the one the user means.
+/// session is aimed at that one and only empties this slot, never discarding a drain, so only the
+/// newest detached drain can be the one the user means.
 ///
 /// The drain retires its own entry at its one decision point ([`settle_detached_stream`]), so a
 /// Cancel after the recording was already written finds the slot empty instead of logging a
@@ -1485,8 +1485,6 @@ impl<M: Default> MuteSlot<M> {
             }
             MuteCmd::Unmute(_) => {}
             MuteCmd::Flush(ack) => {
-                // Exit barrier: everything queued before it has run; restore what is still applied and
-                // ack so the quit can proceed with nothing left muted.
                 restore(&self.mode);
                 *self = Self::default();
                 let _ = ack.send(());
@@ -1664,8 +1662,8 @@ fn run_record_capture(
     stop: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    // One resampler, shared with the `move` capture closure via Arc<Mutex>, so we can flush its
-    // buffered tail after capture stops (the closure owns nothing else we could reach).
+    // Shared with the `move` capture closure via Arc<Mutex> so its buffered tail can still be
+    // flushed after capture stops.
     let resampler = Arc::new(Mutex::new(
         Resampler16k::new(in_rate).map_err(|e| e.to_string())?,
     ));
