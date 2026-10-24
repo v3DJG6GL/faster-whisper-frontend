@@ -385,28 +385,12 @@ pub fn codes_to_accelerator(codes: &[String]) -> Option<String> {
     let mut mods: Vec<&str> = Vec::new();
     let mut key: Option<String> = None;
     for c in codes {
-        match c.as_str() {
-            "ControlLeft" | "ControlRight" => {
-                if !mods.contains(&"Ctrl") {
-                    mods.push("Ctrl");
-                }
-            }
-            "AltLeft" => {
-                if !mods.contains(&"Alt") {
-                    mods.push("Alt");
-                }
-            }
+        let m = match c.as_str() {
+            "ControlLeft" | "ControlRight" => "Ctrl",
+            "AltLeft" => "Alt",
             "AltRight" => return None, // AltGr — evdev-only
-            "ShiftLeft" | "ShiftRight" => {
-                if !mods.contains(&"Shift") {
-                    mods.push("Shift");
-                }
-            }
-            "MetaLeft" | "MetaRight" => {
-                if !mods.contains(&"Super") {
-                    mods.push("Super");
-                }
-            }
+            "ShiftLeft" | "ShiftRight" => "Shift",
+            "MetaLeft" | "MetaRight" => "Super",
             other => {
                 // A second non-modifier means this is a multi-key (N-chord) binding,
                 // which a plugin accelerator can't express (modifiers + exactly ONE key).
@@ -416,7 +400,11 @@ pub fn codes_to_accelerator(codes: &[String]) -> Option<String> {
                     return None;
                 }
                 key = Some(code_to_token(other));
+                continue;
             }
+        };
+        if !mods.contains(&m) {
+            mods.push(m);
         }
     }
     let key = key?;
