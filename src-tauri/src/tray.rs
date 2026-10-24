@@ -455,9 +455,9 @@ pub(crate) fn toggle_main(app: &AppHandle) {
 }
 
 /// Show + focus the main window and ask its router to navigate to `screen`. Used by
-/// the overlay chip's quick-launch (a separate window that can't drive the main
-/// window's router directly) and by the tray menu's screen entries. The main window
-/// listens for `app://navigate` (App.tsx).
+/// the overlay chip's quick-launch and the quick-add window (separate windows that
+/// can't drive the main window's router directly) and by the tray menu's screen
+/// entries. The main window listens for `app://navigate` (App.tsx).
 #[tauri::command]
 pub fn show_main_at_screen(app: AppHandle, screen: String) {
     show_main(&app);
