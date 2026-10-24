@@ -192,7 +192,6 @@ export function TargetLanguagePicker({
   // server's or the app's own ceiling (targetCap), so the wording names neither.
   const full = (used ?? value.length) >= max;
   const fullTitle = used === undefined ? `At most ${max} target languages per run` : `At most ${max} machine translations per run`;
-  // At the cap only a free language (one the site has subtitles for) still adds.
   const blocked = (code: string) => full && !value.includes(code) && !free?.includes(code);
   const anyFree = !!free?.some((c) => !value.includes(c));
   return (
