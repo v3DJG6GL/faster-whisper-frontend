@@ -37,7 +37,8 @@ export interface KeySpec {
   maxLen?: number;
   /** Text: "\n" and "\t" are part of the value (escaped as `\n` / `\t` in the editor), never folded away. */
   multiline?: boolean;
-  /** Live dictation only (every `streaming_` key): stripped from batch requests. */
+  /** Live dictation only (every `streaming_` key). Batch requests drop them by that prefix (Rust
+   *  batch_decode_overrides), not by this flag. */
   live?: boolean;
   /** Typed into the focused app: an inbound sync change needs the user's approval. */
   typed?: boolean;
