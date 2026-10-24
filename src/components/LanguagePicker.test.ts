@@ -1,31 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
+import { hooks } from "./plainRender.testkit";
 
 // No DOM in this suite: the pickers and ListPicker run as plain functions over a tiny hook store
 // (state and refs survive "re-renders" by call order), and the returned trees are walked.
-const hooks = vi.hoisted(() => ({ slots: [] as unknown[], i: 0 }));
-
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return {
-    ...actual,
-    useState: (init: unknown) => {
-      const i = hooks.i++;
-      if (!(i in hooks.slots)) hooks.slots[i] = typeof init === "function" ? (init as () => unknown)() : init;
-      const set = (v: unknown) => {
-        hooks.slots[i] = typeof v === "function" ? (v as (p: unknown) => unknown)(hooks.slots[i]) : v;
-      };
-      return [hooks.slots[i], set];
-    },
-    useRef: (init: unknown) => {
-      const i = hooks.i++;
-      if (!(i in hooks.slots)) hooks.slots[i] = { current: init };
-      return hooks.slots[i];
-    },
-    useEffect: () => {},
-    useId: () => "lp",
-  };
-});
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react")>()),
+  ...(await import("./plainRender.testkit")).fakeHooks,
+  useId: () => "lp",
+}));
 vi.mock("react-dom", () => ({ createPortal: (node: unknown) => node }));
 vi.mock("@/lib/useAnchoredRect", () => ({
   useAnchoredRect: () => null,
