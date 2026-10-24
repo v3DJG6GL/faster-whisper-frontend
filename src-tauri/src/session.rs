@@ -6,7 +6,7 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
-use crate::audio::capture::Meter;
+use crate::audio::capture::{CaptureHandle, Meter};
 use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
@@ -306,8 +306,7 @@ pub struct StartParams {
 
 pub struct StreamSession {
     epoch: u64,
-    capture_stop: Arc<AtomicBool>,
-    capture_join: Option<JoinHandle<()>>,
+    capture: CaptureHandle,
     ws_stop: watch::Sender<bool>,
     ws_task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// Shared with the WS task's `StreamParams::detached` (see [`cancel_detached_stream`]).
@@ -338,11 +337,9 @@ impl StreamSession {
     /// final) in the background so the last utterance is still delivered. Takes
     /// the task out first so the `Drop` below won't abort it.
     pub fn finish(mut self) {
-        self.capture_stop.store(true, Ordering::SeqCst);
+        self.capture.stop();
         let _ = self.ws_stop.send(true);
-        if let Some(j) = self.capture_join.take() {
-            let _ = j.join();
-        }
+        self.capture.join();
         drop(self.ws_task.take());
         tracing::info!("[stream] session {} finished (draining)", self.epoch);
     }
@@ -350,11 +347,9 @@ impl StreamSession {
 
 impl Drop for StreamSession {
     fn drop(&mut self) {
-        self.capture_stop.store(true, Ordering::SeqCst);
+        self.capture.stop();
         let _ = self.ws_stop.send(true);
-        if let Some(j) = self.capture_join.take() {
-            let _ = j.join();
-        }
+        self.capture.join();
         // Abort the WS task immediately (no drain). This path runs when a session
         // is cancelled or REPLACED by a new one; draining a stale session would keep
         // emitting finals/closed and spam the UI. The explicit-stop path (`finish`)
@@ -587,8 +582,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 
     Ok(StreamSession {
         epoch,
-        capture_stop,
-        capture_join: Some(capture_join),
+        capture: CaptureHandle::new(capture_stop, capture_join),
         ws_stop: ws_stop_tx,
         ws_task: Some(ws_task),
         detached,
@@ -951,8 +945,7 @@ pub struct RecordSession {
     epoch: u64,
     params: RecordParams,
     buffer: Arc<Mutex<Vec<u8>>>,
-    capture_stop: Arc<AtomicBool>,
-    capture_join: Option<JoinHandle<()>>,
+    capture: CaptureHandle,
     // Set by the capture thread's err_cb on a TERMINAL device loss; finish() reads it to avoid
     // double-transcribing (the device-loss arm already salvaged the buffer + spawned its transcribe).
     device_lost: Arc<AtomicBool>,
@@ -961,15 +954,6 @@ pub struct RecordSession {
     // .wav/.txt — `retire_active_epoch` suppresses only the UI events, not the POST or the write.
     discard: Arc<AtomicBool>,
     _mute: SystemMuteGuard,
-}
-
-impl Drop for RecordSession {
-    fn drop(&mut self) {
-        self.capture_stop.store(true, Ordering::SeqCst);
-        if let Some(j) = self.capture_join.take() {
-            let _ = j.join();
-        }
-    }
 }
 
 impl RecordSession {
@@ -1017,15 +1001,13 @@ impl RecordSession {
 
     /// Stop recording and transcribe the captured clip in the background.
     pub fn finish(mut self) {
-        self.capture_stop.store(true, Ordering::SeqCst);
-        if let Some(j) = self.capture_join.take() {
-            let _ = j.join();
-        }
+        self.capture.stop();
+        self.capture.join();
         // On a mid-capture device loss the capture thread already salvaged the buffer and spawned its
         // own transcribe (final + closed). Proceeding would spawn a SECOND, empty-pcm transcribe whose
         // immediate "closed" settles the chip to idle BEFORE the salvaged final lands (which is then
         // dropped by the idle-epoch/inSession guard) — silently losing the salvaged transcript. Bail;
-        // Drop still runs (capture_join already None → no double-join) and unmutes via SystemMuteGuard.
+        // Drop still runs (the capture is already joined → no double-join) and unmutes via SystemMuteGuard.
         if self.device_lost.load(Ordering::SeqCst) {
             return;
         }
@@ -1148,8 +1130,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         epoch,
         params: p,
         buffer,
-        capture_stop,
-        capture_join: Some(capture_join),
+        capture: CaptureHandle::new(capture_stop, capture_join),
         device_lost,
         discard,
         _mute: mute,

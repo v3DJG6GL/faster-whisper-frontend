@@ -33,12 +33,29 @@ pub struct CaptureHandle {
     join: Option<JoinHandle<()>>,
 }
 
-impl Drop for CaptureHandle {
-    fn drop(&mut self) {
+impl CaptureHandle {
+    pub(crate) fn new(stop: Arc<AtomicBool>, join: JoinHandle<()>) -> Self {
+        Self {
+            stop,
+            join: Some(join),
+        }
+    }
+    /// Ask the capture thread to stop (does not wait).
+    pub(crate) fn stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
+    }
+    /// Wait for the capture thread (a no-op once joined).
+    pub(crate) fn join(&mut self) {
         if let Some(j) = self.join.take() {
             let _ = j.join();
         }
+    }
+}
+
+impl Drop for CaptureHandle {
+    fn drop(&mut self) {
+        self.stop();
+        self.join();
     }
 }
 
@@ -138,10 +155,7 @@ pub fn start_level_meter(
             }
         })
         .map_err(|e| e.to_string())?;
-    let mut handle = CaptureHandle {
-        stop,
-        join: Some(join),
-    };
+    let mut handle = CaptureHandle::new(stop, join);
     let failed = match ready_rx.recv_timeout(OPEN_WAIT) {
         Ok(Err(e)) => Some(e),
         // Raise `gave_up` first: a failure sent after this look is then emitted by the thread.
@@ -156,9 +170,7 @@ pub fn start_level_meter(
     };
     if let Some(e) = failed {
         // The open failed and the thread is on its way out; join it before reporting.
-        if let Some(j) = handle.join.take() {
-            let _ = j.join();
-        }
+        handle.join();
         return Err(e);
     }
     // Playing, still opening after OPEN_WAIT, or gone (Drop joins it): hand the handle back.
