@@ -1855,18 +1855,23 @@ describe("keep_video: the secondary download folds into the Download row's meta"
   });
 });
 
+// Opens a done link record as the settled panel; an earlier attempt left its Video row failed.
+function openFailedVideoLink(id: string, url: string): void {
+  openHistoryRecord({
+    schemaVersion: 1, kind: "url", id, createdAt: "2026-10-05T12:00:00Z",
+    sourcePath: url, sourceName: "Talk", status: "done",
+  });
+  useTranscribeRun.setState({ lastRunPath: url,
+    stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+}
+
 describe("an on-demand video that fails outright shows on the Video row", () => {
   it("retryRunVideo queues the row, then marks it failed with the request's error", async () => {
     vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
     const url = "https://youtu.be/v";
     try {
-      openHistoryRecord({
-        schemaVersion: 1, kind: "url", id: "rec-v", createdAt: "2026-10-05T12:00:00Z",
-        sourcePath: url, sourceName: "Talk", status: "done",
-      });
       // The settled panel is the link the run ran last.
-      useTranscribeRun.setState({ lastRunPath: url,
-        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      openFailedVideoLink("rec-v", url);
       retryRunVideo(url, RUN_CTX);
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
       // Outside Tauri the request rejects at once; the row must show it, not only the log.
@@ -1894,12 +1899,7 @@ describe("an on-demand video that finishes is pulled once", () => {
       clearInterval: () => { cleared += 1; },
     });
     fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/rec-od.mp4"));
-    openHistoryRecord({
-      schemaVersion: 1, kind: "url", id: "rec-od", createdAt: "2026-10-05T12:00:00Z",
-      sourcePath: url, sourceName: "Talk", status: "done",
-    });
-    useTranscribeRun.setState({ lastRunPath: url,
-      stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+    openFailedVideoLink("rec-od", url);
   });
   afterEach(() => {
     getTranscribeProgress.mockReset();
@@ -2023,12 +2023,7 @@ describe("an on-demand video whose request fails stays failed", () => {
       clearInterval: () => { cleared += 1; tick = null; },
     });
     fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/rec-odf.mp4"));
-    openHistoryRecord({
-      schemaVersion: 1, kind: "url", id: "rec-odf", createdAt: "2026-10-05T12:00:00Z",
-      sourcePath: url, sourceName: "Talk", status: "done",
-    });
-    useTranscribeRun.setState({ lastRunPath: url,
-      stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+    openFailedVideoLink("rec-odf", url);
   });
   afterEach(() => {
     getTranscribeProgress.mockReset();
@@ -2117,12 +2112,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence";
     try {
-      openHistoryRecord({
-        schemaVersion: 1, kind: "url", id: "rec-cadence", createdAt: "2026-10-05T12:00:00Z",
-        sourcePath: url, sourceName: "Talk", status: "done",
-      });
-      useTranscribeRun.setState({ lastRunPath: url,
-        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      openFailedVideoLink("rec-cadence", url);
       retryRunVideo(url, RUN_CTX);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       // On screen: one GET per tick.
@@ -2159,12 +2149,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence-hidden";
     try {
-      openHistoryRecord({
-        schemaVersion: 1, kind: "url", id: "rec-cadence-hidden", createdAt: "2026-10-05T12:00:00Z",
-        sourcePath: url, sourceName: "Talk", status: "done",
-      });
-      useTranscribeRun.setState({ lastRunPath: url,
-        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      openFailedVideoLink("rec-cadence-hidden", url);
       retryRunVideo(url, RUN_CTX);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       await run(2);
@@ -2204,12 +2189,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     const before = hiddenListeners.size;
     const show = () => { windowHidden = false; for (const fn of [...hiddenListeners]) fn(false); };
     try {
-      openHistoryRecord({
-        schemaVersion: 1, kind: "url", id: "rec-cadence-show", createdAt: "2026-10-05T12:00:00Z",
-        sourcePath: url, sourceName: "Talk", status: "done",
-      });
-      useTranscribeRun.setState({ lastRunPath: url,
-        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      openFailedVideoLink("rec-cadence-show", url);
       retryRunVideo(url, RUN_CTX);
       expect(hiddenListeners.size).toBe(before + 1);
       const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
@@ -2261,12 +2241,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
     fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/retry";
     try {
-      openHistoryRecord({
-        schemaVersion: 1, kind: "url", id: "rec-retry", createdAt: "2026-10-05T12:00:00Z",
-        sourcePath: url, sourceName: "Talk", status: "done",
-      });
-      useTranscribeRun.setState({ lastRunPath: url,
-        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      openFailedVideoLink("rec-retry", url);
       retryRunVideo(url, RUN_CTX);
       const watcher = ticks[0];
       // The retry queued the row; clear it, then the watcher paints.
