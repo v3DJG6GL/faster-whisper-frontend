@@ -4,9 +4,9 @@
 // tables. A key added to `DecodeOverrides` without a row here is a compile error (`satisfies`
 // below).
 //
-// Bounds mirror the backend's field metadata (config_store.AdminConfig, frozen in the settings
-// batch contract 2026-10-05). The server clamps every value too and stays authoritative; the app
-// clamps to the same numbers so a synced value is never one the server would refuse.
+// Bounds mirror the backend's field metadata (config_store.AdminConfig). The server clamps every
+// value too and stays authoritative; the app clamps to the same numbers so a synced value is
+// never one the server would refuse.
 //
 // Text semantics: absent = inherit, "" = an explicit empty override, null is never stored.
 
@@ -51,17 +51,14 @@ export interface KeySpec {
 }
 
 export const DECODE_KEYS = {
-  // ── primary ──
   beam_size: { kind: "int", env: "BEAM_SIZE", section: "primary", min: 1, max: 20, step: 1 },
   temperature: { kind: "ladder", env: "TEMPERATURE", section: "primary", min: 0, max: 1, step: 0.1, maxLen: 64, maxRungs: 16 },
   condition_on_previous_text: { kind: "bool", env: "CONDITION_ON_PREVIOUS_TEXT", section: "primary" },
   vad_filter: { kind: "bool", env: "VAD_FILTER", section: "primary" },
   hotwords: { kind: "text", env: "DEFAULT_HOTWORDS", section: "primary", maxLen: 2048, nullText: "none" },
-  // ── Voice activity (VAD) ──
   vad_threshold: { kind: "float", env: "VAD_THRESHOLD", section: "vad", min: 0, max: 1, step: 0.05 },
   vad_min_silence_duration_ms: { kind: "int", env: "VAD_MIN_SILENCE_MS", section: "vad", min: 0, max: 10000, step: 50, unit: "ms" },
   vad_speech_pad_ms: { kind: "int", env: "VAD_SPEECH_PAD_MS", section: "vad", min: 0, max: 2000, step: 10, unit: "ms" },
-  // ── Recognition thresholds ──
   hallucination_silence_threshold: {
     kind: "float", env: "HALLUCINATION_SILENCE_THRESHOLD", section: "thresholds", min: 0, max: 60, step: 0.5, unit: "s", nullText: "off",
     zeroOff: true,
@@ -72,22 +69,20 @@ export const DECODE_KEYS = {
   compression_ratio_threshold: {
     kind: "float", env: "COMPRESSION_RATIO_THRESHOLD", section: "thresholds", min: 0, max: 10, step: 0.1, nullText: "off",
   },
-  // ── Beam & sampling ──
   patience: { kind: "float", env: "PATIENCE", section: "sampling", min: 0.5, max: 5, step: 0.1 },
   length_penalty: { kind: "float", env: "LENGTH_PENALTY", section: "sampling", min: 0.1, max: 5, step: 0.1 },
   repetition_penalty: { kind: "float", env: "REPETITION_PENALTY", section: "sampling", min: 0.5, max: 5, step: 0.1 },
   no_repeat_ngram_size: { kind: "int", env: "NO_REPEAT_NGRAM_SIZE", section: "sampling", min: 0, max: 10, step: 1 },
-  // ── Vocabulary & punctuation ──
   suppress_tokens: { kind: "text", env: "SUPPRESS_TOKENS", section: "vocab", maxLen: 256 },
   suppress_chars: { kind: "text", env: "SUPPRESS_CHARS", section: "vocab", maxLen: 64, nullText: "none" },
   prepend_punctuations: { kind: "text", env: "PREPEND_PUNCTUATIONS", section: "vocab", maxLen: 64 },
   append_punctuations: { kind: "text", env: "APPEND_PUNCTUATIONS", section: "vocab", maxLen: 64 },
   output_prefix: { kind: "text", env: "OUTPUT_PREFIX", section: "vocab", maxLen: 512, typed: true },
   output_suffix: { kind: "text", env: "OUTPUT_SUFFIX", section: "vocab", maxLen: 512, typed: true },
-  // ── Language detection (only with an auto-detected language) ──
+  // Only used with an auto-detected language.
   language_detection_segments: { kind: "int", env: "LANGUAGE_DETECTION_SEGMENTS", section: "langdetect", min: 1, max: 10, step: 1 },
   language_detection_threshold: { kind: "float", env: "LANGUAGE_DETECTION_THRESHOLD", section: "langdetect", min: 0, max: 1, step: 0.05 },
-  // ── Live dictation (stream handshake only), in the block's row order ──
+  // In the live dictation block's row order.
   streaming_vad_inner_silence_ms: {
     kind: "int", env: "STREAMING_VAD_INNER_SILENCE_MS", section: "live", live: true, min: 0, max: 5000, step: 100, unit: "ms",
   },
@@ -101,7 +96,6 @@ export const DECODE_KEYS = {
     kind: "text", env: "STREAMING_HARD_BREAK_SEPARATOR", section: "live", live: true, maxLen: 8, multiline: true, typed: true,
   },
   streaming_vad_threshold: { kind: "float", env: "STREAMING_VAD_THRESHOLD", section: "live", live: true, min: 0, max: 1, step: 0.05 },
-  // ── Spoken-language picker ("Multiple languages") ──
   multilingual: { kind: "bool", env: "MULTILINGUAL", section: "picker" },
 } as const satisfies Record<DecodeKey, KeySpec>;
 
@@ -163,17 +157,16 @@ export function sectionKeys(section: KeySection): DecodeKey[] {
 /** What the TEMPERATURE field stores for what was typed: undefined = inherit (empty), a number
  *  for one plain rung ("0.2" — what a standard server takes), else the text as typed (a retry
  *  ladder "0.0,0.4", or a rung half-typed like "0."; the sync sanitizer and the server parse it).
- *  null = refused: anything but digits, dots, commas and spaces (a stored one only shrinks), a
- *  comma when `singleOnly`
- *  (a standard Whisper server takes one number, no ladder), a rung with a space inside ("0 2")
- *  or two dots ("0.2.4"), a rung above the spec max ("5"), or more rungs or characters than the
- *  spec allows (16 rungs, 64 characters) — values the sync sanitizer and the server would drop
- *  or clamp. `prev` = the stored text: where it already breaks one of these rules (an earlier
- *  build stored it unchecked, a full backend synced a ladder to a standard one, or a synced
- *  value is in exponent form like "1e-7") it may only shrink — never gain a comma, a bad rung, a
- *  foreign character, a rung outside the range, or a character while a bad rung remains — so it
- *  can still be edited down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.")
- *  pass, so typing is never blocked mid-entry. */
+ *  null = refused: anything but digits, dots, commas and spaces, a comma when `singleOnly` (a
+ *  standard Whisper server takes one number, no ladder), a rung with a space inside ("0 2") or
+ *  two dots ("0.2.4"), a rung above the spec max ("5"), or more rungs or characters than the
+ *  spec allows — values the sync sanitizer and the server would drop or clamp. `prev` = the
+ *  stored text: where it already breaks one of these rules (an earlier build stored it
+ *  unchecked, a full backend synced a ladder to a standard one, or a synced value is in exponent
+ *  form like "1e-7") it may only shrink — never gain a comma, a bad rung, a foreign character, a
+ *  rung outside the range, or a character while a bad rung remains — so it can still be edited
+ *  down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.") pass, so typing is
+ *  never blocked mid-entry. */
 export function parseLadderInput(
   raw: string,
   singleOnly: boolean,
@@ -181,9 +174,8 @@ export function parseLadderInput(
 ): number | string | undefined | null {
   const t = raw.trim();
   if (!t) return undefined;
-  // Foreign characters (anything but digits, dots, commas, spaces) may only be deleted: fresh
-  // input refuses every one, while a stored or synced "1e-7" can still be edited down — but
-  // never swap one for another ("1e-7" → "1x7"), so the new ones must be a subsequence of the old.
+  // Foreign characters may only be deleted, never swapped ("1e-7" → "1x7"): the remaining ones
+  // must be a subsequence of prev's.
   const odd = (s: string) => s.replace(/[0-9., ]/g, "");
   const was = odd(prev);
   let at = 0;
@@ -225,8 +217,6 @@ export function parseLadderInput(
   return /^\d+(\.\d+)?$/.test(t) && String(Number(t)) === t ? Number(t) : raw;
 }
 
-// ── sanitizing (sync pull / file import) ────────────────────────────────────
-
 const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math.max(min, n));
 
 /** C0 controls and DEL; a multiline value keeps its "\n" and "\t" (the separator's escapes). */
@@ -248,10 +238,10 @@ function plainRung(n: number): string {
 }
 
 /** A temperature ladder kept verbatim when it is valid and in the editor's alphabet, so a synced
- *  value comes back exactly as typed; out-of-range rungs are clamped, extra rungs dropped, an
- *  empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms ("+0.5", "1e-1",
- *  "1e-7") written plainly (rewritten only then). A rung that is not a decimal number (hex "0x1", a word)
- *  drops the whole value — the server would drop it too. */
+ *  value comes back exactly as typed; otherwise out-of-range rungs are clamped, extra rungs
+ *  dropped, an empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms
+ *  ("+0.5", "1e-1", "1e-7") written plainly. A rung that is not a decimal number (hex "0x1", a
+ *  word) drops the whole value — the server would drop it too. */
 function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
   const text = s.replace(CONTROLS, "").trim();
   if (!text) return undefined;
