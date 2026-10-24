@@ -532,7 +532,7 @@ interface AppState {
   /** Change what the Statistics page asks for (the controller refetches). */
   setUsageViewQuery: (q: UsagePageQuery) => void;
 
-  /** Set (or clear, with null) the config-save error banner. */
+  /** Set (or clear, with null) the config save-error / load-notice banner. */
   setSaveError: (msg: string | null, kind?: "save" | "load") => void;
   /** True once initConfig hydrated (or determined there's nothing to load) — the
    *  onboarding gate waits on this so it can't flash over a config still loading. */
@@ -581,7 +581,7 @@ interface AppState {
     }>,
   ) => void;
 
-  /** Replace settings/backends/profiles from the persisted config (on startup). */
+  /** Replace settings/backends/profiles/appRules from a whole config (startup load, sync pull). */
   hydrate: (cfg: Config) => void;
 }
 
