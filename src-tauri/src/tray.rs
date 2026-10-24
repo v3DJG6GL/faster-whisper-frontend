@@ -134,7 +134,6 @@ mod native {
         let mut builder = TrayIconBuilder::with_id(TRAY_ID)
             .tooltip(TRAY_TITLE)
             .menu(&menu)
-            // Left click toggles the window; the menu is the right-click surface.
             .show_menu_on_left_click(false)
             .on_tray_icon_event(|tray, event| {
                 if let TrayIconEvent::Click {
