@@ -149,7 +149,7 @@ export function FilterBar({
   /** The fetch for this query failed: the older document stays up, and the rail says so. */
   failed: boolean;
 }) {
-  // The Custom popover's draft dates (null = closed); held here to survive the pin remount.
+  // The Custom popover's draft dates (null = closed).
   const [draft, setDraft] = useState<{ f: string; t: string } | null>(null);
   const custom = draft !== null;
   const [sentinelRef, stuck] = useStuck();
