@@ -352,7 +352,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     source = source ?? r.source;
     if (r.warnings?.length) {
       // De-duplicated: the server emits its quality notice per REQUEST, so a 900-segment run
-      // otherwise reported "29 warnings" for one recurring condition.
+      // would otherwise report "29 warnings" for one recurring condition.
       let added = false;
       for (const w of r.warnings) {
         if (!warnings.includes(w)) {
