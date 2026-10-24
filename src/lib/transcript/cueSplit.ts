@@ -123,6 +123,9 @@ export function edgeChar(s: string, end: boolean): string {
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
+/** Whether a letter, digit or opening mark starts `t` at `i` (judged by code point): a glued
+ *  quote opens only what such a character begins (tokensOf, quoteSeams, mixedTokens). */
+const opensAt = (t: string, i: number): boolean => /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(i, i + 2), false));
 /** A blank (not a line break) between two unspaced characters: a phrase space. */
 const PHRASE_SPACE = new RegExp(
   `(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})[^\\S\\n]+(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})`,
@@ -592,7 +595,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     // after it. Its clock is a zero-length one at the next word's start (the word's end until
     // that word arrives): a cue starting with it starts once that word is spoken.
     const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po}|(["']))(["'])$/u.exec(tw);
-    if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
+    if (qm && opensAt(text, cur)) {
       flags ??= quoteFlags(text);
       const j = cur - 1;
       let n = 0;
@@ -1322,7 +1325,7 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         else if (j === end - 1 && t[j] === "\u2018" && /[\p{L}\p{N}]/u.test(p)
           && (singleCloses(t, end, q?.next) ?? !!q?.closes?.single)
           && !lowOpenAt(t, j, "\u201a", q?.lowOpen?.single)) e = end;
-        if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
+        if (e >= 0 && opensAt(t, e)) {
           yield [t.slice(s, j), s];
           s = j;
         }
@@ -1397,7 +1400,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // Glued to the text before it, a quote opens only on positive evidence: an even count of its
     // kind so far in the segment AND a later one of its kind to close it. The last unpaired one —
     // a closer whose opener was in the previous segment — joins the text it closes.
-    const opens = !!qr && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
+    const opens = !!qr && opensAt(t, after)
       && (gap || k < 0 || qr[0] !== qr[1]
         || (quotes[c] % 2 === 0 && total[c] > quotes[c] + qr[1].split(c).length - 1));
     for (let j = idx; j < end; j++) if (flags[j]) quotes[t[j]]++;
