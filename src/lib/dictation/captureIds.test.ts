@@ -1,5 +1,3 @@
-// The capture-id pairing. Every case here is a way the previous single-slot
-// "most recent id" implementation handed a phrase the wrong receipt, or none.
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { CAPTURE_ID_WAIT_MS, newCaptureIdBook } from "./captureIds";
 
@@ -14,8 +12,7 @@ describe("newCaptureIdBook", () => {
 
   it("an utterance with no capture row does not steal the next one's id", async () => {
     // The server samples captures and caps them by count/bytes/duration/disk,
-    // so utterance 1 here simply never produced one. The old positional slot
-    // gave phrase 1 the id belonging to utterance 2.
+    // so utterance 1 here simply never produced one.
     const b = newCaptureIdBook({ waitMs: 5 });
     b.resolve(0, "cap-0");
     b.resolve(2, "cap-2");
@@ -71,7 +68,7 @@ describe("newCaptureIdBook", () => {
       expect(await p).toBeNull();
       b.resolve(0, "very-late");
       // It belongs to utterance 0 and to nothing else — utterance 1 must not
-      // inherit it, which is exactly what the single slot used to do.
+      // inherit it.
       const other = b.take(1);
       await vi.advanceTimersByTimeAsync(CAPTURE_ID_WAIT_MS + 1);
       expect(await other).toBeNull();
@@ -96,7 +93,7 @@ describe("newCaptureIdBook", () => {
     });
 
     it("a backend that sends no ordinal pays the wait at most once", async () => {
-      // Every phrase reports ordinal 0 and no `captured` frame ever comes.
+      // An ordinal already waited out is never waited for again.
       const b = newCaptureIdBook();
       const first = b.take(0);
       await vi.advanceTimersByTimeAsync(CAPTURE_ID_WAIT_MS + 1);
