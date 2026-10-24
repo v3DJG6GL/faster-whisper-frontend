@@ -454,11 +454,13 @@ mod tests {
         ])
     }
 
-    fn run(e: &mut Engine, seq: &[(&[u16], Instant)]) -> Vec<Fire> {
+    /// Feed each held-key set in order, all stamped with one instant (no test orders holds by time).
+    fn run(e: &mut Engine, seq: &[&[u16]]) -> Vec<Fire> {
+        let at = Instant::now();
         let mut out = Vec::new();
-        for (keys, at) in seq {
+        for keys in seq {
             let held: HashSet<u16> = keys.iter().copied().collect();
-            out.extend(e.step(&held, *at));
+            out.extend(e.step(&held, at));
         }
         out
     }
@@ -466,17 +468,8 @@ mod tests {
     #[test]
     fn plain_hold_start_stop() {
         let mut e = family();
-        let t = Instant::now();
         assert_eq!(
-            run(
-                &mut e,
-                &[
-                    (&[CTRL_L], t),
-                    (&[CTRL_L, SHIFT_L], t),
-                    (&[CTRL_L], t),
-                    (&[], t)
-                ]
-            ),
+            run(&mut e, &[&[CTRL_L], &[CTRL_L, SHIFT_L], &[CTRL_L], &[]]),
             vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
         );
     }
@@ -484,15 +477,14 @@ mod tests {
     #[test]
     fn plain_handsfree_toggle_and_rearm() {
         let mut e = Engine::new(vec![hands_free(&[CTRL_L, KEY_H], "l")]);
-        let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[CTRL_L], t),
-                (&[CTRL_L, KEY_H], t), // toggle on
-                (&[CTRL_L], t),        // release H → re-arm
-                (&[CTRL_L, KEY_H], t), // toggle off
-                (&[], t),
+                &[CTRL_L],
+                &[CTRL_L, KEY_H], // toggle on
+                &[CTRL_L],        // release H → re-arm
+                &[CTRL_L, KEY_H], // toggle off
+                &[],
             ],
         );
         assert_eq!(
@@ -504,14 +496,13 @@ mod tests {
     #[test]
     fn handsfree_upgrade_hands_off_the_hold() {
         let mut e = family();
-        let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[CTRL_L, SHIFT_L], t),        // PTT starts
-                (&[CTRL_L, SHIFT_L, SPACE], t), // upgrade
-                (&[CTRL_L, SHIFT_L], t),        // Space up — no phantom restart
-                (&[], t),                       // full release — no stop (handed off)
+                &[CTRL_L, SHIFT_L],        // PTT starts
+                &[CTRL_L, SHIFT_L, SPACE], // upgrade
+                &[CTRL_L, SHIFT_L],        // Space up — no phantom restart
+                &[],                       // full release — no stop (handed off)
             ],
         );
         assert_eq!(
@@ -529,15 +520,9 @@ mod tests {
         // Keys arriving Space-first: the hold completes already-suppressed, so
         // there is no session to hand off — the hands-free chord is a normal toggle.
         let mut e = family();
-        let t = Instant::now();
         let fires = run(
             &mut e,
-            &[
-                (&[SPACE], t),
-                (&[SPACE, CTRL_L], t),
-                (&[SPACE, CTRL_L, SHIFT_L], t),
-                (&[], t),
-            ],
+            &[&[SPACE], &[SPACE, CTRL_L], &[SPACE, CTRL_L, SHIFT_L], &[]],
         );
         assert_eq!(fires, vec![Fire::Toggle("handsfree".into())]);
     }
@@ -548,22 +533,13 @@ mod tests {
         // frontend's no-op (busy), and the hands-free completion must reclassify —
         // the frontend reads same-profile as toggle-off.
         let mut e = family();
-        let t = Instant::now();
         run(
             &mut e,
-            &[
-                (&[CTRL_L, SHIFT_L], t),
-                (&[CTRL_L, SHIFT_L, SPACE], t),
-                (&[], t),
-            ],
+            &[&[CTRL_L, SHIFT_L], &[CTRL_L, SHIFT_L, SPACE], &[]],
         );
         let fires = run(
             &mut e,
-            &[
-                (&[CTRL_L, SHIFT_L], t),
-                (&[CTRL_L, SHIFT_L, SPACE], t),
-                (&[], t),
-            ],
+            &[&[CTRL_L, SHIFT_L], &[CTRL_L, SHIFT_L, SPACE], &[]],
         );
         assert_eq!(
             fires,
@@ -580,15 +556,14 @@ mod tests {
     #[test]
     fn quick_add_opens_on_each_press_and_rearms_on_release() {
         let mut e = family();
-        let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[ALT_L], t),
-                (&[ALT_L, SUPER_L], t), // open
-                (&[ALT_L], t),          // Super up → re-arm
-                (&[ALT_L, SUPER_L], t), // open again
-                (&[], t),
+                &[ALT_L],
+                &[ALT_L, SUPER_L], // open
+                &[ALT_L],          // Super up → re-arm
+                &[ALT_L, SUPER_L], // open again
+                &[],
             ],
         );
         assert_eq!(fires, vec![Fire::OpenQuickAdd, Fire::OpenQuickAdd]);
@@ -598,7 +573,6 @@ mod tests {
     /// just Hold (else dictation starts behind a just-opened quick-add window).
     #[test]
     fn suppression_lift_does_not_fire_handsfree_or_quick_add() {
-        let t = Instant::now();
         // hands-free nested in quick-add: lifting the extra key must not toggle dictation.
         let mut e = Engine::new(vec![
             hands_free(&[CTRL_L, SHIFT_L], "hf"),
@@ -608,11 +582,11 @@ mod tests {
             run(
                 &mut e,
                 &[
-                    (&[SPACE], t),
-                    (&[SPACE, CTRL_L], t),
-                    (&[SPACE, CTRL_L, SHIFT_L], t),
-                    (&[CTRL_L, SHIFT_L], t),
-                    (&[], t)
+                    &[SPACE],
+                    &[SPACE, CTRL_L],
+                    &[SPACE, CTRL_L, SHIFT_L],
+                    &[CTRL_L, SHIFT_L],
+                    &[]
                 ]
             ),
             vec![Fire::OpenQuickAdd]
@@ -626,12 +600,12 @@ mod tests {
             run(
                 &mut e2,
                 &[
-                    (&[KEY_H], t),
-                    (&[KEY_H, CTRL_L], t),
-                    (&[KEY_H, CTRL_L, SHIFT_L], t),
-                    (&[KEY_H, CTRL_L, SHIFT_L, SPACE], t),
-                    (&[CTRL_L, SHIFT_L, SPACE], t),
-                    (&[], t)
+                    &[KEY_H],
+                    &[KEY_H, CTRL_L],
+                    &[KEY_H, CTRL_L, SHIFT_L],
+                    &[KEY_H, CTRL_L, SHIFT_L, SPACE],
+                    &[CTRL_L, SHIFT_L, SPACE],
+                    &[]
                 ]
             ),
             vec![Fire::Toggle("hf".into())]
@@ -642,15 +616,14 @@ mod tests {
     fn suppression_lift_does_not_restart_a_hold() {
         // Root held throughout; superset pressed and released: the lift must not re-fire Start.
         let mut e = family();
-        let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[CTRL_L, SHIFT_L], t),
-                (&[CTRL_L, SHIFT_L, SPACE], t), // handoff
-                (&[CTRL_L, SHIFT_L], t),        // lift — silent
-                (&[CTRL_L, SHIFT_L, SPACE], t), // re-press: hands-free re-armed; no active hold to upgrade → plain toggle (toggles the session off)
-                (&[], t),
+                &[CTRL_L, SHIFT_L],
+                &[CTRL_L, SHIFT_L, SPACE], // handoff
+                &[CTRL_L, SHIFT_L],        // lift — silent
+                &[CTRL_L, SHIFT_L, SPACE], // re-press: hands-free re-armed; no active hold to upgrade → plain toggle (toggles the session off)
+                &[],
             ],
         );
         assert_eq!(
@@ -671,16 +644,10 @@ mod tests {
     #[test]
     fn one_press_never_fires_two_overlapping_chords() {
         let mut e = overlapping();
-        let t = Instant::now();
         assert_eq!(
             run(
                 &mut e,
-                &[
-                    (&[ALT_L], t),
-                    (&[ALT_L, CTRL_L], t),
-                    (&[ALT_L, CTRL_L, SUPER_L], t),
-                    (&[], t)
-                ]
+                &[&[ALT_L], &[ALT_L, CTRL_L], &[ALT_L, CTRL_L, SUPER_L], &[]]
             ),
             vec![]
         );
@@ -691,16 +658,15 @@ mod tests {
     /// the user nothing in ordinary sequential use.
     #[test]
     fn whichever_overlapping_chord_completes_first_wins() {
-        let t = Instant::now();
         let mut e = overlapping();
         assert_eq!(
             run(
                 &mut e,
                 &[
-                    (&[CTRL_L], t),
-                    (&[CTRL_L, SUPER_L], t),
-                    (&[CTRL_L, SUPER_L, ALT_L], t),
-                    (&[], t)
+                    &[CTRL_L],
+                    &[CTRL_L, SUPER_L],
+                    &[CTRL_L, SUPER_L, ALT_L],
+                    &[]
                 ]
             ),
             vec![Fire::Toggle("hf".into())]
@@ -709,12 +675,7 @@ mod tests {
         assert_eq!(
             run(
                 &mut e2,
-                &[
-                    (&[ALT_L], t),
-                    (&[ALT_L, SUPER_L], t),
-                    (&[ALT_L, SUPER_L, CTRL_L], t),
-                    (&[], t)
-                ]
+                &[&[ALT_L], &[ALT_L, SUPER_L], &[ALT_L, SUPER_L, CTRL_L], &[]]
             ),
             vec![Fire::OpenQuickAdd]
         );
@@ -727,14 +688,13 @@ mod tests {
     #[test]
     fn an_overlapping_chord_cannot_cancel_a_live_hold() {
         let mut e = overlapping();
-        let t = Instant::now();
         let fires = run(
             &mut e,
             &[
-                (&[CTRL_L, SHIFT_L], t),          // PTT starts
-                (&[CTRL_L, SHIFT_L, SUPER_L], t), // hands-free completes over it — inert
-                (&[CTRL_L, SHIFT_L], t),          // Super up — no phantom toggle
-                (&[], t),                         // real release → stop
+                &[CTRL_L, SHIFT_L],          // PTT starts
+                &[CTRL_L, SHIFT_L, SUPER_L], // hands-free completes over it — inert
+                &[CTRL_L, SHIFT_L],          // Super up — no phantom toggle
+                &[],                         // real release → stop
             ],
         );
         assert_eq!(
@@ -781,15 +741,14 @@ mod tests {
     #[test]
     fn an_unrelated_held_key_still_lets_a_chord_fire() {
         let mut e = overlapping();
-        let t = Instant::now();
         assert_eq!(
             run(
                 &mut e,
                 &[
-                    (&[KEY_H], t),
-                    (&[KEY_H, CTRL_L], t),
-                    (&[KEY_H, CTRL_L, SHIFT_L], t),
-                    (&[KEY_H], t)
+                    &[KEY_H],
+                    &[KEY_H, CTRL_L],
+                    &[KEY_H, CTRL_L, SHIFT_L],
+                    &[KEY_H]
                 ]
             ),
             vec![Fire::Start("ptt".into()), Fire::Stop("ptt".into())]
@@ -853,10 +812,9 @@ mod tests {
     #[test]
     fn active_holds_reports_for_teardown() {
         let mut e = family();
-        let t = Instant::now();
-        run(&mut e, &[(&[CTRL_L, SHIFT_L], t)]);
+        run(&mut e, &[&[CTRL_L, SHIFT_L]]);
         assert_eq!(e.active_holds(), vec!["ptt".to_string()]);
-        run(&mut e, &[(&[], t)]);
+        run(&mut e, &[&[]]);
         assert!(e.active_holds().is_empty());
     }
 
