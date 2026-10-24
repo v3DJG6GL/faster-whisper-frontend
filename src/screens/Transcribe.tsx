@@ -89,6 +89,9 @@ const STUDIO_CHROME = 340;
 const SPEAKERS_MIN = 1;
 const SPEAKERS_MAX = 32;
 
+/** A stage row's dot on the processing card's sequence hairline (left-[6px] inside pl-6). */
+const PIPELINE_DOT = "absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint";
+
 
 /** "today 21:04 · 11m 10s · de · 4 speakers" — the recent-strip meta line. */
 function recentMeta(rec: TranscriptRecord): string {
@@ -1626,7 +1629,7 @@ export default function Transcribe() {
                 className="absolute bottom-[26px] left-[6px] top-[26px] w-px bg-line-strong"
               />
               <div className="relative">
-                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <span aria-hidden className={PIPELINE_DOT} />
                 {/* Header = gear + switch only; the model pick lives in the
                     expand sub-panel so the header column stays aligned with
                     every other row. */}
@@ -1689,7 +1692,7 @@ export default function Transcribe() {
                 </SettingRow>
               </div>
               <div className="relative">
-                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <span aria-hidden className={PIPELINE_DOT} />
                 {/* Promoted view of runOverrides.vad_filter — the SAME key the
                     Decode-overrides editor edits, so its "set for this run"
                     count and reset work from either place. Tri-state, not a
@@ -1740,7 +1743,7 @@ export default function Transcribe() {
                 </SettingRow>
               </div>
               <div className="relative">
-                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <span aria-hidden className={PIPELINE_DOT} />
                 <SettingRow
                   title="Translate to English"
                   desc={
@@ -1762,7 +1765,7 @@ export default function Transcribe() {
                 )}
               </div>
               <div className="relative">
-                <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
+                <span aria-hidden className={PIPELINE_DOT} />
                 {/* Gear + switch header only, so the header column stays aligned; the
                     speaker mode + model live in the expand sub-panel. */}
                 <SettingRow
@@ -1892,10 +1895,7 @@ export default function Transcribe() {
               </div>
               {translationAvailable && (
                 <div className="relative">
-                  <span
-                    aria-hidden
-                    className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint"
-                  />
+                  <span aria-hidden className={PIPELINE_DOT} />
                   <SettingRow
                     title="Translation"
                     desc="Runs last — translates the finished segments into your target languages, keeping the original (server-side MT)."
