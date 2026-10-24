@@ -499,7 +499,7 @@ const LEGACY_SUB_KEYS = new Set(["recordingsDir", "profileHotkeys", "quickAddHot
 
 /** Complete a persisted (possibly older-version) gate set to one boolean per
  *  manifest entry. Precedence, lowest to highest:
- *  1. manifest defaults (on unless machine-specific);
+ *  1. manifest defaults (on unless machine-specific or local-only);
  *  2. the old coarse per-CATEGORY toggles — a category the user had OFF
  *     seeds every member OFF, so nothing silently starts syncing after the
  *     upgrade to per-setting gates;
