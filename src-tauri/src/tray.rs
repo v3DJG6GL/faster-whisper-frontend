@@ -81,8 +81,6 @@ fn run_menu_action(app: &AppHandle, id: &str) {
     match parse_action(id) {
         Some(MenuAction::Show) => show_main(app),
         Some(MenuAction::Screen(screen)) => show_main_at_screen(app.clone(), screen.to_string()),
-        // Lets the main window land its coalesced writes, then runs the exit sequence (drop
-        // any live dictation so a mute_system session can't leave the system muted, then exit).
         Some(MenuAction::Quit) => crate::quit::request_quit(app),
         None => {}
     }
@@ -137,7 +135,7 @@ mod native {
         let mut builder = TrayIconBuilder::with_id(TRAY_ID)
             .tooltip(TRAY_TITLE)
             .menu(&menu)
-            // Left click reveals the window; the menu is the right-click surface.
+            // Left click toggles the window; the menu is the right-click surface.
             .show_menu_on_left_click(false)
             .on_tray_icon_event(|tray, event| {
                 if let TrayIconEvent::Click {
@@ -361,14 +359,10 @@ mod sni {
                 }
                 Err(e) => {
                     // With `assume_sni_available`, ksni routes only a missing watcher
-                    // (`ServiceUnknown`) to `watcher_offline`. A watcher that answered with a
-                    // standard fdo error arrives as `Error::Watcher` — a refusal, but also a
-                    // timeout or a sandbox proxy's AccessDenied — and one with a non-standard
-                    // error name as `Error::Dbus(MethodError)`. A standard-named `MethodError`
-                    // or any other `Error::Dbus` is a session-bus, name-ownership (RequestName,
-                    // which ksni sends before the watcher call) or transport failure. The log
-                    // names the failure, not who caused it, and never claims there is no tray
-                    // (`WontShow` cannot occur with `assume_sni_available`).
+                    // (`ServiceUnknown`) to `watcher_offline`; every other first-registration
+                    // error lands here (classified by `registration_failed`). The log names the
+                    // failure, not who caused it, and never claims there is no tray (`WontShow`
+                    // cannot occur with `assume_sni_available`).
                     if registration_failed(&e) {
                         tracing::warn!(
                             "[tray] registering with the StatusNotifierWatcher failed; running without a tray: {e}"
@@ -427,11 +421,11 @@ mod sni {
 }
 
 pub(crate) fn show_main(app: &AppHandle) {
-    // Hop the GTK window ops onto the main thread: callers run off the main thread
-    // (hotkeys::triggers::handle_cli_args, the single-instance handler; the Linux tray's D-Bus task), and
-    // GTK window calls off the main thread can crash/hang. run_on_main_thread queues onto the
-    // loop, so the already-on-main callers (tray menu events, the sync show_main_at_screen
-    // command) stay correct without deadlocking.
+    // Hop the GTK window ops onto the main thread: a second launch reaches here off it
+    // (the single-instance handler → hotkeys::triggers::handle_cli_args), and GTK window
+    // calls off the main thread can crash/hang. run_on_main_thread queues onto the loop, so
+    // the already-on-main callers (tray menu events, the sync show_main_at_screen command)
+    // stay correct without deadlocking.
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(window) = handle.get_webview_window("main") {
