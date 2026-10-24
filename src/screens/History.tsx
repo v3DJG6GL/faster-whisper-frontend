@@ -97,6 +97,11 @@ function haystackOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, Haysta
 }
 
 type Segment = "all" | "file" | "url" | "text" | "dictation";
+type KindSegment = Exclude<Segment, "all">;
+
+/** The segment a record lists under; any other kind (a file, or an unknown one read from disk) is a file. */
+const segmentOf = (r: TranscriptRecord): KindSegment =>
+  r.kind === "dictation" || r.kind === "url" || r.kind === "text" ? r.kind : "file";
 
 /** The History view's memory across navigation — filters, search, and the
  *  list's scroll position all survive leaving the page (component state
@@ -366,13 +371,12 @@ export default function History() {
     });
   }, [records, query, haystackCache]);
 
-  const fileMatches = useMemo(
-    () => searched.filter((r) => !isDictation(r) && r.kind !== "url" && r.kind !== "text"),
-    [searched],
-  );
-  const linkMatches = useMemo(() => searched.filter((r) => r.kind === "url"), [searched]);
-  const textMatches = useMemo(() => searched.filter((r) => r.kind === "text"), [searched]);
-  const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
+  const bySegment = useMemo(() => {
+    const out: Record<KindSegment, TranscriptRecord[]> = { file: [], url: [], text: [], dictation: [] };
+    for (const r of searched) out[segmentOf(r)].push(r);
+    return out;
+  }, [searched]);
+  const dictMatches = bySegment.dictation;
 
   // "dictated into" chips: top apps across the (searched) dictations.
   const apps = useMemo(() => {
@@ -407,17 +411,12 @@ export default function History() {
   // The app filter narrows only the Dictations segment.
   const appFiltered = !!appFilter && segment === "dictation";
   const visible = useMemo(() => {
-    let out =
-      segment === "file" ? fileMatches
-        : segment === "url" ? linkMatches
-          : segment === "text" ? textMatches
-            : segment === "dictation" ? dictMatches
-              : searched;
+    let out = segment === "all" ? searched : bySegment[segment];
     if (appFiltered) {
       out = out.filter((r) => appKey(r) === appFilter);
     }
     return out;
-  }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter, appFiltered]);
+  }, [searched, bySegment, segment, appFilter, appFiltered]);
 
   // Matches the active facets hide (never silently — NN/g scoped search). Derived from
   // `visible`, so the app chip counts too: the banner's two numbers always add up to
@@ -979,9 +978,9 @@ export default function History() {
           }}
           options={[
             { value: "all", label: `All · ${fmtFull(searched.length)}` },
-            { value: "file", label: `Files · ${fmtFull(fileMatches.length)}` },
-            { value: "url", label: `Links · ${fmtFull(linkMatches.length)}` },
-            { value: "text", label: `Text · ${fmtFull(textMatches.length)}` },
+            { value: "file", label: `Files · ${fmtFull(bySegment.file.length)}` },
+            { value: "url", label: `Links · ${fmtFull(bySegment.url.length)}` },
+            { value: "text", label: `Text · ${fmtFull(bySegment.text.length)}` },
             { value: "dictation", label: `Dictations · ${fmtFull(dictMatches.length)}` },
           ]}
         />
