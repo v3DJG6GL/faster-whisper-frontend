@@ -1342,7 +1342,6 @@ mod imp {
             .copied()
             .filter(|&id| !(shift_masked && matches!(id, 0xA0 | 0xA1)) && !physically_down(id))
             .collect();
-        // Only keys up on BOTH polls are acted on.
         let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
         // RDP liveness veto (see the doc above): every key keeps its strike and is asked again
