@@ -61,7 +61,7 @@ describe("liveAllowed", () => {
   it("refuses for a hold session that would TYPE, but allows clipboard-only", () => {
     // Clipboard-only types NOTHING, so it is safe under a held chord and may run live in
     // any activation. This is the case that distinguishes `liveAllowed` from `!holdCoerced`
-    // — defining one from the other silently disabled every clipboard-live session.
+    // — defining one from the other would disable every clipboard-live session.
     expect(liveAllowed({ ...base, activation: "hold" })).toBe(false);
     expect(liveAllowed({ ...base, activation: "hold", method: "clipboard" })).toBe(true);
   });
