@@ -170,9 +170,8 @@ export function dictate(profileId: string, action: TriggerAction): void {
     return;
   }
 
-  // Push-to-talk with "ask": arm the settle-time picker instead. The chord is held for the
-  // whole dictation, so the prompt has to wait for release — streaming.ts calls this back at
-  // the one-shot translate, the last moment the answer can still change what is inserted.
+  // Push-to-talk with "ask": arm the settle-time picker instead — streaming.ts calls this back
+  // at the one-shot translate, the last moment the answer can still change what is inserted.
   setSettleTargetPicker(
     profile.askTranslationTargets && profile.activation === "hold"
       ? (stillWanted) =>
@@ -243,10 +242,8 @@ async function startWithPickedTargets(
     const targets = pick.kind === "picked" ? pick.targets : preset;
     if (pick.kind === "picked") rememberRecent("recentTranslationTargets", pick.targets);
     // An explicit "0" (original only) is a decision the chip should acknowledge ("· original")
-    // rather than render as a session that merely has no route. The hint is consumed once by
-    // startLiveInner, so a Profile that simply configures no targets never picks it up. It has
-    // to ride a seam rather than the store: `sessionTargets` is republished by startLiveInner
-    // itself, a tick later than anything set here.
+    // rather than render as a session that merely has no route — see setRouteHint for why it
+    // rides a one-shot seam instead of the store.
     setRouteHint(pick.kind === "picked" && targets.length === 0 ? "original" : null);
     useApp.getState().setDictation({ activeProfile: profile.id, routePending: null });
     void startLive(
