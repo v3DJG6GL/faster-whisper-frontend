@@ -5,7 +5,7 @@ import { Segmented } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtFull, fmtDateFull } from "@/lib/format";
 import {
-  KIND_LABEL, METRIC_LABEL, QUARTER_NAME, rhythmModel, sumKinds, companionMetric, RHYTHMS, DOW_LONG,
+  KIND_LABEL, METRIC_LABEL, QUARTER_NAME, rhythmModel, sumKinds, companionMetric, RHYTHMS, DOW_LONG, PHRASE_SHARE,
   type Rhythm, type ChartMetric, type UsageScope, ordinal,
 } from "@/lib/usageDerive";
 import type { UsageSeriesPoint, UsageStats } from "@/lib/types";
@@ -15,11 +15,14 @@ import { CellTip, LevelLegend } from "@/components/stats/heatGrid";
 import { CELL_HOT, CELL_HOVER, LEVEL_BG, cellOf, useCellTip, useRovingGrid } from "@/components/stats/heatGridKit";
 import { Panel } from "@/components/stats/primitives";
 
+const atLeast = (share: number) => `${Math.round(share * 100)} %+`;
+
 /** The rule behind the busy phrase, per rhythm, as lib/usageDerive.ts rhythmPhrase applies it. */
 function phraseRule(rhythm: Rhythm, measure: string): string {
-  if (rhythm === "months") return `the top month holding 40 %+, else the top two holding 50 %+ of the ${measure}`;
-  if (rhythm === "hours") return `one slot holding 50 %+, else the smallest group holding 60 %+ of the ${measure}`;
-  return `the smallest group holding 60 %+ of the ${measure}`;
+  const S = PHRASE_SHARE;
+  if (rhythm === "months") return `the top month holding ${atLeast(S.month)}, else the top two holding ${atLeast(S.twoMonths)} of the ${measure}`;
+  if (rhythm === "hours") return `one slot holding ${atLeast(S.slot)}, else the smallest group holding ${atLeast(S.group)} of the ${measure}`;
+  return `the smallest group holding ${atLeast(S.group)} of the ${measure}`;
 }
 
 /** The busy panel: one grid, three rhythms — weekday × hour, day of month × hour (the

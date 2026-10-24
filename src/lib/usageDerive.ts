@@ -755,6 +755,9 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number, loose = false): 
 
 const DAY_PARTS: [string, number, number][] = [["06–12", 6, 12], ["12–18", 12, 18], ["18–24", 18, 24], ["00–06", 0, 6]];
 
+/** The busy phrase's share thresholds; BusyPanel's phraseRule states them in its tooltip. */
+export const PHRASE_SHARE = { slot: 0.5, group: 0.6, month: 0.4, twoMonths: 0.5 } as const;
+
 /** Hours: the smallest weekday / part-of-day group holding 60 %+ of the measure (one slot
  *  holding half is named as the slot); days: the third of the month or the part of the day;
  *  months: the top month at 40 %+, else the top two at 50 %+. Ported from the backend. */
@@ -765,7 +768,7 @@ function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonl
     const sum = (days: readonly number[], a: number, b: number) => days.reduce((s, d) => { for (let h = a; h < b; h++) s += values[d * 24 + h]; return s; }, 0);
     let peak = 0;
     values.forEach((v, i) => { if (v > values[peak]) peak = i; });
-    if (values[peak] / total >= 0.5) return `${DOW_SHORT[Math.floor(peak / 24)]} ${String(peak % 24).padStart(2, "0")}–${String(peak % 24 + 1).padStart(2, "0")}`;
+    if (values[peak] / total >= PHRASE_SHARE.slot) return `${DOW_SHORT[Math.floor(peak / 24)]} ${String(peak % 24).padStart(2, "0")}–${String(peak % 24 + 1).padStart(2, "0")}`;
     const groups: [string, number[], number, number][] = [];
     const wk = [0, 1, 2, 3, 4], we = [5, 6], all = [0, 1, 2, 3, 4, 5, 6];
     for (let d = 0; d < 7; d++) for (const [p, a, b] of DAY_PARTS) groups.push([`${DOW_SHORT[d]} ${p}`, [d], a, b]);
@@ -773,19 +776,19 @@ function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonl
     for (const [p, a, b] of DAY_PARTS) { groups.push([`Mon–Fri ${p}`, wk, a, b]); groups.push([`Sat–Sun ${p}`, we, a, b]); }
     for (const [p, a, b] of DAY_PARTS) groups.push([p, all, a, b]);
     groups.push(["Mon–Fri", wk, 0, 24], ["Sat–Sun", we, 0, 24]);
-    for (const [label, days, a, b] of groups) if (sum(days, a, b) / total >= 0.6) return `mostly ${label}`;
+    for (const [label, days, a, b] of groups) if (sum(days, a, b) / total >= PHRASE_SHARE.group) return `mostly ${label}`;
     return null;
   }
   if (rhythm === "days") {
     const third = (n: number) => colTot.slice(n * 10, n === 2 ? cols : n * 10 + 10).reduce((a, v) => a + v, 0);
     const thirds: [string, number][] = [["1st–10th", third(0)], ["11th–20th", third(1)], ["21st–31st", third(2)]];
-    for (const [label, v] of thirds) if (v / total >= 0.6) return `mostly ${label}`;
-    for (const [label, a, b] of DAY_PARTS) if (rowTot.slice(a, b).reduce((x, v) => x + v, 0) / total >= 0.6) return `mostly ${label}`;
+    for (const [label, v] of thirds) if (v / total >= PHRASE_SHARE.group) return `mostly ${label}`;
+    for (const [label, a, b] of DAY_PARTS) if (rowTot.slice(a, b).reduce((x, v) => x + v, 0) / total >= PHRASE_SHARE.group) return `mostly ${label}`;
     return null;
   }
   const order = colTot.map((v, i) => [v, i] as const).sort((a, b) => b[0] - a[0]);
-  if (order[0][0] / total >= 0.4) return `mostly ${MONTH[order[0][1]]}`;
-  if ((order[0][0] + order[1][0]) / total >= 0.5) return `mostly ${MONTH[order[0][1]]} + ${MONTH[order[1][1]]}`;
+  if (order[0][0] / total >= PHRASE_SHARE.month) return `mostly ${MONTH[order[0][1]]}`;
+  if ((order[0][0] + order[1][0]) / total >= PHRASE_SHARE.twoMonths) return `mostly ${MONTH[order[0][1]]} + ${MONTH[order[1][1]]}`;
   return null;
 }
 
