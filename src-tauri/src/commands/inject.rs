@@ -305,35 +305,24 @@ pub async fn get_quickadd_seed(
         .await
         .ok()
         .flatten();
-        let seed = raw.as_deref().and_then(sanitize_seed);
         // `None` and `Some("")` log differently: "the grab found nothing" must stay
         // distinguishable from "the reader aborted (window closed) / timed out" in field reports.
-        match &raw {
-            None => tracing::info!(
-                "[quickadd-seed] windows copy grab returned no text (no copy landed, summon superseded, or wait timed out)"
-            ),
-            Some(t) => tracing::info!(
-                "[quickadd-seed] windows copy grab {} bytes -> seed {} bytes",
-                t.len(),
-                seed.as_deref().map_or(0, str::len)
-            ),
-        }
-        Ok(seed)
+        Ok(match raw.as_deref() {
+            None => {
+                tracing::info!(
+                    "[quickadd-seed] windows copy grab returned no text (no copy landed, summon superseded, or wait timed out)"
+                );
+                None
+            }
+            Some(t) => logged_seed("windows copy grab", t),
+        })
     }
     #[cfg(not(windows))]
     {
         let _ = &seed_rdv;
         use crate::focus::SelRead;
         match crate::focus::focused_selection(guard.inner()).await {
-            SelRead::Text(s) => {
-                let seed = sanitize_seed(&s);
-                tracing::info!(
-                    "[quickadd-seed] atspi selection {} bytes -> seed {} bytes",
-                    s.len(),
-                    seed.as_deref().map_or(0, str::len)
-                );
-                Ok(seed)
-            }
+            SelRead::Text(s) => Ok(logged_seed("atspi selection", &s)),
             SelRead::Empty => {
                 tracing::info!("[quickadd-seed] atspi: nothing selected -> no seed");
                 Ok(None)
@@ -344,13 +333,7 @@ pub async fn get_quickadd_seed(
                     Some(s) => s,
                     None => return Ok(None),
                 };
-                let seed = sanitize_seed(&raw);
-                tracing::info!(
-                    "[quickadd-seed] primary fallback {} bytes -> seed {} bytes",
-                    raw.len(),
-                    seed.as_deref().map_or(0, str::len)
-                );
-                Ok(seed)
+                Ok(logged_seed("primary fallback", &raw))
             }
         }
     }
@@ -429,6 +412,17 @@ fn sanitize_seed(raw: &str) -> Option<String> {
         return None;
     }
     Some(s.to_string())
+}
+
+/// `sanitize_seed` plus the `[quickadd-seed]` size line every seed source logs.
+fn logged_seed(source: &str, raw: &str) -> Option<String> {
+    let seed = sanitize_seed(raw);
+    tracing::info!(
+        "[quickadd-seed] {source} {} bytes -> seed {} bytes",
+        raw.len(),
+        seed.as_deref().map_or(0, str::len)
+    );
+    seed
 }
 
 /// Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke),
