@@ -336,7 +336,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       deletable: !siteCodes.includes(code),
     });
   }
-  // Every wanted language has its badges by now (a target can lack a row), so `shown` is complete.
+  // Build badges for wanted languages without a row too, so `shown` is complete before the cap.
   for (const c of targets) langSources(c);
   // A run downloads at most 8 tracks — the transcript's own track always (cut off, the run would
   // transcribe after all), then the original language's and those of the languages you translate
