@@ -81,6 +81,11 @@ const ENTITIES: Record<string, string> = {
   nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", lrm: "\u200E", rlm: "\u200F",
 };
 
+/** A file-authored speaker name's cap in code points — the viewer's rename cap (viewerKit's SPEAKER_NAME_MAX). */
+const SPEAKER_NAME_MAX = 40;
+/** A leading "Name: " — see speakerPrefix. */
+const SPEAKER_PREFIX = new RegExp(String.raw`^([^:\n]{1,${SPEAKER_NAME_MAX}}):\s+`, "u");
+
 function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (m, ref: string) => {
     if (ref[0] !== "#") return ENTITIES[ref.toLowerCase()] ?? m;
@@ -102,7 +107,7 @@ function stripMarkup(s: string): string {
 /** A `<v Name>` voice tag's name: references decoded, then bounded and sanitized like any
  *  file-authored label (the decode can produce control/bidi characters). */
 function voiceName(raw: string): string {
-  return safeDisplayText(decodeEntities(raw), 40).replace(/\s+/g, " ").trim();
+  return safeDisplayText(decodeEntities(raw), SPEAKER_NAME_MAX).replace(/\s+/g, " ").trim();
 }
 
 /** A cue's (or paragraph's) lines as one: one space between two lines, or none at an unspaced
@@ -203,7 +208,7 @@ function cuesOf(cues: RawCue[]): ImportedText {
  *  ("12: 30 lunch") or a URL scheme. Its 40 counts code points, as the rename cap does, so a
  *  name with emoji or rare CJK characters still re-imports. */
 function speakerPrefix(s: string): RegExpExecArray | null {
-  const m = /^([^:\n]{1,40}):\s+/u.exec(s);
+  const m = SPEAKER_PREFIX.exec(s);
   return m && !/^\d+$/.test(m[1].trim()) && !/^(https?|file)$/i.test(m[1].trim()) ? m : null;
 }
 
@@ -608,7 +613,7 @@ function parseJsonExport(body: string): ImportedText {
         // JSON.parse turns `1e999` into Infinity: a non-finite or negative clock is none.
         start: !synth && typeof seg.start === "number" && Number.isFinite(seg.start) && seg.start >= 0 ? seg.start : undefined,
         end: !synth && typeof seg.end === "number" && Number.isFinite(seg.end) && seg.end >= 0 ? seg.end : undefined,
-        speaker: name === undefined ? undefined : safeDisplayText(name, 40).trim() || undefined,
+        speaker: name === undefined ? undefined : safeDisplayText(name, SPEAKER_NAME_MAX).trim() || undefined,
       });
     }
   }
