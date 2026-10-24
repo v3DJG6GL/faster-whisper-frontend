@@ -58,7 +58,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Bump + commit + tag (dispatch runs only, unless "build-only").
   version:
     if: github.event_name == 'workflow_dispatch' && inputs.bump != 'build-only'
     runs-on: ubuntu-latest
@@ -310,9 +309,8 @@ jobs:
   # Windows installers (MSI + NSIS) on the self-hosted VM runner. Runs in
   # parallel with the Linux build; both upload into the same draft release
   # (find-or-create is race-safe: a lost create just re-reads the winner's
-  # release id). Steps mirror ci.yml's windows leg — see the comments there
-  # for why checkout is manual, pnpm comes via corepack, and there is no
-  # setup-node. WiX + NSIS are fetched by tauri itself on first use (cached
+  # release id). Steps mirror ci.yml's windows leg (reasons in the comments
+  # there). WiX + NSIS are fetched by tauri itself on first use (cached
   # in the service profile's %LOCALAPPDATA%\tauri).
   windows:
     name: build (windows-latest)
