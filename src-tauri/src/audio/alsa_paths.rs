@@ -1,7 +1,7 @@
 //! Which raw ALSA capture paths the advanced picker offers, and what each one does.
 //!
 //! ALSA lists every PCM name a card can be opened under, and they all carry the same description,
-//! which is why the old picker showed each microphone five or six times. Only four kinds are worth
+//! so listing them all shows each microphone five or six times. Only four kinds are worth
 //! offering, each with a different trade-off; everything else is either a duplicate under another
 //! name (`hw:2` = `hw:CARD=USB`), not a capture path for a microphone (`front:`, `usbstream:`,
 //! `iec958:` …) or a plugin that routes back into the sound server or nowhere.
