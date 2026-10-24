@@ -13,6 +13,7 @@ import { buildMicView, isAlsaPin, isLegacyPin, labelForPick, MIC_LABEL_MAX } fro
 import { retryLegacyMicPin } from "@/lib/micMigration";
 import { safeDisplayText } from "@/lib/sanitize";
 import { everyWhileVisible } from "@/lib/windowVisibility";
+import { useTauriListener } from "@/lib/useTauriListener";
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
 // cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
@@ -197,22 +198,11 @@ export function AudioTab() {
   // Clear "playing" when the replay finishes — Rust emits this once the current
   // playback drains (and wasn't superseded). The duration-based timer in replay()
   // is just a safety net in case the event is missed.
+  useTauriListener(() => onMicTestPlayEnded(() => setPlaying(false)), []);
   useEffect(() => {
     mountedRef.current = true;
-    let active = true;
-    let un: (() => void) | undefined;
-    void onMicTestPlayEnded(() => {
-      if (active) setPlaying(false);
-    })
-      .then((u) => {
-        if (active) un = u;
-        else u();
-      })
-      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
       mountedRef.current = false;
-      active = false;
-      un?.();
       if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
       // Silence an in-flight replay on unmount: AudioTab unmounts on a Settings tab switch or a
       // route navigation, but the mic-test playback is a detached Rust thread (up to ~15s) that

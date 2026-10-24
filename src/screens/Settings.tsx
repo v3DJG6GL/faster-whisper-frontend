@@ -36,6 +36,7 @@ import {
   subscribe,
 } from "@/lib/api";
 import { errorText } from "@/lib/errors";
+import { useTauriListener } from "@/lib/useTauriListener";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 // Row titles come from the settings manifest — the single source both this
@@ -212,23 +213,15 @@ export default function Settings() {
   // prunes records on a background thread while the tab stays mounted; nothing above re-runs
   // for it, so the dictation count and the "Delete N dictations" confirm would go stale. The
   // event goes out before the media sweeps, so the audio counts may still lag one sweep.
-  useEffect(() => {
-    if (tab !== STORE_TAB) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    subscribe<unknown>("transcripts://swept", () => {
-      if (!busy.dir && !busy.store) refreshStoreStats();
-    })
-      .then((un) => {
-        if (cancelled) un();
-        else unlisten = un;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [tab, refreshStoreStats]);
+  useTauriListener(
+    () =>
+      tab === STORE_TAB
+        ? subscribe<unknown>("transcripts://swept", () => {
+            if (!busy.dir && !busy.store) refreshStoreStats();
+          })
+        : Promise.resolve(() => {}),
+    [tab, refreshStoreStats],
+  );
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
   const [confirming, setConfirming] = useState<null | StoreKind>(null);
