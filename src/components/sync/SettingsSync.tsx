@@ -61,11 +61,11 @@ import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTyp
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
 const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
 
-/** Coerce an opaque payload field to an array before the previews walk it. Both preview
- *  components render categories that are only compile-time typed: the Rust importer validates a
- *  category's `list` only when the key is present, and the sync-pull path passes the blob through
- *  as raw JSON. A `{"backends": {}}` payload otherwise throws in the render body, and with no
- *  error boundary in the app that unmounts the whole window. */
+/** Coerce an opaque payload field to an array before the previews count it. Both preview
+ *  components render categories that are only compile-time typed: the Rust importer lets an app-rules
+ *  bucket be null or absent, and the sync-pull path passes the blob through as raw JSON. An
+ *  `{"appRules": {}}` payload otherwise throws in the render body, and with no error boundary in
+ *  the app that unmounts the whole window. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
 /** Category descriptions for the import preview and the restore dialog (the Sync
