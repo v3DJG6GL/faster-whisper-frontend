@@ -124,8 +124,9 @@ mod imp {
             let name = label(labels, pid);
             line.push_str(&format!(" | {name} {anon}M (peak {peak}M)"));
             // A first-seen process (the first sample, or a relaunched web process) is seeded
-            // with its current peak, so the jump check below cannot fire for it: a spike that
-            // has already receded by then would otherwise only reach the debug line.
+            // with its current peak, so the jump check below cannot fire for it; `is_new` warns
+            // instead when that peak is already over the line, or a spike that has receded by
+            // then would only reach the debug line.
             let is_new = !seen.contains_key(&pid);
             let s = seen.entry(pid).or_insert_with(|| Seen {
                 peak_mb: peak,
