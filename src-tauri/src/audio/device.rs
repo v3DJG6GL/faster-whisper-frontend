@@ -297,6 +297,9 @@ fn server_hold() -> bool {
     }
 }
 
+/// The saved pin value of the picker's "System default" row (micMigration.ts writes it too).
+const SYSTEM_DEFAULT_PIN: &str = "default";
+
 /// Is this saved value a cpal device id (vs a pre-ids display-name pin)?
 fn parse_pin(pin: &str) -> Option<DeviceId> {
     DeviceId::from_str(pin)
@@ -307,12 +310,12 @@ fn parse_pin(pin: &str) -> Option<DeviceId> {
 /// Find the device a saved pin names; fall back to the default input (and say so) when it is not
 /// connected. `None` / "" / "default" = System default.
 pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
-    let mut pin = pin.filter(|p| !p.is_empty() && *p != "default");
+    let mut pin = pin.filter(|p| !p.is_empty() && *p != SYSTEM_DEFAULT_PIN);
     let mut id = pin.and_then(parse_pin);
     if let (Some(name), None) = (pin, &id) {
         match resolve_legacy(name, false) {
             // A sound-server route ("PipeWire Sound Server"): recorded from the default input.
-            Some((legacy, _)) if legacy == "default" => pin = None,
+            Some((legacy, _)) if legacy == SYSTEM_DEFAULT_PIN => pin = None,
             Some((legacy, _)) => id = parse_pin(&legacy),
             None => {}
         }
@@ -447,7 +450,7 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
         if legacy_server_route(name, || {
             server_route_labels(inputs.get_or_insert_with(host::native_inputs))
         }) {
-            return Some(("default".into(), "System default".into()));
+            return Some((SYSTEM_DEFAULT_PIN.into(), "System default".into()));
         }
         if !legacy_alsa_fallback(persist, served, super::pulse::held()) {
             return None;
