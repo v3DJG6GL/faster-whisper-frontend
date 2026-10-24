@@ -403,7 +403,7 @@ pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, Stri
 
 /// The stream config for `supported`. Through the sound server, ask for ~20 ms callbacks: left at
 /// its default, the PulseAudio host hands over 16384 frames (~340 ms at 48 kHz) per callback, which
-/// would make the level meter and the streaming upload visibly lag. ALSA keeps its own default.
+/// would make the level meter and the streaming upload visibly lag. Other hosts keep their default.
 pub fn capture_config(
     device: &Device,
     supported: &cpal::SupportedStreamConfig,
