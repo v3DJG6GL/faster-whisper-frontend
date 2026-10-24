@@ -312,11 +312,10 @@ fn code_rank(code: &str) -> u8 {
 }
 
 fn canonicalize(mut codes: Vec<String>) -> Vec<String> {
-    // Rank orders modifiers first (by type+side); equal-rank codes (e.g. two non-modifier keys in
-    // an N-chord, both rank 100) fall back to a lexical tie-break so the order is press-order-
-    // independent. Mirrors the TS `canonicalizeCodes` so the two layers agree on equality + round-
-    // trip. The tie-break also makes identical codes adjacent, so `dedup` removes them all (not
-    // just consecutive duplicates).
+    // Equal-rank codes (e.g. two non-modifier keys in an N-chord, both rank 100) fall back to a
+    // lexical tie-break so the order is press-order-independent. Mirrors the TS `canonicalizeCodes`
+    // so the two layers agree on equality + round-trip. The tie-break also makes identical codes
+    // adjacent, so `dedup` removes them all (not just consecutive duplicates).
     codes.sort_by(|a, b| code_rank(a).cmp(&code_rank(b)).then_with(|| a.cmp(b)));
     codes.dedup();
     codes
@@ -607,8 +606,8 @@ pub struct RecordingSettings {
     /// (standby dot / tucked at the edge). Frontend-only — pure CSS in the chip webview.
     #[serde(default = "default_scale")]
     pub dot_scale: f64,
-    /// Send the dictated-into app id with each session's usage outcome.
-    /// `#[serde(default = …)]` so older configs default on (matching the TS default).
+    /// Send the dictated-into app id with each session's usage outcome. Older configs
+    /// default on, matching the TS default.
     #[serde(default = "default_true")]
     pub report_target_app: bool,
     /// Chip quick-launch buttons. Frontend-owned opaque JSON (like decode_overrides);
