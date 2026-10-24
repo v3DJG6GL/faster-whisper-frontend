@@ -40,6 +40,10 @@ const pruneInherit = (x: AppRule): AppRule => ({
   remoteDesktop: x.remoteDesktop ?? undefined,
 });
 
+/** How a rule reads: its label when one shows, else its app id (both peer-authored, defanged). */
+const ruleDisplayName = (r: Pick<AppRule, "name" | "appId">): string =>
+  safeIdentityText(r.name?.trim(), 80) || safeIdentityText(r.appId, 80);
+
 /** The rule's three-state remote-desktop override as the Segmented control's value.
  *  Anything but a real boolean is Auto — the same reading `resolveInjectionTarget` gives it. */
 type RemoteMode = "auto" | "on" | "off";
@@ -162,7 +166,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={safeIdentityText(r.name?.trim(), 80) || safeIdentityText(r.appId, 80) || "New rule"}
+        title={ruleDisplayName(r) || "New rule"}
         subtitle={r.block ? "Per-app rule · never type here" : "Per-app rule"}
         dirty={dirty}
         saveLabel="Save rule"
@@ -189,7 +193,7 @@ function Editor({
         {clash && (
           <div className="mt-1.5 text-[12px] text-warn">
             Saving replaces the existing rule for{" "}
-            {safeIdentityText(clash.name?.trim(), 80) || safeIdentityText(clash.appId, 80)}
+            {ruleDisplayName(clash)}
             {clash.block ? " (never type here)" : ""} — one rule per app.
           </div>
         )}
@@ -325,7 +329,7 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
                 blocked, and app rules sync with NO consent gate — so both identity strings are
                 peer-authored. Bidi/invisible marks here let one rule read as another app. */}
             <span className="truncate text-[14px] font-semibold text-text">
-              {safeIdentityText(r.name?.trim(), 80) || safeIdentityText(r.appId, 80)}
+              {ruleDisplayName(r)}
             </span>
             <span className="truncate rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
               {safeIdentityText(r.appId, 80)}
