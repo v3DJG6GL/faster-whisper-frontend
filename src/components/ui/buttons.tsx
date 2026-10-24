@@ -126,9 +126,9 @@ export function SplitButton({
     if (o) o.onChange(!o.checked);
   };
   const onMenuKey = (e: ReactKeyboardEvent<HTMLElement>) => {
-    // A held key acts once, as in the language pickers (the arrows keep repeating): a held Space
-    // ticked the row on and off at the key-repeat rate, a held Enter ticked, closed, and its
-    // repeat reopened the menu from the chevron (which swallows those below) to tick again.
+    // A held key acts once, as in the other pickers (the arrows keep repeating): a held Space
+    // would tick the row on and off at the key-repeat rate, and a held Enter would tick, close,
+    // and reopen the menu from the chevron to tick again (the chevron swallows those below).
     if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
       e.preventDefault();
       return;
