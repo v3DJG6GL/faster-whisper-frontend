@@ -1,12 +1,9 @@
 // The microphone picker's rows (Settings → Audio), built from the Rust MicInventory.
-//
-// Design "Microphone Paths" (D74 A, D75 L1, D76 P1, D77 M1, D78 chip):
 // - "System default — <what it resolves to now>" first, then one row per microphone.
 // - A pinned mic that isn't connected stays selected and is shown as such; dictation uses the
 //   default until it is back (Rust resolve_input). The pin is never overwritten.
 // - Linux only: "Show all audio paths" adds each mic's ways in — the sound server path and the
 //   raw ALSA paths — labelled by what they do, with the technical id beneath.
-// Pure, so it is unit-tested apart from the component.
 
 import { IS_LINUX } from "./platform";
 import type { MicInventory, MicPath, MicPathKind } from "./types";
@@ -28,7 +25,7 @@ export function isLegacyPin(id: string | null | undefined): id is string {
   return !!id && id !== "default" && pinHost(id) === null;
 }
 
-/** A raw ALSA path — only listed with the advanced paths, so the picker loads them for it. */
+/** A raw ALSA path — usually listed only with the advanced paths, so the picker loads them for it. */
 export function isAlsaPin(id: string | null | undefined): boolean {
   return pinHost(id) === "alsa";
 }
@@ -104,8 +101,6 @@ export function buildMicView(
   const selMic = selectedId ? mics.find((m) => m.id === selectedId) : undefined;
   const selPath = selectedId && !selMic ? paths.find((p) => p.path.id === selectedId) : undefined;
   const missing = !!inv && !!selectedId && !selMic && !selPath;
-  // With no sound server a legacy name is migrated to its card path once that mic is listed
-  // (AudioTab retries), so a name still missing then really is not connected.
   const legacy = cardFallback && missing && isLegacyPin(selectedId) && !!inv?.server;
 
   const rows: MicRow[] = [
@@ -116,7 +111,7 @@ export function buildMicView(
       sub: "Follows your sound settings",
     },
   ];
-  // A pinned mic that isn't connected keeps its place at the top of the mic rows (M1).
+  // A pinned mic that isn't connected keeps its place at the top of the mic rows.
   if (missing && name) {
     rows.push({ type: "mic", value: selectedId!, label: name, bluetooth: false, missing: true });
   }
