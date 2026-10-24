@@ -286,7 +286,7 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
 
   it("re-entering a closed stage restarts its clock (the request-entry" +
      " 'waiting' seeds a transcribing clock the first real stage closes)", () => {
-    // The live-run sequence from the server log, in seconds:
+    // The live-run sequence from the server log:
     at(0, "waiting");            // registry seed → phantom transcribing clock
     at(11_000, "resolving");     // model loaded → phantom stamped SHUT (11s)
     at(14_000, "downloading");
@@ -691,8 +691,8 @@ describe("selectPath keeps a same-path open record", () => {
   });
 
   it("re-selecting the open record's path does not swap to the last-registered record", () => {
-    // r1 and r2 are two records of the SAME source; registering r2 makes it
-    // the historyByPath entry, but the user still has r1 open on screen.
+    // rec-1 and rec-2 are two records of the SAME source; registering rec-2 makes it
+    // the idByPath entry, but the user still has rec-1 open on screen.
     openHistoryRecord(recOf("rec-1", "/a.mp3"));
     openHistoryRecord(recOf("rec-2", "/a.mp3"));
     useTranscribeRun.setState({ openRecordId: "rec-1" });
@@ -2657,8 +2657,8 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("each chunk sends its segments' positions in the whole source as their ids", async () => {
-    // The server's "segment N" warnings name the ids it was sent: per-request ids from 0 made a
-    // later chunk's warning point at a cue in the first chunk.
+    // The server's "segment N" warnings name the ids it was sent: per-request ids from 0 would
+    // point a later chunk's warning at a cue in the first chunk.
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = Array.from({ length: 401 }, (_, i) => ({ text: `cue ${i}` }));
     await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
