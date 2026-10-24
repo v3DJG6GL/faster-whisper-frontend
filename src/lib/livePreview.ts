@@ -40,7 +40,6 @@ export const LIVE_SAMPLE: readonly (readonly [string, number])[] = [
   ["the backend logs each part on its own", 0.6],
 ];
 
-/** What a pause of `seconds` does under `t`. */
 export function pauseKind(seconds: number, t: LiveTimings): PauseKind {
   const ms = seconds * 1000;
   if (t.hardMs > 0 && ms >= t.hardMs) return "par";
