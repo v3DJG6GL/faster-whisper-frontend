@@ -90,9 +90,8 @@ describe("migrateInsertTiming", () => {
 
   it("runs once per config: a second launch on the config it wrote keeps typeAsISpeak", () => {
     // `insertTiming` is never absent (Rust always writes it back), so the gate lives in
-    // `migrateConfig` on the schema version, not on the field. Load a v2 config, flip the
-    // new toggle on, save-shape it as the app would, load again: the migration must not
-    // re-run and reset the toggle to the conservative write-back value.
+    // `migrateConfig` on the schema version, not on the field — a re-run would reset the
+    // toggle to the conservative write-back value.
     const store = useApp.getState();
     store.hydrate({ settings: settingsWith("stop"), backends: [], profiles: [profile()], version: 2 });
     expect(useApp.getState().settings.general.typeAsISpeak).toBe(false);
