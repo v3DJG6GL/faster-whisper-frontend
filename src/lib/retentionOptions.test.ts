@@ -18,7 +18,6 @@ describe("withCurrentDay", () => {
     expect(out).toHaveLength(LOG_RETENTION_OPTIONS.length + 1);
     expect(out[out.length - 1]).toEqual({ value: "60", label: "60 days" });
     expect(out.slice(0, -1)).toEqual(LOG_RETENTION_OPTIONS);
-    // The lists themselves are never mutated.
     expect(LOG_RETENTION_OPTIONS.some((o) => o.value === "60")).toBe(false);
   });
 
