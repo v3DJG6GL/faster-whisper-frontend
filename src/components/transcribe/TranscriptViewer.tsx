@@ -126,7 +126,7 @@ export function TranscriptViewer({
   className,
 }: {
   result: BatchResult;
-  /** The transcribed file's path — keys the per-file overlays and playback. */
+  /** The transcribed file's path (a link run's URL) — keys playback, and the overlays when there is no `overlayKey`. */
   path: string;
   /** App-managed audio copy, playback fallback when `path` is gone. */
   mediaPath?: string;
