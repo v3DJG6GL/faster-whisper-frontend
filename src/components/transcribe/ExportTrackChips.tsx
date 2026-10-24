@@ -106,7 +106,6 @@ export function ExportTrackChips({
     onPointerUp: release,
     onPointerCancel: cancel,
   });
-  /** Alt+←/→: one step left or right. */
   const keyMove = (e: KeyboardEvent<HTMLElement>, from: number, move: (slot: number) => string[]) => {
     if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
     e.preventDefault();
