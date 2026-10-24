@@ -281,6 +281,8 @@ export default function History() {
   // Retry's own feedback: a listing that fails again leaves the notice exactly as it was.
   const [retrying, setRetrying] = useState(false);
   const running = useTranscribeRun((s) => s.running);
+  /** A run-gated button's title: while a run is busy (the button is disabled) it says why. */
+  const runGatedTitle = (idle: string) => (running ? "Wait for the current run to finish" : idle);
   const settings = useApp((s) => s.settings);
   const backends = useApp((s) => s.backends);
   const [query, setQuery] = useState(viewMemory.query);
@@ -789,11 +791,7 @@ export default function History() {
               size="sm"
               className="ml-auto"
               disabled={running}
-              title={
-                running
-                  ? "Wait for the current run to finish"
-                  : "Transcribe the recording with word timestamps — karaoke, corrections, exports"
-              }
+              title={runGatedTitle("Transcribe the recording with word timestamps — karaoke, corrections, exports")}
               onClick={() => openRecordingInWorkbench(rec)}
             >
               <ExternalLink className="size-3.5" />
@@ -902,7 +900,7 @@ export default function History() {
             variant="ghost"
             size="sm"
             disabled={running}
-            title={running ? "Wait for the current run to finish" : "Save the audio…"}
+            title={runGatedTitle("Save the audio…")}
             onClick={() => openExport(rec, "audio")}
           >
             <FileAudio className="size-3.5" />
@@ -913,7 +911,7 @@ export default function History() {
             variant="ghost"
             size="sm"
             disabled={running}
-            title={running ? "Wait for the current run to finish" : "Save the video (with subtitles)…"}
+            title={runGatedTitle("Save the video (with subtitles)…")}
             onClick={() => openExport(rec, "video")}
           >
             <Film className="size-3.5" />
@@ -928,15 +926,13 @@ export default function History() {
           variant="ghost"
           size="sm"
           disabled={running}
-          title={
-            running
-              ? "Wait for the current run to finish"
-              : rec.kind === "url"
-                ? "Transcribe this link again with your current settings"
-                : rec.kind === "text"
-                  ? "Translate this file again with your current settings"
-                  : "Transcribe this file again with your current settings"
-          }
+          title={runGatedTitle(
+            rec.kind === "url"
+              ? "Transcribe this link again with your current settings"
+              : rec.kind === "text"
+                ? "Translate this file again with your current settings"
+                : "Transcribe this file again with your current settings",
+          )}
           onClick={() => retry(rec)}
         >
           <RotateCcw className="size-3.5" />
@@ -947,7 +943,7 @@ export default function History() {
             variant="default"
             size="sm"
             disabled={running}
-            title={running ? "Wait for the current run to finish" : "Open in the workbench"}
+            title={runGatedTitle("Open in the workbench")}
             onClick={() => open(rec)}
           >
             Open
