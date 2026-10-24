@@ -58,12 +58,11 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
 }
 
 /// Fill `out` from `decode` unless it is already cached — one caller per `out` at a time. The
-/// viewer re-requests the decode on every open and only ignores stale results (the blocking
-/// decode is never cancelled), so reopening a transcript mid-decode used to run a second full
-/// decode beside the first: another up-to-640 MiB buffer. Now the waiters share the leader's
-/// outcome: a success through the cache-hit branch, a failure through the error the leader
-/// stored in the slot (else each queued open re-ran the same doomed decode, one after another).
-/// The slot dies with its last holder, so a later fresh open retries.
+/// viewer re-requests the decode on every open and never cancels the blocking one, so without
+/// this a reopen mid-decode runs a second full decode (another up-to-640 MiB buffer). Waiters
+/// share the leader's outcome: a success through the cache-hit branch, a failure through the
+/// error stored in the slot (so queued opens don't re-run the same doomed decode). The slot
+/// dies with its last holder, so a later fresh open retries.
 fn cache_single_flight(
     dir: &std::path::Path,
     out: &std::path::Path,
@@ -72,9 +71,8 @@ fn cache_single_flight(
     let slot = InflightSlot::acquire(out);
     let mut held = slot.lock();
     if out.exists() {
-        // Touch the mtime so eviction is really least-RECENTLY-used: `prune_cache` orders by
-        // mtime, and a pure read left the transcript replayed daily looking older than one
-        // decoded yesterday and never played again. Best-effort.
+        // Touch the mtime so eviction (`prune_cache`, by mtime) is least-recently-used rather
+        // than least-recently-decoded. Best-effort.
         if let Ok(f) = std::fs::File::options().write(true).open(out) {
             let _ =
                 f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
@@ -132,10 +130,9 @@ impl InflightSlot {
 impl Drop for InflightSlot {
     fn drop(&mut self) {
         let mut map = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
-        // Every clone is taken AND every one released under the map lock, so 2 (the map's +
-        // ours) means nobody else is waiting on this path. Releasing ours only after the guard
-        // was gone let two holders dropping together both still count 3 and both keep the entry
-        // — leaving a failed flight's error behind for the next fresh open to return undecoded.
+        // Every clone is taken AND released under the map lock, so 2 (the map's + ours) means
+        // nobody else holds this path. Releasing ours after the map guard instead would let two
+        // concurrent drops both count 3 and strand the entry, failed flight's error included.
         let lock = self.lock.take();
         if lock
             .as_ref()
@@ -273,9 +270,9 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         .as_ref()
         .map(|c| c.count() as u16)
         .unwrap_or(2);
-    // Header space reserved up front and patched in at the end: wrapping a
-    // full PCM buffer afterwards doubled the peak (two ~640 MiB buffers live
-    // at once) on the very path that exists to keep big decodes off the heap.
+    // Header space reserved up front and patched in at the end: wrapping the
+    // finished PCM afterwards would hold two ~640 MiB buffers at once, on the
+    // very path that exists to keep big decodes off the heap.
     let mut pcm: Vec<u8> = vec![0u8; 44];
     // Size the buffer from the header's frame count so the extend loop below
     // doesn't leave Vec's doubling slack (up to ~2x) behind a big decode. A
@@ -314,9 +311,8 @@ pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
         sample_rate = spec.rate();
         channels = spec.channels().count() as u16;
         decoded.copy_to_vec_interleaved::<i16>(&mut interleaved);
-        // Bulk-copy the whole packet at once instead of two bytes at a time:
-        // for the sizes this path handles (~640 MB), the per-sample loop paid
-        // hundreds of millions of capacity checks and tiny memcpys.
+        // Bulk-copy the whole packet: a per-sample push would cost hundreds of
+        // millions of capacity checks and tiny memcpys at these sizes (~640 MB).
         let byte_slice = unsafe {
             std::slice::from_raw_parts(
                 interleaved.as_ptr() as *const u8,
@@ -389,7 +385,8 @@ mod tests {
         stamp(&old, 1_000_000);
         stamp(&mid, 2_000_000);
         stamp(&keep, 500_000); // oldest of all, but it is the one just written
-                               // Force eviction of exactly one file by pretending the ceiling is tiny.
+
+        // Force eviction of exactly one file by pretending the ceiling is tiny.
         prune_cache_to(&dir, &keep, 2 * 1024 + 512);
         assert!(!old.exists(), "the oldest-modified file is evicted first");
         assert!(mid.exists());
