@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import { hooks } from "./plainRender.testkit";
+import { findInTree as find, hooks } from "./plainRender.testkit";
 
 // No DOM in this suite: Combobox runs as a plain function over a tiny hook store (state and refs
 // survive "re-renders" by call order), and its returned tree is walked for the handlers.
@@ -23,21 +23,6 @@ const render = () => {
   return Combobox({ value: "", onChange: () => {}, onSelect: () => {}, suggestions: ["alpha", "beta"] }) as ReactElement<Props>;
 };
 
-/** The first element in the tree matching `pred`. */
-function find(node: unknown, pred: (el: ReactElement<Props>) => boolean): ReactElement<Props> | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const n of node) {
-      const el = find(n, pred);
-      if (el) return el;
-    }
-    return null;
-  }
-  const el = node as ReactElement<Props>;
-  if (!el.props) return null;
-  if (pred(el)) return el;
-  return find(el.props.children, pred);
-}
 const inputOf = (tree: unknown) => find(tree, (el) => el.props.role === "combobox")!;
 const listOf = (tree: unknown) => find(tree, (el) => el.type === "ul");
 const panelOf = (tree: unknown) =>

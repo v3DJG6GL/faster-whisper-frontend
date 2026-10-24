@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
-import { hooks } from "../plainRender.testkit";
+import { findInTree, hooks } from "../plainRender.testkit";
 
 // No DOM in this suite: the Stepper runs as a plain function over a tiny hook store (state and
 // refs survive "re-renders" by call order), and its returned tree is walked for the input.
@@ -19,19 +19,7 @@ type InputProps = {
 };
 
 /** The first element of `type` in the tree. */
-function findElement(node: unknown, type: string): ReactElement | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const n of node) {
-      const el = findElement(n, type);
-      if (el) return el;
-    }
-    return null;
-  }
-  const el = node as ReactElement<{ children?: unknown }>;
-  if (el.type === type) return el;
-  return el.props ? findElement(el.props.children, type) : null;
-}
+const findElement = (node: unknown, type: string): ReactElement | null => findInTree(node, (el) => el.type === type);
 
 type ButtonProps = {
   "aria-label": string;
@@ -40,19 +28,8 @@ type ButtonProps = {
 };
 
 /** The element of `type` whose aria-label starts with `label`. */
-function findLabelled(node: unknown, type: string, label: string): ReactElement | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const n of node) {
-      const el = findLabelled(n, type, label);
-      if (el) return el;
-    }
-    return null;
-  }
-  const el = node as ReactElement<{ children?: unknown; "aria-label"?: string }>;
-  if (el.type === type && el.props?.["aria-label"]?.startsWith(label)) return el;
-  return el.props ? findLabelled(el.props.children, type, label) : null;
-}
+const findLabelled = (node: unknown, type: string, label: string): ReactElement | null =>
+  findInTree(node, (el) => el.type === type && !!(el.props["aria-label"] as string | undefined)?.startsWith(label));
 
 beforeEach(() => {
   hooks.slots = [];

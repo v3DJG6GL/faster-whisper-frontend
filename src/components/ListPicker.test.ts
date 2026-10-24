@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import { hooks } from "./plainRender.testkit";
+import { findInTree, hooks } from "./plainRender.testkit";
 
 // No DOM in this suite: ListPicker runs as a plain function over a tiny hook store (state and refs
 // survive "re-renders" by call order), and its returned tree is walked for the handlers.
@@ -43,34 +43,10 @@ const render = (disabled: boolean) => {
 };
 
 /** The first handler named `onKeyDown` in the popover (the search field's). */
-function listKeyHandler(node: unknown): ((e: unknown) => void) | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const n of node) {
-      const h = listKeyHandler(n);
-      if (h) return h;
-    }
-    return null;
-  }
-  const p = (node as { props?: Record<string, unknown> }).props;
-  if (!p) return null;
-  if (typeof p.onKeyDown === "function") return p.onKeyDown as (e: unknown) => void;
-  return listKeyHandler(p.children);
-}
+const listKeyHandler = (node: unknown): ((e: unknown) => void) | null =>
+  (findInTree(node, (el) => typeof el.props.onKeyDown === "function")?.props.onKeyDown as (e: unknown) => void) ?? null;
 
-function findElement(node: unknown, type: string): ReactElement | null {
-  if (!node || typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const n of node) {
-      const el = findElement(n, type);
-      if (el) return el;
-    }
-    return null;
-  }
-  const el = node as ReactElement<{ children?: unknown }>;
-  if (el.type === type) return el;
-  return el.props ? findElement(el.props.children, type) : null;
-}
+const findElement = (node: unknown, type: string): ReactElement | null => findInTree(node, (el) => el.type === type);
 
 const key = (k: string) => ({ key: k, repeat: false, keyCode: 0, nativeEvent: {}, preventDefault() {}, stopPropagation() {} });
 

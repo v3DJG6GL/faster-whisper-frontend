@@ -1,5 +1,6 @@
 // Test support for suites with no DOM that run a component as a plain function. Must not import
 // react at runtime: suites load it from inside their own vi.mock("react") factory.
+import type { ReactElement } from "react";
 
 /** The hook store: state and refs survive "re-renders" by call order. Set `hooks.i = 0` before
  *  each render and `hooks.slots = []` between tests. */
@@ -22,3 +23,21 @@ export const fakeHooks = {
   },
   useEffect: () => {},
 };
+
+type Props = Record<string, unknown> & { children?: unknown };
+
+/** The first element in a rendered tree (depth first) matching `pred`. */
+export function findInTree(node: unknown, pred: (el: ReactElement<Props>) => boolean): ReactElement<Props> | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const el = findInTree(n, pred);
+      if (el) return el;
+    }
+    return null;
+  }
+  const el = node as ReactElement<Props>;
+  if (!el.props) return null;
+  if (pred(el)) return el;
+  return findInTree(el.props.children, pred);
+}
