@@ -1,4 +1,4 @@
-// The viewer's Subtitles view (D84 V3): the transcript as the subtitle cues an
+// The viewer's Subtitles view: the transcript as the subtitle cues an
 // SRT/VTT export writes. Same timing = one table, a column per visible
 // language; own timing (or a site track with its own timing) = one
 // time-synced lane per language. Display only — corrections stay keyed to
