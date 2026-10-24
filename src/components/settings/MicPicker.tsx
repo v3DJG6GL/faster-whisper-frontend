@@ -1,8 +1,8 @@
-// The microphone picker (Settings → Audio). Design "Microphone Paths", D74 A: the dropdown the
-// row always had, opened as a listbox so its rows can say more than a name — what "System
-// default" resolves to, a Bluetooth chip, a pinned mic that isn't connected, and (Linux, behind
-// the switch at the bottom of the menu) every path into each mic, labelled by what it does.
-// Rows come from lib/micOptions (pure, tested); this file is the interaction.
+// The microphone picker (Settings → Audio): the row's dropdown, opened as a listbox so its rows
+// can say more than a name — what "System default" resolves to, a Bluetooth chip, a pinned mic
+// that isn't connected, and (Linux, behind the switch at the bottom of the menu) every path into
+// each mic, labelled by what it does. Rows come from lib/micOptions (pure, tested); this file is
+// the interaction.
 //
 // Keyboard: the trigger opens on Enter / Space / ArrowDown; inside, focus sits on the listbox
 // and ArrowUp/Down / Home / End move the active row (aria-activedescendant), Enter / Space pick
@@ -65,7 +65,6 @@ export function MicPicker({
 
   useOutsidePress([rootRef], open, () => setOpen(false));
 
-  // Opening focuses the list on the current choice.
   useEffect(() => {
     if (!open) return;
     setActive(selectedIndex);
