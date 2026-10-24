@@ -112,8 +112,6 @@ function Editor({
   const [showInsertion, setShowInsertion] = useState(false);
   const [showTranslation, setShowTranslation] = useState(false);
   const set = (patch: Partial<Profile>) => setP((x) => ({ ...x, ...patch }));
-  // Resolve the target backend so the decode editor can show its defaults as the
-  // inherited baseline and gate to the backend's detected capability.
   const boundBackend = backends.find((b) => b.id === p.backendId);
   // Dictation runs a profile whose backend is gone (or unset) on the FIRST backend
   // (dictation.ts backendForProfile) — preview that one too, and say so on the field.
@@ -123,8 +121,6 @@ function Editor({
   const serverKind = backend
     ? effectiveServerKind(backend, ownProp(connections, backend.id))
     : "unknown";
-  // The effective override-profile (Profile over Backend) and the caller's
-  // capabilities, so the decode editor gates on what this connection allows.
   const effectiveProfile = effectiveOverrideProfile(p.overrideProfile, backend?.overrideProfile);
   // Per-device address override wins for the actual requests (display
   // contexts elsewhere keep showing the canonical serverUrl).
