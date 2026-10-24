@@ -404,7 +404,7 @@ pub(crate) mod win_seed {
         }
     }
 
-    /// Physical set-1 make codes; see `send_copy_chord`.
+    /// Physical set-1 make code; see `send_copy_chord`.
     #[cfg(windows)]
     const SCAN_LCTRL: u16 = 0x1D;
     /// Physical set-1 make code; see `send_copy_chord`.
@@ -823,11 +823,6 @@ pub(crate) mod win_seed {
                 "[quickadd-seed] remote-desktop client focused; holding the window for the copy"
             );
         }
-        // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
-        // and terminals all honor it, and unlike Ctrl+C it is never a terminal
-        // interrupt. Injected events are skipped by our own keyboard hook
-        // (LLKHF_INJECTED + marker), so this can't disturb chord matching.
-        //
         // Last supersede check before anything is injected: `hide` bumps the generation,
         // and that can land during the release gate or the un-timed clipboard prologue.
         // Nothing is on its way to the source app yet, so bailing here leaves the
@@ -856,6 +851,10 @@ pub(crate) mod win_seed {
             );
             return None;
         }
+        // Ctrl+Insert, the CUA copy chord — Win32 edit controls, browsers, Office, Qt,
+        // and terminals all honor it, and unlike Ctrl+C it is never a terminal
+        // interrupt. Injected events are skipped by our own keyboard hook
+        // (LLKHF_INJECTED + marker), so this can't disturb chord matching.
         #[cfg(windows)]
         if !send_copy_chord() {
             tracing::warn!(
