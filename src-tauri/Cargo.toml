@@ -107,7 +107,6 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
-# Linux-only.
 [target.'cfg(target_os = "linux")'.dependencies]
 # cpal's PulseAudio host + the same pure-Rust protocol client (no libpulse, no build-time C deps)
 # for the mic list: cpal's own device description lacks the source props we need (monitor flag,
