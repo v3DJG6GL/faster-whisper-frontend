@@ -20,12 +20,11 @@ use tauri::{AppHandle, Emitter, Manager};
 /// record across their re-read and rewrite too: they run on a background thread (the launch
 /// audio-layout job, an audio-base move) while saves and sweeps stay live, so an unlocked rewrite
 /// could overwrite a newer save with the stale copy it read, or resurrect a record a sweep or the
-/// user's delete just removed. Their path stats (the heal's, on possibly offline shares) run before
-/// they take it, so a slow share there cannot stall a main-thread save either.
+/// user's delete just removed.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
-/// the two rewriters, and `delete_transcript_record` (across its record read + unlink only —
-/// its media-copy and recordings-folder unlinks both run after release, so a slow share there
-/// cannot stall a main-thread save).
+/// the two rewriters, and `delete_transcript_record` (across its record read + unlink only).
+/// Slow-share I/O (the heal's path stats, the delete's media-copy and recordings-folder unlinks)
+/// runs outside the hold, so a stalled share cannot stall a main-thread save.
 /// The destructive commands (`delete_transcript_record`, `delete_all_dictations`,
 /// `clear_file_transcriptions`, `remove_transcript_media`) run on the blocking pool, so they
 /// too may overlap a save or sweep and rely on this per-entry lock, not on IPC ordering.
@@ -851,8 +850,8 @@ pub async fn delete_transcript_record(
             spawn_delete_media(app, id, audio_base, None);
             return Ok(());
         }
-        // Same rule for the recording. A dictation without audio stores `sourcePath: ""` and has
-        // nothing to drop.
+        // The recording too goes only after a successful unlink. A dictation without audio stores
+        // `sourcePath: ""` and has nothing to drop.
         if let (Ok(()), Some(src)) = (&res, src.filter(|s| !s.trim().is_empty())) {
             spawn_delete_media(app, id, audio_base, Some(src));
         }
@@ -1815,8 +1814,8 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&out.record).unwrap();
         assert_eq!(v["mediaPath"], "/new/files/a.m4a");
         assert_eq!(v["sourcePath"], "/new/dictations/d.wav");
-        // The save hands the re-pointed fields back (the webview's mirror still names the old
-        // paths) — exactly those two, not the text.
+        // The save hands the re-pointed fields back: the webview's mirror still names the old
+        // paths.
         assert_eq!(
             out.fields,
             std::collections::HashMap::from([
