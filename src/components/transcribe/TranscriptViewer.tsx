@@ -300,8 +300,7 @@ export function TranscriptViewer({
   // A symphonia decode is in flight — the stall watchdog must not advance
   // the chain past it (a long file legitimately takes seconds to decode).
   const decodePendingRef = useRef(false);
-  // Mirrors decodePendingRef for the readMediaFile buffer stage — same hazard:
-  // the watchdog must not re-enter onAudioError while a buffer read is in flight.
+  // The same watchdog guard while a readMediaFile buffer read is in flight.
   const bufferPendingRef = useRef(false);
   // Generation counter for the audio fallback chain: bumped on every record switch
   // (path/mediaPath change) and on unmount, so an in-flight readMediaFile/decodeMediaFile
@@ -1856,8 +1855,7 @@ export function TranscriptViewer({
               e.currentTarget.playbackRate = rate;
             }}
             onDurationChange={(e) => takeDuration(e.currentTarget)}
-            // Coarse fallback only — while playing, the rAF loop above owns
-            // the playhead (timeupdate ticks every 250-500 ms on WebKitGTK).
+            // Coarse fallback only — while playing, the rAF loop above owns the playhead.
             // The record-switch reset's own rewind/pause echo (parkedRef) reports no playhead.
             onTimeUpdate={(e) => {
               if (!playing && !(parkedRef.current && e.currentTarget.currentTime === 0)) {
