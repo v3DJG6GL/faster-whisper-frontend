@@ -133,9 +133,7 @@ function Editor({
     // Keyed on the EFFECTIVE address: editing "Address on this device" applies live (no save), and
     // the old server's version, username and decode gate must not stay beside the new address.
   }, [effUrl, key]);
-  // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
-  // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
-  // key that was never stored.
+  // Saving the API key to the OS keyring can fail (locked/absent Secret Service): see doSave.
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   // Every disclosure starts closed (a manual draft is prefilled with localhost); its header's
@@ -289,7 +287,7 @@ function Editor({
         backendId: b.id,
         apiKey: testedKey || null,
       });
-      // Local only — the store gets this verdict in `doSave`, once the target it describes is the
+      // Local by default — the store gets this verdict in `doSave`, once the target it describes is the
       // one persisted. Writing it here would cache a DRAFT's verdict under the backend id: edit X,
       // retype the URL, Test, Cancel → `connections[X]` holds the other host's answer while X still
       // routes to the old one (and a tested-then-cancelled connect-first draft leaves an orphan entry).
