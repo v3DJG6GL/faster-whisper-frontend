@@ -409,7 +409,7 @@ export function SettingRow({
 }) {
   // A Toggle, Select or Segmented has no accessible name here (the title is a sibling <div>, not
   // a <label htmlFor>), so a DIRECT child of those types gets the row title. A control wrapped in
-  // its own <div> (the mic select with its Refresh button) is not direct and passes ariaLabel itself.
+  // its own <div> (the mic picker with its Refresh button) is not direct and must name itself.
   const control =
     isValidElement(children) &&
     (children.type === Toggle || children.type === Select || children.type === Segmented)
@@ -419,7 +419,7 @@ export function SettingRow({
       : children;
   // Grid with a capped control column, not flex: in flex a wide Segmented starves the
   // description at any page width. A CONTAINER query on the row, not a viewport breakpoint:
-  // the row sits both in Settings' full-width cards and in the Transcribe studio's 420px rail.
+  // the row sits both in Settings' full-width cards and in the Transcribe studio's resizable rail.
   // Under 640px the control drops underneath instead of squeezing the text.
   return (
     <div className={cn("@container py-4", !last && "border-b border-line")}>
