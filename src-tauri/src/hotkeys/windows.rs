@@ -1512,13 +1512,10 @@ mod tests {
         }
     }
 
-    // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` +
-    // MODIFIER_CODES) MUST map here, or its chord is silently dropped on Windows
-    // while still binding fine in the capture UI. Pins the same bindability matrix
-    // as `evdev`'s twin test — keep keys.ts, this list, the one in
-    // `vk_ids_are_distinct_per_code` and evdev's in sync.
-    #[test]
-    fn every_bindable_code_maps_to_a_windows_vk() {
+    // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` + MODIFIER_CODES), in a
+    // fixed order. Pins the same bindability matrix as `evdev`'s twin test — keep keys.ts, this
+    // list and evdev's in sync.
+    fn bindable_codes() -> Vec<String> {
         let mut codes: Vec<String> = [
             "ControlLeft",
             "ControlRight",
@@ -1564,7 +1561,14 @@ mod tests {
         for f in 1..=24 {
             codes.push(format!("F{f}"));
         }
-        for code in &codes {
+        codes
+    }
+
+    // Every bindable code MUST map here, or its chord is silently dropped on Windows while still
+    // binding fine in the capture UI.
+    #[test]
+    fn every_bindable_code_maps_to_a_windows_vk() {
+        for code in &bindable_codes() {
             assert!(
                 super::code_to_vk(code).is_some(),
                 "bindable code {code:?} has no Windows VK mapping — its hotkey would silently never fire on Windows"
@@ -1655,49 +1659,8 @@ mod tests {
                 }
             }
         };
-        for c in [
-            "ControlLeft",
-            "ControlRight",
-            "ShiftLeft",
-            "ShiftRight",
-            "AltLeft",
-            "AltRight",
-            "MetaLeft",
-            "MetaRight",
-            "Backspace",
-            "Delete",
-            "Enter",
-            "Space",
-            "Tab",
-            "Home",
-            "End",
-            "Insert",
-            "PageUp",
-            "PageDown",
-            "PrintScreen",
-            "ArrowUp",
-            "ArrowDown",
-            "ArrowLeft",
-            "ArrowRight",
-            "NumpadAdd",
-            "NumpadSubtract",
-            "NumpadMultiply",
-            "NumpadDivide",
-            "NumpadDecimal",
-            "NumpadEnter",
-            "NumpadEqual",
-        ] {
-            check(c.to_string());
-        }
-        for c in b'A'..=b'Z' {
-            check(format!("Key{}", c as char));
-        }
-        for d in 0..=9 {
-            check(format!("Digit{d}"));
-            check(format!("Numpad{d}"));
-        }
-        for f in 1..=24 {
-            check(format!("F{f}"));
+        for code in bindable_codes() {
+            check(code);
         }
     }
 }
