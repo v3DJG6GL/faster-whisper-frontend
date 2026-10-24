@@ -110,24 +110,7 @@ export function substituteElementFields<T extends { id: string }>(
    *  fields — right for REQUIRED fields (chords), which peers must receive. */
   exact = false,
 ): T[] {
-  const snapById = new Map(
-    (Array.isArray(snapshot) ? snapshot : [])
-      .filter((e): e is Record<string, unknown> & { id: string } =>
-        isPlainObject(e) && typeof e.id === "string",
-      )
-      .map((e) => [e.id, e]),
-  );
-  return live.map((e) => {
-    const snap = snapById.get(e.id);
-    if (!snap) return e;
-    const out = { ...e };
-    for (const f of fields) {
-      const v = snap[f];
-      if (v !== undefined) (out as Record<string, unknown>)[f] = v;
-      else if (exact) delete (out as Record<string, unknown>)[f];
-    }
-    return out;
-  });
+  return swapElementFields(live, snapshot, fields, exact) as T[];
 }
 
 /** Element-wise re-pin for list categories: for each inbound element whose id
@@ -141,18 +124,7 @@ export function repinElementFields<T extends { id: string }>(
   /** exact: mirror the local field even when ABSENT (see substitute above). */
   exact = false,
 ): T[] {
-  const localById = new Map(local.map((e) => [e.id, e as Record<string, unknown>]));
-  return inbound.map((e) => {
-    const mine = localById.get(e.id);
-    if (!mine) return e;
-    const out = { ...e };
-    for (const f of fields) {
-      const v = mine[f];
-      if (v !== undefined) (out as Record<string, unknown>)[f] = v;
-      else if (exact) delete (out as Record<string, unknown>)[f];
-    }
-    return out;
-  });
+  return swapElementFields(inbound, local, fields, exact) as T[];
 }
 
 /** The engine's category toggles, derived from the gates. Scalar categories
