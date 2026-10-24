@@ -2747,6 +2747,17 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
   await saveSyncState(onDisk).catch((e) => console.error("saveSyncState failed", e));
 }
 
+/** Adopt `snapshot` (the server's document at `version`) as the new 3-way base. Its hash goes
+ *  with it: the push gate reads `state.hash` as the base's own. */
+function adoptBase(
+  snapshot: SyncBlob,
+  version: number,
+  updatedAt: SyncState["updatedAt"],
+  device: SyncState["device"],
+): Promise<void> {
+  return persistState({ version, updatedAt, device, hash: hashBlob(snapshot), snapshot });
+}
+
 /** Bind the bookkeeping to the server it belongs to. On a sync-server switch
  *  the old server's version must not become a CAS base against the new one
  *  (nor its snapshot a merge base) — drop everything but the device identity
@@ -3180,13 +3191,7 @@ export async function pushNow(manual = false): Promise<void> {
       });
       if (myGen !== gen) return; // superseded mid-flight — drop this server's result
       if (res.ok && res.state) {
-        await persistState({
-          version: res.state.version,
-          updatedAt: res.state.updated_ts ?? null,
-          device: device?.hostname ?? null,
-          hash: hashBlob(blob),
-          snapshot: blob,
-        });
+        await adoptBase(blob, res.state.version, res.state.updated_ts ?? null, device?.hostname ?? null);
         if (myGen !== gen) return; // superseded during the keyring stash wait
         dropSupersededPending(res.state.version);
         setRuntime({
@@ -3367,13 +3372,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // an identical hash and silently skip — stranding the local contribution
   // client-side forever. (For toggled-OFF categories merged == remote by
   // construction, so compose-from-snapshot preservation is unaffected.)
-  await persistState({
-    version: remote.version,
-    updatedAt: remote.updated_ts ?? null,
-    device: remote.device ?? null,
-    hash: hashBlob(remoteBlob),
-    snapshot: remoteBlob,
-  });
+  await adoptBase(remoteBlob, remote.version, remote.updated_ts ?? null, remote.device ?? null);
   // persistState can park in the keyring stash; a reset/sync-off in that window must not get
   // this epoch's "ok" written over it.
   if (myGen !== gen) return;
@@ -4117,13 +4116,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // holds backends out of `r.cats`, so `cats` cannot tell): turned off since, nothing is held for
   // it, and reconcileRemote adopts the base then too (`backendsDegraded` is off with it).
   if (((r.degraded && live.backends) || degradedNow) && degradedBaseWithheld(r.remote)) return "done";
-  await persistState({
-    version: r.version,
-    updatedAt: r.updatedAt,
-    device: r.device,
-    hash: hashBlob(r.remote),
-    snapshot: r.remote,
-  });
+  await adoptBase(r.remote, r.version, r.updatedAt, r.device);
   if (myGen !== gen) return "done";
   // The adopted base moves past a conflict raised at this same version (a debounced push 409ing
   // next to the review): its categories were re-merged above, a live edit kept and pushed below.
@@ -4367,16 +4360,10 @@ async function resolveLocked(
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
-  await persistState({
-    version: c.remoteVersion,
-    // The writer of the version being adopted, like the two sibling adopt sites — otherwise
-    // "Last synced just now · from X" kept naming the PREVIOUS sync's device. Its `updatedAt`
-    // too: a null one makes initSync restore "Not synced yet." after a restart.
-    updatedAt: c.remoteUpdatedAt ?? null,
-    device: c.remoteDevice ?? null,
-    hash: hashBlob(c.remote),
-    snapshot: c.remote,
-  });
+  // The writer of the version being adopted, like the two sibling adopt sites — otherwise
+  // "Last synced just now · from X" kept naming the PREVIOUS sync's device. Its `updatedAt`
+  // too: a null one makes initSync restore "Not synced yet." after a restart.
+  await adoptBase(c.remote, c.remoteVersion, c.remoteUpdatedAt ?? null, c.remoteDevice ?? null);
   if (myGen !== gen) return "done";
   // Same as approveLocked: a review at this version is answered by the adopted base (its held-back
   // category either came out of the security check clean, or the user picked this device's side).
