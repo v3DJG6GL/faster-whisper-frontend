@@ -110,7 +110,6 @@ export function quickAddTargetOnSummon(
 ): { moved: boolean; target: QuickAddSaveTarget | null } {
   if (quickAddTargetMoved(current, cfg)) return { moved: true, target: current };
   const next = quickAddTargetOf(cfg);
-  // Not moved: the same backend and list, so only the address is new.
   return { moved: false, target: current && next && { ...current, serverUrl: next.serverUrl } };
 }
 
