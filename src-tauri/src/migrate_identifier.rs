@@ -669,6 +669,16 @@ mod tests {
         dir
     }
 
+    /// A config.json naming `audio_base`, with a stray Latin-1 byte (0xE9, "é") in a string value.
+    fn latin1_config(audio_base: &Path) -> Vec<u8> {
+        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
+        bytes.extend(serde_json::to_vec(audio_base).unwrap());
+        bytes.extend(br#"},"general":{"note":"caf"#);
+        bytes.push(0xE9);
+        bytes.extend(br#""}}}"#);
+        bytes
+    }
+
     #[test]
     fn the_new_id_is_the_configured_identifier() {
         let conf: serde_json::Value =
@@ -964,12 +974,7 @@ mod tests {
         let base = scratch("not-utf8");
         let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
         std::fs::create_dir_all(&new).unwrap();
-        // A stray Latin-1 byte (0xE9, "é") inside a string value.
-        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
-        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
-        bytes.extend(br#"},"general":{"note":"caf"#);
-        bytes.push(0xE9);
-        bytes.extend(br#""}}}"#);
+        let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
         std::fs::write(&config, &bytes).unwrap();
         let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
@@ -996,11 +1001,7 @@ mod tests {
         let base = scratch("side-partial");
         let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
         std::fs::create_dir_all(&new).unwrap();
-        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
-        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
-        bytes.extend(br#"},"general":{"note":"caf"#);
-        bytes.push(0xE9);
-        bytes.extend(br#""}}}"#);
+        let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
         std::fs::write(&config, &bytes).unwrap();
         let side = new.join("config.json.invalid-utf8.bak");
@@ -1022,11 +1023,7 @@ mod tests {
         let base = scratch("write-fails");
         let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
         std::fs::create_dir_all(&new).unwrap();
-        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
-        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
-        bytes.extend(br#"},"general":{"note":"caf"#);
-        bytes.push(0xE9);
-        bytes.extend(br#""}}}"#);
+        let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
         std::fs::write(&config, &bytes).unwrap();
         // A directory where the atomic write's temp file goes: the write fails, as a held
