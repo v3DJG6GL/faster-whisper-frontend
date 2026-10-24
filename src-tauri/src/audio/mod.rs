@@ -189,9 +189,9 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
 /// the windows are u32s that arrive from config — and sync categories carry them, so a peer's
 /// blob sets them with no numeric validation on the way in. On Windows the subtraction converts
 /// the span to 100 ns intervals in an i64, which overflows once the window passes ~10.7 million
-/// days, and `SystemTime: Sub<Duration>` panics rather than returning an error — inside
-/// `setup()`, on every launch, with the value already persisted. Ten years is far past any real
-/// retention window and 0 still means "keep forever".
+/// days, and `SystemTime: Sub<Duration>` panics rather than returning an error, which kills the
+/// sweep run on every launch because the value is already persisted. Ten years is far past any
+/// real retention window and 0 still means "keep forever".
 pub const MAX_RETENTION_DAYS: u32 = 3650;
 
 /// Delete the entries of `dir` that `matches` accepts and whose mtime is older than `days`
@@ -279,9 +279,10 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
 
 /// Make an already-written file owner-only — 0600 on Unix, the owner-only DACL on Windows.
 ///
-/// For files that arrive by copy (`std::fs::copy` keeps the source's mode on Unix; on Windows the
-/// copy takes the destination folder's inherited DACL, and `create_dir_private` leaves a folder
-/// that already existed alone). Best-effort like `create_new_private`'s DACL: logged, not fatal.
+/// For files not opened through `create_new_private`: a copy (`std::fs::copy` keeps the source's
+/// mode on Unix) or a plain write/create (`0666 & ~umask`). On Windows either takes the destination
+/// folder's inherited DACL, and `create_dir_private` leaves a folder that already existed alone.
+/// Best-effort like `create_new_private`'s DACL: logged, not fatal.
 pub(crate) fn restrict_file_private(path: &Path) {
     #[cfg(unix)]
     {
@@ -568,8 +569,9 @@ fn frame_level_s16le(bytes: &[u8]) -> f32 {
 
 /// Trim silence from a COMPLETE 16 kHz s16le mono buffer with the shared [`SpeechGate`], so
 /// "Trim silence" saves the same kind of file on a batch backend as on the streaming path. Fixed
-/// ~64 ms frames, near the streaming chunk size, keep the cadence-sensitive EMA close. Returns the
-/// spoken-only bytes (empty if the whole clip was below the speech threshold).
+/// ~64 ms frames; the gate's EMA is cadence-sensitive, and the streaming path feeds it one capture
+/// chunk at a time (~20 ms through the sound server), so the two trims match closely but not
+/// exactly. Returns the spoken-only bytes (empty if the whole clip was below the speech threshold).
 pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
     const FRAME_BYTES: usize = 2_048; // 1024 samples ≈ 64 ms @ 16 kHz s16le
     let mut gate = SpeechGate::new();
@@ -671,7 +673,7 @@ mod retention_tests {
 
     /// A retention window a peer's sync blob can set must not reach the `SystemTime` subtraction
     /// unclamped: on Windows the span is converted to 100ns intervals in an i64, which overflows
-    /// past ~10.7 million days and PANICS inside `setup()` on every launch once persisted.
+    /// past ~10.7 million days and PANICS, killing the sweep on every launch once persisted.
     #[test]
     fn an_absurd_retention_window_is_clamped_not_fatal() {
         let dir = std::env::temp_dir()
