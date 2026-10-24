@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
 /* "Signal" — a precision voice instrument.
-   Warm dark-first chrome · neutral warm grays · single electric-amber signal
-   accent (VU-meter lineage, deliberately not purple/cyan) · coral reserved for
-   the live recording pulse. Type: Hubot Sans (display) / Mona Sans (UI) /
-   Geist Mono (numerics & readouts) — all OFL. */
+   Warm dark-first chrome · neutral warm grays · single signal accent, electric
+   amber by default (VU-meter lineage, deliberately not purple/cyan) · coral
+   reserved for the live recording pulse. Type: Hubot Sans (display) / Mona Sans
+   (UI) / Geist Mono (numerics & readouts) — all OFL. */
 
 @theme inline {
   --color-bg: var(--c-bg);
@@ -395,11 +395,9 @@ html.accent-tick .transition-colors {
   animation: insert-pulse 0.55s ease-out;
 }
 
-/* Amber variant of insert-pulse for clipboard feedback (--c-warn, the per-theme amber). Mirrors
-   the green pulse so the colour-coded dot pulse — not a distinct icon — conveys "copied to
-   clipboard". Both pulses mix the theme's token at the peak, so the halo matches the dot; the
-   100% frames end on the per-theme same-hue zero-alpha tokens (--c-live-0 / --c-warn-0), as
-   the glow stops above explain. */
+/* Amber variant of insert-pulse (--c-warn, the per-theme amber): the dot's colour, not a
+   distinct icon, says "copied to clipboard". Both pulses end on a same-hue zero-alpha token
+   (--c-live-0 / --c-warn-0), as the glow stops above explain. */
 @keyframes insert-pulse-warn {
   0% {
     transform: scale(1);
