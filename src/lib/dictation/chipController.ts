@@ -38,10 +38,9 @@ const CHIP_ROUTE_TARGETS = 2;
  *  translate) must stay distinguishable, and they are: `??` only takes the fallback for
  *  the former.
  *
- *  Both inputs are peer-authored — a synced Backend's or Profile's `translateTo`, which
- *  `sanitizeProfiles` type-checks but does not bound — and the result rides the ~30Hz
- *  level payload into a `shrink-0` row beside the live transcript. Bounded on both axes:
- *  how many, and how long each. */
+ *  The result rides the ~30Hz level payload into a `shrink-0` row beside the live
+ *  transcript, so it is bounded on both axes: how many, and how long each (12, tighter than
+ *  the 16 a wire code may run to). */
 export function chipRouteTargets(
   sessionTargets: string[] | null,
   profileTargets: string[] | undefined,
@@ -224,8 +223,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // The translation ROUTE has its own switch: it is a promise about what will be typed,
   // so it must not disappear with the tag — nor with the Profile: a session whose Profile is
   // deleted or disabled mid-session still translates with the targets it started with
-  // (sessionTargets). See chipRouteTargets for the resolution order and why both inputs
-  // need bounding.
+  // (sessionTargets). See chipRouteTargets for the resolution order and why the result
+  // needs bounding.
   if (rec.showRouteOnOverlay) {
     const configured = configuredRouteTargets(chipProfile, chipBackend);
     Object.assign(
@@ -239,7 +238,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   if (rec.showStatsOnOverlay) {
     const sb = activeStatsBackend(state);
     // Own-property read: an inherited `Object.prototype` member is non-nullish, so it would
-    // pass `if (u)` and then throw on `u.today.words` — inside a store subscriber, where the
+    // pass `if (u)` and then throw on `u.today.all` — inside a store subscriber, where the
     // throw propagates out of `set()` and aborts every listener after this one.
     const u = sb ? ownProp(state.usage, sb.id) : null;
     if (u) statsLine = chipStatsLine(u, rec.overlayStatsMetric);
@@ -409,7 +408,7 @@ export async function initOverlayController(): Promise<void> {
     // non-KDE Wayland). Also fires on warming (so the warm-up doesn't claim "recording…"), on
     // a route resolved after the status settled, and on the identity inputs `trayRoute` reads
     // for the SOURCE language: `activeProfile` is published AFTER status/targets at session
-    // start, so without them the tooltip read "AUTO → …" until the next status flip.
+    // start, so without them the tooltip would read "AUTO → …" until the next status flip.
     if (
       state.status !== prev.status ||
       state.warming !== prev.warming ||
