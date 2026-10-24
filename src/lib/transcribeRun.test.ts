@@ -360,7 +360,7 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     expect(stageMeta.translating).toMatchObject({ model: "org/mt:Q4", compute: "gguf" });
     expect(stageMeta.downloading?.bytes).toBe(20_000_000);
 
-    // (3) A site-transcript link (rail: downloading, translating) sees no later stage at all.
+    // (2) A site-transcript link (rail: downloading, translating) sees no later stage at all.
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
     at(0, "downloading", { totalBytes: 20_000_000 });
     at(6_000, "downloading", gguf);
@@ -370,14 +370,14 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     expect(stageMeta.downloading).toMatchObject({ bytes: 20_000_000, dlStart: 100_000 });
     expect(stageMeta.downloading?.model).toBeUndefined();
 
-    // (4) A Whisper model fetch (not gguf) before transcribing stays on the download side.
+    // (3) A Whisper model fetch (not gguf) before transcribing stays on the download side.
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
     at(0, "downloading", { totalBytes: 20_000_000 });
     at(5_000, "downloading", { model: "large-v3", compute: "float16" });
     expect(active(link)).toBe("downloading");
     expect(useTranscribeRun.getState().stageTimes.translating).toBeUndefined();
 
-    // (5) Diarized first: the diarize row keeps its own chips and closes at the fetch.
+    // (4) Diarized first: the diarize row keeps its own chips and closes at the fetch.
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
     at(0, "transcribing", { model: "large-v3", compute: "float16" });
     at(20_000, "diarizing", { model: "pyannote", compute: "float32" });
@@ -2022,7 +2022,6 @@ describe("an on-demand video whose request fails stays failed", () => {
     cleared = 0;
     vi.stubGlobal("window", {
       setInterval: (fn: () => void) => { tick = fn; return 1; },
-      // A cleared timer never fires again.
       clearInterval: () => { cleared += 1; tick = null; },
     });
     fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/rec-odf.mp4"));
@@ -2349,7 +2348,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
     const v = useTranscribeRun.getState().stageMeta.downloading?.video;
     expect(v?.state).toBe("done");
     expect(v?.height).toBe(720);
-    // The download clock closed.
     expect(useTranscribeRun.getState().stageMeta.downloading?.videoDlEnd).toBeTypeOf("number");
   });
 
