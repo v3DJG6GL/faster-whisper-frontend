@@ -60,10 +60,9 @@ pub(crate) const AUDIO_SUBDIRS: [&str; 4] = ["dictations", "files", "links", "vi
 /// more re-heal everywhere.
 pub(crate) const HEAL_STAMP: &str = ".heal-v1";
 
-/// The one base folder for ALL stored audio (dictations/, files/, links/
-/// inside it). A non-empty `custom` (audioBaseDir, with the legacy
-/// recordingsDir as fallback — the caller passes the effective preference)
-/// wins; otherwise the default lives under the app data dir. None only if
+/// The one base folder for all stored audio (the `AUDIO_SUBDIRS` live inside it). A non-empty
+/// `custom` (audioBaseDir, with the legacy recordingsDir as fallback — the caller passes the
+/// effective preference) wins; otherwise the default lives under the app data dir. None only if
 /// neither can be resolved.
 pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
     if let Some(c) = custom {
@@ -137,18 +136,18 @@ async fn resolve_key_async(explicit: Option<String>, backend_id: Option<String>)
 /// Run a blocking clipboard / PRIMARY-selection read OFF the UI thread, bounded to 400ms. arboard's
 /// get_text (and the PRIMARY read) are blocking Wayland round-trips that can hang indefinitely on a
 /// dead/slow owner — e.g. right after the previous clipboard owner exited — so every such read goes
-/// through here: one place owns the off-thread + 400ms-cap contract. Returns None on timeout, join
-/// error, or while another read is still running (single-flight, below); otherwise it passes the
-/// closure's value through unchanged — an empty string included, so judging "" (a stalled delayed
-/// render, not the user's clipboard) is the caller's job. Callers log / handle None per-site.
+/// through here. Returns None on timeout, join error, or while another read is still running
+/// (single-flight, below); otherwise it passes the closure's value through unchanged — an empty
+/// string included, so judging "" (a stalled delayed render, not the user's clipboard) is the
+/// caller's job.
 ///
 /// Single-flight (CLIP_READ_BUSY): a read that outlives its 400ms cap keeps its blocking thread,
-/// so on a wedged owner every per-phrase call used to strand one more thread. While a read is still
+/// so on a wedged owner every per-phrase call would strand one more. While a read is still
 /// running, a new one returns None straight away; the flag clears only when the blocking read
 /// itself returns, not when the caller's timeout fires.
 ///
 /// The flag lives in `inject` so the clipboard WRITERS can see it too: on Windows the stuck read
-/// still holds the clipboard, and every write path now waits it out (`wait_clip_read_idle`)
+/// still holds the clipboard, and every write path waits it out (`wait_clip_read_idle`)
 /// instead of racing it.
 pub(crate) async fn read_selection_bounded(
     read: impl FnOnce() -> Option<String> + Send + 'static,
