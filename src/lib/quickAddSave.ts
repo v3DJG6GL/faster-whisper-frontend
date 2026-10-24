@@ -176,7 +176,7 @@ const TYPED_EDGE = " \t\u00a0";
  *  quadratic, and the re-read selection is up to 64K characters (focus/mod.rs SEL_MAX) of
  *  whatever the user selected meanwhile — seconds of a frozen window on a padded terminal
  *  region. trimStart / trimEnd strip exactly `\s`'s set (WhiteSpace and LineTerminator). An
- *  all-blank `current` is both edges at once, as the regexes had it. */
+ *  all-blank `current` is both edges at once. */
 export function selectionEdges(current: string, typed: boolean): { lead: string; trail: string } {
   if (!typed) {
     return { lead: current.slice(0, current.length - current.trimStart().length), trail: current.slice(current.trimEnd().length) };
