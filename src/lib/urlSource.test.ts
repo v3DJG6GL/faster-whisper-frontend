@@ -362,7 +362,7 @@ describe("linkScreenSpoken", () => {
 });
 
 describe("media link edge trim", () => {
-  // The regex trims this file replaced, kept as the reference the scan must match exactly.
+  // The regex edge trims urlSource.ts's scan replaced, kept as the reference the scan must match exactly.
   /* eslint-disable no-control-regex */
   const oldStrip = (raw: string) => stripUrlNoise(raw.replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, ""));
   const oldTrim = (raw: string) => raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, "");
