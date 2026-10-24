@@ -475,9 +475,10 @@ pub async fn inject_text(
     // the field's phrase gap, or a plain phrase without its leading seam space. Omitted = `text`.
     // Sanitized exactly like `text`, in `inject::text`.
     clipboard_text: Option<String>,
-    // `withholdOnDivert` over IPC: nothing worth recovering (the hard-break separator), so `text`
-    // never becomes the clipboard's persistent owner on any divert or recovery arm. What each arm
-    // then writes and reports: see `withhold_on_divert` in `inject::text`. Omitted = false.
+    // `withholdOnDivert` over IPC: nothing worth recovering (the hard-break separator, a
+    // whitespace-only live phrase), so `text` never becomes the clipboard's persistent owner on
+    // any divert or recovery arm. What each arm then writes and reports: see
+    // `withhold_on_divert` in `inject::text`. Omitted = false.
     withhold_on_divert: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(
