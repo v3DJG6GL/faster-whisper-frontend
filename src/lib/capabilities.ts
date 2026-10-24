@@ -1,13 +1,10 @@
 // Per-Backend capability cache (GET /v1/me) — the on-demand sibling of usage.ts.
 //
-// Modelled on lib/usage.ts, with one deliberate difference: there is NO polling
-// loop. Capabilities move only when the server is restarted or reconfigured, and
-// the values we care about (translation_models[].loaded) are read at the moment a
-// job starts, so every refresh here is triggered by a caller that is about to act.
-//
-// It exists because the non-React consumers — streaming.ts, preload.ts — have no
-// hook to hang a fetch off, and because the only previous consumer
-// (useOverrideContext) refetched on every mount and cached nothing.
+// Unlike usage.ts there is NO polling loop: capabilities move only when the server
+// is restarted or reconfigured, and the values we care about
+// (translation_models[].loaded) are read at the moment a job starts, so every
+// refresh here is triggered by a caller that is about to act. It is a module, not a
+// hook, because streaming.ts and preload.ts have no hook to hang a fetch off.
 
 import { useApp } from "./store";
 import { getCapabilities } from "./api";
@@ -70,11 +67,12 @@ export function requestCredentialGen(backendId: string | null | undefined, apiKe
   return backendId && !apiKey ? credentialGeneration(backendId) : 0;
 }
 
-/** Refresh a Backend's cached capabilities. Best-effort and never throws: a
- *  standard/old server stores null ("fetched and unsupported"); a transient error
- *  leaves the cache entry absent so the next trigger re-probes instead of latching
- *  a stale negative. `force` bypasses the min-interval coalescing (used when a job
- *  is starting and the freshness of `loaded` is the whole point). */
+/** Refresh a Backend's cached capabilities. Best-effort and never throws: a server
+ *  known to be standard stores null ("fetched and unsupported"); any other null answer
+ *  (an older server without /v1/me, a transient error) leaves the cache entry absent so
+ *  the next trigger re-probes instead of latching a stale negative. `force` skips the
+ *  min-interval floor (used when a job is starting and the freshness of `loaded` is the
+ *  whole point); a matching in-flight request is still shared. */
 export async function refreshCaps(backend: Backend, opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
   const target = effectiveServerUrl(backend, useApp.getState().settings);
@@ -115,11 +113,10 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
     // Asked with a key that has since been rotated (forgetCaps): same address, same key
     // presence, so the guards below cannot tell — the generation can.
     if ((generation.get(backend.id) ?? 0) !== gen) return;
-    // Verbatim from usage.ts: a slow fetch against the OLD server can resolve AFTER
-    // the user edited this backend's URL/key (the store dropped the stale caps) or
-    // removed it. Bail unless the backend still exists with the same target — else
-    // we'd re-install the previous server's capabilities under a backend that now
-    // points somewhere else, undoing the invalidation that just ran.
+    // A slow fetch against the OLD server can resolve AFTER the user edited this
+    // backend's URL/key (the store dropped the stale caps) or removed it. Bail unless
+    // the backend still exists with the same target — else we'd re-install the previous
+    // server's capabilities under a backend that now points somewhere else.
     const st = useApp.getState();
     const cur = st.backends.find((x) => x.id === backend.id);
     if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
@@ -139,8 +136,8 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
 
 /** A fresh connection verdict (Test connection, a save, onboarding) re-reads that Backend's
  *  capabilities: the test is the moment a user checks a server they just upgraded or
- *  reconfigured, and without it the cache kept the previous server's /v1/me until the next
- *  dictation (a v0.1.154 server showed no info panel). Called once from App. */
+ *  reconfigured, and without it the cache would keep the previous server's /v1/me until the
+ *  next dictation. Called once from App. */
 export function initCapsController(): void {
   useApp.subscribe((state, prev) => {
     if (state.connections === prev.connections) return;
