@@ -613,11 +613,9 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   const own = m.codeOf[key];
   const c = own ?? (sib ? m.codeOf[sib] : undefined);
   if (own && next[key]) tg[own] = true; // switching any source on makes the language wanted
-  // A site track switched on while the download is full would land past the 8-track cap and
-  // grey again — and the language it made wanted would get machine translation instead of the
-  // subtitle asked for. At a full download any track not already fetched (a twin already
-  // fetched stays allowed) caps one: itself or a fetched track the cap ranks below it,
-  // whose language silently falls back to machine translation. Refuse it; free a slot first.
+  // At a full download a site track switched on that is not already fetched (a twin already
+  // fetched stays allowed) caps one: itself, greyed again, or a fetched track the cap ranks
+  // below it, whose language silently falls back to machine translation. Refuse it; free a slot first.
   const run = m.view.run;
   if (mm && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(mm[2])) {
     return { state: st, targets: [...input.targets] };
