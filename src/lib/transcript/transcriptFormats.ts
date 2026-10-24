@@ -17,7 +17,7 @@ import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 export type ExportFormat = "txt" | "srt" | "vtt" | "lrc" | "json";
 /** The two text formats a video player loads beside (or inside) a video —
  *  the formats with subtitle cues. TXT, LRC and JSON are not subtitles: with
- *  Video on, the format row narrows to these two (D69 A). */
+ *  Video on, the format row narrows to these two. */
 export type SubtitleFormat = "srt" | "vtt";
 export function isSubtitleFormat(format: string): format is SubtitleFormat {
   return format === "srt" || format === "vtt";
@@ -37,33 +37,31 @@ export interface ExportOptions {
   /** LRC only: emit enhanced-LRC inline word tags from `words`. */
   wordTimestamps?: boolean;
   /** Emit speaker-name prefixes / voice tags at all (default true). Off +
-   *  a color mode = the colored line carries no name (the old "line-only"
-   *  is exactly names:false + colors:on in the screen's toggle model). */
+   *  a color mode = the colored line carries no name (what "line-only" means
+   *  in the screen's toggle model). */
   speakerNames?: boolean;
   /** TXT only: per-segment "[mm:ss]" line prefixes instead of speaker-turn
    *  paragraphs (the screen's Timestamps toggle; cue formats always carry
    *  times — that is the format). */
   timestamps?: boolean;
   /** Language tracks to include: "orig" + target codes, IN ORDER — the order
-   *  of the files, and of the lines inside a subtitle that stacks several
-   *  (D92). Undefined = original only, exactly the pre-translation output
-   *  (golden-stable). For LRC with more than one track use generateExports —
-   *  one FILE per track. */
+   *  of the files, and of the lines inside a subtitle that stacks several.
+   *  Undefined = original only. For LRC with more than one track use
+   *  generateExports — one FILE per track. */
   tracks?: string[];
-  /** SRT/VTT subtitle cues (D83/D84): split long segments and wrap lines.
-   *  Undefined = one cue per segment, unwrapped — the pre-cue output. */
+  /** SRT/VTT subtitle cues: split long segments and wrap lines.
+   *  Undefined = one cue per segment, unwrapped. */
   cues?: CueOptions;
 }
 
 /** Default per-speaker colors, cycled by first-appearance order. Eight
  *  hue-separated tones at matched brightness so neighbours stay tellable
- *  apart on the dark theme (the old 5-tone cycle put two near-identical
- *  ambers next to each other and repeated from speaker 6 on). Coral stays
- *  reserved for the live-recording pulse. Shared with the speaker chips on
- *  the Transcribe screen.
+ *  apart on the dark theme. Coral stays reserved for the live-recording
+ *  pulse. Shared with the speaker chips on the Transcribe screen.
  *
- *  The same hexes app.css fixes for --spk-1…8: the Signal colour tints chrome
- *  only and never the speaker palette, so screen and export agree. */
+ *  The same hexes app.css fixes for the dark theme's --spk-1…8 (light darkens
+ *  the same hues): the Signal colour tints chrome only and never the speaker
+ *  palette, so screen and export agree. */
 export const DEFAULT_SPEAKER_COLORS = [
   "#ff9e2c", // amber (accent)
   "#6faed9", // sky (think)
@@ -101,9 +99,8 @@ export function speakerOrder(result: BatchResult): string[] {
 
 /** THE speaker-color resolver — viewer chips (via --spk-N tokens) and export
  *  hexes both resolve through this: an explicit user pick wins, else the
- *  label's first-appearance index, cycled through the palette. Keeping one
- *  implementation is the point — the viewer and the exports drifted apart
- *  once (picks read under a different overlay key) and disagreed on colors. */
+ *  label's first-appearance index, cycled through the palette. One
+ *  implementation, so the viewer and the exports cannot disagree on colors. */
 export function speakerColorIndex(
   order: string[],
   picks: Record<string, number> | undefined,
@@ -129,7 +126,7 @@ export function speakerHex(
 /** The export's options from the transcript's display toggles (the view is the export) — one
  *  builder for the export panel and History's quick export. Colors on → "line" mode;
  *  names/timestamps gate their prefixes; the palette picks become the wire's hexes through
- *  the shared resolver. `tracks` in track order (D92); none = the original only. */
+ *  the shared resolver. `tracks` in track order; none = the original only. */
 export function exportOptionsFor(a: {
   format: ExportFormat;
   /** speakerOrder of the result. */
@@ -254,7 +251,8 @@ function trOf(seg: TranscriptSegment, lang: string): string | null {
  *  was dropped, which would otherwise read as the spoken original: it still
  *  says `[LANG]` in an SRT cue, in timestamped TXT when the translation comes
  *  first, and in a timestamps-off TXT turn whose originals are all blank. VTT
- *  marks it through its `.mt` class instead. */
+ *  marks it through its `.mt` class instead (whose tint a speaker colour mode
+ *  overrides). */
 function ambiguous(ctx: Ctx): boolean {
   return ctx.visLangs.length > 1;
 }
@@ -273,12 +271,7 @@ function vttClass(lang: string): string {
 
 /** Cue text lines for one segment across the included tracks, in track order.
  *  `mt` renders a translated line; the speaker is language-independent, so the
- *  color modes style it exactly as they style the original.
- *
- *  `lang` reaches `mt` because it used to be dropped between two maps here:
- *  the language was known, iterated over, and then thrown away before the
- *  line was built, which is why every format emitted untagged translated
- *  lines no matter how many targets were included. */
+ *  color modes style it exactly as they style the original. */
 function cueLines(
   ctx: Ctx,
   seg: TranscriptSegment,
@@ -410,9 +403,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     let who: string | null = null;
     let bufs: string[][] = [];
     const trackCount = ctx.lineTracks.length;
-    // Which language each buffer slot holds, so a paragraph can say what it
-    // is. Without this every track produced an identically-prefixed paragraph
-    // and a reader had only paragraph ORDER to go on.
+    // Which language each buffer slot holds, so a paragraph can say what it is.
     const slotLangs = ctx.lineTracks.map((t) => (t === "orig" ? null : t));
     const flush = () => {
       if (bufs.some((b) => b.length)) {
@@ -551,11 +542,9 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     // STYLE can tone them; others degrade to plain text.
     out.push("STYLE");
     out.push("::cue(.mt) { color: #4dd0c4; }");
-    // ...plus a PER-LANGUAGE class when more than one target is present.
-    // .mt alone was emitted for every target, so an EN line and an FR line
-    // were literally indistinguishable to any player or downstream tool —
-    // the file said "this is a translation" and never which one. The classes
-    // are generated from the language code, which is a code, never user text.
+    // ...plus a per-language class when more than one target is present, so
+    // a player or downstream tool can tell an EN line from an FR one. The
+    // classes are generated from the language code, never user text.
     if (ambiguous(ctx)) {
       for (const lang of mtLangs) {
         out.push(`::cue(.mt-${vttClass(lang)}) { color: #4dd0c4; }`);
@@ -634,7 +623,7 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
       const [from, to] = ranges[i];
       const ws = words.slice(from, to);
       if (ws.length) {
-        // Enhanced LRC (A2): inline <mm:ss.xx> tags, each marking the start
+        // Enhanced LRC: inline <mm:ss.xx> tags, each marking the start
         // of the following word — the karaoke convention.
         // Unspaced text (CJK, Thai, "今年是2024年") has no spaces between its words: joining
         // them with one would add some, so a segment without whitespace joins with none. A
@@ -681,8 +670,7 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
       // re-import reads them as real timing and checks reading speed against them.
       ...(result.timingSynthesized ? { timingSynthesized: true } : {}),
       speakers: ctx.order.map((label) => ({
-        // The raw label is the lookup key; the EMITTED value is defanged like every other
-        // string in this file (the header's promise).
+        // The raw label is the lookup key; only the EMITTED value is defanged.
         label: stripControlChars(label),
         name: nameOf(ctx, label),
         // The user-chosen (or default) chip color — data for downstream
@@ -837,7 +825,7 @@ export interface ExportFileGroup {
  *  can't stack it with the others: LRC (duplicate-timestamp bilingual LRC
  *  renders unreliably across players), SRT/VTT under own translation timing
  *  (cues no longer line up), and site tracks with their own timing; the rest
- *  share one file. A file of its own is named by trackFileSuffixes (D89): its
+ *  share one file. A file of its own is named by trackFileSuffixes: its
  *  language's plain track `stem.de.srt` (the original `stem.srt`), the others
  *  `stem.YouTube.de.srt`. Names depend only on format, tracks and cue timing. */
 export function exportFileGroups(
@@ -845,9 +833,8 @@ export function exportFileGroups(
   result: Pick<BatchResult, "language" | "timedTracks"> = {},
 ): ExportFileGroup[] {
   const ext = EXPORT_EXTENSIONS[opts.format];
-  // JSON carries every track regardless of the picker (jsonExport writes them all), so the stem
-  // suffix must be empty — a language-suffixed name for a full-data file is
-  // misleading and wrong when the track picker state survives a format switch.
+  // JSON carries every track whatever the picker says (its state survives a format switch),
+  // so a language suffix would mislabel the file.
   if (opts.format === "json") return [{ tracks: opts.tracks, name: (stem) => `${stem}.${ext}` }];
   const tracks = tracksOf(opts);
   const perTrack = opts.format === "lrc" || ownTimingOn(opts);
@@ -874,8 +861,8 @@ export function exportFileGroups(
 }
 
 /** The part of `text` the first `until` segments make up. The plain TXT export
- *  writes result.text verbatim, so a space-joined sample showed spaces unspaced
- *  (CJK) text never had; joinSegmentTexts stays the fallback when a segment isn't found. */
+ *  writes result.text verbatim, and space-joining segments would add spaces unspaced
+ *  (CJK) text never had; joinSegmentTexts is the fallback when a segment isn't found. */
 function textPrefix(text: string, segs: TranscriptSegment[], until: number): string {
   if (until >= segs.length) return text;
   let cur = 0;
@@ -952,7 +939,7 @@ export function generateExports(
 }
 
 /** The file names an export would write — NO content serialized, so the export panel can
- *  show them in a render path (generateExports rendered the whole document per repaint). */
+ *  show them in a render path (generateExports would render the whole document per repaint). */
 export function exportFileNames(
   opts: ExportOptions,
   result?: Pick<BatchResult, "language" | "timedTracks">,
@@ -962,9 +949,8 @@ export function exportFileNames(
 
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";
-  // A multi-target export used to return "" here, so the file name carried no
-  // language at all -- the one case where naming matters MOST, since the file
-  // holds several. Bounded: these codes are user-authored and land in a path.
+  // A multi-target file holds several languages, so it names them all. Bounded:
+  // these codes are user-authored and land in a path.
   const slugs = tracks.map((c) => codeSlug(c)).filter(Boolean).slice(0, 4);
   return slugs.length ? "." + slugs.join("+") : "";
 }
