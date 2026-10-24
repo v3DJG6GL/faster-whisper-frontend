@@ -249,7 +249,7 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         return Err("That file doesn't look like a settings export (bad categories).".into());
     }
 
-    // Split out + validate secrets ({backendId: apiKey} strings only).
+    // Split out the secrets ({backendId: apiKey}); a non-string or empty value is dropped, not refused.
     let mut secrets = serde_json::Map::new();
     if let Some(b) = categories
         .get_mut("backends")
@@ -268,9 +268,8 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         }
     }
 
-    // Normalize the typed categories through serde (drops unknown fields,
-    // canonicalizes hotkey chords via the Profile deserializer, and fails
-    // loudly on structurally-broken lists).
+    // The serde round-trip also drops unknown fields and canonicalizes hotkey chords (Profile
+    // deserializer).
     if let Some(list) = categories
         .get_mut("backends")
         .and_then(|b| b.get_mut("list"))
