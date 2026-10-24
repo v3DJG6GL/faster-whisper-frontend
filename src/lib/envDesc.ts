@@ -1,6 +1,6 @@
-// The short description under each setting row that is titled by its server ENV name: the
-// backend's own wording (approved with the settings-batch mockup, 2026-10-05). One table, so a
-// row on Profiles, Backends and Transcribe can't describe the same setting two ways.
+// The short description under each setting row that is titled by its server ENV name, in the
+// backend's own wording. One table, so a row on Profiles, Backends and Transcribe can't describe
+// the same setting two ways.
 
 import { hasOwn } from "./own";
 
@@ -62,7 +62,6 @@ export const ENV_DESC: Readonly<Record<string, string>> = {
   VAD_THRESHOLD: "Speech probability above which audio counts as speech.",
 };
 
-/** The description of a server setting, or undefined when there is none. */
 export function envDesc(env: string): string | undefined {
   return hasOwn(ENV_DESC, env) ? ENV_DESC[env] : undefined;
 }
