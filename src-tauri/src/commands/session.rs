@@ -5,14 +5,12 @@ use super::{resolve_key, resolve_recordings_dir};
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use tauri::{AppHandle, Manager};
 
-// The six session commands below are ASYNC + spawn_blocking, NOT bare sync fns: their bodies do
-// genuinely blocking work — the keyring read (resolve_key → D-Bus), joining the previous/current
-// capture thread (StreamSession/RecordSession finish + Drop), and above all cpal's device open
-// (open_input), which on a Bluetooth mic stalls ~1-2s while the headset switches its profile
-// (A2DP → HFP) before it can capture at all. As sync commands all of that ran on the GTK/UI
-// thread — the same freeze family as the kwin/arboard gotchas — janking the whole UI on every
-// BT dictation start. State is resolved inside the closure via app.state() (a State<'_> param
-// can't cross into spawn_blocking); the state Mutex still serializes concurrent starts/stops.
+// The six session commands below are ASYNC + spawn_blocking so their blocking work stays off the
+// GTK/UI thread: the keyring read (resolve_key → D-Bus), joining the previous/current capture
+// thread (finish + Drop), and above all cpal's open_input, which on a Bluetooth mic stalls ~1-2s
+// while the headset switches profile (A2DP → HFP). State is resolved inside the closure via
+// app.state() (a State<'_> param can't cross into spawn_blocking); the state Mutex still
+// serializes concurrent starts/stops.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn start_stream(
@@ -144,10 +142,8 @@ pub async fn cancel_stream(
             session::retire_active_epoch();
             sess
         };
-        // OUTSIDE the lock — capture join, mute release, etc. Drop (not finish) for a Cancel or the
-        // closed-handler release; a recovery cancel drains instead when "Keep recordings" is on, so
-        // the live session's recording is written rather than aborted with the WS task. Unclaimed,
-        // so no later Cancel reaches it. With recordings off it is dropped like a Cancel.
+        // OUTSIDE the lock — capture join, mute release, etc. A recovery cancel that keeps
+        // recordings drains (unclaimed) instead of aborting; see the doc above.
         match sess {
             Some(s) if user_initiated && !discard_recording && s.keeps_recording() => s.finish(),
             sess => drop(sess),
@@ -157,12 +153,10 @@ pub async fn cancel_stream(
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
         // going into whatever window had focus.
         //
-        // Only when the user pressed Cancel. The one non-user caller is the frontend's `closed`
-        // handler releasing a parked session (capture death / server-initiated close): that
-        // session is still in state, so gating on "a session was taken" bumped the epoch exactly
-        // while that session's own last phrase was being typed and cut it off. In stop-timing
-        // mode the session is already gone while the transcript is typed, so the chip's ✕ must
-        // abort on `user_initiated` alone — which it does.
+        // Gated on `user_initiated`, not on "a session was taken": the one non-user caller, the
+        // `closed` handler releasing a parked session, must not cut off that session's own last
+        // phrase, and in stop-timing mode the session is already gone while its transcript is
+        // typed, so the chip's ✕ must still abort it.
         if user_initiated {
             crate::inject::cancel_injection();
         }
@@ -172,8 +166,6 @@ pub async fn cancel_stream(
     .map_err(|e| e.to_string())?
 }
 
-// Async + spawn_blocking for the same reasons as start_stream (keyring read, previous-session
-// capture join, and the BT-profile-switch stall inside cpal's open_input).
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn start_record(
@@ -326,25 +318,18 @@ pub async fn cancel_record(
         // that arm, and so does the closed-handler release (TS `cancelRecord()` defaults
         // `discard_recording` to true) — harmless there: a parked session's salvage emitted its
         // `closed` only after its .wav/.txt were written, so there is nothing left to discard.
-        // A recovery cancel keeps a live session's audio when "Keep recordings" is on, so it
-        // finishes it instead — the `cancel_stream` rule: the clip is transcribed and its .wav/.txt
-        // written, its UI events epoch-suppressed, and it is never claimed, so no later Cancel
-        // reaches it. finish() bails after the join when a device-loss salvage already took the
-        // clip. A recovery cancel with nothing to keep (recordings off) discards too: a POST whose
-        // every event is suppressed would only upload the clip, and that holds for a device-loss
-        // salvage as well — the flag stops one firing inside the join, and the epoch mark stops
-        // one the sleep already spawned before its POST, or drops its result if the upload is
-        // already under way (with no save dir there is no .wav/.txt to delete).
+        // A recovery cancel that keeps recordings finishes the live session instead, unclaimed
+        // (see the doc); finish() bails after the join when a device-loss salvage already took the
+        // clip. With recordings off it discards too: a POST whose every event is suppressed would
+        // only upload the clip.
         match sess {
             Some(s) if !discard_recording && user_initiated && s.keeps_recording() => s.finish(),
             Some(s) => s.discard(),
             None => {}
         }
-        // …and abandon any transcript still being typed out. The typing paths emit one key at a
-        // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-        // going into whatever window had focus. Only on a user-initiated cancel: the non-user
-        // call is the `closed` handler releasing a parked session, whose own final/tail insert
-        // must not be aborted — see `cancel_stream`.
+        // …and abandon any transcript still being typed out — only on a user-initiated cancel, so
+        // the `closed` handler's release never aborts its session's own final insert (see
+        // `cancel_stream`).
         if user_initiated {
             crate::inject::cancel_injection();
         }
@@ -361,12 +346,11 @@ pub async fn cancel_record(
 #[tauri::command]
 pub fn retire_session_epoch() {
     session::retire_active_epoch();
-    // The three callers are all "the session died" paths (a server error frame, a fatal insert,
-    // a rejected stop), and each one restores the user's focus and declares the session over.
-    // Retiring the ACTIVE epoch only silences future EVENTS, though — a transcript already being
-    // typed kept going, one key at a time, into whatever window the teardown had just refocused.
-    // Abort it too. Unlike a user cancel this leaves the text on the clipboard: the user never
-    // asked for it to go away, and the stop-mode path already offers the same recovery.
+    // The three callers are "the session died" paths (a server error frame, a fatal insert, a
+    // rejected stop) that refocus the user's window. Retiring the epoch only silences future
+    // EVENTS, so a transcript still being typed would keep going into that window: abort it too.
+    // Unlike a user cancel this leaves the text on the clipboard: the user never asked for it to
+    // go away, and the stop-mode path already offers the same recovery.
     crate::inject::abort_injection_for_error();
 }
 
