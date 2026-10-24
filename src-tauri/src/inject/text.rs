@@ -8,19 +8,16 @@ use tauri::{AppHandle, Manager, State};
 
 /// How long a manufactured-stop latch stays valid — see `hotkeys::held_keys::take_lost_if_fresh`.
 ///
-/// Deliberately generous, and sized against the LONGEST leg it has to span rather than a guessed
-/// round-trip: what sits in the middle is the untrusted server returning a final, so anything
-/// shorter is a bypass the server itself can trigger by stalling. A stale latch only ever costs one
-/// phrase a clipboard divert, which the chip now reports; a short one costs the control entirely.
+/// Sized against the LONGEST leg it has to span, not a guessed round-trip: what sits in the middle
+/// is the untrusted server returning a final, so anything shorter is a bypass the server itself can
+/// trigger by stalling. A stale latch only costs one phrase a clipboard divert; a short one costs
+/// the control entirely.
 ///
-/// That leg is NOT bounded by the frontend's stuck-finalize watchdog, which is what this constant
-/// was first tied to: `armStuckWatchdog` returns early unless the endpoint is `stream`
-/// (`src/lib/dictation/streaming.ts`), and `activation: "hold"` with `endpoint: "batch"` is a legal profile —
-/// one that lands in stop-timing mode, where the single insert carries the WHOLE transcript through
-/// the typing path. On that leg the only bound is the shared HTTP client's 120s default
-/// (`transport::mod`, which `batch` dictation does not override), so a transcription that takes
-/// longer than 15s — a long clip, a big model, or a server stalling on purpose — walked straight
-/// past this control. 130s covers the 120s timeout plus the stop → POST → final → inject hops.
+/// The frontend's stuck-finalize watchdog does NOT bound that leg: `armStuckWatchdog` returns early
+/// unless the endpoint is `stream` (`src/lib/dictation/streaming.ts`), and a legal `activation:
+/// "hold"` + `endpoint: "batch"` profile carries the WHOLE transcript in one insert, bounded only by
+/// the shared HTTP client's 120s default (`transport::mod`, not overridden for `batch`). 130s covers
+/// that timeout plus the stop → POST → final → inject hops.
 const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs(130);
 
 /// What `inject_text` did, so the caller can keep its own bookkeeping honest.
@@ -56,11 +53,7 @@ pub struct InjectOutcome {
     /// (`Landed::NothingWritten`). A recovery after a cancel bail or a partly typed phrase still
     /// reports `landed: true, diverted: false`: `Landed` cannot say whether a key went out (see the
     /// note at the recovery block in `inject_text`). The text is safe, but it did not go where the
-    /// user was looking, and until this field existed nothing said so: the caller stamped its
-    /// green "typed" confirmation either way.
-    ///
-    /// This matters more since the held-chord branch became reachable on the primary hotkey paths,
-    /// and more again now that the wiped-map latch can reach it too.
+    /// user was looking, so the caller must not stamp its green "typed" confirmation.
     pub diverted: bool,
 }
 
@@ -148,9 +141,8 @@ pub(crate) async fn inject_text(
     let clip_text = clipboard_form(&text, clipboard_text);
     // Captured HERE — before any await — not where the job is finally queued. Everything below
     // (the held-modifier wait, two focus IPCs, a bounded clipboard read, the settle, and on the
-    // Wayland fallback a failed virtual-keyboard attempt) can take a second or more, and a cancel
-    // landing in that window used to bump the counter BEFORE the job read it, so the job adopted
-    // the post-cancel generation and never saw itself as cancelled.
+    // Wayland fallback a failed virtual-keyboard attempt) can take a second or more; a job reading
+    // the counter later would adopt a cancel's post-cancel generation and never see itself cancelled.
     let epoch = crate::inject::injection_epoch();
     tracing::info!(
         "[inject] {} bytes via {} (auto_enter={})",
@@ -161,9 +153,8 @@ pub(crate) async fn inject_text(
     // Never inject into our OWN UI: if one of our real windows holds keyboard focus, typed/pasted
     // keys would fire buttons/shortcuts in the app itself (e.g. dictating while looking at Home) —
     // AND a clipboard-only insert would silently clobber the user's clipboard for an insert they
-    // can't even see land. So this guard runs for ALL methods, BEFORE the clipboard-only branch
-    // (it used to sit after it, so clipboard-only clobbered the clipboard while our own window was
-    // focused). A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
+    // can't even see land. So this guard runs for ALL methods, BEFORE the clipboard-only branch.
+    // A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
     // unlike detecting other apps' focused fields. The click-through "overlay" chip never holds
     // focus; exclude it. The transcript still shows in the chip.
     if own_window_focused(&app) {
@@ -194,12 +185,10 @@ pub(crate) async fn inject_text(
             });
         }
         if !text.is_empty() {
-            // The whole point of the handshake: this arm's `landed: true` used to be a constant,
-            // and it is the arm that runs for every phrase when the insert method IS the
-            // clipboard. Reporting false is safe here because no keystroke is ever synthesized on
-            // this path, so the caller's re-send cannot duplicate anything. The cancel is asked
-            // again after the write's stuck-read wait (Windows, up to 1s): a cancel during it
-            // skips the write, as the gate above does.
+            // `landed: false` on a failed write is safe: no keystroke is ever synthesized on this
+            // path, so the caller's re-send cannot duplicate anything. The cancel is asked again
+            // after the write's stuck-read wait (Windows, up to 1s): a cancel during it skips the
+            // write, as the gate above does.
             match persist_off_runtime_unless(clip_text.clone(), discarded).await {
                 Err(e) => {
                     tracing::warn!("[inject] clipboard-only insert failed: {e}");
@@ -267,14 +256,11 @@ pub(crate) async fn inject_text(
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
             while held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
                 if std::time::Instant::now() >= deadline {
-                    // The gate used to fail OPEN here: it logged and typed anyway, so the
-                    // transcript's characters folded into the still-held modifier and became
-                    // shortcut chords in the focused app — with the server choosing WHICH ones.
-                    //
-                    // It cannot simply fail closed either. `SHORTCUT_MOD_CODES` spans both
-                    // Shifts, and this is `any_held`, so a user holding Shift to capitalize or
-                    // Ctrl to scroll-zoom during a live session would silently have every phrase
-                    // diverted — dictation looks broken with nothing to explain it. So divert
+                    // Not fail-open: typing anyway folds the transcript's characters into the
+                    // still-held modifier as shortcut chords in the focused app — with the server
+                    // choosing WHICH ones. Not plain fail-closed either: `SHORTCUT_MOD_CODES` spans
+                    // both Shifts and this is `any_held`, so a user holding Shift to capitalize or
+                    // Ctrl to scroll-zoom would silently have every phrase diverted. So divert
                     // only when the modifiers still down are the ones that were down when the
                     // TRIGGER fired, i.e. the dictation chord itself is not being released.
                     modifiers_stuck = crate::hotkeys::triggers::trigger_modifiers_still_held(&held);
@@ -303,25 +289,23 @@ pub(crate) async fn inject_text(
     //
     // Deliberately consumed AFTER the loop, not merged into it: this is a "the chord was down when
     // we lost sight of it" fact, not a live reading, so there is nothing to wait for. Straight to
-    // the same clipboard divert the timeout arm produces. The TTL only has to cover
-    // teardown-stop → frontend finalize → here.
+    // the same clipboard divert the timeout arm produces (consumed below the own-window sink skip).
 
-    // The own-window guard at the top of this command has the same decided-at-T/applied-at-T+n
-    // problem the per-app re-check below was written to fix, and it was left at the entry: the
+    // The entry's own-window guard, re-run at the sink (decided-at-T, applied-at-T+n): the
     // held-modifier wait can take half a second, and in a live or hands-free session the user is
-    // expected to be moving between windows. Clicking our own window in that gap landed the keys
-    // in the app's own settings/dictionary fields — and on the paste path the clipboard was
-    // clobbered first, regardless.
+    // expected to be moving between windows. Clicking our own window in that gap would land the
+    // keys in the app's own settings/dictionary fields — and on the paste path clobber the
+    // clipboard first.
     //
     // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `focus::windows`'s
     // twin) classify our own window as noise and fall back to `last_other`, so they report the
     // PREVIOUS app — which still matches `expect_app_id`, so the mismatch arm never fires. Only
     // the authoritative webview-focus check sees it, so re-run exactly that.
     //
-    // Returning `landed: false`, deliberately NOT a degrade to "clipboard": the entry guard was
-    // moved above the clipboard-only branch precisely so our own window holding focus can never
-    // clobber the user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
-    // leaves `injectedText` un-advanced on a skip, so the text goes out with the next insert.
+    // `landed: false`, deliberately NOT a degrade to "clipboard": our own window holding focus must
+    // never clobber the user's clipboard for an insert they cannot see land. Skipping is safe —
+    // `streaming.ts` leaves `injectedText` un-advanced on a skip, so the text goes out with the
+    // next insert.
     if own_window_focused(&app) {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
         return Ok(InjectOutcome {
@@ -336,12 +320,8 @@ pub(crate) async fn inject_text(
     // BELOW the own-window sink skip, so an injection that is going to write nothing and be re-sent
     // does not destroy the latch the re-send needs.
     //
-    // The TTL covers manufactured-stop → the server returning a final → here, and the SERVER owns
-    // the middle leg. Sized against the LONGEST such leg — the batch POST's 120s client timeout,
-    // NOT the stream-only stuck-finalize watchdog this once cited; see HELD_CHORD_LATCH_TTL. A
-    // tighter bound would let a slow — or deliberately stalling — server walk its transcript
-    // straight past this control, which is a one-line bypass by the actor the control defends
-    // against.
+    // The TTL covers manufactured-stop → the server returning a final → here, and the untrusted
+    // SERVER owns the middle leg, so it is sized against the longest one (see HELD_CHORD_LATCH_TTL).
     if !text.is_empty() {
         let chord_lost = crate::hotkeys::held_keys::take_lost_if_fresh(HELD_CHORD_LATCH_TTL);
         if chord_lost && !modifiers_stuck {
@@ -371,13 +351,11 @@ pub(crate) async fn inject_text(
     } else {
         method
     };
-    // ONE focus read, used for both decisions below. `remote_target` used to be resolved at the
-    // top of this function and acted on here — the same decided-at-T, applied-at-T+n shape the
-    // per-app re-check exists to fix, on the control immediately beside it. Focus leaving a
-    // remote-desktop client meanwhile left it true and the clipboard was never restored; focus
-    // entering one left it false, giving the paste the 60ms local settle instead of 300ms AND
-    // scheduling a restore — reproducing the delayed-rendering failure described above, where the
-    // remote's deferred fetch pastes the RESTORED value.
+    // ONE focus read, used for both decisions below, so `remote_target` is decided at the sink too.
+    // Decided earlier, focus leaving a remote-desktop client meanwhile would skip the restore; focus
+    // entering one would give the paste the short local settle AND schedule a restore —
+    // the delayed-rendering failure described above, where the remote's deferred fetch pastes the
+    // RESTORED value.
     let focused_now = crate::focus::focused_app_now(guard.inner());
     let method = match (&expect_app_id, &focused_now) {
         (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
@@ -391,20 +369,17 @@ pub(crate) async fn inject_text(
         _ => method,
     };
     if method == "clipboard" {
-        // Unlike the clipboard-only block at the top of this function, THIS one is reachable only
-        // by the two mid-function DIVERSIONS above — `modifiers_stuck` and the focus mismatch —
-        // so it sits at the far end of the held-modifier wait, which the `modifiers_stuck` arm has
-        // by construction run to its full 500ms. A cancel landing in that window used to write the
-        // transcript out anyway, as a live persistent clipboard owner, clobbering whatever the user
-        // had copied — the exact thing `cancel_injection`'s contract forbids and the Wayland paste
-        // path was fixed for.
+        // Reachable only by the two mid-function DIVERSIONS above — `modifiers_stuck` and the
+        // focus mismatch — so it sits at the far end of the held-modifier wait (a full 500ms on the
+        // `modifiers_stuck` arm). A cancel in that window must not install the transcript as a live
+        // persistent clipboard owner over what the user copied: `cancel_injection`'s contract.
         //
         // `cancel_wants_recovery` is NOT redundant here: an error abort (a died session) reaches
         // this branch through the same race, and it DOES want its text recovered. Because this is
         // an early `return`, it never reaches the recovery block at the end of the function, so
-        // falling through and letting the write happen is what reproduces that recovery. Unless the
-        // caller withheld it: a withheld insert has nothing to recover, so any cancel stops it here
-        // with `landed: true`, as the clipboard-only arm and the paste write gate do.
+        // letting the write happen IS that recovery. Unless the caller withheld it: a withheld
+        // insert has nothing to recover, so any cancel stops it here with `landed: true`, as the
+        // clipboard-only arm and the paste write gate do.
         let discarded = move || {
             crate::inject::injection_cancelled(epoch)
                 && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
@@ -428,10 +403,10 @@ pub(crate) async fn inject_text(
             });
         }
         if !text.is_empty() {
-            // The divert the ledger's D1 named as the data-loss path: on `landed: true` the
-            // caller advances its baseline and the phrase leaves the re-send stream for good.
-            // Nothing has been typed on this arm either, so `false` is both truthful and safe.
-            // A cancel during the write's stuck-read wait skips it, as the gate above does.
+            // `landed: false` on a failed write: on `true` the caller advances its baseline and
+            // the phrase leaves the re-send stream for good. Nothing has been typed on this arm,
+            // so `false` is both truthful and safe. A cancel during the write's stuck-read wait
+            // skips it, as the gate above does.
             match persist_off_runtime_unless(clip_text.clone(), discarded).await {
                 Err(e) => {
                     tracing::warn!("[inject] divert to clipboard failed: {e}");
@@ -511,11 +486,10 @@ pub(crate) async fn inject_text(
     let probe_app = app.clone();
     let own_focused_probe = move || own_window_focused(&probe_app);
     let res = if crate::inject::is_wayland() {
-        // Each Wayland arm now reports its own `Landed`, like the X11 arm below: the two TYPING
-        // arms (bare auto-Enter via the portal, and `direct` via the virtual keyboard) were the
-        // last sinks in the tree with no own-window re-check, so they could not previously say
-        // anything but "landed". Their guards live inside the backends, at the keystroke, because
-        // that is the far side of the widest guard-to-sink gap on any path.
+        // Each Wayland arm reports its own `Landed`, like the X11 arm below. The two TYPING arms'
+        // own-window guards (bare auto-Enter via the portal, `direct` via the virtual keyboard)
+        // live inside the backends, at the keystroke: the far side of the widest guard-to-sink
+        // gap on any path.
         let wayland_res: Result<crate::inject::Landed, String> = if text.is_empty()
             && auto_enter
             && method != "direct"
@@ -588,22 +562,18 @@ pub(crate) async fn inject_text(
             // synthesized modifier + remapped keycode makes apps fire the wrong
             // shortcut (e.g. opening editor tabs) instead of pasting.
             let clip = text.clone();
-            // Capture the user's prior clipboard TIME-BOUNDED, mirroring begin_injection /
-            // read_primary_now: reading the clipboard is a blocking Wayland round-trip that can hang
-            // indefinitely on a dead clipboard owner, and it previously sat (inside set_clipboard) in an
-            // UN-timed spawn_blocking here — so the end-of-session insert (the restoreClipboard:true
-            // caller) could wedge at "injecting" forever (the stuck-finalize watchdog is stream-only).
-            // Read prev separately (400ms cap; None on timeout → skip the restore), then set the
-            // clipboard so the set_text still lands regardless of the prev-read result.
-            // remote_target skips the capture entirely — see its resolution above.
+            // Capture the user's prior clipboard TIME-BOUNDED (400ms; None on timeout → skip the
+            // restore), as begin_injection / read_primary_now do: the read is a blocking Wayland
+            // round-trip that can hang forever on a dead clipboard owner, wedging the end-of-session
+            // insert (the restoreClipboard:true caller) at "injecting" — the stuck-finalize watchdog
+            // is stream-only. remote_target skips the capture — see its resolution above.
             //
             // A restore the previous paste scheduled and that has not fired yet (see
-            // inject::RestoreSlot) is taken FIRST, before the read, as the X11/Windows twin does:
-            // left in the slot, it could fire during the up-to-400ms read, which then reads back our
-            // own previous transcript (no `prev`) and this paste overwrites the restored clipboard
-            // with nothing scheduled to bring it back. If this paste bails before it writes — on
-            // any path, `?` included — the guard re-schedules it; once the write happened it is
-            // adopted or dropped below.
+            // inject::RestoreSlot) is taken FIRST, as the X11/Windows twin does: left in the slot, it
+            // could fire during the read, which then reads back our own previous transcript (no
+            // `prev`) and this paste overwrites the restored clipboard with nothing scheduled to
+            // bring it back. The guard re-schedules it if this paste bails before its write (`?`
+            // included); after the write it is adopted or dropped below.
             let mut requeue = crate::inject::RequeueRestore(crate::inject::take_pending_restore());
             let prev = if restore_clipboard && !remote_target {
                 match read_selection_bounded(|| {
@@ -619,52 +589,32 @@ pub(crate) async fn inject_text(
                         );
                         None
                     }
-                    // Never adopt OUR OWN last transcript as "the user's previous clipboard" —
-                    // it lingers after a failed/skipped restore, and restoring it would resurrect
-                    // stale dictation on every future paste. Nor an EMPTY read: that is a stalled
-                    // delayed render (a copy made inside an RDP session), and restoring "" would
-                    // erase the user's remote copy — and drop a real restore still pending from
-                    // the previous paste. Same filter as the Windows/X11 paste (`worth_restoring`).
+                    // Never our own last transcript nor an empty read (a stalled RDP delayed
+                    // render) — see `worth_restoring`, shared with the X11/Windows paste.
                     Some(t) if !crate::inject::worth_restoring(&t) => None,
                     some => some,
                 }
             } else {
                 None
             };
-            // `inject::inject`'s own paste path checks the epoch BEFORE it touches the clipboard
-            // (see the `RECOVER_AT_EPOCH` note: a user cancel means "I don't want this", and
-            // putting it on the clipboard anyway clobbers whatever they had copied). This Wayland
-            // twin sits at the end of the same ~0.5-1.2s window — the held-modifier wait, the focus
-            // read, the bounded prev-clipboard read — and carried no such check, so a cancel
-            // landing anywhere in it still wrote the transcript out.
+            // Sink gate at the clipboard write, as `inject::inject`'s paste path has: the
+            // held-modifier wait, latch consume, focus read and bounded prev read (~0.5-1.2s)
+            // separate it from the entry guards.
+            // - Cancel: a user cancel means "I don't want this" (see `RECOVER_AT_EPOCH`), and writing
+            //   anyway clobbers what they had copied. An error abort that wants recovery is NOT
+            //   stopped: an early `return` would skip the recovery block at the end of this function
+            //   and lose a died session's transcript. A withheld insert has nothing to recover, so
+            //   any cancel stops it, as the X11/Windows paste does.
+            // - The epoch is read AFTER the own-window probe (a main-thread round trip): a cancel
+            //   from the hotkey or tray during it (focus stays in the target app, so it answers
+            //   false) would otherwise still write, and with no `prev` the settle check's restore
+            //   cannot undo that.
+            // - Own window: a focus change in that gap would clobber the user's clipboard and fire
+            //   Ctrl+V into one of our own windows. The settle is covered by the chord-time check.
             //
-            // The `cancel_wants_recovery` term is load-bearing, and its absence was a bug in this
-            // check as first written: the justification given was "the error-abort recovery block
-            // below keys off `res`, which this branch never produces", but that block keys off
-            // `injection_cancelled && cancel_wants_recovery && !recovery_text.is_empty()` — never
-            // `res` — and this is an early `return`, so it skipped the block entirely and a died
-            // session lost its transcript instead of leaving it recoverable. A withheld insert has
-            // nothing for that recovery to keep (it skips it), so any cancel stops it before the
-            // write, as the X11/Windows paste does.
-            //
-            // Read AFTER the own-window probe below (`clipboard_write_gate`), as the X11/Windows
-            // paste does: the probe is a main-thread round trip, and a cancel from the hotkey or
-            // the tray landing during it (focus stays in the target app, so it answers false)
-            // otherwise still wrote the discarded transcript. The settle check's restore cannot
-            // undo that write when there is no `prev` to restore.
-            //
-            // Own-window re-check, at the sink rather than at the top of the function. The guard
-            // that decides "our own window took focus" runs up to ~0.4s+ earlier: the latch
-            // consume, the focus read and up to 400ms of bounded prev-clipboard read sit between
-            // it and this write (the settle follows it and is covered by the chord-time check
-            // below). Without this, a focus change inside that window clobbers the
-            // user's clipboard and then fires Ctrl+V into one of our own windows — the exact
-            // outcome the entry guard was moved above the clipboard-only branch to prevent.
-            //
-            // `landed: false` is the truthful answer: nothing has been written yet (`prev` was only
-            // READ), so the caller re-sends and no text is duplicated. This does not strand the
-            // held-chord latch — if it had been armed, `method` would already be "clipboard" and
-            // this branch is unreachable.
+            // The own-window skip answers `landed: false`: nothing is written yet (`prev` was only
+            // READ), so the caller's re-send duplicates nothing. It cannot strand the held-chord
+            // latch — had it been armed, `method` would be "clipboard" and this branch unreachable.
             let gate = clipboard_write_gate(
                 || own_window_focused(&app),
                 || crate::inject::injection_cancelled(epoch),
@@ -682,11 +632,10 @@ pub(crate) async fn inject_text(
                 tracing::info!(
                     "[inject] skipped at the clipboard write: our own window took focus"
                 );
-                // An early `return` here would skip the error-abort recovery block at the end of
-                // this function — the exact defect P4 recorded for the cancel check above, which
-                // cost a died session its transcript. The two states are not exclusive: the cancel
-                // arm only returns when `!cancel_wants_recovery`, so an ERROR abort reaches here.
-                // A withheld insert has nothing to recover: it falls through to the plain skip.
+                // An ERROR abort reaches here too (the cancel arm returns only when
+                // `!cancel_wants_recovery`), and a bare skip would bypass the recovery block at the
+                // end of this function, losing a died session's transcript — so recover here. A
+                // withheld insert has nothing to recover: it falls through to the plain skip.
                 if crate::inject::injection_cancelled(epoch)
                     && crate::inject::cancel_wants_recovery(epoch)
                     && !recovery_text.is_empty()
@@ -708,11 +657,9 @@ pub(crate) async fn inject_text(
                             diverted: false,
                         });
                     }
-                    // The SECOND recovery write, and it needs the same session-restore guard as
-                    // the one at the end of this function — this early `return` is precisely why
-                    // (the block that arms it never evaluates). The two preconditions co-occur
-                    // naturally: the error teardown refocuses our own window, which is what makes
-                    // this guard fire in the first place.
+                    // The session-restore guard is armed here, not by the recovery block at the
+                    // end of this function: this early `return` skips it. (The error teardown
+                    // refocusing our own window is what makes this arm fire.)
                     crate::inject::note_recovery_on_clipboard();
                     crate::inject::note_delivered_unless_user_cancelled(epoch);
                     return Ok(InjectOutcome {
@@ -739,8 +686,7 @@ pub(crate) async fn inject_text(
                     .await
                     .map_err(|e| e.to_string())?
             };
-            // Propagate a set_text failure (the guard puts the pending restore back); prev was
-            // captured (time-bounded) above.
+            // A failed write returns here; the guard puts the pending restore back.
             set_res?;
             // The transcript is on the clipboard now, so this is where the paste went — see
             // LAST_PASTE_REMOTE. Recorded only here, past every bail above, so a phrase that
@@ -800,12 +746,12 @@ pub(crate) async fn inject_text(
             // pasted and report it as never written, with nothing keeping the session snapshot:
             // hand the transcript to the persistent owner and report the divert.
             //
-            // Unless the job was cancelled. Both probes are event-loop round trips, and the
-            // portal job asks the epoch BEFORE its probe, so a cancel can land during either one.
-            // A cancelled job falls through to the restore/recovery logic below, as a cancel in
-            // the settle does via `cancelled_in_settle`: a user cancel restores `prev` and reports
-            // nothing written, an error abort skips the restore and the recovery block at the end
-            // of this function persists the transcript and arms `note_recovery_on_clipboard`.
+            // Unless the job was cancelled: a cancel can still land during the chord-time probe
+            // (the epoch was read before it) or after the portal job's probe answered. A cancelled
+            // job falls through to the restore/recovery logic below, as `cancelled_in_settle` does:
+            // a user cancel restores `prev` and reports nothing written, an error abort skips the
+            // restore and the recovery block at the end of this function persists the transcript
+            // and arms `note_recovery_on_clipboard`.
             if matches!(r, Ok(crate::inject::Landed::NothingWritten))
                 && !crate::inject::injection_cancelled(epoch)
             {
@@ -846,18 +792,16 @@ pub(crate) async fn inject_text(
                     diverted: true,
                 });
             }
-            // Restore the user's prior clipboard only if the paste actually landed. If it failed,
-            // leave the transcript on the clipboard so it's recoverable (the user can paste it
-            // manually) instead of silently clobbering it with the old clipboard.
+            // Restore the user's prior clipboard only if the paste landed; a failed one leaves the
+            // transcript on the clipboard to paste manually.
             //
-            // `r.is_ok()` is not the same question as "did it press anything": the portal job also
-            // returns `Ok(())` when ITS pre-job check finds the epoch cancelled. On an ERROR abort
-            // that matters, because the recovery block at the end of this function is about to put
-            // the transcript on the clipboard — and this restore, which serves `prev` 400ms later,
-            // would erase it, leaving the text neither typed nor recoverable. A plain user cancel
-            // still restores: there the clobbered clipboard IS the thing to put back. So does a
-            // withheld insert, on success, error abort and failure alike: the recovery block skips
-            // it, and there is nothing in it to paste manually.
+            // `r.is_ok()` is not "did it press anything": the portal job also answers
+            // `Ok(Landed::Yes)` when ITS pre-job check finds the epoch cancelled. On an ERROR abort
+            // the recovery block at the end of this function is about to put the transcript on the
+            // clipboard, and this restore (serving `prev` 400ms later) would erase it, leaving the
+            // text neither typed nor recoverable. A plain user cancel still restores: the clobbered
+            // clipboard IS the thing to put back. So does a withheld insert in every case: the
+            // recovery block skips it, and there is nothing in it to paste manually.
             if withhold_on_divert
                 || (r.is_ok()
                     && !(crate::inject::injection_cancelled(epoch)
@@ -929,14 +873,12 @@ pub(crate) async fn inject_text(
         && !recovery_text.is_empty()
         && !withhold_on_divert;
     if recovered {
-        // `recovered` is what upgrades `NothingWritten` to `landed: true, diverted: true` below,
-        // i.e. the claim "the text IS somewhere the user can reach". Now that the write can say
-        // otherwise, that claim follows the write instead of assuming it: on failure the outcome
-        // falls back to plain `NothingWritten`, which is truthful and safe. (This arm is also
-        // reachable after a partial or even complete write — the typing backends report
-        // `Landed::Yes` for a prefix — because `Landed` does not say whether any key went out;
-        // an error abort landing in that window then overwrites the clipboard with text that
-        // was already typed. Closing that needs a "nothing written" variant on `Landed`.)
+        // `recovered` upgrades `NothingWritten` to `landed: true, diverted: true` below ("the text
+        // IS somewhere the user can reach"), so it follows the write: on failure the outcome falls
+        // back to plain `NothingWritten`. (Known gap: this arm is also reachable after a partial or
+        // complete write — `Landed::Yes` covers both a typed prefix and a job cancelled before any
+        // key — so an error abort there overwrites the clipboard with text already typed. Closing
+        // that needs a cancelled-before-any-key variant distinct from `Landed::Yes`.)
         match persist_off_runtime(recovery_text).await {
             Ok(()) => {
                 tracing::info!(
@@ -975,11 +917,9 @@ pub(crate) fn settle_outcome(
             landed: true,
             diverted: false,
         },
-        // "Nothing written" is only true if the recovery block above did not just write the
-        // transcript to the clipboard. When it did, the text IS somewhere the user can reach, and
-        // saying otherwise both mis-describes the state and makes the caller re-issue an insert
-        // that would land in the same place. This is also what the Wayland arm reports for the
-        // same event, so the two platforms now answer the same question the same way.
+        // Recovered by `inject_text`'s error-abort block: the text IS somewhere the user can reach,
+        // and "nothing written" would make the caller re-issue an insert landing in the same
+        // place. The Wayland own-window arm answers the same.
         crate::inject::Landed::NothingWritten if recovered => InjectOutcome {
             landed: true,
             diverted: true,
@@ -1026,10 +966,10 @@ fn clipboard_form(text: &str, clipboard_text: Option<String>) -> String {
     }
 }
 
-/// The mid-function divert's answer — the one site that reports a DIVERT: the caller asked to type
-/// or paste and we did neither. Reported only when a transcript was written. A withheld bare Enter
-/// (empty text) wrote nothing and pressed no Return, so it is `landed: false` like every other sink
-/// that skips one: a caller clearing its owed phrase gap on a landed Enter must not see one.
+/// The mid-function divert's answer (the caller asked to type or paste and we did neither).
+/// Reported only when a transcript was written. A withheld bare Enter (empty text) wrote nothing
+/// and pressed no Return, so it is `landed: false` like every other sink that skips one: a caller
+/// clearing its owed phrase gap on a landed Enter must not see one.
 fn divert_outcome(text: &str) -> InjectOutcome {
     InjectOutcome {
         landed: !text.is_empty(),
@@ -1042,10 +982,9 @@ mod tests {
     use super::{clipboard_form, clipboard_write_gate, divert_outcome};
     use crate::inject::SinkGate;
 
-    /// The Wayland paste arm read the cancel BEFORE its clipboard-write own-window probe (a
-    /// main-thread round trip) and never again before the write: a cancel from the hotkey or the
-    /// tray landing during the probe (focus stays in the target app, so it answers false) still
-    /// wrote the discarded transcript over what the user had copied.
+    /// A cancel landing during the Wayland paste arm's clipboard-write own-window probe (a
+    /// main-thread round trip; focus stays in the target app, so it answers false) still skips the
+    /// write instead of clobbering what the user had copied.
     #[test]
     fn a_cancel_during_the_clipboard_write_probe_skips_the_write() {
         use std::cell::Cell;
