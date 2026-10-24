@@ -1,6 +1,6 @@
-// A correction half-typed into a row is stored when the batch run's follow switches the viewer
-// to its next finished file. That switch is no click, so no blur commits the draft: the span's
-// text was overwritten with the new file's line and the edit mode reset unmounted it unsaved.
+// A correction half-typed into a row must be stored when the batch run's follow switches the viewer
+// to its next finished file. That switch is no click, so no blur commits the draft: without this,
+// the span's text is overwritten with the new file's line, or the edit-mode reset unmounts it unsaved.
 import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the row in.
 import rowSrc from "./SegmentRow.tsx?raw";
