@@ -84,7 +84,7 @@ let wired = false;
 // Auto-stop a hands-free session after a configured stretch of continuous silence (0 = off).
 // Reuses the SAME speaking detector as the chip (lib/speaking), so "silence" means exactly what the
 // chip shows as not-green; fires the normal stop (which drains the last phrase). Armed per session in
-// startLive, disarmed on any stop/cancel.
+// startLiveInner and by applyReclassify's in-place hands-free upgrade, disarmed on any stop/cancel.
 let autoStopMemo: SpeakMemo = newSpeakMemo();
 let autoStopMs = 0;
 let lastSpokeAt = 0;
@@ -1129,7 +1129,7 @@ let lastTypedApp: string | null | undefined;
 // not just once at stop (which an ongoing hands-free session never reaches).
 let clipDirty = false;
 /** Put the user's clipboard back from the Rust-held snapshot (which survives, so a later paste can
- *  restore again). Every restore goes through here. */
+ *  restore again). Every mid-session restore goes through here; endInjection restores and clears. */
 async function giveClipboardBack(): Promise<void> {
   try {
     await restoreClipboardSnapshot();
@@ -1391,7 +1391,7 @@ export function liveAllowed(args: {
 
 /** The per-app injection policy: focused app + per-app rule + opt-in deep detection → the effective
  *  insertion method, paste shortcut, the matched rule, and whether a non-editable target was coerced
- *  to clipboard. This MUST be the single source: it is resolved both at session start (startLive,
+ *  to clipboard. This MUST be the single source: it is resolved both at session start (startLiveInner,
  *  frozen into insertCfg + the chip's blocked/notEditable flags) AND per phrase / on the focus poll
  *  (resolveTarget) — open-coding it twice risks the chip readout, the start-of-session decision, and
  *  the per-phrase injection silently disagreeing. `targetApp` null (nothing known yet) → no rule, so
@@ -1476,8 +1476,8 @@ export function resolveInjectionTarget(
   return { rule, notEditable, method, pasteShortcut, autoEnter, restoreClipboard, remoteDesktop, isSelf: false };
 }
 
-/** Resolve the CURRENT injection target (focused app → per-app rule) into the method +
- *  paste-shortcut to use RIGHT NOW. Called per injection — NOT once at dictation start — so
+/** Resolve the CURRENT injection target (focused app → per-app rule) into the insertion
+ *  settings to use RIGHT NOW. Called per injection — NOT once at dictation start — so
  *  per-app rules follow window switches mid-session: a hands-free/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
  *  whatever was focused when dictation began. */
@@ -2544,9 +2544,6 @@ async function ensureListeners(): Promise<void> {
             // A cancel / fresh session that landed during the awaited inject nulled or replaced
             // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
             if (insertCfg !== cfg) return;
-            // A real paste just clobbered the user's clipboard with the transcript, so it owes a restore at
-            // phrase end; direct typing and a guard-skipped own window clobbered nothing.
-            //
             // `landed` is the SINK's answer; `t.isSelf` the one resolved ~1s earlier. Both are needed:
             // `t.isSelf` covers a start-time skip (returned above; kept so `delivered` reads whole), `landed`
             // our own window taking focus DURING the insert, where Rust's skip otherwise looks like success.
@@ -3057,8 +3054,8 @@ async function ensureListeners(): Promise<void> {
         // runs before any new session could reset it.)
         const finalClip = (): Promise<void> => {
           // The queue has drained, so a carry still pending here never found a real window to go
-          // to (the last phrases were all skipped in our own window). Say so — by length — and
-          // drop it; the next session starts clean either way.
+          // to (the last phrases were all skipped in our own window or refused by the sink). Say
+          // so — by length — and drop it; the next session starts clean either way.
           noteDroppedCarry();
           return beganInjection ? (clipDirty ? endInjection() : discardInjectionSnapshot()) : Promise.resolve();
         };
@@ -3174,8 +3171,7 @@ async function ensureListeners(): Promise<void> {
           const t = await resolveTarget(cfg);
           // A cancel (insertCfg→null) OR a cancel-then-fresh-session (insertCfg→a new object) landing
           // during the awaited resolve must not paste the OLD session's whole transcript into the new/
-          // refocused window. Identity-check, mirroring the post-inject guard below + the live tasks;
-          // a normal stop keeps insertCfg===cfg so the end-of-session insert still lands.
+          // refocused window. A normal stop keeps insertCfg===cfg, so the end-of-session insert still lands.
           if (insertCfg !== cfg) return;
           let landed = true;
           let diverted = false;
@@ -3630,8 +3626,7 @@ async function startLiveInner(
   autoStopMemo = newSpeakMemo();
   lastSpokeAt = performance.now();
   autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
-  // Effective values: a set per-Profile override wins; else inherit the Backend. The model is
-  // trimmed on both sides (a synced Backend model may be padded; preloadPlanFor warms it trimmed).
+  // Trimmed on both sides: a synced Backend model may be padded, and preloadPlanFor warms it trimmed.
   const model = pov?.model?.trim() || backend.model.trim();
   // A word naming a Whisper language (a synced "english") comes back as its code, so every sink
   // below (stream/record, translate source, sessionMeta) sends what sessionShape compares.
