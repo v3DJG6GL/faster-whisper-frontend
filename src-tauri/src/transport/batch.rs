@@ -88,9 +88,9 @@ pub struct BatchOptions {
     /// Per-run diarization pipeline / MSS model overrides.
     pub diarization_model: Option<String>,
     pub separation_model: Option<String>,
-    /// URL runs: also fetch the VIDEO (best video + best audio merged) beside
-    /// the audio, capped at this height (None = best available).
+    /// URL runs: also fetch the VIDEO (best video + best audio merged) beside the audio.
     pub keep_video: Option<bool>,
+    /// Height cap for that video (None = best available).
     pub video_max_height: Option<u32>,
     /// The rung's yt-dlp format id from the link card (regex-gated before it
     /// rides the form; the server ignores an id no longer on the ladder).
@@ -866,7 +866,7 @@ fn fin_frac(v: Option<f64>) -> Option<f64> {
 }
 
 /// Bound a server notice list (warnings, ignored overrides): at most `MAX_NOTICES`
-/// entries, each capped like an error text. Shared with the text-translate reply.
+/// entries, each capped like an error text.
 pub(crate) fn bound_notices(v: &[String]) -> Vec<String> {
     v.iter()
         .take(super::MAX_NOTICES)
@@ -897,7 +897,7 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
                         // The webview's unit is `{target: string, state: <these five>}` and its
                         // rail renders the target as text: a unit without a language or with a
                         // state it has no rendering for is dropped here, not passed on as null
-                        // (a null target crashed the Transcribe screen).
+                        // (a null target crashes the Transcribe screen).
                         let target = u
                             .target
                             .map(|s| super::bounded_server_text(&s, 16))
@@ -1036,8 +1036,8 @@ pub struct BatchProgress {
 }
 
 /// Bound a parsed progress poll: every server string rendered as a UI label,
-/// every number a bar width or a clock. Split out of `progress()` so the
-/// bounding is unit-testable without a socket.
+/// every number a bar width or a clock. Shared by `progress()` and the job
+/// resource's reattach poll (`jobs.rs`).
 pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
     BatchProgress {
         stage: parsed.stage.map(|s| super::bounded_server_text(&s, 32)),
@@ -1394,8 +1394,8 @@ async fn post(
     // translate_to sentinel: None → omit the field, so the server inherits its
     // override-profile's TRANSLATE_TO; Some(_) → send it, where an EMPTY value means
     // "no targets" and overrides that inherited list. The client's chip list is
-    // authoritative, so an empty one has to be said out loud — omitting it let the
-    // server put back the stage the user had switched off.
+    // authoritative, so an empty one has to be said out loud — omitting it would let
+    // the server put back the stage the user had switched off.
     if let Some(csv) = translate_to {
         form = form.text("translate_to", csv);
         if has_targets {
@@ -1498,15 +1498,11 @@ async fn post(
         "/v1/audio/transcriptions"
     };
     let mut req = with_auth(client().post(format!("{base}{endpoint}")), api_key).multipart(form);
-    // Per-request override of the shared client's 120 s default (reqwest's RequestBuilder::timeout
-    // replaces the client-level timeout for this request only). The file-upload and link paths
-    // set it (FILE_TRANSCRIBE_TIMEOUT); batch dictation passes None and keeps the 120 s default.
+    // reqwest's RequestBuilder::timeout replaces the shared client's 120 s default for this
+    // request only; None keeps that default.
     if let Some(t) = timeout {
         req = req.timeout(t);
     }
-    // Classify connect/timeout failures the same way discovery/pipeline/streaming do, so the
-    // Transcribe screen and batch dictation show "Could not connect…" / "Timed out…" instead of
-    // a raw reqwest error chain.
     let parsed: VerboseJson = send_json(req, MAX_BODY, "decoding response").await?;
     Ok(to_batch_result(parsed))
 }
