@@ -61,13 +61,10 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
         crate::aux_windows::topmost::assert_topmost(&win);
         let _ = win.unminimize();
         let _ = win.set_focus();
-        // A Tauri emit with no listener is dropped, never queued. What makes this one safe
-        // is NOT `win.show()` — the webview registers its listener in a mount effect,
-        // independently of visibility — but the window being PREWARMED (visible:false in
-        // tauri.conf.json, mounted at launch), so the listener exists long before the first
-        // user-triggered summon. A summon in the first few hundred ms of process life could
-        // still lose it; quick-add's pull-based `get_quickadd_seed` is the recovery shape if
-        // that ever matters here.
+        // A Tauri emit with no listener is dropped, never queued. Safe because the window is
+        // PREWARMED (mounted at launch, so its mount-effect listener exists long before a
+        // summon) — not because of `win.show()`. A summon in the first few hundred ms could
+        // still lose it; quick-add's pull-based `get_quickadd_seed` is the fix if that matters.
         let _ = handle.emit("langpick://shown", seed);
     });
     // "A dismissed or failed picker always answers": if the main-thread hop itself failed
@@ -107,10 +104,10 @@ pub fn commit_lang_pick(app: AppHandle, targets: Vec<String>) {
 /// this" and "answered with nothing" (an empty commit = insert the original only) are
 /// different answers, and conflating them would make Esc mean "translate nothing".
 ///
-/// There is deliberately no "dismiss → use the Profile's preset" command any more: a
-/// picker that is on screen always ends in a real answer. The only "no answer" left is
-/// `langpick://unavailable`, emitted by `show_lang_pick` itself when it could not show a
-/// window — that one is not a user gesture, so the asker treats it as the preset.
+/// A picker that is on screen always ends in a real answer (no "dismiss → use the
+/// Profile's preset"). The only "no answer" is `langpick://unavailable`, emitted by
+/// `show_lang_pick` when it could not show a window — not a user gesture, so the asker
+/// treats it as the preset.
 #[tauri::command]
 pub fn abort_lang_pick(app: AppHandle) {
     let _ = app.emit("langpick://abort", ());
