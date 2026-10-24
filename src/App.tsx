@@ -34,8 +34,8 @@ import AppRules from "@/screens/AppRules";
 import Statistics from "@/screens/Statistics";
 import Settings from "@/screens/Settings";
 
-// Land every debounced / coalesced write: History edits (first — they feed the record writes),
-// History writes, config save, usage-outcome queue save. None of the flushes rejects.
+// Land every debounced / coalesced write. History edits go first: they feed the record writes.
+// None of the flushes rejects.
 function flushPendingWrites(): Promise<PromiseSettledResult<void>[]> {
   flushPersistEdits();
   return Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
@@ -277,11 +277,9 @@ export default function App() {
   const theme = useApp((s) => s.settings.theme);
   const accentHue = useApp((s) => s.settings.accentHue);
   const accentMotion = useApp((s) => s.settings.accentMotion);
-  // First-run gate: a LOADED config with no backends AND no profiles (a fresh
-  // install seeds none) and no prior skip mounts the onboarding flow
-  // instead of the shell. Latched locally so the flow survives its own store
-  // writes (creating Backend #1 makes backends non-empty mid-flow); it closes
-  // only via onDone, and setupDismissed keeps it from ever re-opening.
+  // First-run gate (a fresh install seeds no backends or profiles). Latched locally so the flow
+  // survives its own store writes (creating Backend #1 makes backends non-empty mid-flow); it
+  // closes only via onDone, and setupDismissed keeps it from ever re-opening.
   const configLoaded = useApp((s) => s.configLoaded);
   // Not on a FAILED load: the store is then the empty boot state, not an empty config, and
   // every exit from onboarding ("Skip for now" included) writes the store — which the armed
