@@ -132,11 +132,11 @@ export interface Profile {
   translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, ALL translateTo targets are injected (blank-line separated)
   /** Insert each phrase as you speak, instead of the whole transcript when the session ends.
    *
-   *  Only meaningful on a STREAMING profile run HANDS-FREE: batch has no live phrases to
-   *  insert, and a held push-to-talk chord folds into every injected keystroke. `liveAllowed`
-   *  is the authority — it tests the RUNTIME activation, because the Home button and the
-   *  chip's quick-launch both start a hold profile hands-free. undefined = inherit
-   *  `general.typeAsISpeak` (resolve with `??`). */
+   *  Only meaningful on a STREAMING profile, and under a held push-to-talk chord only with the
+   *  clipboard-only method: batch has no live phrases to insert, and a held chord folds into
+   *  every injected keystroke. `liveAllowed` is the authority — it tests the RUNTIME activation,
+   *  because the Home button and the chip's quick-launch both start a hold profile hands-free.
+   *  undefined = inherit `general.typeAsISpeak` (resolve with `??`). */
   typeAsISpeak?: boolean;
   /** Ask which languages to translate into at the start of each session, instead of
    *  always using `translationOverrides.translateTo`.
@@ -289,8 +289,8 @@ export interface GeneralSettings {
    *  source's flags, e.g. a password manager's). Default on. */
   excludeFromClipboardHistory: boolean;
   /** Default for the per-Profile "Type as I speak" — what a Profile inherits when it sets
-   *  no opinion of its own. Only ACTS on a streaming, hands-free session; see
-   *  `liveAllowed`, which is the authority for all three preconditions. */
+   *  no opinion of its own. Only ACTS on a streaming session that is hands-free or
+   *  clipboard-only; see `liveAllowed`, which is the authority for all three preconditions. */
   typeAsISpeak: boolean;
   soundEffects: boolean;
   evdevEnabled: boolean; // opt-in evdev backend (reliable hold / L-R / AltGr on Wayland)
@@ -638,8 +638,8 @@ export interface ConnectionInfo {
   /** Server's per-process `boot_id` (non-standard, faster-whisper-backend only).
    *  Present ⇒ full backend; absent ⇒ conventional Whisper server. */
   bootId?: string;
-  /** Server build version (`server_version` from /v1/models, non-standard).
-   *  Emitted by faster-whisper-backend ≥ v0.1.0; absent on older builds. */
+  /** Server build version (`server_version` from /v1/models, non-standard; faster-whisper-backend
+   *  only, so may be absent). */
   serverVersion?: string;
   error?: string;
 }
@@ -1198,7 +1198,7 @@ export interface PlanStage {
   units?: PlanUnit[] | null;
 }
 
-/** Live progress of an in-flight file transcription. */
+/** Live progress of an in-flight batch run (file or link). */
 export interface BatchProgress {
   /** waiting | resolving | downloading | separating | analyzing |
    *  transcribing | diarizing | loading | translating | unknown */
