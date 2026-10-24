@@ -77,7 +77,7 @@
   --c-armed: #ff9e2c; /* amber: armed but silent ("ready to speak"). Fixed — the accent may be any hue and may drift */
   --c-ok: #93b76f;
   --c-warn: #e0a33a;
-  --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — the only cool hue, so it can't be read as off-grey, armed-amber, live-green, or error-red */
+  --c-think: #6faed9; /* cool steel blue: machine working (finalizing/inserting/warm-up) — cool, so it can't be read as off-grey, armed-amber, live-green, or error-red */
   --c-translate: #4dd0c4; /* teal: the T2T translating stage — unclaimed by any other stage hue */
   --c-para: #4dd0c4; /* the live-dictation preview's hard break (new paragraph) */
   --c-whisper: #ff9e2c; /* identity: a Whisper-transcribed track (the default accent's amber, fixed — it never drifts with the Signal colour) */
@@ -208,8 +208,8 @@ body {
   cursor: default;
 }
 
-/* The overlay (chip) and quick-add windows are transparent so their rounded panel
-   floats on the desktop — the body must not paint the opaque app background (which
+/* The overlay (chip), quick-add and language-picker windows are transparent so their rounded
+   panel floats on the desktop — the body must not paint the opaque app background (which
    would show as a hard rectangle in the window's padding/shadow gutter). */
 body[data-window="overlay"],
 body[data-window="quickadd"],
@@ -230,15 +230,16 @@ body[data-window="main"]::before {
 }
 
 /* A Motion drift tick (theme.ts `stampTick`) restamps the accent tokens up to 4× a second;
-   without this every `transition-colors` element re-ran its 150 ms fade on each tick and the
-   window animated most frames. Scoped to that utility on purpose: a blanket transition:none
-   would cut the Pride mark's delayed transitions below. Lifted two frames after the tick. */
+   without this every `transition-colors` element would re-run its 150 ms fade on each tick and
+   the window would animate most frames. Scoped to that utility on purpose: a blanket
+   transition:none would cut the Pride mark's delayed transitions below. Lifted two frames
+   after the tick. */
 html.accent-tick .transition-colors {
   transition-property: none !important;
 }
 
 /* Layered on purpose: an unlayered rule beats every `@layer utilities` declaration whatever its
-   specificity, so `font-mono` on an input/textarea silently rendered proportional. */
+   specificity, so `font-mono` on an input/textarea would silently render proportional. */
 @layer base {
   input,
   textarea {
