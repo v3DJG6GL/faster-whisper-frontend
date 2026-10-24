@@ -143,7 +143,7 @@ export default function QuickAdd() {
   // The loaded theme setting, kept for the OS-scheme watcher ("auto" must re-resolve live).
   const themeRef = useRef<ThemeName>("auto");
   // Track live OS scheme flips while on "auto" — this window is prewarmed/long-lived;
-  // refresh() re-applies the setting itself on every summon.
+  // refreshLocalConfig() re-applies the setting itself on every summon.
   useEffect(() => startAccentDrift(), []);
   useEffect(() => watchSystemTheme(() => themeRef.current), []);
   // Generation guards so an out-of-order async resolution can't apply stale state. `loadGen`
@@ -356,15 +356,11 @@ export default function QuickAdd() {
         return false;
       }
       const newest = mySeq === saveSeq.current;
-      // A 2xx can still change nothing: the server's environment pins the whole rule list, so the
-      // next summon's refresh drops this mapping. Say so ("pinned", like Dictionary's notice) — but
-      // not as "error": that state skips the summon re-sync and auto-retries, and against a pin
-      // every retry ends the same way (a PATCH per summon, rows never re-synced, and once the pin
-      // is lifted the retry would push these stale rows over the stored rule unasked).
-      // A 2xx whose reply couldn't be read (ok:false) still LANDED: "error" would re-PATCH on every
-      // summon and skip the re-sync. A refusal the server names ("refused": the list was locked,
-      // deleted or hidden after this window loaded) is terminal for the same reason as a pin —
-      // see quickAddSaveOutcome.
+      // quickAddSaveOutcome keeps three cases out of "error" (which skips the summon re-sync and
+      // auto-retries): a 2xx the server's environment pins ("pinned", like Dictionary's notice), a
+      // 2xx whose reply couldn't be read (it LANDED), and a refusal the server names. Retrying them
+      // would PATCH on every summon, never re-sync, and once a pin is lifted push these stale rows
+      // over the stored rule unasked.
       const outcome = quickAddSaveOutcome(res);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
@@ -848,7 +844,6 @@ async function replaceSelectionAfterClose(
   // double-click grabs (Word / browsers) and the line break a triple-click grabs. A paste /
   // clipboard route puts that back verbatim; only the typing method would turn an edge newline
   // into a real Enter, so there the edges are spaces/tabs only and anything else is a skip.
-  // (Linear scans: the re-read is up to 64K characters of whatever is selected now.)
   const { lead, trail } = selectionEdges(current, method === "direct");
   if (current.slice(lead.length, Math.max(lead.length, current.length - trail.length)) !== original) {
     console.info("[quick-add] correct-on-close skipped: selection changed or edge line break on a typed route");
