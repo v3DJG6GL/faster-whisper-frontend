@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import { needsLowLevel } from "./keys";
 import { STARTERS_LOW_LEVEL_NOTE, starterProfiles, startersClearOf, startersNeedLowLevelNote } from "./starters";
-// Raw source (vite `?raw`).
 import profilesSrc from "../screens/Profiles.tsx?raw";
 import onboardingSrc from "../screens/Onboarding.tsx?raw";
 
