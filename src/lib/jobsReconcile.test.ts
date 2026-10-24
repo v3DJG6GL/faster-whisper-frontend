@@ -75,6 +75,12 @@ function records() {
   return useTranscriptHistory.getState().records;
 }
 
+/** The failed record the pump wrote for a lost request (its id is the job id). */
+function lostFailedRecord(r: LedgerRow): TranscriptRecord {
+  return { schemaVersion: 1, kind: "file", id: r.jobId, createdAt: new Date(r.startedAt).toISOString(),
+    sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(T0 + 60_000);
@@ -485,8 +491,7 @@ describe("reconcileJobs", () => {
   it("an earlier launch's lost request whose backend is deleted settles its failed record with the reason", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [rec] });
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
@@ -501,8 +506,7 @@ describe("reconcileJobs", () => {
   it("the reconcile pass settles an earlier launch's lost record whose backend is gone", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     // At launch nothing has loaded History yet (the app opens on the Dashboard): the record is on disk only.
     useTranscriptHistory.setState({ records: [], loaded: false });
     listTranscriptRecords.mockResolvedValueOnce([rec]);
@@ -516,8 +520,7 @@ describe("reconcileJobs", () => {
   it("a failed History listing keeps a gone backend's row; a later pass settles its record", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [], loaded: false });
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     useApp.setState({ backends: [] });
@@ -534,8 +537,7 @@ describe("reconcileJobs", () => {
   it("a gone backend's headless row is kept when the History listing fails, and settled by the retry pass it schedules", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     await reconcileJobs();
@@ -559,8 +561,7 @@ describe("reconcileJobs", () => {
   it("a retry the headless watcher schedules while a pass is in flight runs after that pass", async () => {
     const r = row(JOB_A, T0);
     await seed(r, row(JOB_B, T0 + 1));
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     // A non-idle workbench: A is watched headless; B's per-row error arms the retry timer.
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
@@ -596,8 +597,7 @@ describe("reconcileJobs", () => {
   it("the last retry of the launch's budget firing mid-pass still runs its pass", async () => {
     const r = row(JOB_A, T0);
     await seed(r, row(JOB_B, T0 + 1));
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
     let bCalls = 0;
@@ -627,8 +627,7 @@ describe("reconcileJobs", () => {
   it("a gone backend's row stopped during the History listing settles nothing", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [], loaded: false });
     let resolveListing: (v: unknown[]) => void = () => {};
     listTranscriptRecords.mockReturnValueOnce(new Promise<unknown[]>((res) => { resolveListing = res; }));
@@ -1037,8 +1036,7 @@ describe("reconcileJobs", () => {
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     watchOrphan(JOB_A);
     await vi.advanceTimersByTimeAsync(0);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     expect(openHistoryRecord(rec)).toBe(true);
     // The rebuilt row still names the job, so the watcher's ingest would settle it.
     expect(useTranscribeRun.getState().queue[0].orphanJobId).toBe(JOB_A);
@@ -1061,8 +1059,7 @@ describe("reconcileJobs", () => {
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     await reconcileJobs();
     expect(useTranscribeRun.getState().queue).toEqual([]);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     expect(openHistoryRecord(rec)).toBe(true);
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
@@ -1130,8 +1127,7 @@ describe("reconcileJobs", () => {
   it("deleting a lost request's failed record stops its watcher, so the finished job can't re-add it", async () => {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [rec] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     watchOrphan(JOB_A);
@@ -1153,8 +1149,7 @@ describe("reconcileJobs", () => {
   async function watchLostFailed(register: boolean) {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
-    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
-      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [rec] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     watchOrphan(JOB_A);
