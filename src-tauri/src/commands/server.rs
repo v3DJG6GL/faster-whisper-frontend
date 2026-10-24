@@ -125,11 +125,10 @@ pub async fn get_recent_words(
     transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
 }
 
-/// The caller's own usage document (`GET /v1/usage`) — per-kind today/total, the
-/// daily series, stages, dictation facets, apps, calendar and streak — for the Home strip,
-/// the Statistics page and the optional chip readout. Best-effort — null on any error so
-/// the UI hides the feature on a standard/old server or when unreachable. `query.tz` is the
-/// caller's IANA zone so the server reckons days (and DST) the way the viewer does.
+/// The caller's own usage document (`GET /v1/usage`) for the Home strip, the Statistics page
+/// and the optional chip readout. Best-effort — null on any error so the UI hides the feature
+/// on a standard/old server or when unreachable. `query.tz` is the caller's IANA zone so the
+/// server reckons days (and DST) the way the viewer does.
 #[tauri::command]
 pub async fn get_usage_stats(
     server_url: String,
