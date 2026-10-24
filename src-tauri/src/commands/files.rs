@@ -402,15 +402,12 @@ pub async fn move_audio_base(
                 break;
             }
         }
-        // Move the heal stamp so the new base is stamped and the old one is clean.
-        // Without this the old base keeps a stray stamp (blocking the remove_dir
-        // below) and the new one re-runs the full heal scan on the next launch.
-        // A missing old stamp means a heal is still pending (a failed rewrite or
-        // identifier migration dropped it): that must travel to the new base too, so
-        // a stray stamp already there is cleared instead of masking it.
-        // Rename first: it is a no-op when both paths name the same folder (case-only
-        // difference, symlink). Across drives it fails (EXDEV); the stamp is an empty
-        // marker, so write + remove is the move then.
+        // Move the heal stamp: left behind, it blocks the remove_dir below and the new base
+        // re-runs the full heal scan next launch. A missing old stamp is a pending heal (a failed
+        // rewrite or identifier migration dropped it) that must travel too, so a stray stamp
+        // already at the new base is cleared instead of masking it. Rename first: a no-op when
+        // both paths name one folder (case-only difference, symlink); across drives (EXDEV) the
+        // empty marker is written + removed instead.
         let (old_stamp, new_stamp) = (from.join(HEAL_STAMP), to.join(HEAL_STAMP));
         if !old_stamp.exists() {
             let _ = std::fs::remove_file(&new_stamp);
