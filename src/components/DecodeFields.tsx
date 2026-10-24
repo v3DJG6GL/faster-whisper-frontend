@@ -17,9 +17,8 @@ import { envDesc } from "@/lib/envDesc";
 // because an unset boolean must stay distinct from an explicit false. The backend clamps every
 // value; the bounds here come from the one key table (decodeKeys.ts) and mirror the server's.
 //
-// Rows are titled by the server's ENV name with the backend's short description; the primary
-// fields are always shown, every other section is its own (closed) block. Live dictation's keys
-// have their own block (LiveDictationFields); `multilingual` rides the spoken-language picker.
+// Live dictation's keys have their own block (LiveDictationFields); `multilingual` rides the
+// spoken-language picker.
 
 /** Why the language-detection rows are disabled while a language is pinned. */
 const LANG_PINNED_REASON = "Language detection only runs when the language is auto-detected; this one names a language.";
@@ -40,8 +39,8 @@ export function DecodeFields({
 }: {
   value: DecodeOverrides;
   onChange: (v: DecodeOverrides) => void;
-  /** Baseline this editor overrides (Backend defaults and/or a selected server
-   *  override-profile's values), ghosted into each control's placeholder/state
+  /** Baseline this editor overrides (serverInherited().values: the server's values with any
+   *  Backend defaults over them), ghosted into each control's placeholder/state
    *  so you can see what a blank field will inherit. */
   inherited?: InheritedValues;
   /** Tooltip per key: where the inherited value comes from (serverInherited().sources). */
