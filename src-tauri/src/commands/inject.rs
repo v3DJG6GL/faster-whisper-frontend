@@ -12,7 +12,8 @@ use tauri::{AppHandle, State};
 #[derive(Default)]
 pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 
-/// Snapshot the current clipboard before a live paste-injection session.
+/// Snapshot the current clipboard before each paste of a live paste-injection session; a read
+/// that finds nothing new from the user keeps the prior snapshot.
 #[tauri::command]
 pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), String> {
     // Read the clipboard OFF the GTK main thread, time-bounded (see read_selection_bounded). This is
