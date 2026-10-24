@@ -46,8 +46,8 @@ static MOVED: std::sync::Mutex<Option<Moved>> = std::sync::Mutex::new(None);
 
 /// The session's moved paths: `fwd` (old → new, what a save re-points through) and its reverse
 /// index `rev` (new → every old mapped onto it), so chaining a note touches only the entries
-/// that pointed at the moved path: a move or heal notes once per re-pointed field, and a scan of
-/// the whole map per note made a large history's move quadratic.
+/// that pointed at the moved path: a move or heal notes once per re-pointed field, so scanning
+/// the whole map per note would make a large history's move quadratic.
 #[derive(Default)]
 struct Moved {
     fwd: std::collections::HashMap<String, String>,
@@ -1195,8 +1195,7 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     }
 }
 
-/// `sweep_orphan_media` over one media folder `dir`, against the record store `records`.
-/// Returns how many files it removed.
+/// `sweep_orphan_media` over one media folder; returns the removed count.
 fn sweep_orphans_in(dir: &Path, records: &Path) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
