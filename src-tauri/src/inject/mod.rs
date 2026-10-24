@@ -1,15 +1,17 @@
 //! Insert transcribed text into the focused field of the active application.
 //!
-//! Two strategies (mirroring the settings):
+//! Three strategies (mirroring the settings):
 //!   * **paste** — put the text on the clipboard and synthesize Ctrl/Cmd+V
 //!     (robust, layout-agnostic; optional clipboard restore afterwards).
 //!   * **direct** — type the characters directly via the OS (never touches the
 //!     clipboard, but can struggle with some layouts / non-Latin input).
+//!   * **clipboard** — only leave the text on the clipboard for the user to paste (no keystrokes).
 //!
 //! Backed by `enigo` (Windows SendInput / X11 XTEST) and `arboard` for the clipboard; native
 //! Wayland typing and paste go through the RemoteDesktop portal or the virtual keyboard.
 //!
-//! Submodules: the native-Wayland typing backends (`wayland` — portal keycodes, `virtual_keyboard`
+//! Submodules: the per-transcript insert behind the `inject_text` command (`text`), the
+//! native-Wayland typing backends (`wayland` — portal keycodes, `virtual_keyboard`
 //! — zwp_virtual_keyboard_v1), the Windows clipboard owner for remote-desktop pastes
 //! (`windows_clipboard`) and remote-desktop client detection (`rdp_client`).
 
@@ -1839,9 +1841,9 @@ mod tests {
         assert_eq!(typing_gate(true, || true, || false), SinkGate::OwnWindow);
     }
 
-    /// `persist_transcript` (the clipboard-only insert and the mid-function divert write through
-    /// it) re-asks about a cancel after waiting out a stuck read (up to 1s on Windows): a cancel
-    /// during the wait must not install the discarded transcript.
+    /// `persist_transcript_unless` (the clipboard-only insert and the mid-function divert write
+    /// through it) re-asks about a cancel after waiting out a stuck read (up to 1s on Windows): a
+    /// cancel during the wait must not install the discarded transcript.
     #[test]
     fn a_cancel_during_the_persist_wait_writes_nothing() {
         use super::serve_transcript;
