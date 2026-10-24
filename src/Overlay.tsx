@@ -521,7 +521,7 @@ export default function Overlay() {
   const onPointerEnter = () => {
     hoverEpoch.current++;
     setHovering(true);
-    setPeekRestoring(peeked); // remember whether the chip was tucked when this hover began
+    setPeekRestoring(peeked);
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     // Hover-intent dwell: wait the configured delay before revealing — so a fly-over
@@ -864,7 +864,6 @@ export default function Overlay() {
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       pulseTimer.current = setTimeout(() => setPulse(null), warnHold || 1100);
     } else {
-      // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       pulseHoldUntil.current = 0;
       setPulse(null);
@@ -898,8 +897,7 @@ export default function Overlay() {
     }
   }, [state.sessionNote]);
 
-  // Expand instantly when speech (or a state change) wants it; collapse only after a
-  // linger, so the final words linger on screen rather than snapping shut on a pause.
+  // Expand instantly when speech (or a state change) wants it; collapse only after a linger.
   useEffect(() => {
     if (wantExpanded) {
       setExpanded(true);
