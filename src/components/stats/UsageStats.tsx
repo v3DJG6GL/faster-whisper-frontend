@@ -1,14 +1,14 @@
 // The usage surfaces: the Home "Usage" strip (four sparkline tiles + small multiples
 // by kind, off the fixed 30-day document) and the Statistics page (one filter bar —
-// range · kind · with-stages — five tiles, the stacked columns by kind bucketed to the
-// window, the Stages / Dictation / Rhythm / When-you-dictate panels, off the page's own
+// range · kind · with-stages — the measure tiles, the stacked columns by kind bucketed to
+// the window, the Stages / Dictation / Calendar / Busy panels, off the page's own
 // document). Both read from the store (fed by lib/usage.ts) and render nothing when
 // unsupported.
 //
 // Numbers come from lib/usageDerive.ts (pure, tested); this file only lays them out.
 // The backend series is SPARSE (only days that had usage) — densified client-side into
-// one point per calendar day so the charts plot against real dates and the 7/30/90
-// ranges genuinely differ. Zero-dependency SVG; Intl for de-CH dates.
+// one point per calendar day so the charts plot against real dates and the ranges
+// genuinely differ. Zero-dependency SVG.
 //
 // Chart conventions (validated palette, see app.css): one colour per job kind, text
 // imports hatched neutral; a 2 px surface gap between stacked segments; thin marks; all
@@ -74,8 +74,6 @@ import { StatTile } from "@/components/stats/StatTiles";
 import { fmtDateRange, fmtSpanDate, kindFill } from "@/components/stats/chartKit";
 import { Eyebrow, HatchDef, Num, Panel, Pill, Swatch } from "@/components/stats/primitives";
 import { tileSpecs } from "@/components/stats/tileSpecs";
-
-/* ── stages ──────────────────────────────────────────────────────────────── */
 
 /** Window runs per kind: the densified series summed. */
 function windowKinds(dense: readonly UsageKinds[]): UsageKinds {
@@ -186,8 +184,6 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
   );
 }
 
-/* ── dictation facets ────────────────────────────────────────────────────── */
-
 function HBars({ title, rows, empty }: { title: string; rows: FacetRow[]; empty?: ReactNode }) {
   return (
     <div>
@@ -281,8 +277,6 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
   );
 }
 
-/* ── view resolution ─────────────────────────────────────────────────────── */
-
 /** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
  *  defaulting to the dictation/home-target backend), the fixed 30-day series, and a
  *  setter. Shared by the Home strip + the Statistics page so they stay in sync. The chip
@@ -308,8 +302,6 @@ function useUsageView() {
   );
   return { backends, statsBackends, viewBackend, setView, stats, dense };
 }
-
-/* ── Home strip ──────────────────────────────────────────────────────────── */
 
 /** One kind's 30-day bars on the shared scale — a link into Statistics with that kind. */
 function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: UsageSeriesPoint[]; max: number; hatchId: string }) {
@@ -343,9 +335,7 @@ function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: U
 
 const HOME_TILES = new Set(["words", "audio_s", "sessions", "errors"]);
 
-/** Home: four sparkline stat tiles + the "By kind · 30 days" small multiples, with the
- *  backend selector + "View statistics" link on the header row. Hidden entirely (no empty
- *  box) until some backend has usage stats. */
+/** Home's usage strip; hidden entirely (no empty box) until some backend has usage stats. */
 export function HomeUsageStrip() {
   const { backends, statsBackends, viewBackend, setView, stats, dense } = useUsageView();
   const hatchId = useId();
@@ -390,8 +380,6 @@ export function HomeUsageStrip() {
   );
 }
 
-/* ── Statistics page ─────────────────────────────────────────────────────── */
-
 /** The range as the panels name it: `30 days` · `1 year` · `since 14 Feb 2025` · a span. */
 function rangeWord(q: UsagePageQuery, win: { from: number; to: number; days: number }): string {
   if (q.range === "all") return `since ${fmtSpanDate(win.from)}`;
@@ -400,7 +388,7 @@ function rangeWord(q: UsagePageQuery, win: { from: number; to: number; days: num
   return `${q.range} days`;
 }
 
-/** Statistics page body: backend chips + the filter bar, the five tiles, the stacked
+/** Statistics page body: backend chips + the filter bar, the measure tiles, the stacked
  *  columns and the four panels. Friendly empty state when no backend has usage. */
 export function StatisticsView({
   scope,
