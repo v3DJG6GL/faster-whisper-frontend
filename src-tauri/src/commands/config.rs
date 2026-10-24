@@ -85,10 +85,11 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
     // The live switches apply BEFORE the write (see `apply_live_switches`): on a refused save
     // (BACKUP_FAILED session, full/read-only disk) push-to-talk, Quick-Add, clipboard writes and
-    // the log level still follow the paste path instead of lagging until restart. The Quick-Add
-    // window's own paste reads the rules from disk, so after a held or refused save its grab
-    // (here) and its paste can disagree until the next good save — the lesser split (else the
-    // main window's paste and push-to-talk would disagree).
+    // the log level still follow Settings, as the paste path (rules sent with each insert) does,
+    // instead of lagging until restart. The Quick-Add window's own paste reads the rules from
+    // disk, so after a held or refused save its grab (here) and its paste can disagree until the
+    // next good save — the lesser split (else the main window's paste and push-to-talk would
+    // disagree).
     set_live_switches(
         &config.app_rules,
         config.settings.general.exclude_from_clipboard_history,
