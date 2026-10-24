@@ -3,13 +3,11 @@
 //!
 //! Why: a main-window webview once peaked at 5.4 GB with nothing in the log to say when, or
 //! on which screen. WebKitGTK runs every webview in its own `WebKitWebProcess` child, where
-//! our own allocator stats cannot see it — /proc can. A spike also logs a `warn` (so it lands
-//! in the log at the default level): once when a process crosses `WARN_ANON_MB` (re-armed
-//! once it falls back under `REARM_ANON_MB`), and whenever a peak jumps by `WARN_PEAK_JUMP_MB`
-//! between two samples (or, the first time a process is seen, when its peak is already over
-//! `WARN_ANON_MB`); a peak warning is skipped when the same sample already logged the
-//! crossing warning, so one spike is one warn line. Linux only; `note_route` exists everywhere because the webview calls
-//! it on every platform.
+//! our own allocator stats cannot see it — /proc can. A spike also logs one `warn` line (so it
+//! lands in the log at the default level): when a process crosses `WARN_ANON_MB` (re-armed under
+//! `REARM_ANON_MB`), or its peak jumps by `WARN_PEAK_JUMP_MB` between samples (or is already over
+//! `WARN_ANON_MB` when first seen). Linux only; `note_route` exists everywhere because the
+//! webview calls it on every platform.
 
 use std::sync::Mutex;
 
