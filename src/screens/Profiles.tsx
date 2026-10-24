@@ -854,8 +854,8 @@ export default function Profiles() {
     void evdevStatus().then(setEvdev).catch(() => {});
   }, []);
   const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Profile | null>(null);
+  const editingId = draft?.id ?? null;
   // Checklist path: the suggested-starters card can be waved off for this visit.
   const [startersDismissed, setStartersDismissed] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -869,7 +869,6 @@ export default function Profiles() {
     const p = profiles.find((x) => x.id === id);
     if (p) {
       setDraft(p);
-      setEditingId(p.id);
       // Consume the param ONLY once the target profile exists. The store boots with seeded default
       // profiles and hydrates the real config async; consuming it on a not-yet-found id would strip
       // the deep link before hydration, so the editor would never open. An invalid id just lingers
@@ -903,15 +902,8 @@ export default function Profiles() {
   // these chords, not the fixed suggestion: with both starters cleared it has nothing to warn of.
   const keptStarters = startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive);
 
-  const startAdd = () => {
-    const p = blankProfile(backends[0]?.id ?? null);
-    setDraft(p);
-    setEditingId(p.id);
-  };
-  const startEdit = (p: Profile) => {
-    setDraft(p);
-    setEditingId(p.id);
-  };
+  const startAdd = () => setDraft(blankProfile(backends[0]?.id ?? null));
+  const startEdit = (p: Profile) => setDraft(p);
   const onSave = (p: Profile, takeovers: string[]) => {
     // "Use it here": the bindings this profile took its shortcut from lose theirs.
     for (const id of takeovers) {
@@ -920,12 +912,8 @@ export default function Profiles() {
     }
     upsertProfile(p);
     setDraft(null);
-    setEditingId(null);
   };
-  const onCancel = () => {
-    setDraft(null);
-    setEditingId(null);
-  };
+  const onCancel = () => setDraft(null);
 
   return (
     <div className="page page-form">
