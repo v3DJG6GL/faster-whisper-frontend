@@ -7,7 +7,7 @@
 // take their labels from this table, so the two can never disagree on names.
 // Declaring a setting here IS its sync registration: new settings appear in
 // the Sync list automatically (on by default, `machineSpecific: true` flips
-// them off).
+// them off, `localOnly: true` keeps them out of the list entirely).
 //
 // Forgetting an entry is a compile error, not a convention: the coverage
 // maps below are `satisfies`-checked against the store slices' full key
