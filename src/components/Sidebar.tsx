@@ -24,8 +24,8 @@ function TranscribeRunBadge() {
   );
 }
 
-/** Live percentage of in-flight retro-translate run(s) — same pill idiom as
- *  the transcribe badge, in the translate accent, so a run started from the
+/** Live percentage of in-flight retro-translate run(s) — same idiom as the
+ *  transcribe badge, in the translate accent, so a run started from the
  *  viewer stays visible from every tab. Max pct across in-flight runs; a lone
  *  finished run shows its 100% receipt. */
 function TranslateRunBadge() {
@@ -141,7 +141,7 @@ export function Sidebar() {
   const profileCount = useApp((s) => s.profiles.length);
   const showLogsInSidebar = useApp((s) => s.settings.logging?.showInSidebar ?? true);
   const vis = dictationVisual(status, speaking, warming, serverWork);
-  // Build-time app version (from tauri.conf.json), shown next to the brand label.
+  // Build-time app version (from tauri.conf.json), shown in the footer slot.
   const [version, setVersion] = useState("");
   useEffect(() => {
     void appVersion()
@@ -149,12 +149,9 @@ export function Sidebar() {
       .catch(() => {}); // best-effort: a missing version just hides the readout
   }, []);
 
-  // An open editor holds unsaved work in local state, so leaving the screen
-  // discards it. Ask first: the guard runs the navigation itself if the user
-  // says to go. With no editor open (or a clean one) this is a straight pass.
-  // A click on the screen already shown leaves nothing (an editor in local state stays
-  // open — Discard would navigate to the same path and change nothing), so it skips the
-  // guard: the NavLink to the current path is a no-op.
+  // An open editor's unsaved work lives in local state and leaving the screen discards
+  // it, so ask first (the guard runs the navigation itself if the user says go). A click
+  // on the screen already shown skips the guard: Discard would change nothing there.
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const guardedNav = (path: string) => (e: React.MouseEvent) => {
