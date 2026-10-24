@@ -4,10 +4,6 @@ import { conflicts, withQuickAddPeer } from "./hotkeyConflicts";
 import { IS_WINDOWS } from "./platform";
 import type { Profile } from "./types";
 
-/**
- * Load persisted config on startup, then auto-save (debounced) whenever
- * settings / backends / profiles change. No-op outside Tauri.
- */
 let started = false;
 
 /** Resolves once the initial load hydrated the store AND the auto-save
@@ -119,13 +115,10 @@ export async function initConfig(): Promise<void> {
   if (started) return;
   started = true;
 
-  // Arm auto-save ONLY after the initial load resolves. The store boots EMPTY
-  // (no backends, no profiles — the first-run gate keys on that); persisting
-  // before (or instead of) a successful load — e.g. a change landing during the
-  // load window — would overwrite the real on-disk config with that empty
-  // state. (In dev, editing store.ts
-  // hot-reloads it back to defaults; this guard plus the post-load subscribe keep the
-  // saved config safe, but you still must restart the app to see your config again.)
+  // Arm auto-save ONLY after the initial load resolves. The store boots EMPTY (no backends, no
+  // profiles — the first-run gate keys on that), so a save during the load window would overwrite
+  // the on-disk config with that empty state. (In dev, an HMR edit of store.ts resets it to
+  // defaults: the config on disk stays safe, but restart the app to see it again.)
   let hydrated = false;
   try {
     const loaded = await loadConfig();
@@ -239,10 +232,11 @@ export async function initConfig(): Promise<void> {
     // it's silent and unrelated settings/backends edits are dropped, with only the Profiles
     // screen hinting why. Keep pendingBindingChange so the fix triggers a reregister.
     // Include the quick-add chord as a synthetic peer (mirrors the capture-time check in
-    // Profiles.tsx / the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row)). It shares the same chord namespace as profile
-    // chords in every hotkey backend (evdev / Windows hook / plugin each keep the first in config
-    // order and drop the later duplicate), but the enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
-    // unless the save-gate sees it too.
+    // Profiles.tsx and the Dictionary screen's QuickAddShortcutField). It shares the chord
+    // namespace with profile chords in every hotkey backend (evdev / Windows hook / plugin each
+    // keep the first in config order and drop the later duplicate), but the enable toggle bypasses
+    // capture — so an enabled profile could silently collide with quick-add unless the save gate
+    // sees it too.
     const qa = s.settings.general.quickAddHotkey;
     const conflictPeers = withQuickAddPeer(s.profiles, qa);
     // No low-level backend (Linux with evdev off OR enabled-but-not-permitted) ⇒ the plugin
@@ -286,25 +280,21 @@ export async function initConfig(): Promise<void> {
             }
           }
           // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
-          // notice (settings reset from a corrupt file / failed to load) is not a save failure:
-          // it stays until the user dismisses it — and comes back once a save error or conflict
-          // freeze that replaced it clears — so an edit can't silently erase where the backup
-          // went or the "saving may overwrite" warning. Re-registration has its OWN
-          // catch: a reregister failure is NOT data loss (the config was persisted fine), so it
-          // must never raise the "couldn't save your settings" banner below.
+          // notice is not a save failure: it stays until dismissed (and returns once a save error
+          // or freeze that replaced it clears), so an edit can't erase where the backup went or the
+          // "saving may overwrite" warning. Re-registration has its OWN catch: its failure is not
+          // data loss and must never raise the "couldn't save your settings" banner.
           if (newest) {
             if (loadNotice) {
               if (useApp.getState().saveError !== loadNotice) useApp.getState().setSaveError(loadNotice, "load");
             } else useApp.getState().setSaveError(null);
           }
-          // Use the capture-aware variant: a debounced save left pending by an edit just before the
-          // user enters chord-capture can resolve DURING the capture window, and a plain reregister
-          // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire
-          // dictation). When no capture is active it re-arms normally; the capture's own teardown
-          // re-arms when it ends. Mirrors cancelLive's use of the same variant.
+          // Capture-aware: a save left pending by an edit just before chord-capture can resolve
+          // DURING capture, and a plain reregister would re-arm the hotkeys mid-capture (the next
+          // keypress would both rebind AND fire dictation); the capture's teardown re-arms instead.
           // The newest write also carries a chord change whose own (older) save failed after this
-          // one was issued: that failure handed the intent back too late for this save to take it.
-          // The flag stays set — a chord changed after this save was issued needs its own save's
+          // one was issued — that failure handed the intent back too late for this save to take it.
+          // The flag stays set: a chord changed after this save was issued needs its own save's
           // re-register; a second one is harmless.
           if (reReg || (newest && pendingBindingChange)) void reregisterShortcutsUnlessCapturing().catch((e) => console.error("reregister failed", e));
         },
@@ -316,10 +306,9 @@ export async function initConfig(): Promise<void> {
             saveHeld = true;
             useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
           }
-          // The write didn't land, so the re-register never ran — restore the intent (like the
-          // conflict early-return does) so the NEXT successful save re-registers the bindings.
-          // Otherwise a later non-binding save would persist the new chord to disk but leave it
-          // not-live (reReg=false) until an app restart.
+          // Restore the intent (as the conflict early-return keeps it) so the NEXT successful save
+          // re-registers — else a later non-binding save would persist the chord but leave it not
+          // live until an app restart.
           if (reReg) pendingBindingChange = true;
         },
       );
