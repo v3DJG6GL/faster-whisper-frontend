@@ -1,7 +1,7 @@
 //! Settings sync with the server, its local bookkeeping, and the settings file
 //! export/import.
 
-use super::{config_dir, resolve_key_async, store_io};
+use super::{blocking, config_dir, resolve_key_async, store_io};
 use crate::config;
 use crate::transport;
 use std::path::PathBuf;
@@ -138,7 +138,7 @@ fn collect_keys(
 /// user-picked sink (USB stick, network share).
 #[tauri::command]
 pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    blocking(move || -> Result<(), String> {
         let path = PathBuf::from(path);
         let text = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
         // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
@@ -149,7 +149,6 @@ pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> 
         config::write_private_atomic(&path, &text).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// A parsed + validated settings export, ready for the import-preview UI.
@@ -177,9 +176,7 @@ pub struct ImportResult {
 /// hydrating a broken store later.
 #[tauri::command]
 pub async fn import_settings_file(path: String) -> Result<ImportResult, String> {
-    tauri::async_runtime::spawn_blocking(move || import_settings_file_inner(&path))
-        .await
-        .map_err(|e| e.to_string())?
+    blocking(move || import_settings_file_inner(&path)).await
 }
 
 fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
