@@ -712,12 +712,9 @@ mod win_hover {
     }
 }
 
-/// KDE-specific overlay placement via a KWin window rule. On native Wayland a
-/// client can't position its own window or force "keep above"; KWin ignores both.
-/// The portable fix on KDE is a *window rule*, which KWin applies compositor-side.
-/// We write one (merged into the user's `~/.config/kwinrulesrc` without clobbering
-/// their existing rules) and ask KWin to reload. The rule only ever matches our
-/// chip, identified by its unique title.
+/// KDE-Wayland overlay placement via a KWin window rule (see the module docs): merged into
+/// the user's `~/.config/kwinrulesrc` without clobbering their existing rules, then KWin is
+/// asked to reload. The rule only ever matches our chip, identified by its unique title.
 #[cfg(target_os = "linux")]
 mod kwin {
     use std::process::{Command, Stdio};
