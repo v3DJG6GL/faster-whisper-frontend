@@ -4,14 +4,14 @@
 //
 // Injection timing (per-Profile "Type as I speak"):
 //   • off   — insert the whole transcript once, when dictation stops.
-//   • on    — insert each phrase AS YOU FINISH IT (streaming backends only, and
-//             only when the Profile's activation is hands-free — never hold; see below).
+//   • on    — insert each phrase AS YOU FINISH IT (streaming backends only, and never
+//             TYPED under hold — see below; clipboard-only types nothing and may run live).
 //
-// Live insert is NOT possible in HOLD/push-to-talk mode: the activation chord is
+// Live typing is NOT possible in HOLD/push-to-talk mode: the activation chord is
 // physically held for the entire dictation, so the compositor folds that held
 // modifier into every injected keystroke (Alt → the app's menu-mnemonic mode eats
 // them, Ctrl → letters become shortcuts, Super → KWin global shortcuts). No chord
-// avoids this, so hold mode always falls back to a single insert on release.
+// avoids this, so a typing method under hold always falls back to a single insert on release.
 //
 // Live insert is APPEND-ONLY: on each `final` we type only the new suffix of the
 // whole document (committed + tail) beyond what we've already typed — we never
@@ -220,16 +220,16 @@ let injectedText = "";
 // typed phrase — and the boundary separator that goes between them. Filled by the boundary's
 // chained link (the only place that knows the old document AND the drained typed baseline),
 // consumed by the typed branch of the final handler on a delivered insert. Without it, a phrase
-// skipped in our own window — or refused by Rust with nothing written — was cleared together
+// skipped in our own window — or refused by Rust with nothing written — would be cleared together
 // with `injectedText` at the break and never typed anywhere. Session-scoped: startLiveInner and
 // cancelLive clear it, and a session that ends with a carry still pending logs its length.
 let carryText = "";
 let carrySep = "";
 /** A per-utterance record whose OWN insert delivered nothing (an own-window or sink skip) while
  *  its text stayed owed: the un-advanced typed baseline, or the hard-break carry, re-sends it
- *  with a later insert — which booked only ITS record, so History said "not inserted" for text
- *  that did go out. `from` is where the record's text starts in the typed baseline's
- *  coordinates (the final handler's `target`); null once a hard break moved it into the carry. */
+ *  with a later insert — which by itself books only ITS record, so History would say "not
+ *  inserted" for text that did go out. `from` is where the record's text starts in the typed
+ *  baseline's coordinates (the final handler's `target`); null once a hard break moved it into the carry. */
 export interface OwedUtterance {
   id: string;
   from: number | null;
@@ -335,9 +335,9 @@ let clipByLang: Record<string, string> | undefined;
  *  The server holds back trailing words that could still change ("neue" before "Zeile", a
  *  trailing "Komma" or "-") and releases them only once nothing follows — a hard break, its 5 s
  *  idle release, a stop — all later than the 1.2 s quiet timer, which has already moved the
- *  baseline and closed the window. The release then copied the held words ALONE over the phrase
- *  on the clipboard ("neue." instead of "Das ist das neue.") and booked them as a window of their
- *  own. A release with no new speech since the pause re-copies the closed window with its words
+ *  baseline and closed the window. Left alone, the release would copy the held words ALONE over the
+ *  phrase on the clipboard ("neue." instead of "Das ist das neue.") and book them as a window of
+ *  their own. A release with no new speech since the pause re-copies the closed window with its words
  *  added instead, and its translation replaces that window's booking. `baseline` is set
  *  synchronously by the timer; `booked` / `byLang` by its queued close link, from what it closed
  *  (and re-recorded by a release that reopens it). Null once new speech commits (an ordinal
@@ -348,7 +348,7 @@ let clipByLang: Record<string, string> | undefined;
  *  `landed` (set by the close link, from `clipLanded`): a clipboard copy of the window landed.
  *  Only such a window reopens. A TYPED window (paste/direct, with focus then moving to a
  *  clipboard-routed app) is in a field already and its translation booked by the typed path:
- *  reopening it copied the typed phrase again and booked its translation and tracks twice. */
+ *  reopening it would copy the typed phrase again and book its translation and tracks twice. */
 type ClosedClipWindow = {
   baseline: string;
   booked: ClipBooking | null;
@@ -674,10 +674,9 @@ export function cancelDictationTranslate(): void {
   if (target) void cancelTextTranslation(target).catch(() => {});
 }
 /** Give up on the in-flight translate immediately: the awaiting inject task
- *  resolves with the ORIGINAL text and proceeds normally — the user's words
- *  still land, which is exactly what the existing toast already promises — and
- *  the server is told to stop. Unlike cancelDictationTranslate this doesn't
- *  wait out the remaining budget. */
+ *  resolves with the ORIGINAL text and proceeds normally (the user's words still
+ *  land), and the server is told to stop. Unlike cancelDictationTranslate this
+ *  doesn't wait out the remaining budget. */
 export function abortDictationTranslate(): void {
   activeTranslateAbort?.abort();
 }
@@ -747,11 +746,11 @@ async function maybeTranslate(
   const oneShot = opts?.oneShot === true;
   // This request's progress id, so the `finally` below only drops ITS OWN cancel handle:
   // a translate abandoned by a teardown outlives its session (up to the cold budget), and
-  // an unconditional clear here nulled the NEXT session's handle — leaving that translate
+  // an unconditional clear would null the NEXT session's handle — leaving that translate
   // un-cancellable on the server and wiping its progress card.
   let myProgressId: string | null = null;
   // Read before the first await: a translate a cancel abandoned can resume after the NEXT
-  // session opened, and reading `sessionMeta` late stamped that session's job on this receipt.
+  // session opened, and reading `sessionMeta` late would stamp that session's job on this receipt.
   const clientJob = sessionMeta?.clientJob ?? null;
   try {
     // Pair this phrase with ITS OWN capture row before the request goes out. The one-shot
@@ -819,8 +818,6 @@ async function maybeTranslate(
             });
           }
         },
-        // Every reading the stall detector takes. foldTranslatePhase no-ops
-        // unless a phase card is up, so a live phrase's polls stay silent.
         onProgress: foldTranslatePhase,
       },
       {
@@ -835,7 +832,7 @@ async function maybeTranslate(
     );
     // Recorded BEFORE the supersede check: a translation that succeeded proves
     // the model is resident whether or not this phrase still has a session to
-    // land in, and throwing that away made the NEXT phrase pay the cold
+    // land in, and throwing that away would make the NEXT phrase pay the cold
     // allowance all over again.
     if (r.ok) tr.warm = true;
     if (insertCfg !== cfg) return { text, translated: false }; // superseded — caller bails on its own guard too
@@ -1125,7 +1122,7 @@ const gapOwedApps = new Set<string | null>();
 // they key on this as well as on gapOwedApps: the Set is the right key for the translated gap
 // (A, B, A still owes A its gap) but holds every app typed into since its last Return, so with
 // Enter off and a plain separator nothing ever pays A, and clicking back into A to write a draft
-// got the separator (or a newline separator's Return that submits it) at the next hard break.
+// would get the separator (or a newline separator's Return that submits it) at the next hard break.
 // Session-scoped via clearPhraseEnd.
 let lastTypedApp: string | null | undefined;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
@@ -1379,8 +1376,8 @@ export function holdCoerced(activation: ActivationKind | undefined, method: Inse
  *  Clipboard-only is a live-ENABLER, not a blocker: it types nothing, so it is safe under
  *  a held chord and may run live in any activation — it just refreshes the clipboard per
  *  phrase. `!holdCoerced` would forbid exactly that, and would also forbid the ordinary
- *  hands-free + clipboard-only session. (Caught by streaming.insertion.test.ts, which is why
- *  the two predicates are stated separately rather than one defined from the other.)
+ *  hands-free + clipboard-only session — which is why the two predicates are stated separately
+ *  rather than one defined from the other (streaming.insertion.test.ts pins both).
  *
  *  `activation` is the RUNTIME value, not the Profile's: the Home button and the chip's
  *  quick-launch both start a hold Profile hands-free, so a Profile-only test would be
@@ -1446,9 +1443,9 @@ export function resolveInjectionTarget(
   // but the live id comes from Rust's `bounded_server_text`, whose character class is not the same
   // one — so an app naming itself with an invisible character (a variation selector, U+2800, the
   // combining grapheme joiner) publishes an id the normalized key can never equal, and a rule that
-  // reads "Blocked — never typed here" silently stops blocking. Normalizing the live id here is
-  // what keeps the fix from inverting: doing it on the rule alone would break the Windows case,
-  // where an exe basename may legitimately carry such a character.
+  // reads "Blocked — never typed here" silently stops blocking. The live id has to be normalized
+  // too: doing it on the rule alone would break the Windows case, where an exe basename may
+  // legitimately carry such a character.
   //
   // Both injecting windows route through this function, so this covers the main window and QuickAdd
   // in one place. `expectAppId` still crosses to Rust raw, so the sink re-check is unchanged.
@@ -1589,9 +1586,8 @@ let targetPollTimer: ReturnType<typeof setInterval> | null = null;
 const TARGET_POLL_MS = 700;
 function startTargetPoll(): void {
   stopTargetPoll();
-  // resolveTarget awaits getFocusedApp(), which (unlike the seed reads) does NOT swallow IPC
-  // errors. In this fire-and-forget poll there's no caller to surface them, so attach .catch here
-  // to avoid an unhandled rejection on each tick — matching every other void-ed IPC in this file.
+  // resolveTarget's getFocusedApp() does NOT swallow IPC errors, and this fire-and-forget poll has
+  // no caller to surface them: without the .catch every failing tick is an unhandled rejection.
   const poll = () => void resolveTarget(insertCfg).catch((e) => console.error("target poll failed:", e));
   poll();
   targetPollTimer = setInterval(poll, TARGET_POLL_MS);
@@ -2151,7 +2147,7 @@ async function ensureListeners(): Promise<void> {
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
-  // `utterance` is absent/null on a server RELEASE final: the server now holds back the end of
+  // `utterance` is absent/null on a server RELEASE final: the server holds back the end of
   // the document while it could still change (a half-spoken "neuer" before "Absatz", a trailing
   // "Komma"), and releases it with a final of its own — before a hard break, at close, on a
   // flush — that belongs to no utterance. Rust drops that frame's `flush: true` marker; the
@@ -2221,11 +2217,11 @@ async function ensureListeners(): Promise<void> {
       // leading whitespace) — so the clipboard branch can ask "was everything BEFORE this window
       // already delivered?" against the typed baseline, which lives in those coordinates.
       const lead = committedDoc.length - target.length;
-      // Did the document GROW vs the last final? False for a re-sent `final` (the drain's flush
-      // final at hands-free end). Kept separate from the typed baseline (injectedText), so it holds
-      // wherever the phrase actually typed.
       // Where this final's new text starts, in `target` coordinates — an owed record's place
-      // (oweUtterance) when its own insert delivers nothing.
+      // (oweUtterance) when its own insert delivers nothing. `grew` (did the document grow vs the
+      // last final?) is false for a re-sent `final` (the drain's flush final at hands-free end); it
+      // is kept separate from the typed baseline (injectedText), so it holds wherever the phrase
+      // actually typed.
       const uttFrom = commonPrefixLen(seenDoc, target);
       const grew = uttFrom < target.length;
       seenDoc = target;
@@ -2370,8 +2366,8 @@ async function ensureListeners(): Promise<void> {
               // moves to for pasting it — submitting that draft before the paste.
               lastPhraseDiverted = true;
               // Delivered (to the clipboard), so the phrase advances the typed baseline like a typed one;
-              // otherwise, once focus moved to a typing window, the next typed phrase (and the hard-break
-              // carry) re-typed every clipboard-routed phrase before it.
+              // otherwise, once focus moves to a typing window, the next typed phrase (and the hard-break
+              // carry) would re-type every clipboard-routed phrase before it.
               //
               // Only when everything BEFORE this window was already delivered, though: an earlier phrase the
               // own-window guard skipped (baseline still short of `clipFrom`) is on no clipboard and in no
@@ -2404,9 +2400,9 @@ async function ensureListeners(): Promise<void> {
           const carried = carryText;
           if (toType.length > 0 || carried) {
             // Our own window holds focus: Rust's guard writes nothing there, so the phrase is skipped BEFORE
-            // its translate. Translating first re-translated everything past the un-moved baseline on every
-            // final (growing GPU work, the serial queue held up to the live ceiling, timeouts raising the
-            // "translation failed" doorway, and a divert nothing booked if focus left mid-translate). The
+            // its translate. Translating first would re-translate everything past the un-moved baseline on
+            // every final (growing GPU work, the serial queue held up to the live ceiling, timeouts raising
+            // the "translation failed" doorway, and a divert nothing booked if focus left mid-translate). The
             // baseline and the carry stay put, so the next delivered insert re-sends it all.
             //
             // Except a final that only appends the server's output_suffix (" " or "\n") with no carry
@@ -2441,12 +2437,12 @@ async function ensureListeners(): Promise<void> {
             const typeOut = sessionTranslation
               ? (block ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block : "")
               : phrase.text;
-            // So it is no insert at all: only the baseline moves past it. Sent anyway, Rust answers an
-            // empty text `landed` before checking focus or the chord, and the task would book a typed paste
-            // that never happened — a snapshot and restore debt (restoring the old clipboard over a block
-            // diverted just before), a green "typed" pulse, and `lastPhraseDiverted` cleared so the
-            // stood-down Enter fires. It owes no gap and books no record (its delta is whitespace); no carry
-            // is pending, since a carry would make the block non-empty.
+            // A translated whitespace-only phrase is no insert at all: only the baseline moves past it. Sent
+            // anyway, Rust answers an empty text `landed` before checking focus or the chord, and the task
+            // would book a typed paste that never happened — a snapshot and restore debt (restoring the old
+            // clipboard over a block diverted just before), a green "typed" pulse, and `lastPhraseDiverted`
+            // cleared so the stood-down Enter fires. It owes no gap and books no record (its delta is
+            // whitespace); no carry is pending, since a carry would make the block non-empty.
             if (!opensBlock) {
               injectedText = target;
               return;
@@ -2464,7 +2460,7 @@ async function ensureListeners(): Promise<void> {
             }
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
-            // stays un-advanced), and booking it here appended its translation to history twice.
+            // stays un-advanced), so booking it here would append its translation to history twice.
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
             // not once at session start. Skipped only while our last paste is still owed a restore
             // (clipDirty): the clipboard holds that transcript and the snapshot before it is the
@@ -2497,7 +2493,7 @@ async function ensureListeners(): Promise<void> {
             // at the chord, an untypeable layout), a failed paste and the error-abort recoveries — writes
             // `clipboardText` in place of `text`, so pasted text never opens with the field's gap. It has to
             // be Rust's write: a recovery's outcome arrives after the teardown nulled insertCfg, so a JS
-            // re-copy never ran for it, and one that did added a second, gapped clipboard-history entry.
+            // re-copy would never run for it, and one that did would add a second, gapped clipboard-history entry.
             // The clipboard-only method never reaches this branch (holdCoerced routes it above).
             //
             // A whitespace-only phrase (the server's output_suffix alone) has no clipboard form, so it is
@@ -2643,11 +2639,11 @@ async function ensureListeners(): Promise<void> {
       // inserts queued before it, whose text ends before this phrase, cannot book it.
       if (!queued && uttRec?.id && uttRec.delta.trim()) oweDroppedInsert(cfg, uttRec.id, uttFrom);
       // Text landed and the document GREW (`grew` is false for a re-sent final, e.g. the drain's
-      // flush final at hands-free end; re-arming for it fired a second Enter). (Re)start the quiet
+      // flush final at hands-free end; re-arming for it would fire a second Enter). (Re)start the quiet
       // timer so the per-phrase Enter + clipboard restore fire ~PHRASE_END_QUIET_MS after speech
       // stops; stream://partial keeps bumping it. Only while capturing: after stopLive the timer no
-      // longer waits for the server, so a drain final re-arming it pressed Enter while the stopped
-      // utterance was still decoding — the `closed` tail enters the drained text instead.
+      // longer waits for the server, so a drain final re-arming it would press Enter while the stopped
+      // utterance is still decoding — the `closed` tail enters the drained text instead.
       if (grew) {
         // Unconditional: this flag means "text landed since the last Enter", not "Enter is
         // armed" — whether an Enter is actually wanted is resolved per target, later.
@@ -2757,7 +2753,7 @@ async function ensureListeners(): Promise<void> {
     clipClosed = null;
     // clipBooked / clipByLang are closed in the link below, not here: a clipboard phrase
     // enqueued before this break books its window only after an awaited translate, so a
-    // synchronous close let that late booking survive into the next document's window.
+    // synchronous close would let that late booking survive into the next document's window.
     seenDoc = "";
     // A new document: utterance text restarts at 0, and no release final reaches back across
     // a break (the server sends them before it). A clip still on its way finds its utterance by
@@ -2794,8 +2790,8 @@ async function ensureListeners(): Promise<void> {
           // no typed text before it has none anyway (docAtBreak is stripped, like `target`).
           let rest = untypedRemainder(injectedText, docAtBreak).trimEnd();
           // Bounded like bankedDoc, for the same server looping final/boundary while nothing
-          // lands (our own window focused, every paste refused): unbounded, the carry grew by a
-          // whole document per break, and each joinCarry copied all of it. The overflow is
+          // lands (our own window focused, every paste refused): unbounded, the carry would grow by a
+          // whole document per break, and each joinCarry would copy all of it. The overflow is
           // dropped, not the session; its records are not carried either.
           if (rest.trim() && carryText.length + carrySep.length + rest.length > MAX_BANKED_DOC) {
             logLine("warn", "dictation", `hard break: dropped ${rest.length} untyped chars, the carry is at its ceiling (${carryText.length} pending)`);
@@ -3120,14 +3116,10 @@ async function ensureListeners(): Promise<void> {
         }
         setDictation({ status: sessionTranslation ? "translating" : "injecting" });
         enqueueInject(async () => {
-          // T2T: translate the whole transcript once, then inject the result.
-          // Falls back to the original on timeout/failure (maybeTranslate warns).
-          //
-          // `oneShot`: this is the LAST task in the inject chain — the session is
-          // over, nothing is queued behind it — so it can afford to wait out a
-          // cold model load (tens of seconds for a GGUF) instead of timing out
-          // and inserting the original. That is why the long wait is scoped
-          // HERE and not given to live phrases, which block the next phrase.
+          // The translate below falls back to the original on timeout/failure (maybeTranslate warns).
+          // `oneShot`: this is the LAST task in the inject chain — nothing is queued behind it — so
+          // it can wait out a cold model load (tens of seconds for a GGUF) instead of timing out and
+          // inserting the original. Live phrases don't get the long wait: they block the next phrase.
           let outText = text;
           // Push-to-talk asks for its targets HERE, not at session start: the chord is held
           // for the whole dictation, so a prompt then would have eaten the keystrokes. The
@@ -3212,9 +3204,8 @@ async function ensureListeners(): Promise<void> {
             // and resolve the chip to a benign-looking "nothing landed" idle. Surface it, and put
             // the transcript on the clipboard so it's recoverable.
             console.error("end-of-session insert failed:", e);
-            // A cancel (insertCfg→null) or a fresh session (insertCfg→a new object) that landed during
-            // the awaited injectText must not recover this discarded session's transcript to the
-            // clipboard nor flash its error onto the idled/next session (mirrors the success guard below).
+            // Same guard after the awaited injectText: a cancel / fresh session must not get this
+            // discarded session's transcript on the clipboard nor its error flash.
             if (insertCfg !== cfg) return;
             // Did the transcript actually end up on the clipboard? Ask on EVERY method, not just
             // direct: a clipboard-method `inject_text` can report a real write failure too. Asking
@@ -3235,9 +3226,8 @@ async function ensureListeners(): Promise<void> {
             );
             return;
           }
-          // A cancel (insertCfg→null) or a fresh session (insertCfg→a new object) that landed during
-          // the awaited injectText must not stamp this finished session's outcome onto the idled/next
-          // session's globals — mirrors the live per-phrase tasks' post-inject guard.
+          // Same guard: a cancel / fresh session during injectText must not get this finished
+          // session's outcome stamped onto its globals.
           if (insertCfg !== cfg) return;
           // Single end-of-session insert: this IS the whole session, so its outcome feeds the done
           // marker directly. Same `landed` term as the per-phrase path, and it matters more here:
@@ -3261,8 +3251,7 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             if (onClipboard) {
               sessionClipboard = true;
-              // On any method the skip may have been a failed clipboard write (the clipboard
-              // method's own, or a paste / direct insert's divert) rather than our window taking
+              // The skip may have been a failed clipboard write rather than our window taking
               // focus — the two cannot be told apart here — so make no focus claim.
               flashError("The transcript is on the clipboard to paste manually.");
             } else {
@@ -3437,8 +3426,7 @@ function teardownAfterFatalInject(): void {
   // Null insertCfg (like cancelLive) so an inject task still QUEUED behind the failed one bails on
   // its `insertCfg !== cfg` guard instead of typing a phrase and pulsing green onto the red chip.
   // Safe: the failing task returns without re-reading insertCfg, and the late `closed` bails on
-  // status "error"/"idle" first. The snapshot is dropped (not restored) on `owed` below, so the
-  // failed phrase's transcript stays on the clipboard as the error promises.
+  // status "error"/"idle" first.
   insertCfg = null;
   const owed = injectChain;
   void owed
@@ -3664,7 +3652,6 @@ async function startLiveInner(
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's (shared with sessionShape).
   const overrideProfile = effectiveOverrideProfile(pov?.overrideProfile, backend.overrideProfile);
-  // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
   const endpoint = pov?.endpoint ?? backend.endpoint;
   // T2T dictation translation: per-field merge (Profile wins over Backend);
   // any targets set = translate every injection this session (all targets,
@@ -3776,7 +3763,7 @@ async function startLiveInner(
   // value keeps the session aimed at the app the user was actually in.
   const targetApp = preresolvedTarget !== undefined ? preresolvedTarget : await getFocusedApp();
   // The own-window short-circuit lives INSIDE resolveInjectionTarget, so this and the
-  // per-phrase path share it by construction (two hand-copied literals once diverged).
+  // per-phrase path share it by construction.
   // The Profile's own overrides, frozen for the session. `resolveTarget` re-reads the
   // app-rule layer per phrase but never this one — a profile does not change mid-session,
   // and the poll can outlive `activeProfile`.
@@ -3883,7 +3870,7 @@ async function startLiveInner(
   });
   // Warm-up gate: hold "warming up…" until real audio actually flows (a cold/Bluetooth
   // mic is silent for ~1–2s first). The level handler clears it on sustained real audio
-  // (a single open-blip is ignored); a safety timeout caps it. micLiveHits resets here.
+  // (a single open-blip is ignored); a safety timeout caps it.
   micLiveHits = 0;
   clearWarmTimer();
   warmTimer = setTimeout(() => {
@@ -4089,12 +4076,13 @@ function applyReclassify(profile: Profile): void {
     // the clipboard booked each copied phrase into the typed baseline (clipboard-routed
     // phrases count as delivered, see the final handler), so the first typed phrase after
     // the flip types only what is new, not every phrase the user already has on the
-    // clipboard. A non-live hold session never touched the baseline, so it all goes out. EXCEPT when a hard break already banked text (a long hold upgraded late):
-    // the live path never re-reads bankedDoc, so flipping `live` would drop it at stop
-    // — keep the session in its started insert mode in that rare case.
+    // clipboard. A non-live hold session never touched the baseline, so it all goes out.
+    // EXCEPT when a hard break already banked text (a long hold upgraded late): the live
+    // path never re-reads bankedDoc, so flipping `live` would drop it at stop — keep the
+    // session in its started insert mode in that rare case.
     if (bankedDoc === "") {
       // Through the SAME helper as startLiveInner, so a term added to the derivation also applies
-      // to an upgraded session (an open-coded copy here had already drifted).
+      // to an upgraded session.
       // The `timing !== "off"` term mirrors startLiveInner's `live` too (timing is the frozen
       // g.insertTiming): an "off" session that went live here would type every phrase, since
       // the closed handler's off-drop only runs when `live` is false.
@@ -4143,8 +4131,8 @@ export async function stopLive(): Promise<void> {
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
-  // Clear `warming` too: stopping DURING warm-up (before the mic went live) otherwise
-  // left the chip stuck on "warming up…" instead of showing "finalizing…".
+  // Clear `warming` too: stopping DURING warm-up (before the mic went live) would otherwise
+  // leave the chip stuck on "warming up…" instead of showing "finalizing…".
   // micLive:false marks the mic-closed edge for the overlay's stop cue — a stop landing
   // DURING a per-phrase translate (translating->transcribing) is a real session end, while
   // translatePhrase's post-stop status restore is not; only the store can tell them apart.
@@ -4238,11 +4226,12 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); book what
   // already landed — live phrases typed or copied before the cancel are in the target app — else
-  // Nothing, so the Dictation panel never shows "unreported". Before the
-  // sessionTyped/sessionClipboard reset below: they decide the delivery and a translating session's
-  // answer. Every cancel is abandoned, wake from sleep included — it keeps the audio, not the text.
-  // The stuck-finalize watchdog claimed the outcome before calling (deferSessionOutcome) and books its
-  // recovered copy itself, and an errored session already booked its own, so this is a no-op there.
+  // Nothing, so the Dictation panel never shows "unreported". Before the sessionTyped/
+  // sessionClipboard reset below: they decide the delivery and a translating session's answer.
+  // Every cancel is abandoned, wake from sleep included — it keeps the audio, not the text.
+  // With text to recover, the stuck-finalize watchdog claimed the outcome before calling
+  // (deferSessionOutcome) and books its copy itself, and an errored session already booked its
+  // own, so this is a no-op there.
   // A chord-family restart's hold session that no utterance reached left the server no job to
   // book: posting would only mint a stub "Nothing" session in Statistics. Claim the slot without
   // posting, so no late terminal path books it either.
