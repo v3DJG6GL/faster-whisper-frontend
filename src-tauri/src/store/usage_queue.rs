@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 /// (MAX_ITEMS = 200 entries at ~400 bytes each with a typical server URL ≈ 80 KB)
 /// plus margin, so a legitimately full queue never trips the cap and loses
 /// unposted outcomes. Anything past this is not a queue but a runaway, and the
-/// reader must not parse it on the main thread.
+/// reader does not parse it.
 pub const MAX_QUEUE_BYTES: usize = 256 * 1024;
 
 fn queue_path(dir: &Path) -> PathBuf {
