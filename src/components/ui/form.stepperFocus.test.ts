@@ -18,7 +18,7 @@ describe("Stepper keeps keyboard focus", () => {
       expect(src).toContain("disabled={disabled}");
       expect(src).toContain(`aria-disabled={${bound} || undefined}`);
       expect(src).not.toMatch(/disabled=\{disabled \|\| cur/);
-      // The handlers refuse the step themselves now that the button stays enabled.
+      // The button stays enabled at a bound, so the handlers refuse the step themselves.
       expect(src).toContain(`!${bound}) press(`);
       expect(src).toContain(`e.detail === 0 && !${bound}) stepBy(`);
     }
