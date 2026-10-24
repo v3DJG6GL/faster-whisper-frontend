@@ -2,9 +2,9 @@
 //
 // Unlike usage.ts there is NO polling loop: capabilities move only when the server
 // is restarted or reconfigured, and the values we care about
-// (translation_models[].loaded) are read at the moment a job starts, so every
-// refresh here is triggered by a caller that is about to act. It is a module, not a
-// hook, because streaming.ts and preload.ts have no hook to hang a fetch off.
+// (translation_models[].loaded) are read at the moment a job starts, so a refresh is
+// triggered by a caller about to act (or by a fresh connection verdict). It is a module,
+// not a hook, because streaming.ts and transcribeRun.ts have no hook to hang a fetch off.
 
 import { useApp } from "./store";
 import { getCapabilities } from "./api";
@@ -23,9 +23,9 @@ const MIN_INTERVAL_MS = 2_000;
 
 /** Both keyed by Backend id and stamped with the address the request went to: the floor and
  *  the coalescing below apply only to a request for the SAME target. Keyed by id alone, the
- *  forced refresh after fixing an unreachable address joined the run still hanging on the OLD
- *  host (up to the client timeout), whose answer the guards then discarded — so the corrected
- *  server's caps stayed absent until some later dictation. */
+ *  forced refresh after fixing an unreachable address would join the run still hanging on the
+ *  OLD host (up to the client timeout), whose answer the guards then discard — leaving the
+ *  corrected server's caps absent until some later dictation. */
 const lastFetchAt = new Map<string, { at: number; target: string }>();
 const inFlight = new Map<
   string,
