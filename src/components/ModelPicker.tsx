@@ -5,7 +5,8 @@
 // just because the server is down or stopped listing it.
 //
 // Commit semantics: the draft is local while typing; the parent's onChange fires
-// only on a suggestion pick, Enter, or focus leaving the picker — so call sites
+// only on a suggestion pick, Enter, focus leaving the picker, "use default", or an
+// Escape / history-traversal key over an uncommitted draft — so call sites
 // that persist/reset on change aren't hammered per keystroke.
 
 import { useEffect, useState } from "react";
