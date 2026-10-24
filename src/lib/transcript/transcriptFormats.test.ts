@@ -483,8 +483,6 @@ describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", (
   });
 
   it("viewer var(--spk-N) index and export hex agree for the same picks", () => {
-    // The viewer's palette index and the hex colorOf emits for the SAME order+picks must
-    // point at the same palette slot.
     const picks = { SPEAKER_01: 5 };
     const idx = speakerColorIndex(order, picks, "SPEAKER_01");
     expect(speakerHex(order, picks, "SPEAKER_01")).toBe(DEFAULT_SPEAKER_COLORS[idx]);
