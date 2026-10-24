@@ -32,6 +32,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { useDebounced } from "@/lib/useDebounced";
+import { useTauriListener } from "@/lib/useTauriListener";
 import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
@@ -369,13 +370,11 @@ export default function Transcribe() {
   // drop never fires), so listen on the webview. A drop mid-run is ignored,
   // not staged (the busy drop zone shows no highlight); unaccepted files are
   // dropped without a notice.
-  useEffect(() => {
-    if (!isTauri) return;
-    let stale = false;
-    let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
-      getCurrentWebview()
-        .onDragDropEvent((event) => {
+  useTauriListener(() => {
+    if (!isTauri) return Promise.resolve(() => {});
+    return import("@tauri-apps/api/webview")
+      .then(({ getCurrentWebview }) =>
+        getCurrentWebview().onDragDropEvent((event) => {
           if (event.payload.type === "over" || event.payload.type === "enter") {
             setDragOver(true);
           } else if (event.payload.type === "drop") {
@@ -386,17 +385,12 @@ export default function Transcribe() {
           } else {
             setDragOver(false);
           }
-        })
-        .then((u) => {
-          if (stale) u();
-          else unlisten = u;
-        })
-        .catch((e) => console.warn("drag-drop registration failed:", e)),
-    );
-    return () => {
-      stale = true;
-      unlisten?.();
-    };
+        }),
+      )
+      .catch((e) => {
+        console.warn("drag-drop registration failed:", e);
+        return () => {};
+      });
   }, []);
 
   // The store boots with an EMPTY backend list (store.ts); config hydration, a sync pull or an
