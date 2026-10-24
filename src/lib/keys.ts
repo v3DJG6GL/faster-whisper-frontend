@@ -5,18 +5,17 @@
 // accepts the uppercased W3C `KeyboardEvent.code` for the key part (KEYH, DIGIT1,
 // BACKSPACE, ARROWUP, NUMPAD0, F1–F24, numpad operators, …) plus friendly aliases,
 // and logical modifiers (Ctrl/Alt/Shift/Super) — it can NOT distinguish left/right
-// modifiers (that needs the evdev backend, P5). Punctuation/symbol codes (Minus,
-// BracketLeft, Backquote, IntlBackslash, …) and ContextMenu aren't supported and
-// are rejected here; `validateCodes` is the final gate in the Rust layer.
+// modifiers (that needs a low-level backend: evdev or the Windows hook).
+// Punctuation/symbol codes (Minus, BracketLeft, Backquote, IntlBackslash, …) and
+// ContextMenu aren't supported and are rejected here; Rust's `validate_codes` is the
+// final gate.
 
 import { keycapLabel } from "./keyboardLayout";
-// A hotkey CODE is an untrusted key just like a backend id: `isCodeList`/`isStringList` check only
-// `typeof === "string"`, and Rust's `de_hotkey` only sorts and dedups — so a sync blob or an
-// imported file can put `"__proto__"` in a chord. Every bare index into the literal maps below then
-// returns an `Object.prototype` member instead of `undefined`: `codeToLabel` handed that object to
-// `<Kbd>` as a React child (which throws, unmounting a window with no error boundary above it), and
-// `collapseModifierSides` put it into a `string[]` where `canonicalizeCodes`' `localeCompare`
-// tie-break threw — aborting `applyBlob` uncaught and stalling sync permanently.
+// A hotkey CODE is untrusted: `isCodeList`/`isStringList` check only `typeof === "string"` and
+// Rust's `de_hotkey` only sorts and dedups, so a sync blob or imported file can put "__proto__" in
+// a chord. A bare index into the literal maps below would then return an `Object.prototype` member
+// — a React child that throws (no error boundary) or a non-string that breaks `canonicalizeCodes`
+// and stalls sync — hence every lookup goes through `ownProp`.
 import { ownProp } from "./own";
 import { IS_WINDOWS } from "./platform";
 
@@ -29,7 +28,6 @@ const NAMED_CODES = new Set<string>([
   "Numpad5", "Numpad6", "Numpad7", "Numpad8", "Numpad9",
   "NumpadAdd", "NumpadSubtract", "NumpadMultiply", "NumpadDivide",
   "NumpadDecimal", "NumpadEnter", "NumpadEqual",
-  // F1–F24
   ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`),
 ]);
 
@@ -127,7 +125,7 @@ export function prettyToken(token: string): string {
 }
 
 // Modifier `event.code` → display label. Right-side modifiers and AltGr are shown
-// distinctly (they're only honoured by the evdev backend; the plugin collapses them).
+// distinctly (only a low-level backend — evdev, the Windows hook — honours them).
 const MOD_LABELS: Record<string, string> = {
   ControlLeft: "Ctrl", ControlRight: "R-Ctrl",
   ShiftLeft: "Shift", ShiftRight: "R-Shift",
@@ -166,13 +164,11 @@ const SIDE_COLLAPSE: Record<string, string> = {
   // register under the plugin — a non-blocking condition already surfaced by the "needs evdev" hint.
 };
 
-/** Collapse right-side modifiers to their left equivalent — matching what the global-shortcut PLUGIN
- *  backend does (its accelerator parser can't distinguish Ctrl/Shift/Super sides; see codes_to_accelerator).
- *  Use this for conflict detection when the plugin is the registrar (evdev off), so two chords that
- *  differ ONLY by modifier side (Ctrl-left+H vs Ctrl-right+H) are correctly seen as the same chord —
- *  otherwise both pass conflict detection yet collide at registration and one silently never fires.
- *  AltGr (AltRight) is excluded: the plugin rejects it rather than folding it, so it must stay a distinct
- *  token (see SIDE_COLLAPSE). Under evdev (which DOES honour sides) callers skip this entirely. */
+/** Collapse right-side modifiers to their left equivalent, as the global-shortcut PLUGIN's
+ *  accelerator parser does (codes_to_accelerator). For conflict detection when the plugin is the
+ *  registrar: chords differing only by modifier side would otherwise pass yet collide at registration,
+ *  one silently never firing. AltGr stays distinct (see SIDE_COLLAPSE). Callers skip this when a
+ *  low-level backend (evdev, the Windows hook), which honours sides, is live. */
 export function collapseModifierSides(codes: string[]): string[] {
   return codes.map((c) => ownProp(SIDE_COLLAPSE, c) ?? c);
 }
@@ -209,9 +205,8 @@ export function altGrPhantomActive(e: { getModifierState?: (k: string) => boolea
  *  chord is independent of press order and comparable by value. */
 export function canonicalizeCodes(codes: string[]): string[] {
   return Array.from(new Set(codes)).sort(
-    // Rank orders modifiers first (by type+side); equal-rank codes — e.g. two non-modifier
-    // keys in an evdev N-chord, both rank 100 — fall back to a stable lexical tie-break so the
-    // same chord canonicalizes identically regardless of press order (keeps `sameCodes` correct).
+    // Equal-rank codes (two non-modifier keys of a low-level N-key chord, both rank 100) need
+    // the lexical tie-break, or press order would leak into the result and break `sameCodes`.
     (a, b) => (ownProp(CODE_RANK, a) ?? 100) - (ownProp(CODE_RANK, b) ?? 100) || a.localeCompare(b),
   );
 }
