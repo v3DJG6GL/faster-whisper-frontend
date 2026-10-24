@@ -551,7 +551,6 @@ enum ClosePolicy {
     /// clicked, and a destroyed chip would stay gone for the session (every overlay command
     /// bails on a missing window). Not hidden either — chipController owns its visibility.
     Keep,
-    /// Let it close.
     Allow,
 }
 
