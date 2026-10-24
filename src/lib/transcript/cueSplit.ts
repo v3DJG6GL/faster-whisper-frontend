@@ -1173,6 +1173,11 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
   return wrapTokens(toks, gaps, cpl, len, firstReserve, lang);
 }
 
+/** A fresh count of the ASCII quotes before a cue (its QuoteCtx), zero without one. */
+function quotesBefore(q?: QuoteCtx): QuoteCount {
+  return { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+}
+
 /** Which characters of `t` are counted ASCII quotes, `q` = its segment's quotes and characters
  *  around it when `t` is a cue of it (QuoteCtx), so a cue counts its quotes as its segment does.
  *  A " or ' between two ASCII letters or digits is none (it's, rock'n'roll), and neither is an
@@ -1180,7 +1185,7 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
  *  is even (6.1", 27") — counted, it would flip the pairing of every quote after it. At an odd
  *  count the same quote closes (他说"是2024"). */
 function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
-  const n: QuoteCount = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+  const n: QuoteCount = quotesBefore(q);
   const out: boolean[] = [];
   for (let j = 0; j < t.length; j++) {
     const c = t[j];
@@ -1302,7 +1307,7 @@ function lowOpenAt(t: string, j: number, low: string, open: true | undefined): b
  *  needs a letter, digit or opener glued after it. Uncut, the opener would ride on the text
  *  before it and a line or part could end on it. */
 function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
-  const n: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+  const n: Record<string, number> = quotesBefore(q);
   let pos = 0;
   for (const m of t.matchAll(MIXED_TOKEN)) {
     const idx = m.index!;
@@ -1367,7 +1372,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
   const flags = quoteFlags(t, q);
   /** Counted quotes of each kind before the current match (from the segment start) — kept
    *  running, so the pass stays linear. */
-  const quotes: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+  const quotes: Record<string, number> = quotesBefore(q);
   /** Counted quotes of each kind in the whole segment. */
   const total: Record<string, number> = { '"': quotes['"'] + (q?.after['"'] ?? 0), "'": quotes["'"] + (q?.after["'"] ?? 0) };
   for (let j = 0; j < t.length; j++) if (flags[j]) total[t[j]]++;
