@@ -85,23 +85,17 @@ describe("pruneTargets", () => {
   });
 });
 
-// The "cleared vs inherited" wire shape.
-//
-// The server now reads a PRESENT-but-empty override as "cleared — ignore what you would
-// have inherited", and an ABSENT one as "inherit". Everywhere the client used to collapse
-// the two (`|| undefined`, `!value.trim()`, "prune the empty list") it lost the user's
-// ability to say *no* — the cleared prompt / glossary / target list came back from the
-// server override-profile, silently, with the field still showing empty in the editor.
-//
-// These pin the three states for each field the client can now express. The `language`
-// and `translate_to` form values themselves are pinned on the Rust side
-// (`transport::wire_language`, `transport::batch::translate_to_field`).
+// The "cleared vs inherited" wire shape: the server reads a PRESENT-but-empty override as
+// "cleared — ignore what you would have inherited" and an ABSENT one as "inherit", so collapsing
+// the two (`|| undefined`, `!value.trim()`, pruning the empty list) silently brings back the
+// server profile's prompt / glossary / targets for a field the editor shows empty. The `language`
+// and `translate_to` form values are pinned on the Rust side (`transport::wire_language`,
+// `transport::batch::translate_to_field`).
 
 describe("pruneTranslationOverrides — what an editor stores", () => {
   it("keeps an explicitly emptied target list and glossary", () => {
-    // Pruning these was the bug: the stored object went back to "inherit", so the
-    // server's own TRANSLATE_TO / TRANSLATION_GLOSSARY applied to a field the user
-    // had visibly cleared.
+    // Pruning these sends the field back to "inherit", so the server's own TRANSLATE_TO /
+    // TRANSLATION_GLOSSARY would apply to a field the user visibly cleared.
     expect(pruneTranslationOverrides({ translateTo: [] })).toEqual({ translateTo: [] });
     expect(pruneTranslationOverrides({ glossary: "" })).toEqual({ glossary: "" });
   });
