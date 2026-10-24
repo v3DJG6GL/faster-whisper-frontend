@@ -434,13 +434,12 @@ export default function Overlay() {
   // chipRules). Everything the phase row renders hangs off this one value.
   const phase = currentPhase(state.status, state.phase);
   // Re-render once a second while a phase is up: the elapsed readout counts on the
-  // READER's clock (DictationPhase broadcasts a start epoch, deliberately — a per-second
-  // store write would wake every dictation subscriber for a number one row shows), and
-  // chipExpansion's "has this outlasted the anti-glitch window" term is likewise a
-  // function of time, not of any prop. Keyed on the phase IDENTITY (kind+start), not the
-  // payload object, which is replaced ~30 times a second by the level stream — depending
-  // on that would restart the interval before it ever fired. A phase exists only during a
-  // processing stage, so this never ticks at idle.
+  // READER's clock (DictationPhase broadcasts only a start epoch), and chipExpansion's
+  // "has this outlasted the anti-glitch window" term is likewise a function of time, not
+  // of any prop. Keyed on the phase IDENTITY (kind+start), not the payload object, which
+  // is replaced ~30 times a second by the level stream — depending on that would restart
+  // the interval before it ever fired. A phase exists only during a processing stage, so
+  // this never ticks at idle.
   const phaseKey = phase ? `${phase.kind}:${phase.startedAt}` : "";
   const [, tickPhase] = useState(0);
   useEffect(() => {
@@ -648,7 +647,6 @@ export default function Overlay() {
   // Target readout: chipController.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
-  // The "only while speaking" and "on hover" reveal gates stack on top.
   const showTarget =
     !!state.targetTitle && (!state.targetOnlySpeaking || expanded) && (!state.targetOnHover || hoverReveal);
   // The gate above reads the RAW title, the render the defanged one: a focused app named only
@@ -1015,7 +1013,7 @@ export default function Overlay() {
   // SAME dictationVisual() call the dot uses (else the bars would glow amber "ready" next to a
   // working dot, or blue next to the teal translating one) — Home's waveTone is that tone too.
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
-  // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
+  // grey like the hollow idle dot, not the amber "ready" tone.
   const barTone = working
     ? vis.tone
     : speaking
@@ -1263,7 +1261,7 @@ export default function Overlay() {
         <Target className="size-3 shrink-0 opacity-90" aria-hidden />
         {/* The skip state lives on the app NAME itself — struck-through when blocked, italic when
             not a text field — so the chip stays compact. The full word ("blocked" / "not a text
-            field") returns when expanded; the title + sr-only status keep it accessible collapsed. */}
+            field") returns when expanded; collapsed, only the title carries it. */}
         <span
           className={cn(
             "max-w-[130px] truncate",
@@ -1385,8 +1383,8 @@ export default function Overlay() {
           )}
 
           {/* Body (waveform + transcript) reveals by animating its WIDTH 0 → auto,
-              clipping a natural-width (w-max) inner row so the content is revealed —
-              never squished or scaled. Clean grow AND shrink, no empty-pill frame. */}
+              clipping the inner row so the content is revealed — never squished or
+              scaled. Clean grow AND shrink, no empty-pill frame. */}
           <AnimatePresence onExitComplete={reportBounds}>
             {(expanded || showQuickLaunch) && !peeked && (
               <motion.div
@@ -1481,7 +1479,8 @@ export default function Overlay() {
                               className={cn(
                                 "whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em]",
                                 // The not-inserted note is a quiet qualifier, not a warning: faint,
-                                // not dim. "incomplete" IS a warning (words may be lost): dim.
+                                // not dim. An untranslated landing and "incomplete" (words may be
+                                // lost) ARE warnings: dim.
                                 pulse === "untranslated" || note === "incomplete" ? "text-dim" : "text-faint",
                               )}
                             >
