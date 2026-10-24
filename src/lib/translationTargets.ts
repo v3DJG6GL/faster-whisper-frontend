@@ -16,10 +16,9 @@ export function pruneTargets(targets: string[], source: string): string[] {
 /** A target list as the wire takes it — and the ONE list the chips show, count and remove from,
  *  and a run sends. Mirrors Rust's `is_lang_code` (src-tauri/src/transport/mod.rs): 2..=16
  *  ASCII letters, digits or `-`; a code the wire would refuse is skipped whole, never shortened
- *  (a clipped `ca-ES-valencia` is a code nobody picked). `translationOverrides` is a SYNCED field
- *  neither sanitizer clamps element-wise, so non-strings are dropped — a peer's `[123]` would
- *  crash the render body, which has no error boundary. Trimmed, de-duplicated (chips are keyed on
- *  the code), at most 32. */
+ *  (a clipped `ca-ES-valencia` is a code nobody picked). Input may be synced, stored or
+ *  server-sent, so non-strings are dropped — a `[123]` would crash the render body, which has no
+ *  error boundary. Trimmed, de-duplicated (chips are keyed on the code), at most 32. */
 export const wireCodes = (v: unknown) =>
   cleanCodes(
     Array.isArray(v) ? v.filter((c) => typeof c === "string" && /^[A-Za-z0-9-]{2,16}$/.test(c.trim())) : v,
