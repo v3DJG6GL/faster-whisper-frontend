@@ -4,9 +4,8 @@
 // both handlers land the parked writes first. Rust re-points every save that names a moved
 // path (MOVED, save_transcript_record), so a flushed write cannot put a pre-move path back.
 // The same holds for an overlay edit still in its 800 ms debounce when the move lands: it is
-// run before the reload, not cleared (forgetRecord(null) dropped it from disk and mirror).
+// run before the reload, not cleared.
 import { describe, expect, it } from "vitest";
-// Raw source (vite `?raw`).
 import settingsSrc from "./Settings.tsx?raw";
 
 // From one handler's declaration to the next declaration in the component.
