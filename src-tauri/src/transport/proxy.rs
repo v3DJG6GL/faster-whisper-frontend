@@ -878,6 +878,11 @@ mod tests {
             .unwrap()
     }
 
+    /// GETs `url` through `client` and returns the body: the fake listeners answer `ok`.
+    async fn get_body(client: &reqwest::Client, url: impl reqwest::IntoUrl) -> String {
+        client.get(url).send().await.unwrap().text().await.unwrap()
+    }
+
     /// The one client lives as long as the app, so a system proxy switched on or off while it runs
     /// must reach its next request — as it reaches the next dictation — not wait for a restart.
     #[tokio::test]
@@ -894,7 +899,7 @@ mod tests {
 
         let (proxy, seen) = http_ok().await;
         *setting.lock().unwrap() = Some(format!("http://{proxy}"));
-        let body = client.get(url).send().await.unwrap().text().await.unwrap();
+        let body = get_body(&client, url).await;
         assert_eq!(body, "ok");
         let head = seen.lock().unwrap().to_ascii_lowercase();
         assert!(
@@ -927,14 +932,7 @@ mod tests {
             .unwrap()
             .to_ascii_lowercase();
         let client = client_via(move || Matcher::builder().all(proxy_url.as_str()).build());
-        let body = client
-            .get("http://gpu-box.test:8000/health")
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let body = get_body(&client, "http://gpu-box.test:8000/health").await;
         assert_eq!(body, "ok");
         let head = seen.lock().unwrap().to_ascii_lowercase();
         assert!(
@@ -955,14 +953,7 @@ mod tests {
         let (proxy, seen) = http_ok().await;
         let proxy_url = format!("http://a%2541%40b:x%259Fy%3A%40z@{proxy}");
         let client = client_via(move || Matcher::builder().all(proxy_url.as_str()).build());
-        let body = client
-            .get("http://gpu-box.test:8000/health")
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let body = get_body(&client, "http://gpu-box.test:8000/health").await;
         assert_eq!(body, "ok");
         let expected = base64::prelude::BASE64_STANDARD.encode("a%41@b:x%9Fy:@z");
         let head = seen.lock().unwrap().clone();
@@ -982,10 +973,7 @@ mod tests {
         let (server, seen) = http_ok().await;
         let client = client_via(move || Matcher::builder().all("http://u:p@127.0.0.1:9").build());
         let url = format!("http://localhost:{}/health", server.port());
-        assert_eq!(
-            client.get(url).send().await.unwrap().text().await.unwrap(),
-            "ok"
-        );
+        assert_eq!(get_body(&client, url).await, "ok");
         let head = seen.lock().unwrap().to_ascii_lowercase();
         assert!(head.starts_with("get /health http/1.1\r\n"), "{head}");
         assert!(!head.contains("proxy-authorization"), "{head}");
@@ -1121,14 +1109,7 @@ mod tests {
         assert!(format!("{err:?}").contains("dns error"), "{err:?}");
         assert!(via_proxy.lock().unwrap().is_empty());
         // A dotted name still takes the proxy.
-        let body = client
-            .get("http://gpu-server.test:8000/health")
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
+        let body = get_body(&client, "http://gpu-server.test:8000/health").await;
         assert_eq!(body, "ok");
         let head = via_proxy.lock().unwrap().to_ascii_lowercase();
         assert!(
