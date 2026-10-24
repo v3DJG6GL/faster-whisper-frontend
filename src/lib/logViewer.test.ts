@@ -1,7 +1,5 @@
-// The invariant every Logs.tsx memo silently depends on: what `visibleLines()`
-// returns must be a NEW array whenever the version bumps. Handing back the
-// module-level `buf` (which `append()` mutates in place) would freeze every
-// `useMemo(..., [all])` on its empty mount snapshot; see visibleLines()'s doc.
+// Guards the invariant every Logs.tsx memo keyed on `visibleLines()` depends on:
+// a NEW array on every version bump (see visibleLines()'s doc).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogLine } from "./api";
@@ -134,7 +132,6 @@ describe("attachLogStream while the window is hidden", () => {
     const shown = visibleLines();
     expect(shown.slice(before).map((l) => l.seq)).toEqual([lastSeq + 1, lastSeq + 2]);
 
-    // Live again once shown.
     emit?.({ lines: [line(lastSeq + 3)] });
     expect(visibleLines()).toHaveLength(before + 3);
 
