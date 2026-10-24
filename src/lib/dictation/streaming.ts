@@ -401,8 +401,7 @@ let insertSeq = 0;
 function signalInsert(kind: "typed" | "clipboard"): void {
   useApp.getState().setDictation({ lastInsert: { kind, seq: ++insertSeq } });
 }
-/** The truthful end-of-session outcome from what landed this session — typed wins over
- *  clipboard wins over nothing. */
+/** The truthful end-of-session outcome from what landed this session. */
 function endOutcome(): "typed" | "clipboard" | "none" {
   return sessionTyped ? "typed" : sessionClipboard ? "clipboard" : "none";
 }
@@ -1156,7 +1155,7 @@ let pendingReclassify: Profile | null = null;
 // then cancels the hold session (if it came up) and runs this to start the hands-free one.
 // Cleared on every fresh start and on cancel, like pendingReclassify.
 let restartOwed: (() => void) | null = null;
-// Serialise every injection op so backspaces/types never interleave or race.
+// Serialise every injection op so inserts, Enters and clipboard restores never interleave or race.
 let injectChain: Promise<void> = Promise.resolve();
 /** Pending links on `injectChain`. The queue is fed by `stream://final`, whose rate the untrusted
  *  server chooses — Rust bounds each FIELD at MAX_TRANSCRIPT and the message at MAX_WS_MESSAGE,
@@ -1814,9 +1813,9 @@ export function incompleteFlashMessage(notice: string | null): string {
 /** Re-cap a session's targets once its Backend's caps are known (they were capped from whatever
  *  was cached). Shrink only, and as a NEW array: a phrase already in flight keeps the list it
  *  captured. routePending is left alone (an armed picker keeps its glyph; its pick re-caps live).
- *  Republished only while the session's route is (`sessionTargets` is never null while one
- *  lives): an answer landing after the settle cleared it must not bring the finished run's route
- *  back onto the idle chip and tray tooltip. */
+ *  Republished only while `sessionTargets` is still set (it is never null while a session lives):
+ *  an answer landing after the settle cleared it must not bring the finished run's route back
+ *  onto the idle chip and tray tooltip. */
 function shrinkToServerCap(tr: NonNullable<typeof sessionTranslation>): void {
   const capped = sendableTargets(tr.targets, tr.backendId);
   if (capped.length < tr.targets.length) {
@@ -2136,9 +2135,8 @@ async function ensureListeners(): Promise<void> {
     } else if (!partialTimer) {
       partialTimer = setTimeout(() => {
         partialTimer = undefined;
-        // Closure-local like the level tick: it cannot be cleared on teardown, so re-ask the
-        // same `inSession()` question the leading edge asked rather than resurrecting a stale
-        // preview into an idle or errored chip.
+        // Re-ask the leading edge's `inSession()` question at fire time rather than resurrecting
+        // a stale preview into an idle or errored chip.
         if (inSession()) flushPartial();
       }, pWait);
     }
@@ -3453,9 +3451,9 @@ export function sinkSkipMessage(): string {
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
  *  Guarded: if a new session starts first (status leaves "error"), the pending clear is a no-op. */
 function flashError(message: string): void {
-  // Every call site is terminal for the session, and `settleIdle` (the normal releaser) only runs
-  // for a session that reached "injecting" — so release the preload lease here, or the warm hint
-  // keeps POSTing every RENEW_MS until the next successful start. Idempotent.
+  // Every call site is terminal for the session, and `settleIdle` (the normal releaser) runs only
+  // from the `closed` tail, which bails on "error" — so release the preload lease here, or the warm
+  // hint keeps POSTing every RENEW_MS until the next successful start. Idempotent.
   releaseWarmLease();
   voidPendingHoldStart(); // don't chain a queued start onto a failed session (in-flight check included)
   // Clear the live preview: otherwise the stale `partial` lingers and, when the error auto-clears,
@@ -3762,8 +3760,6 @@ async function startLiveInner(
   // A caller that had to take focus first (the picker) already read this — using its
   // value keeps the session aimed at the app the user was actually in.
   const targetApp = preresolvedTarget !== undefined ? preresolvedTarget : await getFocusedApp();
-  // The own-window short-circuit lives INSIDE resolveInjectionTarget, so this and the
-  // per-phrase path share it by construction.
   // The Profile's own overrides, frozen for the session. `resolveTarget` re-reads the
   // app-rule layer per phrase but never this one — a profile does not change mid-session,
   // and the poll can outlive `activeProfile`.
@@ -4081,8 +4077,6 @@ function applyReclassify(profile: Profile): void {
     // path never re-reads bankedDoc, so flipping `live` would drop it at stop — keep the
     // session in its started insert mode in that rare case.
     if (bankedDoc === "") {
-      // Through the SAME helper as startLiveInner, so a term added to the derivation also applies
-      // to an upgraded session.
       // The `timing !== "off"` term mirrors startLiveInner's `live` too (timing is the frozen
       // g.insertTiming): an "off" session that went live here would type every phrase, since
       // the closed handler's off-drop only runs when `live` is false.
@@ -4174,7 +4168,7 @@ export async function stopLive(): Promise<void> {
     // Null insertCfg (AFTER reading it for `pending`), as stream://error, teardownAfterFatalInject and
     // cancelLive do, so a LIVE phrase still queued behind the rejected stop can't type/paste into the
     // now-refocused window and pulse "inserted" onto the red error chip. endInjection is chained on
-    // `owed` above, so any snapshot still restores; the recovery below doesn't read insertCfg.
+    // `owed` above, so any snapshot still restores; the recovery below needs only `pending`.
     insertCfg = null;
     // Flash BEFORE the recovery await, as the stream://error handler does: the chip sits on
     // "transcribing" until the flash, so a stop gesture landing in that window cancels this session
