@@ -248,15 +248,17 @@ export function useHotkeyCapture(opts: {
     };
   }, [capturing, lowLevelActive]);
 
+  // The parked chord's clash check against the registrar as it is NOW.
+  const clashIn = (codes: string[], list: Profile[]) =>
+    findChordConflict(codes, list, !ref.current.lowLevelActive, ref.current.selfKind);
   // The parked chord as the tile shows it, against the bindings as they are NOW: the first owner it
   // still clashes with that the user has not agreed to take over yet, else the first agreed one that
   // still clashes (clicking takes its keys, so the warning must stay), else `clear`.
   const describe = (codes: string[]): PendingChord => {
-    const { others, lowLevelActive: ll, selfKind } = ref.current;
-    const clashIn = (list: Profile[]) => findChordConflict(codes, list, !ll, selfKind);
+    const { others } = ref.current;
     const live =
-      clashIn(others.filter((o) => !takenRef.current.includes(o.id))) ??
-      clashIn(others.filter((o) => takenRef.current.includes(o.id)));
+      clashIn(codes, others.filter((o) => !takenRef.current.includes(o.id))) ??
+      clashIn(codes, others.filter((o) => takenRef.current.includes(o.id)));
     if (!live) return { codes, clear: true };
     // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
     // and this is the sentence the user reads to decide whether to take the keys over — so it
@@ -280,12 +282,7 @@ export function useHotkeyCapture(opts: {
       if (!takenRef.current.includes(shown.otherId)) takenRef.current = [...takenRef.current, shown.otherId];
       // findChordConflict reports only the first owner: if another binding clashes too, name it
       // next instead of committing a set the save gate would refuse.
-      const next = findChordConflict(
-        codes,
-        ref.current.others.filter((o) => !takenRef.current.includes(o.id)),
-        !ref.current.lowLevelActive,
-        ref.current.selfKind,
-      );
+      const next = clashIn(codes, ref.current.others.filter((o) => !takenRef.current.includes(o.id)));
       if (next) {
         setParked({ codes }); // a new object re-renders, and `describe` names the next owner
         return;
@@ -296,7 +293,7 @@ export function useHotkeyCapture(opts: {
     // nesting, whose keys must then stay with it.
     const taken = takenRef.current.filter((id) => {
       const o = ref.current.others.find((x) => x.id === id);
-      return !!o && !!findChordConflict(codes, [o], !ref.current.lowLevelActive, ref.current.selfKind);
+      return !!o && !!clashIn(codes, [o]);
     });
     takenRef.current = [];
     for (const id of taken) ref.current.onTakeOver(id);
