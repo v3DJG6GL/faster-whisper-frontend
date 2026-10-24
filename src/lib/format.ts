@@ -121,13 +121,13 @@ export function fmtBitrate(kbps: number | null | undefined): string {
   return `${(kbps / 1000).toFixed(1)} Mbit/s`;
 }
 
-/** "just now" / "4m ago" / "3h ago" / a date — for the last-synced lines (Sync tab,
- *  Backends restore offer, Onboarding). `now` is a parameter so the tier edges are testable. */
+/** "just now" / "4m ago" / "3h ago" / a date — for the last-synced lines. `now` is a
+ *  parameter so the tier edges are testable. */
 export function relTime(ms: number, now: number = Date.now()): string {
   const d = now - ms;
   if (d < 60_000) return "just now";
-  // floor, not round: 59.5 min rounded up read "60m ago" (and 23.5 h "24h ago") — a value
-  // the next tier owns.
+  // floor, not round: rounding reads 59.5 min as "60m ago" (and 23.5 h as "24h ago"), a
+  // value the next tier owns.
   if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`;
   if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`;
   return new Date(ms).toLocaleDateString();
