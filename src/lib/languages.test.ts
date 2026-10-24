@@ -95,7 +95,7 @@ describe("matchesLanguage", () => {
     expect(matchesLanguage("zh-Hant", "zh")).toBe(true);
   });
   it("matches a code only exactly", () => {
-    expect(matchesLanguage("zh", "z")).toBe(false); // a code prefix is not a match
+    expect(matchesLanguage("zh", "z")).toBe(false);
     expect(matchesLanguage("da", "de")).toBe(false);
   });
 });
