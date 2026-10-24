@@ -3,32 +3,26 @@ import type { DictationStatus, ServerWork } from "../types";
 /**
  * THE single source of truth mapping dictation state → colour / shape / label,
  * shared by every surface (overlay chip, sidebar status dot, Home hero button, the
- * waveforms). Before this, each surface hard-coded its own map and they disagreed
- * (the sidebar even inverted it — idle=green, active=red).
+ * waveforms).
  *
- * It mirrors the overlay chip's long-standing palette, which is the design intent:
+ * It mirrors the overlay chip's palette, which is the design intent:
  *   • green  (live)   — actively speaking
  *   • amber  (armed)  — armed but silent ("ready to speak"; the OS mic-in-use cue). Its
- *                       own fixed token (--c-armed): it used to borrow the accent, but the
- *                       Signal colour is now any hue the user picks and may drift with the
- *                       clock, and a state colour must not (D13′).
- *   • teal   (translate) — the T2T translating stage. It is a machine-working state like
- *                       the blue ones, but the ONE that can take tens of seconds (a cold
- *                       GGUF load), so it earns its own hue rather than hiding inside the
- *                       generic blue: a wait you can't distinguish from "finalizing…" reads
- *                       as a hang. The hue isn't new — `--c-translate` was already reserved
- *                       for T2T and is what the viewer's MT lines and the translate run
- *                       chrome use, so the chip now agrees with those surfaces too.
+ *                       own fixed token (--c-armed), not the accent: the Signal colour is
+ *                       any hue the user picks and may drift with the clock, and a state
+ *                       colour must not.
+ *   • teal   (translate) — the T2T translating stage: the one machine-working state that can
+ *                       take tens of seconds (a cold GGUF load), so it gets its own hue rather
+ *                       than the generic blue — a wait you can't tell from "finalizing…" reads
+ *                       as a hang. It reuses `--c-translate`, the T2T hue of the viewer's MT
+ *                       lines and the translate run chrome.
  *   • blue   (think)  — finalizing / inserting / mic warm-up, and — in a streaming session, whose
  *                       status never leaves "listening" — whatever the SERVER reports it is
- *                       doing: loading its model, or holding / decoding your last phrase
- *                       (machine working). Was
- *                       neutral-grey (dim), but grey-working was indistinguishable
- *                       from grey-off — literally identical on the tucked edge-dot,
- *                       whose colour is its ONLY channel (no shape/motion legibility
- *                       at half-dot size). A cool hue can't be confused with any of
- *                       the warm states, and deliberately is NOT amber: the mic is
- *                       closed while finalizing, so "ready to speak" would lie.
+ *                       doing: loading its model, or holding / decoding your last phrase.
+ *                       Not grey: grey-working would be identical to grey-off on the tucked
+ *                       edge-dot, whose colour is its ONLY channel (no shape/motion legibility
+ *                       at half-dot size). Not amber: the mic is closed while finalizing, so
+ *                       "ready to speak" would lie.
  *   • red    (rec)    — error
  *   • grey   (faint)  — off / idle, rendered HOLLOW
  *
@@ -86,13 +80,10 @@ export function dictationVisual(
       return { state: "processing", tone: "think", label: "inserting…", pulse: true, filled: true };
     case "listening":
       if (speaking) return { state: "speaking", tone: "live", label: "listening", pulse: true, filled: true };
-      // A streaming session never leaves "listening" between phrases, so without this the
-      // stretch between "you stopped talking" and the server's `final` read as amber "ready,
-      // nothing happening" while the backend was holding — then decoding — the phrase, where a
-      // batch session shows blue "finalizing…" for the very same work. The SERVER says so
-      // (`utterance` frames → serverWork); nothing here is guessed from silence. The mic IS
-      // still open (unlike the other blue states), which is why speech wins above: talk again
-      // and it goes straight back to green.
+      // A streaming session never leaves "listening" between phrases: while the server holds,
+      // then decodes, the phrase (`utterance` frames → serverWork, never guessed from silence),
+      // this shows the blue a batch session shows for the same work, not amber "ready". The mic
+      // IS still open (unlike the other blue states), which is why speech wins above.
       return serverWork === "open" || serverWork === "decoding"
         ? { state: "processing", tone: "think", label: "transcribing…", pulse: true, filled: true }
         : { state: "armed", tone: "armed", label: "listening", pulse: true, filled: true };
@@ -104,9 +95,9 @@ export function dictationVisual(
 
 /**
  * THE single membership test for the "active session" set {listening, transcribing, translating, injecting}
- * — armed/capturing → finalizing → inserting. Excludes idle (no session) and error. Centralizes
- * what the chip visibility, Home stop/cancel button, hotkey busy-gate, and stream epoch-gating
- * each used to hand-roll, so a future status can't be silently omitted at one of them.
+ * — armed/capturing → finalizing → translating → inserting. Excludes idle (no session) and error.
+ * Shared by the chip visibility, Home stop/cancel button, hotkey busy-gate and stream epoch-gating
+ * so a future status can't be silently omitted at one of them.
  */
 export function isActiveDictation(status: DictationStatus): boolean {
   return (
@@ -118,8 +109,7 @@ export function isActiveDictation(status: DictationStatus): boolean {
 /**
  * The post-capture "processing" subset {transcribing, translating, injecting} — finalizing → translating → inserting,
  * the states with no audio to react to that drive the self-animated chip/waveform motion AND
- * the hotkey/button stop-vs-cancel branch. Centralized for the same reason as isActiveDictation:
- * so a future post-capture status can't be silently omitted at one of the ~6 sites that hand-roll it.
+ * the hotkey/button stop-vs-cancel branch. Centralized for the same reason as isActiveDictation.
  */
 export function isProcessing(status: DictationStatus): boolean {
   return status === "transcribing" || status === "translating" || status === "injecting";
@@ -127,21 +117,15 @@ export function isProcessing(status: DictationStatus): boolean {
 
 /**
  * Does a stop gesture mean "end this session gracefully" (stopLive) rather than "kill it"
- * (cancelLive)? The three stop-vs-cancel branches — the hotkey/PTT path, the Home hero
- * button, and the chip's toggle — all used `status === "listening"` for this.
+ * (cancelLive)? Shared by the hotkey/PTT path, the Home hero button and the chip's toggle.
  *
- * That stopped being sufficient when a per-phrase translate began reporting itself:
- * "translating" is a PROCESSING status, but on the live path it happens WHILE THE MIC IS
- * STILL OPEN. Under the old test a push-to-talk chord release landing in that window was
- * silently DROPPED (stopOrCancel does nothing for a processing status on a soft stop) and
- * the session wedged listening with the chord already released; the hero and the chip
- * would meanwhile have offered a cancel — discarding a live session — where the user
- * expected a stop.
- *
- * So the question is really "is there a live mic behind this status", which is what
- * `capturing` answers (streaming.isCapturing). Post-capture processing keeps the old
- * behaviour exactly: a soft stop is a no-op, a deliberate toggle is the cancel that
- * recovers a wedged finalize.
+ * `status === "listening"` alone is not enough: a live per-phrase translate reports
+ * "translating" (a PROCESSING status) WHILE THE MIC IS STILL OPEN, so a push-to-talk chord
+ * release in that window would be silently dropped (stopOrCancel ignores a processing status
+ * on a soft stop), wedging the session, and the hero and chip would offer a cancel that
+ * discards a live session. The real question is "is there a live mic behind this status" —
+ * `capturing` (streaming.isCapturing). For post-capture processing a soft stop stays a no-op
+ * and a deliberate toggle is the cancel that recovers a wedged finalize.
  */
 export function isGracefulStop(status: DictationStatus, capturing: boolean): boolean {
   return status === "listening" || (capturing && isProcessing(status));
