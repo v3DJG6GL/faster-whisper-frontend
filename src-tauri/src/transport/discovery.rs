@@ -41,8 +41,6 @@ struct ModelObj {
     device: Option<String>,
 }
 
-/// Probe a server: list its models and resolve auth state. Never errors — failures
-/// are reported in `ConnectionInfo { ok: false, error }` so the UI can show them.
 /// Ceiling on server-supplied identifier lists (model ids, override-profile names). Orders of
 /// magnitude above any real server's inventory; it exists so one response cannot make the settings
 /// window lay out an unbounded number of DOM nodes.
@@ -93,6 +91,8 @@ fn failed_probe(open_mode: bool, username: Option<String>, error: String) -> Con
     }
 }
 
+/// Probe a server: list its models and resolve auth state. Never errors — failures
+/// are reported in `ConnectionInfo { ok: false, error }` so the UI can show them.
 pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> ConnectionInfo {
     let base = base_url(server_url);
 
@@ -141,9 +141,8 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     ok: true,
                     open_mode,
                     username,
-                    // Count and length ceiling on the one server-supplied list in this layer that
-                    // never got one: the editor maps EVERY entry into a rendered chip, and the
-                    // probe runs on screen entry, not only behind the manual button.
+                    // Count and length ceiling: the editor maps every entry into a rendered chip,
+                    // and the probe runs on screen entry, not only behind the manual button.
                     models: parsed
                         .data
                         .into_iter()
@@ -161,10 +160,8 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     server_version: parsed.server_version.map(|s| bounded_name(&s)),
                     error: None,
                 },
-                // serde's error can include the server body (its `invalid_type`
-                // Display echoes the offending value untruncated). Every
-                // sibling field is already `bounded_name`d and both static error arms plus
-                // `friendly_err` are bounded to `MAX_ERR`. Bound this one to match.
+                // serde's `invalid_type` Display echoes the server body untruncated, so bound it
+                // to `MAX_ERR` like the other error arms.
                 Err(e) => failed_probe(
                     open_mode,
                     username,
@@ -192,7 +189,6 @@ struct OverrideProfilesResp {
 pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> Vec<String> {
     let base = base_url(server_url);
     let url = format!("{base}/v1/override-profiles");
-    // Best-effort: get_json → None on any failure, so the picker falls back to free-text.
     get_json::<OverrideProfilesResp>(url, api_key)
         .await
         .map(|r| {
@@ -439,11 +435,9 @@ pub async fn get_usage_stats(
     } else {
         format!("{base}/v1/usage?{q}")
     };
-    // Every string and list here rides in a struct the store re-serializes with TWO
-    // JSON.stringify passes on the main thread every 30s for every backend — the same reason
-    // `series` is sliced client-side. The `test_connection` sibling caps `username`.
-    // Read at the usage-specific ceiling (not the shared MAX_META_BODY): the "All"
-    // window can legitimately exceed 1 MiB — see USAGE_MAX_BODY.
+    // The strings and lists are bounded below because the store re-serializes this struct with
+    // TWO JSON.stringify passes on the main thread every 30 s for every backend.
+    // Read at the usage-specific ceiling (not MAX_META_BODY): see USAGE_MAX_BODY.
     // A timeout collapses to None like any other failure, so the UI keeps its last values.
     let req = with_auth(client().get(url), api_key).timeout(USAGE_TIMEOUT);
     let mut u: UsageStats = match req.send().await {
@@ -800,8 +794,8 @@ mod tests {
     }
 
     /// The map is bounded: a key the registry could not have produced is dropped, at most 64
-    /// survive, and a value keeps its "\n" while other controls and bidi overrides go — the
-    /// label beside it stays one line.
+    /// survive, and a value keeps its "\n" and "\t" while other controls and bidi overrides go —
+    /// the label beside it stays one line.
     #[test]
     fn decode_settings_map_is_bounded_and_values_keep_their_newline_and_tab() {
         let mut settings = serde_json::Map::new();
