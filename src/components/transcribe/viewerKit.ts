@@ -8,6 +8,10 @@ export function chipStyle(color: string) {
   return { color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` };
 }
 
+/** The DOM id of segment `i`'s row (a Segments row, or its first Subtitles cue): follow, the
+ *  Export→Read re-centre and "Edit its segment" look rows up by it. */
+export const segRowId = (i: number) => `seg-row-${i}`;
+
 export type EffSegment = {
   start: number;
   end: number;

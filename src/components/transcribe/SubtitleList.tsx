@@ -28,6 +28,7 @@ import { trackCode } from "@/lib/transcript/exportTracks";
 import { clean, writesCue, writtenTrackCues } from "@/lib/transcript/transcriptFormats";
 import type { BatchResult } from "@/lib/types";
 import { useResizeObserver } from "@/lib/useResizeObserver";
+import { segRowId } from "@/components/transcribe/viewerKit";
 
 interface Line {
   text: string;
@@ -87,7 +88,7 @@ const CueRow = memo(function CueRow({
   );
   return (
     <div
-      id={anchorId ?? (row.first && row.seg >= 0 ? `seg-row-${row.seg}` : undefined)}
+      id={anchorId ?? (row.first && row.seg >= 0 ? segRowId(row.seg) : undefined)}
       onClick={canSeek ? () => seekTo(row.start) : undefined}
       className={cn(
         "group relative gap-3.5 rounded-lg px-2 py-2",

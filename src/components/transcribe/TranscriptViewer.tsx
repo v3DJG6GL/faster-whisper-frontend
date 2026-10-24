@@ -68,7 +68,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { applySpeakerRenameInput, chipStyle, playRejectionBreaks, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
+import { applySpeakerRenameInput, chipStyle, playRejectionBreaks, renameToCommit, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 const trDoneTimers = new Map<string, number>();
@@ -491,7 +491,7 @@ export function TranscriptViewer({
   }, []);
   useEffect(() => {
     if (jumpSeg === null || !editMode) return;
-    const row = transcriptBoxRef.current?.querySelector<HTMLElement>(`#seg-row-${jumpSeg}`);
+    const row = transcriptBoxRef.current?.querySelector<HTMLElement>(`#${segRowId(jumpSeg)}`);
     row?.scrollIntoView({ block: "center" });
     row?.querySelector<HTMLElement>("[contenteditable]")?.focus();
     setJumpSeg(null);
@@ -1373,7 +1373,7 @@ export function TranscriptViewer({
       // anchor (the DOM, not timeAnchor: that state lands after this effect).
       const row =
         box.querySelector<HTMLElement>(`#${TIME_ANCHOR_ID}`) ??
-        (activeSegIdx >= 0 ? box.querySelector<HTMLElement>(`#seg-row-${activeSegIdx}`) : null);
+        (activeSegIdx >= 0 ? box.querySelector<HTMLElement>(`#${segRowId(activeSegIdx)}`) : null);
       if (row) {
         box.scrollTop +=
           row.getBoundingClientRect().top -
@@ -1422,7 +1422,7 @@ export function TranscriptViewer({
     const byTime = timeAnchor !== null;
     if (!follow || !playing || editMode || !reading || (!byTime && activeSegIdx < 0)) return;
     const box = transcriptBoxRef.current;
-    const row = document.getElementById(byTime ? TIME_ANCHOR_ID : `seg-row-${activeSegIdx}`);
+    const row = document.getElementById(byTime ? TIME_ANCHOR_ID : segRowId(activeSegIdx));
     if (!box || !row) return;
     const boxRect = box.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();

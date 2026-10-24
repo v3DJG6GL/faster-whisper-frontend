@@ -6,7 +6,7 @@ import { langText } from "@/lib/languages";
 import { cn } from "@/lib/cn";
 import { ownProp } from "@/lib/own";
 import type { TranscriptWord } from "@/lib/types";
-import { chipStyle, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, segRowId, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** One transcript row, memoized: during playback only the row entering and the
@@ -101,7 +101,7 @@ export const SegmentRow = memo(function SegmentRow({
   const visLangs = visLangsKey ? visLangsKey.split(",") : [];
   return (
     <div
-      id={`seg-row-${i}`}
+      id={segRowId(i)}
       className={cn(
         // No opacity transition here on purpose: when a finished line flips
         // from karaoke (words already dimmed one by one) to the plain passed
