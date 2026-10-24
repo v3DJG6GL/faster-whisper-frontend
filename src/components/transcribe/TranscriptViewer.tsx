@@ -887,6 +887,7 @@ export function TranscriptViewer({
     if (urlSource) return mediaPath ? convertFileSrc(mediaPath) : undefined;
     return convertFileSrc(path);
   }, [path, mediaPath, urlSource, textSource]);
+  const canSeek = !!audioSrc && !audioBroken;
 
   // What the playhead loop reads each frame — a ref, so the loop never
   // re-subscribes and never closes over stale data.
@@ -1568,7 +1569,7 @@ export function TranscriptViewer({
         )
       )
         return;
-      if (!audioSrc || audioBroken) return;
+      if (!canSeek) return;
       // Export: no list to step through, so leave the arrows to native scrolling.
       if (!reading && e.key !== " ") return;
       if (e.key === " ") {
@@ -1650,7 +1651,6 @@ export function TranscriptViewer({
     [okey, result],
   );
 
-  const canSeek = !!audioSrc && !audioBroken;
   const mtModel = shortModelName(result.translation?.model, 40);
   /** The Subtitles option's tooltip: the limits the cues follow. */
   const subtitlesTitle = (() => {
@@ -1822,7 +1822,7 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {audioSrc && !audioBroken && (
+      {canSeek && (
         <>
           {/* key forces a clean reload per file; mounted in every mode, so
               Export keeps the playhead and Space still plays */}
@@ -2333,7 +2333,7 @@ export function TranscriptViewer({
           lines. Copy and every export write all of them.
         </div>
       )}
-      {audioSrc && !audioBroken && hasSegments && mode === "read" && (
+      {canSeek && hasSegments && mode === "read" && (
         <div
           className={cn(
             "border-t border-line font-mono text-[11px] text-faint",
