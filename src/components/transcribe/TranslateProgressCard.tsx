@@ -20,10 +20,8 @@ function fmtRunClock(ms: number): string {
  *  fixed so the teal translate segment always grows from the same origin. */
 const MODEL_LANE = 0.15;
 
-/** The retro-translate mini progress card ("Job Signals") — Processing-box
- *  design language: mono uppercase title, big amber %, Cancel pill, segmented
- *  stage bar (amber model phase → growing teal translate → hatched remainder),
- *  detail chips, and the live last-line readout. */
+/** The retro-translate mini progress card, in the Processing box's design language; its
+ *  stage bar runs amber model phase → growing teal translate → hatched remainder. */
 export function TranslateProgressCard({
   run,
   modeLabel,
@@ -65,7 +63,6 @@ export function TranslateProgressCard({
             : done
               ? "Done"
               : "Translating…";
-  // Download receipt chips: fraction, size, and average transfer speed.
   const dlChips: string[] = [];
   if (run.phase === "downloading" && run.totalBytes) {
     const got = run.totalBytes * run.modelPct;
