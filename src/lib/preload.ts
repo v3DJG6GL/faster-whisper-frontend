@@ -133,8 +133,9 @@ function fire(entry: Entry, force: boolean): void {
   // from effects that re-run on unrelated state churn, and without this a burst
   // of re-renders is a burst of POSTs.
   if (!force && key === entry.sentKey && now - entry.sentAt < RENEW_MS) return;
-  // Checked BEFORE the send is recorded: a plan we declined because caps aren't
-  // known yet must still be sent once they are, rather than being debounced out.
+  // Checked BEFORE the send is recorded: a plan declined now (a proven-standard server, or
+  // nothing left once translation is stripped) must still go once that changes, rather than
+  // being debounced out.
   const models = sendableModels(entry.spec);
   if (!models.length) return;
   entry.sentKey = key;
