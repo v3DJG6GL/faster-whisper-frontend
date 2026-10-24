@@ -932,6 +932,12 @@ function roundedIn(v: unknown, lo: number, hi: number): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : undefined;
 }
 
+/** A machine-path leaf (Rust `Option<String>`): the inbound value when `gate` opts in and it is a
+ *  string or `null` ("use the default location", a legitimate value); otherwise `local`. */
+function gatedPath<L>(gate: boolean, v: unknown, local: L): string | null | L {
+  return gate && (typeof v === "string" || v === null) ? v : local;
+}
+
 /** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
  *  opaque JSON and forwards `contextSegments` into an `Option<u32>` IPC field on every dictation
  *  translation, so a fractional or negative value would fail that call — it is an integer 0–10
@@ -1789,14 +1795,8 @@ export async function applyBlob(
           // `null` is a LEGITIMATE value ("use the default location", Rust Option<String>) and
           // must apply — treating it as "keep local" would let a peer's next push resurrect the
           // old path and silently revert a reset-to-default after one round trip.
-          recordingsDir:
-            gates.audioFolder && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
-              ? rec.recordingsDir
-              : settings.recording.recordingsDir,
-          audioBaseDir:
-            gates.audioFolder && (typeof rec.audioBaseDir === "string" || rec.audioBaseDir === null)
-              ? rec.audioBaseDir
-              : settings.recording.audioBaseDir,
+          recordingsDir: gatedPath(gates.audioFolder, rec.recordingsDir, settings.recording.recordingsDir),
+          audioBaseDir: gatedPath(gates.audioFolder, rec.audioBaseDir, settings.recording.audioBaseDir),
         },
       };
     }
@@ -1856,10 +1856,7 @@ export async function applyBlob(
           keepDays: ((d) => (d === undefined ? cur.keepDays : Math.floor(d)))(
             clampedIn(lg.keepDays, 0, MAX_RETENTION_DAYS),
           ),
-          logDir:
-            gates.logFolder && (typeof lg.logDir === "string" || lg.logDir === null)
-              ? lg.logDir
-              : cur.logDir,
+          logDir: gatedPath(gates.logFolder, lg.logDir, cur.logDir),
         },
       };
     }
