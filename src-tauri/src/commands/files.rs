@@ -652,8 +652,7 @@ mod tests {
     #[test]
     fn a_move_that_cannot_remove_its_source_leaves_no_destination_behind() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("fwf-move-partial-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("move-partial");
         let (from, to) = (root.join("from"), root.join("to"));
         std::fs::create_dir_all(&from).unwrap();
         std::fs::create_dir_all(&to).unwrap();
@@ -677,9 +676,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn an_export_never_writes_through_a_planted_tmp_symlink() {
-        let dir = std::env::temp_dir().join(format!("fwf-export-tmp-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("export-tmp");
         let victim = dir.join("victim.txt");
         std::fs::write(&victim, "keep").unwrap();
         let dest = dir.join("transcript.srt");
@@ -731,9 +728,7 @@ mod tests {
 
     #[test]
     fn a_cross_volume_move_copy_keeps_the_source_mtime() {
-        let dir = std::env::temp_dir().join(format!("fwf-copymtime-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("copymtime");
         let (src, dest) = (dir.join("dictation-a.wav"), dir.join("moved.wav"));
         std::fs::write(&src, b"RIFF").unwrap();
         let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
@@ -752,8 +747,7 @@ mod tests {
 
     #[test]
     fn read_media_file_refuses_an_over_cap_file_and_reports_a_missing_one() {
-        let dir = std::env::temp_dir().join(format!("fwf-readmedia-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("readmedia");
         let big = dir.join("big.webm");
         // Sparse: the size check reads the length, never the bytes.
         std::fs::File::create(&big)

@@ -791,9 +791,7 @@ mod tests {
 
     #[test]
     fn a_session_file_is_new_owner_only_and_never_reuses_a_name() {
-        let dir = std::env::temp_dir().join(format!("fwf-session-file-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("session-file");
         let stamp = "2026-10-13_12-00-00";
         let (mut first, first_path) = super::create_session_file(&dir, stamp).unwrap();
         first.write_all(b"first session\n").unwrap();
@@ -827,9 +825,7 @@ mod tests {
 
     #[test]
     fn prune_selects_by_name_and_age() {
-        let dir = std::env::temp_dir().join(format!("fwf-prune-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("prune-test");
         let old = dir.join("fwf-2020-01-01_00-00-00.log");
         let fresh = dir.join("fwf-2099-01-01_00-00-00.log");
         let other = dir.join("keep.txt");
@@ -868,9 +864,7 @@ mod tests {
     /// it past `keep_days`: the prune must still skip it.
     #[test]
     fn prune_skips_the_live_session_file() {
-        let dir = std::env::temp_dir().join(format!("fwf-prune-live-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("prune-live-test");
         let live = dir.join("fwf-2020-01-01_00-00-00.log");
         let stale = dir.join("fwf-2020-01-02_00-00-00.log");
         let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);

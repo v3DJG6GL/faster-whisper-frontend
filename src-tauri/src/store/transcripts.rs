@@ -1383,8 +1383,7 @@ mod tests {
 
     #[test]
     fn record_rewrite_is_atomic_and_leaves_no_tmp() {
-        let dir = std::env::temp_dir().join(format!("fwf-atomic-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::config::fresh_test_dir("atomic");
         let path = dir.join("r.json");
         std::fs::write(&path, "{\"a\":1}").unwrap();
         crate::config::write_private_atomic(&path, "{\"a\":2}").unwrap();
@@ -1414,8 +1413,7 @@ mod tests {
 
     #[test]
     fn dictation_audio_removal_spares_foreign_files() {
-        let dir = std::env::temp_dir().join(format!("fwf-dict-rm-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let dir = crate::config::fresh_test_dir("dict-rm");
         for n in [
             "dictation-1.wav",
             "dictation-1.txt",
@@ -1490,8 +1488,7 @@ mod tests {
     /// keeps its own handling.
     #[test]
     fn an_older_builds_bare_tmp_copy_is_swept_and_counted_like_any_copy() {
-        let base = std::env::temp_dir().join(format!("fwf-tmp-copy-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let base = crate::config::fresh_test_dir("tmp-copy");
         let (dir, records) = (base.join("files"), base.join("transcripts"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&records).unwrap();
@@ -1564,14 +1561,12 @@ mod tests {
 
     #[test]
     fn a_listing_skips_bad_files_but_rejects_an_unlistable_folder() {
-        let dir = std::env::temp_dir().join(format!("fwf-list-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::config::fresh_test_dir("list");
         // A missing folder (first launch) is an empty history, not a failure.
         let mut out = Vec::new();
         assert!(read_records_into(&dir.join("missing"), &mut out).is_ok());
         assert!(out.is_empty());
         // One corrupt record never hides the rest.
-        std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.json"), "{\"id\":\"a\"}").unwrap();
         std::fs::write(dir.join("b.json"), "not json").unwrap();
         assert!(read_records_into(&dir, &mut out).is_ok());
@@ -1584,14 +1579,12 @@ mod tests {
 
     #[test]
     fn a_wipe_rejects_an_unlistable_folder_instead_of_removing_nothing() {
-        let dir = std::env::temp_dir().join(format!("fwf-wipe-list-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = crate::config::fresh_test_dir("wipe-list");
         // A missing folder is nothing to delete, not a failure.
         assert_eq!(wipe_records(&dir.join("missing")), Ok(0));
         assert_eq!(remove_own_recordings(&dir.join("missing")), Ok(0));
         // A path that exists but cannot be listed (here: a regular file) rejects, so
         // "Delete all" never reports "Removed 0" while every file stays on disk.
-        std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("dictation-1.wav");
         std::fs::write(&file, b"1234").unwrap();
         assert!(wipe_records(&file).is_err());
@@ -1945,8 +1938,7 @@ mod tests {
     #[test]
     fn heal_reports_an_unreadable_record() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("fwf-heal-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("heal");
         let (dir, base) = (root.join("history"), root.join("base"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(base.join("files")).unwrap();
@@ -1976,8 +1968,7 @@ mod tests {
     #[test]
     fn heal_reports_an_unlistable_folder() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("fwf-heal-unlisted-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("heal-unlisted");
         let (dir, base) = (root.join("history"), root.join("base"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&base).unwrap();
@@ -2027,8 +2018,7 @@ mod tests {
 
     #[test]
     fn a_folder_named_like_a_record_is_no_failed_record() {
-        let root = std::env::temp_dir().join(format!("fwf-heal-dirjson-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("heal-dirjson");
         let (dir, base) = (root.join("history"), root.join("base"));
         std::fs::create_dir_all(dir.join("x.json")).unwrap();
         std::fs::create_dir_all(base.join("files")).unwrap();
@@ -2053,8 +2043,7 @@ mod tests {
 
     #[test]
     fn the_fresh_install_check_finds_records_and_skips_only_missing_folders() {
-        let root = std::env::temp_dir().join(format!("fwf-any-rec-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("any-rec");
         let (a, b) = (root.join("a"), root.join("b"));
         std::fs::create_dir_all(&a).unwrap();
         std::fs::write(a.join("notes.txt"), b"x").unwrap();
@@ -2072,8 +2061,7 @@ mod tests {
     #[test]
     fn the_fresh_install_check_counts_an_unlistable_folder_as_maybe_holding_records() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("fwf-any-unlisted-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = crate::config::fresh_test_dir("any-unlisted");
         let dir = root.join("history");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
