@@ -17,7 +17,7 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { backendForAddress, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { forgetCredential } from "@/lib/capabilities";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import {
@@ -90,8 +90,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const backends = useApp((s) => s.backends);
   const keptKeyless = (() => {
     if (!landed || busy || !key) return false;
-    const gateUrl = typedServerUrl(url);
-    const kept = backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+    const kept = backendForAddress(backends, storedTypedUrl(url));
     return !!kept && kept.id !== gateBackend.current?.id && !kept.hasApiKey;
   })();
   // Set by finishLanded when the backend the starters bind to has no key here: the quick-add
@@ -107,8 +106,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const finishLanded = () => {
     const s = st.getState();
     const gate = gateBackend.current;
-    const gateUrl = typedServerUrl(url);
-    const kept = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+    const kept = backendForAddress(s.backends, storedTypedUrl(url));
     if (gate && kept && kept.id !== gate.id && !s.backends.some((b) => b.id === gate.id)) {
       void deleteBackendKey(gate.id).catch(() => {});
     }
@@ -258,7 +256,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Backends screen's restore does. Never fall back to the first entry of the server-written
       // list: sync, and with it every push of every backend's plaintext key, would bind to a
       // backend chosen by position, and the gate's keyring entry would be orphaned.
-      let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+      let match = backendForAddress(s.backends, storedTypedUrl(url));
       if (!match && gateBackend.current) {
         s.upsertBackend(gateBackend.current);
         match = gateBackend.current;
