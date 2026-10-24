@@ -356,7 +356,7 @@ function Editor({
       </div>
 
       {/* Laid out like the Backends editor: the plain fields are rows in one card, and decode,
-          insertion and translation each get their OWN disclosure. */}
+          live dictation, insertion and translation each get their OWN disclosure. */}
       <div className="mt-5 rounded-card border border-line bg-surface-2/40 px-[18px] py-1">
         <OverrideHeader title="Backend" env={false}>
           <div className={OVERRIDE_CONTROL_W}>
