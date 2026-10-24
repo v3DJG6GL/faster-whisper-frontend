@@ -40,10 +40,12 @@ const setHidden = (h: boolean) => {
 const settle = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 };
+/** The fixed per-backend trend document's call, as opposed to the page's own view / year. */
+const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
 /** Calls since the last reset, split into the fixed per-backend document and the page's. */
 function calls() {
-  const all = getUsageStats.mock.calls.map(([a]) => a.query);
-  const fixed = all.filter((q) => q.days === TREND_DAYS && Object.keys(q).length <= 2).length;
+  const all = getUsageStats.mock.calls.map(([a]) => a);
+  const fixed = all.filter(isTrend).length;
   return { fixed, page: all.length - fixed };
 }
 
@@ -401,7 +403,7 @@ describe("usage poll gates", () => {
     // The server is gone for the page's documents when the window comes back.
     const ok = getUsageStats.getMockImplementation()!;
     getUsageStats.mockImplementation(async (a) =>
-      a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2 ? ok(a) : (null as never),
+      isTrend(a) ? ok(a) : (null as never),
     );
     try {
       setHidden(false);
@@ -479,7 +481,7 @@ describe("usage poll gates", () => {
     const pageCalls = () =>
       getUsageStats.mock.calls
         .map(([a]) => a as { backendId?: string; query: Record<string, unknown> })
-        .filter((a) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2));
+        .filter((a) => !isTrend(a));
     expect(pageCalls().length).toBe(2); // the view + the year
     expect(pageCalls().every((a) => a.backendId === "b2")).toBe(true);
     // With no page open, a hidden move records nothing: the show runs no pass.
@@ -518,7 +520,7 @@ describe("usage poll gates", () => {
     const ok = getUsageStats.getMockImplementation()!;
     let releaseB2!: (v: null) => void;
     getUsageStats.mockImplementation((a) =>
-      (a as { backendId?: string }).backendId === "b2" && a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2
+      (a as { backendId?: string }).backendId === "b2" && isTrend(a)
         ? (new Promise((r) => (releaseB2 = r)) as never)
         : ok(a),
     );
@@ -565,7 +567,7 @@ describe("usage poll gates", () => {
     const ok = getUsageStats.getMockImplementation()!;
     let releaseB2!: (v: null) => void;
     getUsageStats.mockImplementation((a) =>
-      (a as { backendId?: string }).backendId === "b2" && a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2
+      (a as { backendId?: string }).backendId === "b2" && isTrend(a)
         ? (new Promise((r) => (releaseB2 = r)) as never)
         : ok(a),
     );
@@ -598,7 +600,6 @@ describe("usage poll gates", () => {
     await settle();
   });
   it("a show while a hidden pass is running hands it the direct fetch: its page step does not refetch", async () => {
-    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
     // skipped 0: the show only fetches the page (no pass of its own); 2: it also folds a rerun,
     // which fetches the page as usual.
     for (const skipped of [0, 2]) {
@@ -653,7 +654,6 @@ describe("usage poll gates", () => {
     }
   });
   it("the catch-up pass fetches the picked backend's page when its trend fetch brings it back during the pass", async () => {
-    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
     const ok = getUsageStats.getMockImplementation()!;
     // b2 — the user's pick — is down: no usage, so the page falls back to b1.
     getUsageStats.mockImplementation((a) => ((a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (Promise.resolve(null) as never) : ok(a)));
@@ -697,7 +697,6 @@ describe("usage poll gates", () => {
     await settle();
   });
   it("the catch-up pass refetches the page when a range change's fetch missed after the show's direct fetch landed", async () => {
-    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
     useApp.setState({
       backends: [
         { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
@@ -750,7 +749,6 @@ describe("usage poll gates", () => {
   });
   it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
     const ok = getUsageStats.getMockImplementation()!;
-    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     const close = openStatisticsPage();
     try {
       await settle();
@@ -776,7 +774,7 @@ describe("usage poll gates", () => {
       // Back from All onto a miss: the kept year is refetched and marked failed, not shown as current.
       useApp.setState({ usageViewQuery: { range: "all", with: [] } });
       await settle();
-      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      getUsageStats.mockImplementation(async (a) => (!isTrend(a) ? (null as never) : ok(a)));
       useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
       await settle();
       expect(useApp.getState().usageYear).toEqual({ sig: view.sig, stats: view.stats, failed: true });
@@ -789,13 +787,12 @@ describe("usage poll gates", () => {
 
   it("a reopened 1 year view not yet refetched is no stand-in for the year: coming back fetches it", async () => {
     const ok = getUsageStats.getMockImplementation()!;
-    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     let close = openStatisticsPage();
     try {
       useApp.setState({ usageViewQuery: { range: "365", with: [] } });
       await settle();
       close(); // left on 1 year: the kept view is from this (now past) visit
-      getUsageStats.mockImplementation((a) => (page(a) ? new Promise<never>(() => {}) : ok(a)));
+      getUsageStats.mockImplementation((a) => (!isTrend(a) ? new Promise<never>(() => {}) : ok(a)));
       close = openStatisticsPage(); // the reopen's view fetch never lands
       await settle();
       getUsageStats.mockClear();
@@ -811,7 +808,6 @@ describe("usage poll gates", () => {
 
   it("a 1 year view whose last poll missed is no stand-in for the year: coming back fetches it", async () => {
     const ok = getUsageStats.getMockImplementation()!;
-    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     const close = openStatisticsPage();
     try {
       await settle();
@@ -819,7 +815,7 @@ describe("usage poll gates", () => {
       await settle();
       await vi.advanceTimersByTimeAsync(30_000); // a poll on 1 year confirms the view
       await settle();
-      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      getUsageStats.mockImplementation(async (a) => (!isTrend(a) ? (null as never) : ok(a)));
       await vi.advanceTimersByTimeAsync(30_000); // the next poll misses: the view may now be old
       await settle();
       getUsageStats.mockClear();
@@ -836,7 +832,6 @@ describe("usage poll gates", () => {
 
   it("switching back to the last visit's query before the reopen fetch lands marks its kept documents failed on a miss", async () => {
     const ok = getUsageStats.getMockImplementation()!;
-    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     const last = { range: "7", with: ["vad"] } as const;
     let close = openStatisticsPage();
     try {
@@ -848,7 +843,7 @@ describe("usage poll gates", () => {
       expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
       // The sidebar reopens on the default query; the server hangs, then misses.
       const pending: ((v: null) => void)[] = [];
-      getUsageStats.mockImplementation((a) => (page(a) ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
+      getUsageStats.mockImplementation((a) => (!isTrend(a) ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
       close = openStatisticsPage();
       await settle();
@@ -902,7 +897,6 @@ describe("usage poll gates", () => {
 
   it("a poll that missed only the view leaves the year it confirmed reused by a range change, not refetched or failed", async () => {
     const ok = getUsageStats.getMockImplementation()!;
-    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     const close = openStatisticsPage();
     try {
       await settle();
@@ -913,7 +907,7 @@ describe("usage poll gates", () => {
       await settle();
       const { usageYear } = useApp.getState();
       expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
-      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      getUsageStats.mockImplementation(async (a) => (!isTrend(a) ? (null as never) : ok(a)));
       getUsageStats.mockClear();
       useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
       await settle();
