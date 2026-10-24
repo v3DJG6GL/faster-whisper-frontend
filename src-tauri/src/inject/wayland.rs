@@ -87,13 +87,11 @@ mod imp {
         /// type's modifiers, so KWin capitalizes the lowercase keysym under Caps Lock). The
         /// typer brackets such a keypress with a Caps Lock toggle. See `charmap_from_keymap`.
         lock: bool,
-        /// Does toggling Shift on this glyph's press, under a live Caps Lock, still type THIS glyph
-        /// (a normal A–Z key)? When a live Caps Lock capitalizes alphabetic output, the typer
-        /// cancels it by pressing Shift — but that only recovers the intended glyph where Shift and
-        /// Lock cancel out. On a FOUR_LEVEL key (ü, where Shift→è), for a letter on a digit key's
-        /// Shift level (Swiss ç on Shift+4) or an AltGr letter (µ on AltGr+m) pressing Shift
-        /// selects the WRONG glyph, so for `caps_safe == false` the typer flips Caps OFF for the
-        /// press instead. Per glyph, not per key. See `PressReplay` and `caps_plan`.
+        /// Does toggling Shift on this glyph's press, under a live Caps Lock, still type THIS glyph?
+        /// True where Shift and Lock cancel out (an A–Z key); false on a FOUR_LEVEL key (ü), a
+        /// digit key's Shift letter (Swiss ç) or an AltGr letter (µ), where the typer flips Caps
+        /// OFF for the press instead. Per glyph, not per key. See
+        /// `PressReplay::shift_cancels_caps` and `caps_plan`.
         caps_safe: bool,
         /// Does this glyph's own press still type it with Caps Lock locked? True for a digit or
         /// symbol Lock leaves alone; false for a letter Caps capitalizes, and for a glyph whose key
@@ -864,14 +862,13 @@ mod imp {
 
     /// Does `text` hold a letter of a foreign word that the active layout cannot type? On any
     /// layout: a letter of a non-Latin script, from Greek (U+0370) up, cased or not. The Latin
-    /// blocks above that floor (phonetic extensions, Latin Extended Additional/-C/-D/-E/-F/-G,
-    /// super/subscript letters, letterlike symbols, the ﬁ ligatures, fullwidth Latin), the
-    /// Latin-letter symbols Unicode also counts as alphabetic (circled Ⓜ, squared 🅿 emoji, math
-    /// alphanumerics) and the Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB)
-    /// stay with the per-character skip. On a layout that types no basic Latin letter (Cyrillic,
-    /// Greek...): also any unreachable Latin letter (ASCII, Latin-1, Latin Extended-A/-B) — there
-    /// it is an English brand or name, not a stray accent. Modifier letters (the Belarusian
-    /// apostrophe U+02BC a `by` layout cannot type) and µ ª º stay with the per-character skip.
+    /// blocks above that floor (`LATIN_ABOVE_GREEK`, including the Latin-letter symbols Unicode
+    /// also counts as alphabetic: circled Ⓜ, squared 🅿 emoji, math alphanumerics) and the
+    /// Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB) stay with the
+    /// per-character skip. On a layout that types no basic Latin letter (Cyrillic, Greek...): also
+    /// any unreachable Latin letter (ASCII, Latin-1, Latin Extended-A/-B) — there it is an English
+    /// brand or name, not a stray accent. Modifier letters (the Belarusian apostrophe U+02BC a `by`
+    /// layout cannot type) and µ ª º stay with the per-character skip.
     fn unreachable_foreign_word(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
         const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 14] = [
             0x1D00..=0x1DFF,   // phonetic extensions (+ supplement), combining Latin letters
@@ -1518,8 +1515,8 @@ mod imp {
                         //   is off, leaving the user's state unchanged; Shift/AltGr still apply (È = Lock+Shift).
                         // - otherwise a live Caps capitalizes the output: a case-pair key cancels it with Shift; a
                         //   non-caps-safe FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) flips Caps OFF around
-                        //   its own modifiers instead. A glyph whose own press survives Caps (`caps_keeps`: caseless
-                        //   letters, ß) gets neither — Shift would select its shift level (de Shift+ß = '?').
+                        //   its own modifiers instead. A glyph whose own press survives Caps (`caps_keeps`, asked of
+                        //   the keymap: a digit, a symbol) gets neither — Shift would select its shift level (Shift+1 = '!').
                         if flip_caps {
                             press!(KEY_CAPSLOCK);
                             // Caps Lock toggles on the PRESS, so mark it flipped here — before the
