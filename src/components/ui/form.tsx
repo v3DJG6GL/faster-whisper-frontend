@@ -503,7 +503,7 @@ export function Stepper({
     }, 380);
   };
 
-  // Resync when the value changes from outside (a −/+ press, a reset) — but never mid-typing:
+  // Resync when the value changes from outside (a reset, the parent) — but never mid-typing:
   // we only commit on blur/Enter, so `value` stays put while you type and the field is stable.
   useEffect(() => {
     if (!focused) setText(String(value));
