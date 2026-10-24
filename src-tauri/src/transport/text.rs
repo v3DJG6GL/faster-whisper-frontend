@@ -205,12 +205,7 @@ fn align_segments(
         results[at] = super::batch::bound_translation_keys(seg.translations);
         // Kept-original markers are language codes — bound like the
         // translation keys, capped at the target ceiling.
-        kept[at] = seg
-            .kept_original
-            .iter()
-            .take(MAX_TARGETS)
-            .map(|k| bounded_server_text(k, 16))
-            .collect();
+        kept[at] = super::batch::bound_texts(&seg.kept_original, MAX_TARGETS, 16);
     }
     (results, kept)
 }

@@ -867,13 +867,18 @@ fn fin_frac(v: Option<f64>) -> Option<f64> {
     v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0))
 }
 
+/// Bound a server string list: at most `max_items` entries, each capped at `max_chars`.
+pub(crate) fn bound_texts(v: &[String], max_items: usize, max_chars: usize) -> Vec<String> {
+    v.iter()
+        .take(max_items)
+        .map(|s| super::bounded_server_text(s, max_chars))
+        .collect()
+}
+
 /// Bound a server notice list (warnings, ignored overrides): at most `MAX_NOTICES`
 /// entries, each capped like an error text.
 pub(crate) fn bound_notices(v: &[String]) -> Vec<String> {
-    v.iter()
-        .take(super::MAX_NOTICES)
-        .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
-        .collect()
+    bound_texts(v, super::MAX_NOTICES, super::MAX_ERROR_TEXT)
 }
 
 /// Bound every server string and number in a plan: the webview renders these
@@ -1051,12 +1056,7 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
         device: parsed.device.map(|s| super::bounded_server_text(&s, 32)),
         compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
         // ~4 stage names in the protocol; take(4) is defensive.
-        skipped: parsed.skipped.map(|v| {
-            v.into_iter()
-                .take(4)
-                .map(|s| super::bounded_server_text(&s, 32))
-                .collect()
-        }),
+        skipped: parsed.skipped.map(|v| bound_texts(&v, 4, 32)),
         target: parsed.target.map(|s| super::bounded_server_text(&s, 16)),
         target_progress: fin_frac(parsed.target_progress),
         // The row's bar width / percent label and the VAD share read these raw.
@@ -1534,22 +1534,14 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
                 s.translations = s.translations.map(bound_translation_keys);
                 // Kept-original markers are language codes too — same bound,
                 // capped at the translate target ceiling.
-                s.translations_kept = s.translations_kept.map(|v| {
-                    v.iter()
-                        .take(super::MAX_TARGETS)
-                        .map(|k| super::bounded_server_text(k, 16))
-                        .collect()
-                });
+                s.translations_kept = s
+                    .translations_kept
+                    .map(|v| bound_texts(&v, super::MAX_TARGETS, 16));
                 s
             })
             .collect(),
         words: parsed.words,
-        speakers: parsed
-            .speakers
-            .iter()
-            .take(MAX_SPEAKERS_LISTED)
-            .map(|s| super::bounded_server_text(s, SPEAKER_MAX))
-            .collect(),
+        speakers: bound_texts(&parsed.speakers, MAX_SPEAKERS_LISTED, SPEAKER_MAX),
         warnings: bound_notices(&parsed.warnings),
         overrides_ignored: bound_notices(&parsed.overrides_ignored),
         // Opaque 32-hex id from OUR backend; screened like a progress id so a
@@ -1576,12 +1568,7 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
             model: t
                 .model
                 .and_then(|m| super::model_id_within(&m, super::MODEL_ID_MAX)),
-            targets: t
-                .targets
-                .iter()
-                .take(super::MAX_TARGETS)
-                .map(|s| super::bounded_server_text(s, 16))
-                .collect(),
+            targets: bound_texts(&t.targets, super::MAX_TARGETS, 16),
             source: t.source.map(|s| super::bounded_server_text(&s, 16)),
             mode: t.mode.map(|m| super::bounded_server_text(&m, 16)),
         }),

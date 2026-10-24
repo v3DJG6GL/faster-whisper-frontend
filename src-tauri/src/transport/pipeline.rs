@@ -240,32 +240,24 @@ pub async fn save_pipeline_rules(
                 match serde_json::from_str::<SaveBody>(&text)
                     .map_err(|e| super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))
                 {
-                    Ok(mut b) => PipelineSave {
+                    Ok(b) => PipelineSave {
                         ok: true,
                         status: code,
                         // Capped like `words`: it crosses the IPC and is JSON-parsed on the
                         // webview main thread, and the only consumer reads `.length`, so the cap
                         // loses nothing.
-                        saved: {
-                            b.saved.truncate(MAX_RECENT_WORDS);
-                            b.saved
-                                .iter()
-                                .map(|s| super::bounded_server_text(s, WORD_MAX))
-                                .collect()
-                        },
+                        saved: super::batch::bound_texts(&b.saved, MAX_RECENT_WORDS, WORD_MAX),
                         conflicts: if b.conflicts.is_null() {
                             serde_json::json!([])
                         } else {
                             b.conflicts
                         },
                         requires_restart: b.requires_restart,
-                        env_pinned_ignored: {
-                            b.env_pinned_ignored.truncate(MAX_ENV_PINNED);
-                            b.env_pinned_ignored
-                                .iter()
-                                .map(|s| super::bounded_server_text(s, SETTING_NAME_MAX))
-                                .collect()
-                        },
+                        env_pinned_ignored: super::batch::bound_texts(
+                            &b.env_pinned_ignored,
+                            MAX_ENV_PINNED,
+                            SETTING_NAME_MAX,
+                        ),
                         errors: None,
                         detail: None,
                     },
@@ -370,12 +362,7 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
                 // The COUNT is capped in both webviews; the per-word LENGTH never was, and
                 // `Combobox.rank` lowercases every candidate on every keystroke.
                 Ok(mut rw) => {
-                    rw.words.truncate(MAX_RECENT_WORDS);
-                    rw.words = rw
-                        .words
-                        .iter()
-                        .map(|w| super::bounded_server_text(w, WORD_MAX))
-                        .collect();
+                    rw.words = super::batch::bound_texts(&rw.words, MAX_RECENT_WORDS, WORD_MAX);
                     rw
                 }
                 Err(e) => {
