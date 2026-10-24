@@ -1,11 +1,9 @@
 import { backendDisplayName, safeDisplayText } from "./sanitize";
 import { fmtBytes } from "./format";
-// Truthful error toasts ("Job Signals"): one template mapping the Rust
-// transport's classified error strings (friendly_err's "Could not connect…" /
-// "Timed out…" + the "HTTP nnn: detail" form) onto cause + backend name + one
-// fix, instead of every call site guessing its own prose. Kept generic across
-// job kinds; the translate paths are wired now, other call sites migrate as
-// they're touched.
+// Truthful error doorways: one template mapping the Rust transport's classified
+// error strings (friendly_err's "Could not connect…" / "Timed out…" + the
+// "HTTP nnn: detail" form) onto cause + backend name + one fix, instead of every
+// call site guessing its own prose.
 
 export type TransportErrorKind = "translate" | "transcribe" | "dictation";
 
@@ -97,8 +95,8 @@ export function describeTransportError(
   e: unknown,
   backendLabel: string,
 ): TransportErrorInfo {
-  // Defang once at the template boundary: the label is a peer-authored backend name that
-  // otherwise reached the fixed doorway banner — the one surface above every screen — uncapped.
+  // Defang once at the template boundary: the label is a peer-authored backend name shown on
+  // the fixed doorway banner, the one surface above every screen.
   const label = doorwayBackendLabel(backendLabel);
 
   const msg = String(e ?? "");
@@ -180,9 +178,7 @@ export function describeTransportError(
 
 /** The dictation per-phrase translate fallback doorway. The client-side causes (our own
  *  budget, our own cancel, an empty answer) are named as such and offer no "View logs":
- *  the Logs buffer is fed by Rust tracing only, and a client-side budget expiry writes
- *  nothing there — the old text rendered every one of them as "see the log" with a
- *  button that led to nothing. */
+ *  the Logs buffer is fed by Rust tracing only, so they write nothing there. */
 export function translateFailureDoorway(
   cause: "timeout" | "cancelled" | "empty" | "error" | null,
   e: unknown,
