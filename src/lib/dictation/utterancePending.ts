@@ -51,8 +51,8 @@ export function newUtterancePending(): UtterancePending {
 /** A lifecycle frame arrived. Returns true when it was a terminal (`dropped`). Unknown states
  *  are ignored — must-ignore covers the value as much as the frame type, and the Rust parser
  *  already drops them; this is the second fence, for the value crossing the IPC as a string.
- *  streaming.ts handles `dropped` through its own endUtterance (it has to read the min-show
- *  hold before clearing), so the `dropped` branch here serves callers without that hold. */
+ *  streaming.ts sends `dropped` to its own endUtterance instead (it has to read the min-show
+ *  hold before clearing), so the `dropped` branch here is a fallback no caller reaches today. */
 export function onFrame(p: UtterancePending, state: string, ordinal: number | null, now: number): boolean {
   if (state === "dropped") {
     onTerminal(p);
