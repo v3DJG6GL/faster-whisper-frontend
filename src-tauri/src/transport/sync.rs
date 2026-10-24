@@ -117,11 +117,11 @@ const MAX_SAFE_VERSION: i64 = 9_007_199_254_740_991;
 /// version and make every later push a 409.
 const VERSION_ERR: &str = "The server sent a settings version this app cannot represent.";
 
-/// Accept one parsed server state: version-checked, then bounded; a parse error is prefixed
-/// with `what`. The ONE gate for all three response arms (pull, push 2xx, push 409), so the
-/// version guard cannot go missing from one of them (see `version_representable`).
-fn accept(parsed: Result<SyncRemoteState, String>, what: &str) -> Result<SyncRemoteState, String> {
-    match parsed {
+/// Parse and accept one server state body: version-checked, then bounded; a parse error is
+/// prefixed with `what`. The ONE gate for all three response arms (pull, push 2xx, push 409), so
+/// the version guard cannot go missing from one of them (see `version_representable`).
+fn accept(text: &str, what: &str) -> Result<SyncRemoteState, String> {
+    match serde_json::from_str::<SyncRemoteState>(text).map_err(|e| e.to_string()) {
         Ok(state) if state.version_representable() => Ok(state.bounded()),
         Ok(_) => Err(VERSION_ERR.into()),
         Err(e) => Err(format!(
@@ -216,10 +216,7 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
                     Ok(b) => b,
                     Err(reason) => return SyncPull::failed(code, reason),
                 };
-                match accept(
-                    serde_json::from_str(&text).map_err(|e| e.to_string()),
-                    "Unexpected response",
-                ) {
+                match accept(&text, "Unexpected response") {
                     Ok(state) => SyncPull {
                         ok: true,
                         status: code,
@@ -286,10 +283,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                 Err(reason) => return SyncPush::failed(code, reason),
             };
             if (200..300).contains(&(code as i32)) {
-                match accept(
-                    serde_json::from_str(&text).map_err(|e| e.to_string()),
-                    "Unexpected response",
-                ) {
+                match accept(&text, "Unexpected response") {
                     Ok(state) => SyncPush {
                         ok: true,
                         status: code,
@@ -302,10 +296,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
             } else if code == 409 {
                 // The conflict body IS the current server state (+ a detail
                 // string serde ignores) — hand it to the merge loop.
-                match accept(
-                    serde_json::from_str(&text).map_err(|e| e.to_string()),
-                    "Unexpected conflict response",
-                ) {
+                match accept(&text, "Unexpected conflict response") {
                     Ok(current) => SyncPush {
                         ok: false,
                         status: code,
