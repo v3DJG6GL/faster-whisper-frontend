@@ -41,3 +41,11 @@ export function findInTree(node: unknown, pred: (el: ReactElement<Props>) => boo
   if (pred(el)) return el;
   return findInTree(el.props.children, pred);
 }
+
+/** Calls a rendered element's mousedown handler with a synthetic press; true when it prevented the
+ *  default (kept focus where it was). */
+export function pressPrevented(onMouseDown: unknown, target: unknown, button = 0): boolean {
+  let prevented = false;
+  (onMouseDown as (e: unknown) => void)({ button, target, preventDefault: () => (prevented = true) });
+  return prevented;
+}

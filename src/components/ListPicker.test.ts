@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import { findInTree, hooks } from "./plainRender.testkit";
+import { findInTree, hooks, pressPrevented } from "./plainRender.testkit";
 
 // No DOM in this suite: ListPicker runs as a plain function over a tiny hook store (state and refs
 // survive "re-renders" by call order), and its returned tree is walked for the handlers.
@@ -154,11 +154,7 @@ describe("ListPicker popover focus", () => {
     const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
     const field = {};
     input.props.ref.current = field;
-    const press = (target: unknown, button = 0) => {
-      let prevented = false;
-      panel.props.onMouseDown?.({ button, target, preventDefault: () => (prevented = true) });
-      return prevented;
-    };
+    const press = (target: unknown, button = 0) => pressPrevented(panel.props.onMouseDown, target, button);
     // The magnifier, a section header, the hint line: focus would otherwise drop to <body>.
     expect(press({})).toBe(true);
     // The field itself keeps its press (caret placement, selection).
@@ -193,11 +189,7 @@ describe("ListPicker popover focus", () => {
     const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
     let refocused = 0;
     input.props.ref.current = { focus: () => refocused++ };
-    const press = (target: unknown, button = 0) => {
-      let prevented = false;
-      panel.props.onMouseDown?.({ button, target, preventDefault: () => (prevented = true) });
-      return prevented;
-    };
+    const press = (target: unknown, button = 0) => pressPrevented(panel.props.onMouseDown, target, button);
     // A row still keeps focus in the field, and arms nothing.
     expect(press({ id: "lp-list-opt-0" })).toBe(true);
     expect(ups).toHaveLength(0);

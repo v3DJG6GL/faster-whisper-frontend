@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import { findInTree as find, hooks } from "./plainRender.testkit";
+import { findInTree as find, hooks, pressPrevented } from "./plainRender.testkit";
 
 // No DOM in this suite: Combobox runs as a plain function over a tiny hook store (state and refs
 // survive "re-renders" by call order), and its returned tree is walked for the handlers.
@@ -57,11 +57,7 @@ describe("Combobox suggestion list press", () => {
     let refocused = 0;
     (input.props as unknown as { ref: { current: unknown } }).ref.current = { focus: () => refocused++ };
 
-    const press = (target: unknown) => {
-      let prevented = false;
-      (panelOf(tree).props.onMouseDown as (e: unknown) => void)({ button: 0, target, preventDefault: () => (prevented = true) });
-      return prevented;
-    };
+    const press = (target: unknown) => pressPrevented(panelOf(tree).props.onMouseDown, target);
     // The footer and the rows' chrome still keep focus in the input, and arm nothing.
     expect(press({ id: "" })).toBe(true);
     expect(ups).toHaveLength(0);
@@ -98,13 +94,7 @@ describe("Combobox suggestion list press", () => {
     render();
     (inputOf(render()).props.onFocus as () => void)();
     const tree = render();
-    let prevented = false;
-    (panelOf(tree).props.onMouseDown as (e: unknown) => void)({
-      button,
-      target: { id: "cb-list" },
-      preventDefault: () => (prevented = true),
-    });
-    expect(prevented).toBe(true);
+    expect(pressPrevented(panelOf(tree).props.onMouseDown, { id: "cb-list" }, button)).toBe(true);
     expect(ups).toHaveLength(0);
     // Nothing marks a list press, so a later blur closes the list and reaches the parents.
     let stopped = 0;
