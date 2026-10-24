@@ -170,7 +170,7 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
   const unconfirmed = sig !== yearFreshSig;
-  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force && !unconfirmed) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
+  if (!force && confirmedDoc(s.usageYear, sig, yearFreshSig)) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
   const gen = yearGen;
   const cred = credentialGeneration(backend.id);
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
@@ -187,6 +187,12 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   }
 }
 
+/** `doc` answers `sig`, a fetch this visit confirmed that signature (`fresh`), and it holds a
+ *  good document (stats, not failed). */
+function confirmedDoc<D extends { sig: string; stats: unknown; failed?: boolean }>(doc: D | null | undefined, sig: string, fresh: string | null): doc is D {
+  return doc?.sig === sig && sig === fresh && !!doc.stats && !doc.failed;
+}
+
 /** Coming back from 1 year: the page's own 365-day document — once a fetch this visit confirmed
  *  it — answers the calendar's year query exactly (same signature), so it becomes the year
  *  document without a fetch. False when it cannot stand in (another stage filter, a failed,
@@ -197,7 +203,7 @@ function seedYearFromView(s = useApp.getState()): boolean {
   if (!backend || !q) return false;
   const sig = viewSignature(backend, effectiveServerUrl(backend, s.settings), q, viewerTimeZone());
   const view = s.usageView;
-  if (view?.sig !== sig || sig !== viewFreshSig || !view.stats || view.failed) return false;
+  if (!confirmedDoc(view, sig, viewFreshSig)) return false;
   s.setUsageYear(sig, view.stats);
   yearGen++;
   yearFreshSig = sig;
@@ -212,12 +218,10 @@ function pageConfirmed(s = useApp.getState()): boolean {
   const target = effectiveServerUrl(backend, s.settings);
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, s.usageViewQuery, tz);
-  const view = s.usageView;
-  if (view?.sig !== sig || sig !== viewFreshSig || !view.stats || view.failed) return false;
+  if (!confirmedDoc(s.usageView, sig, viewFreshSig)) return false;
   const q = yearPageQuery(s.usageViewQuery);
   if (!q) return true;
-  const year = s.usageYear;
-  return year?.sig === viewSignature(backend, target, q, tz) && year.sig === yearFreshSig && !!year.stats && !year.failed;
+  return confirmedDoc(s.usageYear, viewSignature(backend, target, q, tz), yearFreshSig);
 }
 
 /** Fetch the Statistics page's document for the current query against the viewed
