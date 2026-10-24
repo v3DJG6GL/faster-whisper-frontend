@@ -51,6 +51,8 @@ export const ZERO_TOTALS: Readonly<UsageKindTotals> = Object.freeze({
   audio_s: 0,
   processing_s: 0,
 });
+/** The counters every totals block carries, in ZERO_TOTALS' (type-checked) key order. */
+const COUNTERS = Object.keys(ZERO_TOTALS) as (keyof UsageKindTotals)[];
 
 export function zeroKinds(): UsageKinds {
   return { all: { ...ZERO_TOTALS }, dictation: { ...ZERO_TOTALS }, file: { ...ZERO_TOTALS }, url: { ...ZERO_TOTALS }, text: { ...ZERO_TOTALS } };
@@ -60,14 +62,9 @@ export function zeroKinds(): UsageKinds {
  *  server's shape is trusted for keys, not for values (a missing block reads as zero). */
 export function safeTotals(t: Partial<UsageKindTotals> | null | undefined): UsageKindTotals {
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-  return {
-    sessions: n(t?.sessions),
-    requests: n(t?.requests),
-    errors: n(t?.errors),
-    words: n(t?.words),
-    audio_s: n(t?.audio_s),
-    processing_s: n(t?.processing_s),
-  };
+  const out = { ...ZERO_TOTALS };
+  for (const k of COUNTERS) out[k] = n(t?.[k]);
+  return out;
 }
 
 /** A wire value as a finite count or duration: non-numbers, NaN and ±Infinity read as 0, negatives clamp to 0. */
@@ -385,12 +382,7 @@ export interface UsageBucket extends UsageKinds {
 }
 
 function addTotals(a: UsageKindTotals, b: UsageKindTotals): void {
-  a.sessions += b.sessions;
-  a.requests += b.requests;
-  a.errors += b.errors;
-  a.words += b.words;
-  a.audio_s += b.audio_s;
-  a.processing_s += b.processing_s;
+  for (const k of COUNTERS) a[k] += b[k];
 }
 
 /** Adds `add` into `into` for every scope, each counter of `add` coerced (safeTotals). Returns `into`. */
