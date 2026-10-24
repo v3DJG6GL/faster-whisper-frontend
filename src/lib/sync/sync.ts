@@ -936,9 +936,9 @@ export function clampTranslationOverrides(v: unknown): TranslationOverrides | un
 
 /** Inbound `profiles.list` / `backends.list` are typed only by assertion: the FILE import path
  *  gets a real serde parse in Rust, the sync path does not. An element missing a required field
- *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
- *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
- *  entries here so both paths share the same floor. */
+ *  reaches consumers that deref it unguarded (`p.hotkey.length`), and with no error boundary in
+ *  the tree a throw during render unmounts the window. Drop malformed entries here so both paths
+ *  share the same floor. */
 export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
   return dedupeById(list
@@ -1192,8 +1192,8 @@ const MAX_SYNCED_ENTRIES = 500;
 
 /** Closed-vocabulary settings arrive as raw JSON. `save_config` takes a typed `Config` whose
  *  enums have no serde fallback, so one unknown variant makes EVERY later save fail — the store
- *  keeps the bad value, the save stays held, and `pushNow` short-circuits on it. Keep the
- *  device's current value when the incoming one is not a known variant. */
+ *  keeps the bad value, the save stays held, and `pushNow` short-circuits on it. An unknown
+ *  incoming variant becomes `fallback` (the device's current value where the caller has one). */
 function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 }
@@ -2660,7 +2660,7 @@ async function stashSnapshot(prevChunks: number): Promise<void> {
   const secrets = state.snapshot?.backends?.secrets;
   // Iterate the snapshot's BACKEND LIST and read by id (as `reconcileBackendSecrets` does), never
   // the server-authored `secrets` map itself: these ids are persisted twice — to sync-state.json
-  // AND as keyring chunk accounts read back at every launch. A `{"list":[],"secrets":{…350 000
+  // AND inside the keyring stash read back at every launch. A `{"list":[],"secrets":{…350 000
   // junk ids…}}` fits SYNC_MAX_BODY and raises no SecurityChange (`securityChanges` iterates the
   // empty list), so it would apply unattended; `Object.keys` on a STRING `secrets` likewise yields
   // one id per code unit. The list is the bound that matters — `composeBlob` builds `secrets` from
@@ -3612,7 +3612,7 @@ export function securityChanges(
   gates?: Partial<Pick<Gates, "modelDecodeDefaults" | "serverAddresses" | "apiKeys">>,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
-  // The three retention clocks drive sweeps that DELETE stored data (saved
+  // The retention windows drive sweeps that DELETE stored data (saved
   // recordings; dictation sessions incl. audio; file transcripts incl. their
   // audio copies). Only a change that starts deleting, or deletes sooner, needs
   // consent — lengthening the window (or turning retention off) destroys
@@ -4355,13 +4355,12 @@ async function resolveLocked(
   const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
   // Judged under applyCats, as approveLocked does: a degraded keyring holds backends out of both
   // the judge and the apply.
-  // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
-  // the re-merge, which already contains every NON-conflicting category auto-resolved in the
-  // server's favour — so a peer that also touches some category the user happened to edit
-  // locally forces the pull down this branch and rides its backend repoint / key swap in
-  // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
-  // address change. Same shape as reconcileRemote: apply everything else, hold the flagged
-  // categories back, and persist no base so a rejection is re-offered on the next pull.
+  // The security gate runs here too, not only on the clean-merge path: `final` carries every
+  // non-conflicting category auto-resolved in the server's favour, and the conflict dialog shows
+  // only the conflicting category names, so a peer that also touched a locally edited category
+  // (forcing this branch) would ride its backend repoint / key swap in unreviewed. Same shape as
+  // reconcileRemote: apply everything else, hold the flagged categories back, and persist no
+  // base so a rejection is re-offered on the next pull.
   const risky = gatedSecurityCheck(final, localNow, applyCats);
   if (risky.length > 0) {
     const applyNow = heldBack(applyCats, risky);
