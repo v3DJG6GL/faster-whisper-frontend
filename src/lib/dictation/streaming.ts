@@ -71,7 +71,7 @@ import {
   type TranslateFailure,
 } from "./dictationTranslate";
 import { newCaptureIdBook } from "./captureIds";
-import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "../types";
+import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork, UsageOutcome } from "../types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
 import { appRuleKey, stripControlChars } from "../sanitize";
@@ -409,8 +409,11 @@ let insertSeq = 0;
 function signalInsert(kind: "typed" | "clipboard"): void {
   useApp.getState().setDictation({ lastInsert: { kind, seq: ++insertSeq } });
 }
+/** What a session delivered: the outcome post's `delivery`. */
+type Delivery = UsageOutcome["delivery"];
+
 /** The truthful end-of-session outcome from what landed this session. */
-function endOutcome(): "typed" | "clipboard" | "none" {
+function endOutcome(): Delivery {
   return sessionTyped ? "typed" : sessionClipboard ? "clipboard" : "none";
 }
 
@@ -463,7 +466,7 @@ export function translationOutcome(s: {
  *  delivery; cancelLive reports what already landed (else "none") with `abandoned`, before it
  *  resets sessionTyped/sessionClipboard. The failure paths book through bookFailedEnd /
  *  deferSessionOutcome instead (see there). */
-function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
+function reportSessionOutcome(delivery: Delivery, abandoned = false): void {
   deferSessionOutcome()?.(delivery, abandoned);
 }
 
@@ -471,7 +474,7 @@ type OutcomeSettle = ReturnType<typeof deferSessionOutcome>;
 
 /** A failure path's booking: the delivery that landed (default: what landed this session),
  *  abandoned exactly when nothing landed. The text was lost, like a cancel. */
-function bookFailedEnd(settle: OutcomeSettle, delivery: "typed" | "clipboard" | "none" = endOutcome()): void {
+function bookFailedEnd(settle: OutcomeSettle, delivery: Delivery = endOutcome()): void {
   settle?.(delivery, delivery === "none");
 }
 
@@ -485,7 +488,7 @@ function bookFailedEnd(settle: OutcomeSettle, delivery: "typed" | "clipboard" | 
  *  The app id goes only with "Report the app I dictate into" on and never for a target an
  *  App rule blocked (the same promise the history capture keeps). Words and audio seconds
  *  are the server's own — it counted the utterances. */
-function deferSessionOutcome(): ((delivery: "typed" | "clipboard" | "none", abandoned: boolean) => void) | null {
+function deferSessionOutcome(): ((delivery: Delivery, abandoned: boolean) => void) | null {
   const meta = sessionMeta;
   const jobId = meta?.clientJob;
   if (!meta || !jobId || sessionOutcomeReported) return null;
@@ -1799,7 +1802,7 @@ let sessionIncomplete: string | null = null;
 export function incompleteSurface(
   incomplete: boolean,
   doc: string,
-  outcome: "typed" | "clipboard" | "none",
+  outcome: Delivery,
 ): "flash" | "note" | null {
   if (!incomplete) return null;
   return !doc.trim() && outcome === "none" ? "flash" : "note";
