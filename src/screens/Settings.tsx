@@ -420,9 +420,8 @@ export default function Settings() {
   }, [tab]);
 
 
-  // Audio base folder: resolve the active path for display (custom or
-  // default), re-resolving when the preference changes. Change/Reset MOVE the
-  // whole store first and persist the setting only on success.
+  // The active audio base folder (custom or default), for display. Change/Reset MOVE
+  // the whole store first and persist the setting only on success.
   const [recDirDisplay, setRecDirDisplay] = useState<string | null>(null);
   useEffect(() => {
     // Change… then Reset race two lookups; only the latest may land.
@@ -722,9 +721,9 @@ export default function Settings() {
             </SettingRow>
 
             <SectionLabel className="mb-1 mt-7">While recording</SectionLabel>
-            {/* PulseAudio/PipeWire-backed — `apply_mute` is a real no-op off Linux (macOS has
-                neither pactl nor wpctl), so don't show a dead switch there. The setting itself
-                still syncs; only the row is gated. */}
+            {/* PulseAudio/PipeWire-backed — `apply_mute` is a real no-op on Windows and finds
+                neither pactl nor wpctl on macOS, so don't show a dead switch there. The setting
+                itself still syncs; only the row is gated. */}
             {IS_LINUX && (
               <SettingRow
                 title={SETTING.muteSystemAudio.label}
