@@ -52,6 +52,8 @@ pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{Job, WaylandTyper};
+    // Safe from the typer task: Tauri's `is_focused` posts to the event loop and waits on a channel.
+    use crate::commands::own_window_focused;
     use crate::inject::{sink_gate, typing_gate, SinkGate};
     use ashpd::desktop::{
         remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
@@ -1142,17 +1144,6 @@ mod imp {
         }
         mods.extend(keys);
         mods
-    }
-
-    /// Is one of our own windows focused right now? The same predicate `inject_text` uses at its
-    /// entry guard and at both X11/Windows sink guards — kept here rather than passed in because
-    /// `session_loop` already owns an `AppHandle`. Safe from this task: Tauri's `is_focused` posts
-    /// to the event loop and waits on a channel, so the toolkit call runs on the main thread
-    /// whichever thread asks, and this task never blocks the event loop.
-    fn own_window_focused(app: &AppHandle) -> bool {
-        app.webview_windows()
-            .iter()
-            .any(|(label, w)| label.as_str() != "overlay" && w.is_focused().unwrap_or(false))
     }
 
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
