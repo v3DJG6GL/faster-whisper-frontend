@@ -272,9 +272,8 @@ export function AudioTab() {
   }, [replay]);
   stopAndReplayRef.current = stopAndReplay;
 
-  // Test/Stop: pressing Stop replays what was just captured (a quick "did my mic
-  // work?" check). The capture effect's cleanup also calls stopMicTest — harmless;
-  // here we stop first so the recorded clip is final, then play it back.
+  // The capture effect's cleanup also calls stopMicTest — harmless; Stop calls it first so the
+  // recorded clip is final before it is replayed.
   const onToggle = useCallback(async () => {
     if (!testing) {
       // Starting a test silences any lingering replay (Rust bumps the generation).
