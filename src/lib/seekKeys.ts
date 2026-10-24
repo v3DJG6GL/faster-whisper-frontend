@@ -28,8 +28,8 @@ export function seekKeyTarget(
 }
 
 /** Index of the last item whose `start` is <= t, or -1 when none has started.
- *  Binary search — items must be time-ordered (segments and words both are).
- *  Shared by the playhead sync (per animation frame) and line stepping. */
+ *  Binary search (the playhead sync calls it every animation frame) — items
+ *  must be time-ordered (segments and words both are). */
 export function lastStartedAt(items: readonly { start: number }[], t: number): number {
   let lo = 0;
   let hi = items.length - 1;
