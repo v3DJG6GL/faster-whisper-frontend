@@ -53,6 +53,11 @@ const fileRecord = (id: string, file: string, over: Partial<TranscriptRecord> = 
   sourcePath: `/${file}`, sourceName: file, status: "done", ...over,
 });
 
+/** A done record of the file `file` as the listing reads it from disk: untyped, so a repair test can damage any field. */
+const storedFile = (id: string, file: string, createdAt: string, over: Record<string, unknown> = {}) => ({
+  schemaVersion: 1, kind: "file", id, createdAt, sourcePath: `/${file}`, sourceName: file, status: "done", ...over,
+});
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -197,18 +202,11 @@ describe("loadHistory", () => {
 
   it("repairs a string translateTo and non-string texts so the bug report and the snippet cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "bad-texts",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "/a.wav",
-        sourceName: "a.wav",
-        status: "done",
+      storedFile("bad-texts", "a.wav", "2026-01-02T03:04:05.000Z", {
         options: { translateTo: "de", diarize: true },
         translatedText: 5,
         result: { text: 7, translation: { targets: "de" } },
-      },
+      }),
     ]);
     await loadHistory(true);
     const s = saved("bad-texts");
@@ -222,32 +220,18 @@ describe("loadHistory", () => {
 
   it("repairs a damaged segment list and correction map so the snippet cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "bad-segs",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "/a.wav",
-        sourceName: "a.wav",
-        status: "done",
+      storedFile("bad-segs", "a.wav", "2026-01-02T03:04:05.000Z", {
         edits: { 0: "gone", 1: 9, 2: "TWO", "2.0": "junk", "": "x" },
         speakerEdits: { 2: "Ana" },
         translationsStale: { 0: true },
         result: { text: "ok", segments: [{ start: 0, end: 1, text: 5 }, null, { start: 1, end: 2, text: "two" }] },
-      },
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "str-segs",
-        createdAt: "2026-01-02T03:04:06.000Z",
-        sourcePath: "/b.wav",
-        sourceName: "b.wav",
-        status: "done",
+      }),
+      storedFile("str-segs", "b.wav", "2026-01-02T03:04:06.000Z", {
         edits: { 0: "x" },
         speakerEdits: { 0: "Ana" },
         translationsStale: { 0: true },
         result: { text: "plain", segments: "abc" },
-      },
+      }),
     ]);
     await loadHistory(true);
     const a = saved("bad-segs");
@@ -300,14 +284,7 @@ describe("loadHistory", () => {
 
   it("drops non-string speaker names so the viewer's speaker-name sanitizer cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "bad-speakers",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "/a.wav",
-        sourceName: "a.wav",
-        status: "done",
+      storedFile("bad-speakers", "a.wav", "2026-01-02T03:04:05.000Z", {
         speakerEdits: { 0: 5, 1: "Ana" },
         renames: { A: 1, B: "Bo" },
         result: {
@@ -318,19 +295,12 @@ describe("loadHistory", () => {
             { start: 1, end: 2, text: "there", speaker: "B" },
           ],
         },
-      },
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "obj-renames",
-        createdAt: "2026-01-02T03:04:06.000Z",
-        sourcePath: "/b.wav",
-        sourceName: "b.wav",
-        status: "done",
+      }),
+      storedFile("obj-renames", "b.wav", "2026-01-02T03:04:06.000Z", {
         speakerEdits: ["Ana"],
         renames: "Bo",
         result: { text: "x", speakers: "A" },
-      },
+      }),
     ]);
     await loadHistory(true);
     const a = saved("bad-speakers");
@@ -348,25 +318,11 @@ describe("loadHistory", () => {
 
   it("repairs damaged per-segment translations so the viewer and the exports cannot throw", async () => {
     const seg = (text: string, extra: object) => ({ start: 0, end: 1, text, ...extra });
-    const clean = {
-      schemaVersion: 1,
-      kind: "file",
-      id: "clean-tr",
-      createdAt: "2026-01-02T03:04:06.000Z",
-      sourcePath: "/b.wav",
-      sourceName: "b.wav",
-      status: "done",
+    const clean = storedFile("clean-tr", "b.wav", "2026-01-02T03:04:06.000Z", {
       result: { text: "hi", segments: [seg("hi", { translations: { de: "Hallo" }, translationsKept: ["fr"] })] },
-    };
+    });
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "bad-tr",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "/a.wav",
-        sourceName: "a.wav",
-        status: "done",
+      storedFile("bad-tr", "a.wav", "2026-01-02T03:04:05.000Z", {
         result: {
           text: "a b c d",
           segments: [
@@ -376,7 +332,7 @@ describe("loadHistory", () => {
             seg("d", { translationsKept: ["de", 3] }),
           ],
         },
-      },
+      }),
       clean,
     ]);
     await loadHistory(true);
@@ -493,26 +449,8 @@ describe("loadHistory", () => {
 
   it("drops a non-number result.duration so the viewer's meta line cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "dur-str",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "/a.wav",
-        sourceName: "a.wav",
-        status: "done",
-        result: { text: "hi", duration: "12.5", language: "en" },
-      },
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "dur-ok",
-        createdAt: "2026-01-02T03:04:06.000Z",
-        sourcePath: "/b.wav",
-        sourceName: "b.wav",
-        status: "done",
-        result: { text: "ok", duration: 12.5 },
-      },
+      storedFile("dur-str", "a.wav", "2026-01-02T03:04:05.000Z", { result: { text: "hi", duration: "12.5", language: "en" } }),
+      storedFile("dur-ok", "b.wav", "2026-01-02T03:04:06.000Z", { result: { text: "ok", duration: 12.5 } }),
     ]);
     await loadHistory(true);
     const r = saved("dur-str");
@@ -524,28 +462,14 @@ describe("loadHistory", () => {
 
   it("drops a non-string result.language / language so the track readers cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "lang-bad",
-        createdAt: "2026-01-02T03:04:07.000Z",
-        sourcePath: "/c.wav",
-        sourceName: "c.wav",
-        status: "done",
+      storedFile("lang-bad", "c.wav", "2026-01-02T03:04:07.000Z", {
         language: {},
         result: { text: "hi", language: 5 },
-      },
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "lang-ok",
-        createdAt: "2026-01-02T03:04:07.500Z",
-        sourcePath: "/d.wav",
-        sourceName: "d.wav",
-        status: "done",
+      }),
+      storedFile("lang-ok", "d.wav", "2026-01-02T03:04:07.500Z", {
         language: "de",
         result: { text: "ok", language: "de" },
-      },
+      }),
     ]);
     await loadHistory(true);
     const r = saved("lang-bad");
@@ -558,17 +482,10 @@ describe("loadHistory", () => {
 
   it("files a stored standard server's word language by its code", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "file",
-        id: "lang-word",
-        createdAt: "2026-01-02T03:04:08.000Z",
-        sourcePath: "/e.wav",
-        sourceName: "e.wav",
-        status: "done",
+      storedFile("lang-word", "e.wav", "2026-01-02T03:04:08.000Z", {
         language: "english",
         result: { text: "hi", language: "english" },
-      },
+      }),
     ]);
     await loadHistory(true);
     expect(saved("lang-word").result?.language).toBe("en");
