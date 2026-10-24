@@ -476,7 +476,7 @@ describe("wrapLines", () => {
       "Street, and the old bridge was closed.",
     ]);
     const ja = "今日は朝から雨が降っていて、駅までの道はとても混んでいました。電車も遅れていたので、会社に着いたのは十時過ぎでした。🎉それでも午後には晴れて、皆で外に出ました。";
-    // The 、 rides with the character before it (the old snapshot started line 2 with it).
+    // The 、 rides with the character before it.
     expect(wrapLines(ja, 16, 2)).toEqual([
       "今日は朝から雨が降ってい", "て、駅までの道はとても混ん", "でいました。電車も遅れていた", "ので、会社に着いたのは十時過",
       "ぎでした。🎉それでも午後に", "は晴れて、皆で外に出ました。",
@@ -999,7 +999,7 @@ describe("wrapLines", () => {
       }
     }
     expect(cutByShare("他说：“你好。”“我很好。”然后我们一起回家了", [1, 2])[0]).toBe("他说：“你好。”");
-    // A quoted brand name is no longer torn to keep the opener off the line end.
+    // A quoted brand name is never torn to keep the opener off the line end.
     expect(wrapLines("我们看到了“Microsoft”“Google”两个牌子", 16, 2)).toEqual(["我们看到了“Microsoft”", "“Google”两个牌子"]);
     // A German or Scandinavian closer is no opener of the next quotation: those stay as they were.
     expect(wrapLines("„Hallo“東京です", 8, 2)).toEqual(["„Hallo“", "東京です"]);
@@ -1454,7 +1454,7 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     expect(wrapLines(t, 42, 2)).toEqual(["ขอบคุณมากครับ", "วันนี้อากาศดีมากเลยนะครับเพื่อน AI"]);
   });
   it("wrapLines keeps a short CJK word or a Thai phrase whole when a space fits both lines", () => {
-    // Latin-dominant lines with a CJK name break at a word space, as before the run was split.
+    // Latin-dominant lines with a CJK name break at a word space.
     expect(wrapLines("I went to Tokyo yesterday and saw 東京 tower which was very tall indeed ok", 42, 2)).toEqual([
       "I went to Tokyo yesterday and saw 東京 tower",
       "which was very tall indeed ok",
@@ -1589,7 +1589,7 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       expect(cuesOf([...head, g, "再见", q, ...tail], "short", { 4: 0.8 }).join(" | "))
         .toBe(`我们的产品叫${g.slice(0, -1)} | ${g.slice(-1)}再见${q}然后我们一起走了`);
     }
-    // Unchanged: a quote closing one opened between two letters (RTX"Super"), one glued to a Latin
+    // Not moved: a quote closing one opened between two letters (RTX"Super"), one glued to a Latin
     // word or number (AI", iPhone", Model"X"), and a lone " timed as a word of its own.
     for (const [ws, pauses, short, standard] of [
       [["我们", "的", "产品", "叫", 'RTX"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"], { 4: 0.8 },
@@ -1765,15 +1765,14 @@ describe("joinLineBreaks", () => {
   it("cjkWrapsLines: a mark counts while any colon's quotation is still open, so a second speaker's or an outer quote counts", () => {
     // Seven unpunctuated lines plus one: the eighth line alone decides (one line in eight).
     const file = (l: string) => cjkWrapsLines(["我们今天去公园", "然后去吃饭", "天气很好", "我很开心", "明天再见", "大家都来了", "晚上回家", l]);
-    // Two speakers, the first quote closed, the mark inside the second (false before this fix).
+    // Two speakers, the first quote closed, the mark inside the second.
     expect(file("甲问：“好吗” 乙答：“好的，我来了”")).toBe(true);
     expect(file("甲问：「好吗」乙答：「好的，我来了」")).toBe(true);
     expect(file("乙答：“好的，我来了”")).toBe(true);
     expect(file("他问：“你好，你今天要去哪里”")).toBe(true);
-    // An inner quote closed, the mark inside the outer one (false at 9ed9c273).
+    // An inner quote closed, the mark inside the outer one.
     expect(file("他说：“她说：‘好’，我们走吧”")).toBe(true);
-    // A quoted credit name closed before the mark stays no evidence, also behind an earlier
-    // credit (both counted before 9ed9c273, which let any colon opening a quote through).
+    // A quoted credit name closed before the mark stays no evidence, also behind an earlier credit.
     expect(file("字幕：「XX字幕组」。翻译：小红")).toBe(false);
     expect(file("字幕：「XX字幕组」翻译：「小红」。谢谢观看")).toBe(false);
     // A plain credit field stays no evidence.
@@ -1790,7 +1789,7 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("你好，\n“”\n世界。", true)).toBe("你好， “” 世界。");
   });
   it("with wraps, a seam on an ASCII quote is judged by the character past the quotes too", () => {
-    // " and ' are Po, not Pi/Pf: a seam on one used to keep a space between two CJK characters.
+    // " and ' are Po, not Pi/Pf: a Pi/Pf check alone keeps a space between two CJK characters.
     expect(joinLineBreaks('他说："我们走吧。"\n然后他们一起走了回家', true)).toBe('他说："我们走吧。"然后他们一起走了回家');
     expect(joinLineBreaks('我看完了。\n"好的"他回答说', true)).toBe('我看完了。"好的"他回答说');
     expect(joinLineBreaks("他说：'我们走吧。'\n然后他们走了", true)).toBe("他说：'我们走吧。'然后他们走了");
@@ -1868,8 +1867,8 @@ describe("cutByShare", () => {
     expect(cutByShare("彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1])[0]).not.toMatch(/』$/);
   });
   it("a Japanese quote the sentence goes on from past a space (」 と言って) is no sentence end either", () => {
-    // The particle was read from the space itself (" と"), so the spaced seam took the sentence-end
-    // bonus the cue split and the wrap never give it: the next part opened on "と言って".
+    // The particle is read past the space (" と"), as the cue split and the wrap read it: the
+    // spaced seam gets no sentence-end bonus, so no part opens on "と言って".
     for (const shares of [[1, 1], [12, 16]]) {
       expect(cutByShare("彼は「もう帰ろう。」 と言って、すぐに部屋を出ていきました", shares, "ja"))
         .toEqual(["彼は「もう帰ろう。」 と言って、", "すぐに部屋を出ていきました"]);
@@ -1930,8 +1929,8 @@ describe("cutByShare", () => {
     expect(wrapLines(j250, 28, 2, 0, undefined, "de")).toEqual(["Wir feiern zum 250. Jubiläum", "im Büro der Stadt"]);
     expect(cutByShare("Wir nehmen die Nr. 5 ganz bestimmt mit uns", [4, 6], "de"))
       .toEqual(["Wir nehmen die Nr. 5", "ganz bestimmt mit uns"]);
-    // Unchanged: "Mrs." and "Dr." as before, a real sentence end on "no." or an English "3.",
-    // and "etc.", after which a piece may end.
+    // "Mrs." and "Dr." hold too; a real sentence end on "no." or an English "3." ends one, and so
+    // may "etc.".
     expect(cutByShare("Yesterday I met Mrs. Johnson at the station", [19, 23], "en"))
       .toEqual(["Yesterday I met", "Mrs. Johnson at the station"]);
     expect(cutByShare("Gestern traf ich Dr. Johnson am Bahnhof dort", [5, 5], "de"))
@@ -1951,22 +1950,21 @@ describe("cutByShare", () => {
       .toEqual(["We bought pears etc.", "Then we went home happy"]);
   });
   it("a lowercase unit \"m.\" or \"ms.\" ends a sentence; only the titles \"M.\" and \"Ms.\" stay with the next word", () => {
-    // Read as the titles, the units were held to the next word: "about 300" / "m. Then …".
+    // Read as the titles, the units would be held to the next word: "about 300" / "m. Then …".
     const m = "The tower is about 300 m. Then we walked back home";
     expect(cutByShare(m, [1, 1], "en")).toEqual(["The tower is about 300 m.", "Then we walked back home"]);
     expect(wrapLines(m, 30, 2)).toEqual(["The tower is about 300 m.", "Then we walked back home"]);
     const ms = "It took about 5 ms. Then it crashed again";
     expect(cutByShare(ms, [1, 1], "en")).toEqual(["It took about 5 ms.", "Then it crashed again"]);
     expect(wrapLines(ms, 30, 2, 0, undefined, "en")).toEqual(["It took about 5 ms.", "Then it crashed again"]);
-    // The titles as before.
+    // The titles stay with the name.
     expect(wrapLines("Yesterday I met Ms. Johnson at the station", 30, 2, 0, undefined, "en"))
       .toEqual(["Yesterday I met", "Ms. Johnson at the station"]);
     expect(wrapLines("Hier j'ai vu M. Dupont à la gare du nord", 30, 2, 0, undefined, "fr"))
       .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
   });
   it("a lowercase unit before a lowercase word ends no sentence and stays with its number in the cut, the wrap and the cue split", () => {
-    // Every lowercase unit ended a sentence: "about 300 m." / "away from …", and a Lithuanian
-    // date ("1995 m. birželio", year + month) drew a 1:2 cut onto itself.
+    // A Lithuanian date is the same shape ("1995 m. birželio", year + month).
     const cues = (t: string, lang: string, cpl: number) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -1996,7 +1994,6 @@ describe("cutByShare", () => {
       .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
   });
   it("a name's initials stay inside the name in the cut, the wrap and the cue split; \"a plan B.\" still ends a sentence", () => {
-    // A lone capital and its stop counted as a sentence end: "John F." / "Kennedy …".
     const cues = (t: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2012,7 +2009,7 @@ describe("cutByShare", () => {
       expect(parts).toEqual(["The book by J. K. Rowling", "sold many copies worldwide"]);
     expect(cutByShare("Later George W. Bush gave a speech at the old airport", [1, 1], "en"))
       .toEqual(["Later George W. Bush gave", "a speech at the old airport"]);
-    // A letter after a lowercase word, and a Roman numeral, end a sentence as before.
+    // A letter after a lowercase word, and a Roman numeral, end a sentence.
     for (const [t, first] of [
       ["We need a plan B. Then we leave the city tonight", "We need a plan B."],
       ["Take some vitamin C. Then you will feel much better", "Take some vitamin C."],
@@ -2024,8 +2021,6 @@ describe("cutByShare", () => {
     }
   });
   it("a letter after a capitalised noun ends a sentence before a sentence opener or in German; a name's initials stay held", () => {
-    // Any capitalised word before the letter read as a first name: "Option B. Then" / "Plan B. Dann"
-    // lost their sentence end, and the cut took the next sentence's first word or tore the letter off.
     const cues = (t: string, lang: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2068,8 +2063,7 @@ describe("cutByShare", () => {
     }
   });
   it("a translation cut keeps a first name of nine letters or more with its initial, as it does \"John\"", () => {
-    // The cut read the word before a seam from a 9-character window, which held no word before
-    // "Christopher": the cut ended on the first name and the next part opened on "F.".
+    // The word before a seam comes from a bounded look-back, which must still hold "Christopher".
     for (const name of ["John", "Christopher", "Alexander", "Elizabeth"]) {
       const t = `Yesterday we met ${name} F. Kennedy at the old airport`;
       for (const lang of ["en", undefined])
@@ -2085,7 +2079,6 @@ describe("cutByShare", () => {
       .toEqual(["They ran exactly 1,000,000 m.", "in that long year"]);
   });
   it("shape matrix: an I., V. or X. right after another initial is a name's initial; after a word it is a Roman numeral", () => {
-    // The Roman-numeral carve-out also took the I/V/X of a name: "J. V." | "Stalin …".
     for (const [t, shares, cpl, cut, wrap] of [
       ["The leader was J. V. Stalin and then everyone left the room", [3, 4], 24,
         ["The leader was J. V. Stalin", "and then everyone left the room"],
@@ -2096,7 +2089,7 @@ describe("cutByShare", () => {
       ["Yesterday we met John F. X. Kennedy at the old airport", [1, 1], 26,
         ["Yesterday we met John F. X. Kennedy", "at the old airport"],
         ["Yesterday we met", "John F. X. Kennedy", "at the old airport"]],
-      // Unchanged: a Roman numeral after a word, and a lone "I." after an ordinary word, end one.
+      // A Roman numeral after a word, and a lone "I." after an ordinary word, end one.
       ["It started before World War I. After that the town grew", [1, 1], 32,
         ["It started before World War I.", "After that the town grew"],
         ["It started before World War I.", "After that the town grew"]],
@@ -2118,8 +2111,8 @@ describe("cutByShare", () => {
     }
   });
   it("shape matrix: a first name keeps its initials when the second one is A. or I.", () => {
-    // The seam before the first initial asked the word after it for a sentence opener: "A." and
-    // "I." stripped to the article and the pronoun, so "Mary" | "J. A. Smith" lost its hold.
+    // Stripped of its stop, a second initial "A." or "I." reads as the article or the pronoun, a
+    // sentence opener, which must not release "Mary" | "J. A. Smith".
     for (const [t, cut, wrap] of [
       ["The film starred Mary J. A. Smith and later moved to a new town",
         ["The film starred Mary J. A. Smith", "and later moved to a new town"],
@@ -2130,7 +2123,7 @@ describe("cutByShare", () => {
       ["We later met Lisa M. I. Brown at the old airport",
         ["We later met Lisa M. I. Brown", "at the old airport"],
         ["We later met Lisa M. I. Brown", "at the old airport"]],
-      // Unchanged: any other second initial, and an opener with no stop after a single initial.
+      // Any other second initial, and an opener with no stop after a single initial.
       ["The film starred Mary J. K. Smith and later moved to a new town",
         ["The film starred Mary J. K. Smith", "and later moved to a new town"],
         ["The film starred", "Mary J. K. Smith", "and later moved to a new town"]],
@@ -2146,10 +2139,8 @@ describe("cutByShare", () => {
     }
   });
   it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
-    // Only a short opener list ended the sentence ("Option B. Then"): "Plan B. What", "Gate B. Your
-    // flight" and "Vitamin C. Many" were held as a name's initial, and "Answer:" read as a first
-    // name. Each row is the cut, the wrap and the cue split as they were before initials were
-    // held; the name rows below them stay held.
+    // Each row is the cut, the wrap and the cue split as they read with no initial held ("Answer:"
+    // is no first name either); the name rows below them stay held.
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2210,9 +2201,6 @@ describe("cutByShare", () => {
     }
   });
   it("a letter after a capitalised noun ends a sentence before a contracted or elided opener; a name's apostrophe surname stays held", () => {
-    // Only the opener as listed counted ("it's", "that's"): "I'm", "You'll", "We're" and the
-    // elided "C'est", "J'ai", "L'idea" read as a surname, so the cut and the wrap took the
-    // opener's first word onto the line with "B.".
     const ROWS: [text: string, lang: string, cut: string, wrap: string][] = [
       ["We went with Plan B. I'm sure it was right", "en",
         "We went with Plan B. | I'm sure it was right", "We went with Plan B. | I'm sure it was right"],
@@ -2226,7 +2214,7 @@ describe("cutByShare", () => {
         "On a choisi le Plan B. | J'ai une bonne idée", "On a choisi le Plan B. | J'ai une bonne idée"],
       ["Usiamo il Piano B. L'idea è sempre la stessa", "it",
         "Usiamo il Piano B. | L'idea è sempre la stessa", "Usiamo il Piano B. | L'idea è sempre la stessa"],
-      // A surname with an apostrophe keeps its initial, as before.
+      // A surname with an apostrophe keeps its initial.
       ["We met Robert B. D'Angelo at the big party", "en",
         "We met Robert B. D'Angelo | at the big party", "We met Robert B. D'Angelo | at the big party"],
       ["We met Mary J. O'Brien at the old airport", "en",
@@ -2240,9 +2228,8 @@ describe("cutByShare", () => {
     }
   });
   it("a letter after a capitalised noun ends a sentence before French N', S', T', M' and Italian C'è", () => {
-    // The elisions mapped to words no opener list held ("ne", "me", "te"; "si"/"se" not in French,
-    // "ci" nowhere), so "N'oublie", "S'il", "T'as", "M'a-t-il" and "C'è" read as a surname and the
-    // cut and the wrap took them onto the line with "B.".
+    // The elisions stand for "ne", "se"/"si", "te", "me" and "ci": each must count as an opener,
+    // or "N'oublie", "S'il", "T'as", "M'a-t-il" and "C'è" read as a surname.
     const ROWS: [text: string, lang: string, cut: string, wrap: string][] = [
       ["On a choisi le Plan B. N'oublie pas ton billet", "fr",
         "On a choisi le Plan B. | N'oublie pas ton billet", "On a choisi le Plan B. | N'oublie pas ton billet"],
@@ -2274,8 +2261,6 @@ describe("cutByShare", () => {
     }
   });
   it("a name's initial at the text's start or after a comma or a full stop stays with the name; an opener after it still ends a sentence", () => {
-    // With no word before the initial, or one ending on a clause or sentence mark, "J." read as a
-    // sentence end: "In 1924, J." / "Edgar Hoover …", a cut or line of a lone "J." or "F.".
     const ROWS: [text: string, shares: number[], cpl: number, cut: string][] = [
       ["In 1924, J. Edgar Hoover became the director of the bureau", [1, 1], 28,
         "In 1924, J. Edgar Hoover became | the director of the bureau"],
@@ -2303,9 +2288,8 @@ describe("cutByShare", () => {
     }
   });
   it("German and Luxembourgish keep a name's initial at the text's start or after a comma or a full stop with the name too", () => {
-    // The rule that a capitalised word before the letter says nothing of a name in German
-    // ("Plan B. Dann") also caught the initial with no word before it: "F." / "Scott Fitzgerald …",
-    // "Im Jahr 1924, J." / "Edgar Hoover …" under de and lb.
+    // German's rule that a capitalised word before the letter says nothing of a name ("Plan B.
+    // Dann") needs such a word: with none, or a mark, before it, the initial stays held.
     const ROWS: [text: string, shares: number[], cpl: number, cut: string, wrap: string][] = [
       ["F. Scott Fitzgerald schrieb das Buch", [1, 1], 26,
         "F. Scott Fitzgerald | schrieb das Buch", "F. Scott Fitzgerald | schrieb das Buch"],
@@ -2350,8 +2334,8 @@ describe("cutByShare", () => {
       .toEqual(["They moved to the U.S.", "The rest of the family stayed in Ireland for good"]);
   });
   it("a name's compact initials or a capital initialism before a capital is judged as a name's initial is", () => {
-    // Only spaced initials were held ("J. K. Rowling"): "J.K.", "C.S.", "J.R.R." and "U.S." before
-    // a capital read as a sentence end, so the cut, the wrap and the cue split tore them off the name.
+    // Compact initials ("J.K.", "C.S.", "J.R.R.") before a capital hold as spaced ones ("J. K.
+    // Rowling") do; a place initialism ("U.S.") never does.
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2360,7 +2344,8 @@ describe("cutByShare", () => {
         .cues.map((c) => c.text);
     };
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
-      // After a lowercase word it ends one, as "by F. Scott" does ("the U.S. These days").
+      // After a lowercase word it ends one, as "by F. Scott" does; a place initialism ("the U.S.
+      // Army") ends one after any word.
       ["The new book by J.K. Rowling came out last week", 30,
         "The new book by J.K. | Rowling came out last week", "The new book by J.K. | Rowling came out last week",
         "The new book by J.K. | Rowling came out last week"],
@@ -2395,8 +2380,7 @@ describe("cutByShare", () => {
     }
   });
   it("a capital initialism after a lowercase word ends a sentence before any capital, a name's compact initials after a capitalised word or at the start do not", () => {
-    // "the U.S." / "den U.S.A." before a capital was held unless the next word was in the closed
-    // opener list, so "These", "Most" or "Seine" ran on into the sentence before it.
+    // Any capital, not only the closed opener list: "These", "Most", "Seine".
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2431,8 +2415,6 @@ describe("cutByShare", () => {
     }
   });
   it("the seam between a first name and its compact initials is held as the one before a single initial is", () => {
-    // Only "John | F. Kennedy" was penalised: "George | R.R. Martin" was an ordinary seam, so the
-    // cut, the wrap and the cue split could tear the first name off its initials.
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
@@ -2447,7 +2429,7 @@ describe("cutByShare", () => {
       ["The panel with George R.R. Martin starts at noon", 34,
         "The panel with George R.R. Martin | starts at noon", "The panel with George R.R. Martin | starts at noon",
         "The panel | with George R.R. Martin | starts at noon"],
-      // A lowercase word before an initialism holds nothing: "the U.S." still ends one before "Army".
+      // A place initialism is no name's: "the U.S." still ends one before "Army".
       ["He served in the U.S. Army for many years", 30,
         "He served in the U.S. | Army for many years", "He served in the U.S. | Army for many years",
         "He served in the U.S. | Army for many years"],
@@ -2460,8 +2442,6 @@ describe("cutByShare", () => {
     }
   });
   it("a place initialism after a place name or a comma ends a sentence before any capital, as no name's initials", () => {
-    // "D.C." / "L.A." after "Washington" or "Los Angeles," were judged as a name's initials, so
-    // "Today", "Tomorrow" or "Officials" ran on into the sentence before them.
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
