@@ -5,10 +5,9 @@ import { ownProp } from "./own";
 // never a hex. These hexes mirror the backend's own pipeline editor exactly (the
 // `data-color` CSS in admin_routes.py / quick_config_routes.py), so the dot we show
 // matches the colour the admin picked there. They deliberately sit OUTSIDE the
-// Signal functional palette (blue/purple/pink have no Signal token) — they're
-// cosmetic admin metadata, so we render the real hue inline rather than snapping to
-// the nearest Signal token (which collapsed blue, purple AND pink to the amber
-// accent — the "always yellow-ish" bug).
+// Signal functional palette (blue/purple/pink have no Signal token) — cosmetic admin
+// metadata, so the real hue is rendered rather than snapped to the nearest Signal
+// token (which would collapse blue, purple and pink onto the amber accent).
 const RULE_DOT_HEX: Record<string, string> = {
   red: "#f85149",
   amber: "#d29922",
