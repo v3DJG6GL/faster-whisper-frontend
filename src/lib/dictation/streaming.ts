@@ -1237,7 +1237,7 @@ function enqueueAutoEnter(): void {
  *  clipboard is never touched. Resolves whether the Return landed in place (not skipped, withheld
  *  or diverted). A rejection propagates to the caller's enqueueInject catch. */
 async function pressReturn(t: Awaited<ReturnType<typeof resolveTarget>>, cfg: InsertCfg | null): Promise<boolean> {
-  const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+  const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, ...targetArgs(t) });
   // The Return ended the phrase in the field: the next translated block opens on a fresh line,
   // not three more Returns. Only a Return in the window that owes the gap pays it.
   if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
@@ -1521,6 +1521,13 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<
   return { ...resolved, appId: targetApp?.appId ?? null };
 }
 
+/** The resolved target's fields every injectText call forwards unchanged (the paste chord, the
+ *  app the sink re-checks focus against, the rule's remote-desktop override): spread into each
+ *  call, so a new per-target field is threaded in one place. */
+function targetArgs(t: Awaited<ReturnType<typeof resolveTarget>>) {
+  return { pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop };
+}
+
 /** Copy `text` to the clipboard for a RESOLVED target — the clipboard-only phrase path and the
  *  recovery copies after a failed insert. `expectAppId` is inert here: Rust's clipboard arm returns
  *  BEFORE the per-app sink re-check that reads it. `landed: false` comes from inject_text's
@@ -1532,9 +1539,7 @@ function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>
     method: "clipboard",
     autoEnter: false,
     restoreClipboard: false,
-    pasteShortcut: t.pasteShortcut,
-    expectAppId: t.appId,
-    remoteDesktop: t.remoteDesktop,
+    ...targetArgs(t),
   });
 }
 
@@ -2503,7 +2508,7 @@ async function ensureListeners(): Promise<void> {
             const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
             try {
-              ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: spacingOnly }));
+              ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, ...targetArgs(t), withholdOnDivert: spacingOnly }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -2893,7 +2898,7 @@ async function ensureListeners(): Promise<void> {
             }
             let outcome: InjectOutcome;
             try {
-              outcome = await injectText({ text: part, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
+              outcome = await injectText({ text: part, method: t.method, autoEnter: false, restoreClipboard: false, ...targetArgs(t), withholdOnDivert: true });
             } catch (e) {
               console.error("separator inject failed:", e);
               if (insertCfg !== cfg) return false;
@@ -3186,8 +3191,7 @@ async function ensureListeners(): Promise<void> {
               method: t.method,
               autoEnter: t.autoEnter,
               restoreClipboard: t.restoreClipboard,
-              pasteShortcut: t.pasteShortcut, expectAppId: t.appId,
-              remoteDesktop: t.remoteDesktop,
+              ...targetArgs(t),
             }));
           } catch (e) {
             // The whole-session insert IS the product of the dictation. A failure here (portal
