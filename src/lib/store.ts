@@ -49,8 +49,8 @@ const MAX_QUICK_LAUNCH = 100;
  * a dictation setup (activation + chord + a target Backend + optional overrides).
  */
 
-// DEFAULT_SYNC / DEFAULT_SETTINGS moved to defaults.ts (pure data, no import
-// cycle with the settings manifest); re-exported here so importers don't churn.
+// DEFAULT_SYNC lives in defaults.ts (pure data, no import cycle with the settings
+// manifest); re-exported here so importers don't churn.
 import { DEFAULT_SETTINGS, DEFAULT_SYNC } from "./defaults";
 import { completeGates, withLegacySubKeys } from "./settingsManifest";
 export { DEFAULT_SYNC };
@@ -62,16 +62,11 @@ export { DEFAULT_SYNC };
 export function withSettingsDefaults(raw: unknown): AppSettings {
   const s = (raw ?? {}) as Partial<AppSettings>;
   const recording = { ...DEFAULT_SETTINGS.recording, ...(s.recording ?? {}) };
-  // This merge fills MISSING keys but cannot vouch for the type of a key that is PRESENT, and
-  // the whole `recording` block is replaced wholesale by a pulled sync blob. `quickLaunch` is
-  // the one leaf whose elements get dereferenced unguarded (`quickLaunchMeta` reads `e.kind`
-  // in both the chip and the Settings editor), and with no error boundary in either webview a
-  // bad element unmounts the window. Coerce it to a list of objects here, at the choke point.
-  // The "is an object" floor was enough for the `e.kind` deref it was written for, but the
-  // Settings editor also builds `${e.kind}:${e.target}` keys and renders `e.kind` as a React
-  // CHILD, and `quickLaunchMeta` compares kind/target as strings against the registry (an
-  // unknown target resolves to "Unknown action", inert). An object leaf survives that floor and
-  // throws "Objects are not valid as a React child" during render. Require string leaves.
+  // This merge fills MISSING keys but cannot vouch for the type of a PRESENT one, and a pulled
+  // sync blob replaces the whole `recording` block. `quickLaunch` elements are used unguarded in
+  // the chip and the Settings editor (kind/target compared as strings, interpolated into keys,
+  // `e.kind` rendered as a React child), and with no error boundary in either webview a
+  // non-string leaf unmounts the window. Require string leaves here, at the choke point.
   recording.quickLaunch = Array.isArray(recording.quickLaunch)
     ? recording.quickLaunch.filter(
         (e) =>
@@ -88,17 +83,14 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
         const id = (e as { id: string }).id;
         return seen.has(id) ? false : (seen.add(id), true);
       })(new Set<string>()))
-      // The one sync-supplied list with no entry ceiling anywhere — the three list sanitizers all
-      // have one. It is re-serialized into the overlay payload on every level tick, rendered one
-      // button per entry in the always-on-top chip and one row per entry in the editor, and
-      // persisted, so an oversized list survives restarts. The editor hard-caps the user at 6 and
-      // the option universe is ~11, so this ceiling is far above anything reachable by hand —
-      // deliberately, because this list IS pushed back to the server, and a cap near the real
-      // count would propagate a truncation to the user's other devices.
+      // The one sync-supplied list no sanitizer bounds. It is re-serialized into the overlay
+      // payload on every level tick, rendered one button/row per entry in the chip and the
+      // editor, and persisted, so an oversized list survives restarts. MAX_QUICK_LAUNCH says why
+      // the ceiling is loose.
       .slice(0, MAX_QUICK_LAUNCH)
     : [];
-  // The Home screen became Dashboard (2026-09-02); a quick-launch entry saved before then
-  // still names it by its old id.
+  // A quick-launch entry saved before the Home screen became Dashboard still names it by its
+  // old id.
   for (const e of recording.quickLaunch as { target?: string }[]) if (e.target === "home") e.target = "dashboard";
   const migratedCategories = completeCategories(s.sync?.categories);
   return {
@@ -113,8 +105,7 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
       // The MIGRATED map, not the raw one: a pre-split `recording:false` /
       // `general:false` only reaches the chip/dictionary members through the
       // split-out keys completeCategories adds, and the completed gates are
-      // persisted in full — so a miss here was permanent. One binding, so the
-      // two cannot drift apart.
+      // persisted in full — so a miss here is permanent.
       sub: completeSub(s.sync?.sub, migratedCategories),
       urlOverrides: { ...(s.sync?.urlOverrides ?? {}) },
     },
@@ -245,11 +236,10 @@ function isReservedId(id: unknown): boolean {
  * direction. New profiles leave the field undefined and inherit `general.typeAsISpeak`.
  *
  * Runs exactly once, gated by `migrateConfig` on the config's schema version being
- * below 3 (the version that introduced this migration). Presence of the field cannot
- * be the key: Rust's
+ * below 3. Presence of the field cannot be the key: Rust's
  * `GeneralSettings.insert_timing` is a non-Option `#[serde(default)]` field, so every
  * config that has passed through `load_config`/`save_config` carries it — a presence
- * gate re-ran this on every launch and reset `typeAsISpeak` to the write-back value.
+ * gate would re-run this on every launch and reset `typeAsISpeak` to the write-back value.
  * `insertTiming` itself is kept in the type (deprecated) and in the Rust struct — see
  * the note there — so a rollback to an older build still reads a conservative value
  * rather than defaulting itself back to "live".
@@ -309,7 +299,7 @@ function migrateConfig(raw: unknown): Config {
   if (!c || typeof c !== "object") {
     return { settings: DEFAULT_SETTINGS, backends: [], profiles: [] };
   }
-  // Already v2 (has `backends`).
+  // Post-split shape (has `backends`): v2 and later.
   if (Array.isArray((c as { backends?: unknown }).backends)) {
     const version = typeof c.version === "number" ? c.version : 0;
     const settings = withSettingsDefaults(c.settings);
@@ -419,7 +409,7 @@ interface AppState {
 
   connections: Record<string, ConnectionInfo | undefined>; // keyed by Backend id
 
-  /** P28: per-Backend usage stats (GET /v1/usage), keyed by Backend id. A
+  /** Per-Backend usage stats (GET /v1/usage), keyed by Backend id. A
    *  present-but-null value means "fetched and unsupported" (hide the stats
    *  surfaces); an absent key means "not fetched yet". Runtime-only — kept off
    *  the persisted Config. Fed by the usage controller (lib/usage.ts). */
@@ -434,7 +424,7 @@ interface AppState {
    *  lib/capabilities.ts. */
   caps: Record<string, Capabilities | null>;
 
-  /** P31: which Backend the usage VIEW (Home strip + Statistics page) shows. null =
+  /** Which Backend the usage VIEW (Home strip + Statistics page) shows. null =
    *  follow the dictation/home-target backend. Runtime-only (a view preference, not
    *  persisted). The chip readout ignores this — it always uses activeStatsBackend. */
   usageViewBackendId: string | null;
@@ -483,7 +473,7 @@ interface AppState {
     mode?: "fluent" | "faithful",
   ) => void;
 
-  /** P30 runtime sync status (never persisted): what the Sync tab's status
+  /** Runtime sync status (never persisted): what the Sync tab's status
    *  line shows. `syncUnsupported` = the sync backend 404'd the endpoint
    *  (build too old); `lastSyncedAt`/`lastSyncDevice` mirror sync-state.json. */
   syncStatus: "idle" | "syncing" | "ok" | "error";
@@ -504,8 +494,8 @@ interface AppState {
   /** Patch settings.sync (deep-merges categories/urlOverrides at the caller). */
   updateSync: (patch: Partial<SyncSettings>) => void;
   /** Set (or clear, with null/empty) this device's address override for a
-   *  backend. Invalidates the backend's cached connection + usage — the
-   *  effective target changed (mirrors upsertBackend's URL-edit handling). */
+   *  backend. Evicts the backend's caches (connection, usage, caps, Statistics
+   *  documents) — the effective target changed (as upsertBackend's URL edit). */
   setUrlOverride: (backendId: string, url: string | null) => void;
 
   upsertBackend: (b: Backend) => void;
@@ -553,7 +543,7 @@ interface AppState {
   configLoadFailed: boolean;
   setConfigLoadFailed: () => void;
 
-  /** P30: update the runtime sync status line (engine-owned). */
+  /** Update the runtime sync status line (engine-owned). */
   setSyncRuntime: (
     patch: Partial<{
       syncStatus: "idle" | "syncing" | "ok" | "error";
@@ -602,11 +592,9 @@ function scrubBackendFromSettings(settings: AppSettings, id: string): AppSetting
   let next = settings;
   if (next.quickAddList?.backendId === id) next = { ...next, quickAddList: null };
   const sync = next.sync;
-  // hasOwn, not `in`, for the same reason as `setUsage`'s: a blob-authored id like `constructor`
-  // is inherited-present, so `in` reports a reference this map does not hold and rebuilds
-  // `settings` when nothing pointed at the backend — the spurious churn this function's docstring
-  // says it exists to avoid, which then triggers a config save and a push. `isReservedBackendId`
-  // rejects only the `__…__` namespace, so those ids survive `sanitizeBackends`.
+  // hasOwn, not `in`: a blob-authored id like `constructor` is inherited-present, so `in` would
+  // rebuild `settings` when nothing pointed at the backend — a spurious config save + push.
+  // `isReservedBackendId` rejects only the `__…__` namespace, so those ids survive `sanitizeBackends`.
   if (sync && (sync.backendId === id || hasOwn(sync.urlOverrides, id))) {
     const urlOverrides = { ...sync.urlOverrides };
     delete urlOverrides[id];
@@ -621,7 +609,6 @@ function scrubBackendFromSettings(settings: AppSettings, id: string): AppSetting
   return next;
 }
 
-// Replace-or-append by id — the shared body of the upsert* reducers (backends/profiles/appRules).
 function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
   const i = arr.findIndex((x) => x.id === item.id);
   const next = [...arr];
@@ -722,8 +709,8 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       const sync = s.settings.sync ?? DEFAULT_SYNC;
       const next = url?.trim() ? url.trim() : null;
-      // Own-property read, same reason as the `in` above: an inherited `constructor` hands `cur`
-      // a function, so the `cur === next` short-circuit could never fire for such an id.
+      // Own-property read: an inherited `constructor` hands `cur` a function, so the
+      // `cur === next` short-circuit could never fire for such an id.
       const cur = (hasOwn(sync.urlOverrides, backendId) ? sync.urlOverrides[backendId] : null) ?? null;
       if (cur === next) return {};
       const urlOverrides = { ...sync.urlOverrides };
@@ -752,11 +739,9 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       const prev = s.backends.find((x) => x.id === b.id);
       const backends = upsertById(s.backends, b);
-      // A changed server URL (or key presence) invalidates the cached connection: its
-      // ok/bootId/models/capabilities describe the OLD server, yet effectiveServerKind, the
-      // Backends status dot, the decode-override gate, and the usage poll all key on the backend
-      // id. Drop the stale connection + usage so they re-test against the new target instead of
-      // showing the old server's "connected"/classification.
+      // A changed server URL (or key presence) makes every cache under this id describe the OLD
+      // server, yet effectiveServerKind, the status dot, the decode-override gate and the usage
+      // poll all key on the backend id — evict them so they re-test against the new target.
       if (prev && (prev.serverUrl !== b.serverUrl || prev.hasApiKey !== b.hasApiKey)) {
         return { backends, ...evictBackendCaches(s, b.id) };
       }
@@ -785,11 +770,8 @@ export const useApp = create<AppState>((set) => ({
           ? s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p))
           : s.profiles,
         ...evictBackendCaches(s, id),
-        // Scrub the other id-keyed references to the removed backend so none dangle: the usage-view
-        // pin (runtime), the PERSISTED quick-add-list pin, and the sync meta (removing the sync
-        // server disables sync — there's nowhere to push to; also drop its per-device URL
-        // override). Keep each ref stable when it didn't point at this backend, so the auto-save
-        // subscriber doesn't see a spurious settings change.
+        // Scrub the other id-keyed references so none dangle, keeping each ref stable when it
+        // didn't point at this backend (else the auto-save subscriber sees a spurious change).
         usageViewBackendId: s.usageViewBackendId === id ? null : s.usageViewBackendId,
         settings: scrubBackendFromSettings(s.settings, id),
       };
@@ -951,16 +933,12 @@ export const useApp = create<AppState>((set) => ({
   hydrate: (cfg) =>
     set((s) => {
       const c = migrateConfig(cfg);
-      // Same invalidation `upsertBackend` and `setUrlOverride` do, for the same reason — this
-      // is the third writer of `backends` and the only one that was missing it. It matters most
-      // here: `hydrate` is also how a sync pull or an imported file replaces the list, so a
-      // blob that keeps an existing id and repoints its address would otherwise leave the OLD
-      // server's `{ok: true}` verdict — the green "connected" on the card whose own comment
-      // calls it the audit surface — bound to the new host, permanently, since every re-test is
-      // a user gesture. On the startup path nothing has been tested yet, so this drops nothing.
-      // Like `evictBackendCaches` it also drops the Statistics documents naming such a backend:
-      // a pull that adds this server's key elsewhere never reaches `forgetBackendCaches`, and
-      // the signature carries no caller identity. Unmatched ones keep their reference.
+      // Same invalidation as `upsertBackend` and `setUrlOverride`: a sync pull or imported file
+      // that keeps an existing id but repoints its address would otherwise leave the OLD server's
+      // `{ok: true}` "connected" bound to the new host until the user re-tests. On the startup
+      // path nothing has been tested yet, so this drops nothing. Like `evictBackendCaches` it also
+      // drops the Statistics documents naming such a backend: a pull that adds this server's key
+      // never reaches `forgetBackendCaches`, and the signature carries no caller identity.
       const prev = new Map(s.backends.map((b) => [b.id, b]));
       const connections = { ...s.connections };
       const usage = { ...s.usage };
