@@ -16,7 +16,7 @@ function preRun(res: PipelineSaveResult): QuickAddSaveOutcome {
   const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
   return pinned ? "pinned" : saveLanded(res) ? "saved" : "error";
 }
-/** eea3e152 (run 73): every 403 refused, by status alone. */
+/** eea3e152: every 403 refused, by status alone. */
 function byStatus(res: PipelineSaveResult): QuickAddSaveOutcome {
   if (res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING)) return "pinned";
   if (saveLanded(res)) return "saved";
