@@ -88,8 +88,8 @@ export function MicPicker({
   };
 
   const onListKey = (e: KeyboardEvent) => {
-    // A held Enter / Space acts once, as in ListPicker: its repeat reached the refocused trigger,
-    // which reopened the menu, and the next repeat picked again — the arrows keep repeating.
+    // A held Enter / Space acts once, as in ListPicker: otherwise its repeat reaches the refocused
+    // trigger, reopens the menu, and the next repeat picks again. The arrows keep repeating.
     if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
       e.preventDefault();
       return;
@@ -105,7 +105,7 @@ export function MicPicker({
       if (r) pick(r);
     } else if (e.key === "Escape") close(true);
     else if (e.key === "Tab") {
-      // Into the switch, keeping the menu open: closing first unmounted it under the focus move.
+      // Into the switch, keeping the menu open: closing first would unmount it under the focus move.
       const sw = e.shiftKey ? null : footRef.current?.querySelector("button");
       if (!sw) {
         setOpen(false);
