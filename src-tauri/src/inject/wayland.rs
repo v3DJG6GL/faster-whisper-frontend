@@ -554,15 +554,11 @@ mod imp {
             }
         }
 
-        // Second pass: capitals NOT directly on any level. On layouts like Swiss-German
-        // (ch/de_nodeadkeys) the ü/ä/ö keys are XKB type `FOUR_LEVEL` — Shift yields è/à/é, and
-        // the type doesn't consume Lock, so the capital Ü/Ä/Ö (and È/É/À) exists only because
-        // KWin capitalizes the lowercase keysym while Caps Lock is on. The level scan above can't
-        // see those, so each typed capital would be silently dropped. Recover them: for every
-        // lowercase char we DID map, register its uppercase (if not already reachable) on the same
-        // key with a `lock` flag — the typer presses it with Caps Lock toggled on for that key.
-        // Kept only where that press, replayed, types the capital: on pl π's AltGr level the key
-        // type consumes Lock as Shift, so the Caps press types Ω and Π stays unreachable.
+        // Second pass: capitals reachable only through Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À; see
+        // `KeySpec::lock`), which the level scan above can't see, so each would be silently
+        // dropped. Registered on the lowercase char's key with `lock` set, and only where that
+        // press, replayed, types the capital: on pl π's AltGr level the key type consumes Lock as
+        // Shift, so the Caps press types Ω and Π stays unreachable.
         let extras: Vec<(char, KeySpec)> = map
             .iter()
             .filter_map(|(&ch, &spec)| {
@@ -2498,7 +2494,6 @@ mod imp {
             assert!(!divert_unreachable("Vi\u{1ec7}t Nam", &vn, CAPS_OFF));
             // A mark with no key of its own leaves the letter unreachable: ẽ needs U+0303.
             assert!(key_sequence('\u{1ebd}', &vn).is_none());
-            // A letter on its own key is that one key.
             assert_eq!(key_sequence('a', &vn).map(|k| k.len()), Some(1));
             // ǖ = u + U+0308 + U+0304 (same combining class): ū then U+0308 would type another
             // glyph, so with no ü key the letter is unreachable; ü then U+0304 spells it.
