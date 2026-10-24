@@ -563,7 +563,8 @@ export async function cancelBackendTranscription(args: ServerTarget & {
   }, undefined);
 }
 
-/** Poll the live progress of an in-flight file transcription. */
+/** Poll the server's live progress entry behind `progressId`: a transcription, a text
+ *  translation or an on-demand link download. */
 export async function getTranscribeProgress(args: ServerTarget & {
   progressId: string;
 }): Promise<BatchProgress> {
