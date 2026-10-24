@@ -5,6 +5,7 @@
 import { plural } from "../format";
 import { isSubtitleFormat, writtenCues, type ExportFormat } from "./transcriptFormats";
 import { timedTrack, type CueGrid, type CueOptions } from "./cueSplit";
+import { LINK_AUDIO_EXT } from "./mediaExport";
 import type { BatchResult } from "../types";
 
 /** on/off = a toggle; fixed = always in this format; na = the format can't
@@ -238,7 +239,7 @@ export function exportSummary(a: {
             why: `video in ${m.container.toUpperCase()}, subtitles ${
               m.subtitleMode === "embedded" ? "embedded" : m.subtitleMode === "sidecar" ? "as separate files" : "embedded and as files"}`,
           }
-        : m.choice === "audio" ? { state: "on", why: `audio copy as ${m.audioExt ?? "m4a"}` }
+        : m.choice === "audio" ? { state: "on", why: `audio copy as ${m.audioExt ?? LINK_AUDIO_EXT}` }
           : { state: "off", why: "text file only" },
     ));
   }

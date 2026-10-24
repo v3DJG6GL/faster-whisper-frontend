@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
+  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -217,7 +217,7 @@ export function TranscriptExport({
     urlSource && linkServerAudioLive(rec?.result, nowSec) ? rec?.result?.sourceMediaId ?? null : null;
   /** The server that issued `serverAudioId` — as `serverVideoIssuer`. */
   const serverAudioIssuer = serverAudioId ? rec?.result?.sourceMediaBackendId ?? rec?.backendId ?? null : null;
-  const audioExt = localAudio ? extOf(localAudio) || "m4a" : serverAudioId ? "m4a" : null;
+  const audioExt = localAudio ? extOf(localAudio) || LINK_AUDIO_EXT : serverAudioId ? LINK_AUDIO_EXT : null;
   const audioAvailable = urlSource && !!(localAudio || serverAudioId);
   const videoWhy = !hasVideoSource
     ? "no video is available for this transcription"

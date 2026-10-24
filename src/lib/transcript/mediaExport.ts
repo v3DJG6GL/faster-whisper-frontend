@@ -38,6 +38,9 @@ export function isVideoSourcePath(path: string): boolean {
   return (VIDEO_SOURCE_EXTS as readonly string[]).includes(extOf(path));
 }
 
+/** The container a link's audio is assumed to be in until its copy names one. */
+export const LINK_AUDIO_EXT = "m4a";
+
 /** Codec facts the panel greys out MP4 on (the server's `streams`). */
 export interface MediaStreams {
   videoCodec?: string | null;
