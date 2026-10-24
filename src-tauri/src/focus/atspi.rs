@@ -47,9 +47,8 @@ pub(super) fn retry_delay(failures: u32) -> Duration {
 
 pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
     // Reconnect loop: the a11y connection can die — registry daemon restart, or (the big
-    // one for long sessions) suspend/resume drops the bus. If we just returned, the task
-    // would exit forever and the snapshot would freeze on the last-seen app (looked like
-    // "worked for a while, then everything became konsole"). So we always reconnect.
+    // one for long sessions) suspend/resume drops the bus. Returning would end the task for
+    // good and freeze the snapshot on the last-seen app, so we always reconnect.
     let mut failures: u32 = 0;
     loop {
         // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events —
@@ -74,10 +73,8 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
         }
         let started = std::time::Instant::now();
         let outcome = run_once(snapshot.clone(), deep.clone()).await;
-        // A stream that ENDS counts as a failure too (bus restart). Resetting only after a
-        // long-lived connection keeps a fast end or Err/Ok alternation from flooding the log,
-        // yet lets a new incident's first warn through instead of a counter an earlier
-        // outage left at 45.
+        // A stream that ENDS counts as a failure too (bus restart); see next_failures for the
+        // reset that lets a new incident's first warn through.
         failures = next_failures(
             failures,
             started.elapsed() >= std::time::Duration::from_secs(60),
@@ -145,9 +142,9 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     // Resolve focus OFF the event loop, in a single COALESCING task that always works on
     // the LATEST focus. Resolving one focus is several D-Bus round-trips serviced on the
     // *target app's* UI thread, so a busy window (a terminal streaming output) can take >1s;
-    // resolved inline, every resolve timed out under load and the snapshot froze on the last
-    // app that did resolve (its stale `editable=Some(false)` then coerced injection to
-    // clipboard). Now a slow app stalls only this task, and it never works off a backlog.
+    // resolved inline, every resolve would time out under load and the snapshot freeze on the
+    // last app that did resolve (its stale `editable=Some(false)` then coerces injection to
+    // clipboard). This way a slow app stalls only this task, and it never works off a backlog.
     // Three slots — latest window:activate, window:deactivate, element focus — so a burst
     // can't coalesce away the activate/deactivate that drive foreground tracking. Processed
     // activate → deactivate → focus so the mark is right before focus is gated — except when
@@ -260,8 +257,6 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
             ev = stream.next() => {
                 let Some(ev) = ev else { break Ok(()) }; // stream ended → reconnect
                 let Ok(ev) = ev else { continue };
-                // window:activate is ESSENTIAL: without it, switching windows without changing
-                // the focused element wouldn't update detection.
                 let routed = {
                     let mut p = pending.lock();
                     match ev {
