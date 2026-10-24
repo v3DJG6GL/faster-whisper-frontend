@@ -1,5 +1,6 @@
-// The Stepper's buttons must not drop keyboard focus to <body>: a native `disabled` set on the
-// FOCUSED −/+ when a keyboard step reaches a bound did, and so did the ↺ that unmounts itself.
+// The Stepper's buttons must not drop keyboard focus to <body>, which a native `disabled` set on
+// the FOCUSED −/+ when a keyboard step reaches a bound would do, and so would the ↺ unmounting
+// itself.
 import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the Stepper in.
 import formSrc from "./form.tsx?raw";
