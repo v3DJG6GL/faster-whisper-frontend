@@ -17,9 +17,9 @@ const MAX_ROTATION_REPROBES = 3;
 export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   const conn = useApp((s) => (backend ? ownProp(s.connections, backend.id) : undefined));
   const id = backend?.id;
-  // Reactive, through the store: after a failed probe `conn` stays undefined, so only `url`
-  // in the deps re-runs the probe once the user corrects the address (or a per-device URL
-  // override changes it).
+  // Reactive, through the store: a corrected address (or per-device URL override) evicts `conn`,
+  // which re-runs the probe — but mid-probe `conn` is already undefined, so only `url` in the
+  // deps re-aims it at the new address.
   const url = useApp((s) => (backend ? effectiveServerUrl(backend, s.settings) : ""));
   // Key presence too: a sync pull that adds a key to a keyless backend (or removes one) moves no
   // credential generation, and `conn` is already undefined — keyed on it, the probe re-runs as
