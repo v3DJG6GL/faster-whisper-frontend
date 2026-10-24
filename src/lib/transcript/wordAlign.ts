@@ -7,6 +7,10 @@
 
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
 
+/** A word's slack around its segment's window, in seconds (segmentWordRanges, and the
+ *  export preview's word cut that mirrors it). */
+export const WORD_SLACK_S = 0.05;
+
 /** Word index ranges per segment. One pass: words arrive time-ordered; each
  *  word belongs to the first segment whose window (±0.05 s slack) it falls
  *  into — but never past the NEXT segment's start: adjacent segments share an
@@ -20,11 +24,11 @@ export function segmentWordRanges(
   let wi = 0;
   return segments.map((seg, i) => {
     const next = segments[i + 1];
-    while (wi < words.length && words[wi].start < seg.start - 0.05) wi++;
+    while (wi < words.length && words[wi].start < seg.start - WORD_SLACK_S) wi++;
     const from = wi;
     while (
       wi < words.length &&
-      words[wi].start < seg.end + 0.05 &&
+      words[wi].start < seg.end + WORD_SLACK_S &&
       (!next || words[wi].start < next.start)
     )
       wi++;

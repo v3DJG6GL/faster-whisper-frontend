@@ -11,7 +11,7 @@ import {
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { ownProp } from "../own";
 import { codeSlug, stripControlChars } from "../sanitize";
-import { segmentWordRanges } from "./wordAlign";
+import { WORD_SLACK_S, segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 
 export type ExportFormat = "txt" | "srt" | "vtt" | "lrc" | "json";
@@ -918,7 +918,7 @@ export function previewExport(
   // The segments behind the first n cues — or, for a track with its own
   // timing, everything before the n-th cue ends.
   const until = !last ? Math.min(n, segs.length) : last.seg >= 0 ? last.seg + 1 : segs.filter((s) => s.start < last.end).length;
-  const end = (last && last.seg < 0 ? last.end : segs[until - 1]?.end ?? 0) + 0.05;
+  const end = (last && last.seg < 0 ? last.end : segs[until - 1]?.end ?? 0) + WORD_SLACK_S;
   // The sample's last segment has no `next`, so segmentWordRanges would let the
   // slack admit the cut-off segment's first word: cap at that segment's start,
   // as the full export does.
