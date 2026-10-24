@@ -197,7 +197,8 @@ function Editor({
   // The model is typed too: debounce it like the address so typing doesn't fetch per character.
   const debouncedModel = useDebounced(b.model ?? "", 400);
   // What the server gives this backend's requests (its model + override profile) — the values
-  // its blank decode fields and prompt inherit. Batch terms: the backend serves both.
+  // its blank decode fields and prompt inherit. Read in batch terms, not live dictation's: a
+  // backend serves both endpoints.
   const decodeDefaults = useDecodeDefaults({
     serverUrl: probeUrl,
     backendId: b.id,
