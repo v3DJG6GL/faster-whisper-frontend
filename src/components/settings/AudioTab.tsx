@@ -91,10 +91,10 @@ export function AudioTab() {
   }, [refresh]);
 
   // A legacy name pin (saved before pins were device ids) is moved to its id once per launch
-  // (micMigration.ts) — but only if that mic was listed then. Retry whenever the listed mics
-  // change (plugged in after launch, or the pin arrived by sync), not on every 3 s poll: else
-  // the picker lists the mic twice and calls the name "not offered by the sound server" while
-  // dictation records it through the server just fine.
+  // (micMigration.ts) — but only if that mic was listed then. Left unmoved, the picker lists the
+  // mic twice and calls the name "not offered by the sound server" while dictation records it
+  // through the server just fine. So retry whenever the listed mics change (plugged in after
+  // launch, or the pin arrived by sync) — not on every 3 s poll.
   const micIds = inv ? inv.mics.map((m) => m.id).join("\n") : null;
   useEffect(() => {
     if (micIds !== null && isLegacyPin(microphoneId)) void retryLegacyMicPin();
