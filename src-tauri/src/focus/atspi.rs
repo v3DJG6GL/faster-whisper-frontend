@@ -185,11 +185,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                 // STATE_ACTIVE; a background app's stray activate reports false → ignore it.
                 let activate = async {
                     if let Some((_, item)) = act {
-                        if let Ok(Some((app_id, _, active))) = tokio::time::timeout(
-                            std::time::Duration::from_millis(1000),
-                            resolve_focus(&item, &bus, deep, false, true),
-                        )
-                        .await
+                        if let Some((app_id, _, active)) =
+                            resolve_focus_bounded(&item, &bus, deep, false, true).await
                         {
                             if active != Some(false) {
                                 let sender = item.name_as_str().map(str::to_owned);
@@ -204,11 +201,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                 let deactivate = async {
                     if let Some((_, item)) = deact {
                         if note_deactivate_bus(&snapshot, item.name_as_str()) {
-                            if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
-                                std::time::Duration::from_millis(1000),
-                                resolve_focus(&item, &bus, deep, false, false),
-                            )
-                            .await
+                            if let Some((app_id, _, _)) =
+                                resolve_focus_bounded(&item, &bus, deep, false, false).await
                             {
                                 note_deactivate(&snapshot, &app_id);
                             }
@@ -226,11 +220,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                 if let Some(item) = foc {
                     // A newer focus supersedes the parked one, whether or not it resolves.
                     parked = None;
-                    if let Ok(Some((app_id, editable, _))) = tokio::time::timeout(
-                        std::time::Duration::from_millis(1000),
-                        resolve_focus(&item, &bus, deep, true, false),
-                    )
-                    .await
+                    if let Some((app_id, editable, _)) =
+                        resolve_focus_bounded(&item, &bus, deep, true, false).await
                     {
                         // Hand the element ref to the snapshot so a later command can read its
                         // selection (Quick-Add seed + correct-on-close) without a tree walk.
@@ -311,10 +302,29 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     result
 }
 
+/// `resolve_focus` bounded to 1 s, so a busy or departing app cannot stall the resolver; a timeout
+/// reads as unresolved.
+async fn resolve_focus_bounded(
+    item: &ObjectRefOwned,
+    bus: &zbus::Connection,
+    deep: bool,
+    read_editable: bool,
+    read_active: bool,
+) -> Option<(String, Option<bool>, Option<bool>)> {
+    tokio::time::timeout(
+        Duration::from_millis(1000),
+        resolve_focus(item, bus, deep, read_editable, read_active),
+    )
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Read a source's app id, plus its editability (`read_editable`: the element's role/state, for
 /// element focus) and its frame's STATE_ACTIVE (`read_active`, for window:activate — to reject a
 /// background app's stray activate); both off for window:deactivate (app id is enough). Pure I/O —
-/// the caller bounds it with a timeout. `None` if it can't resolve (proxy error / empty name).
+/// callers go through `resolve_focus_bounded`. `None` if it can't resolve (proxy error / empty
+/// name).
 async fn resolve_focus(
     item: &ObjectRefOwned,
     bus: &zbus::Connection,
