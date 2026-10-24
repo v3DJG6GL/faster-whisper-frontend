@@ -1,8 +1,5 @@
-// The link card's "Download existing subtitles" panel: the switch,
-// the Existing-subtitles presets, and the "Subtitles" table — one row per language with its
-// source badges (Whisper / the site's / machine translation; active, idle = greyed, off =
-// struck), a trash button for languages the site lacks, and "Add language" last. Every rule
-// lives in lib/transcript/siteSubtitles; this file only draws derive() (the caller's, `view`) and
+// The link card's "Download existing subtitles" panel. Every rule lives in
+// lib/transcript/siteSubtitles; this file only draws derive() (the caller's, `view`) and
 // routes clicks back.
 
 import { Loader2, Trash2 } from "lucide-react";
