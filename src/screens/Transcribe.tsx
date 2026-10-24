@@ -85,6 +85,10 @@ const STUDIO_PANE_MIN = 560;
  *  between window.innerWidth and the two content panes. */
 const STUDIO_CHROME = 340;
 
+/** Diarization speaker bounds: the seed's clamp and the three speaker steppers share them. */
+const SPEAKERS_MIN = 1;
+const SPEAKERS_MAX = 32;
+
 
 /** "today 21:04 · 11m 10s · de · 4 speakers" — the recent-strip meta line. */
 function recentMeta(rec: TranscriptRecord): string {
@@ -206,9 +210,9 @@ function seedTranscribe(t: TranscribeSettings | undefined, backends: readonly Ba
     model: saved ? (t?.model?.trim() ?? "") : "",
     diarize: t?.diarize,
     speakerMode,
-    numSpeakers: Math.min(32, Math.max(1, t?.numSpeakers || 2)),
-    minSpeakers: Math.min(32, Math.max(1, t?.minSpeakers || 2)),
-    maxSpeakers: Math.min(32, Math.max(1, t?.maxSpeakers || 4)),
+    numSpeakers: Math.min(SPEAKERS_MAX, Math.max(SPEAKERS_MIN, t?.numSpeakers || 2)),
+    minSpeakers: Math.min(SPEAKERS_MAX, Math.max(SPEAKERS_MIN, t?.minSpeakers || 2)),
+    maxSpeakers: Math.min(SPEAKERS_MAX, Math.max(SPEAKERS_MIN, t?.maxSpeakers || 4)),
     translate: t?.translate ?? false,
     translateTo: wireCodes(t?.translateTo),
     translationModel: saved ? (t?.translationModel?.trim() ?? "") : "",
@@ -1812,8 +1816,8 @@ export default function Transcribe() {
                                   setNumSpeakers(v);
                                   persistOptions({ numSpeakers: v });
                                 }}
-                                min={1}
-                                max={32}
+                                min={SPEAKERS_MIN}
+                                max={SPEAKERS_MAX}
                                 ariaLabel="Speaker count"
                               />
                             )}
@@ -1827,8 +1831,8 @@ export default function Transcribe() {
                                     setMaxSpeakers(mx);
                                     persistOptions({ minSpeakers: v, maxSpeakers: mx });
                                   }}
-                                  min={1}
-                                  max={32}
+                                  min={SPEAKERS_MIN}
+                                  max={SPEAKERS_MAX}
                                   ariaLabel="Minimum speakers"
                                 />
                                 <span className="text-[12px] text-dim">to</span>
@@ -1840,8 +1844,8 @@ export default function Transcribe() {
                                     setMinSpeakers(mn);
                                     persistOptions({ maxSpeakers: v, minSpeakers: mn });
                                   }}
-                                  min={1}
-                                  max={32}
+                                  min={SPEAKERS_MIN}
+                                  max={SPEAKERS_MAX}
                                   ariaLabel="Maximum speakers"
                                 />
                               </>
