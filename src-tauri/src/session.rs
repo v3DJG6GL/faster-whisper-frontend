@@ -88,8 +88,9 @@ fn mark_batch_cancelled(epoch: u64) {
     }
 }
 
-/// Disown whatever batch transcription is currently detached, if any. Called by `cancel_record`
-/// even when the session has already been taken out of state by a preceding stop.
+/// Disown whatever batch transcription is currently detached, if any. Called (via
+/// [`settle_detached_batch_on_cancel`]) only for a user's Cancel that found no live session,
+/// because a preceding stop already took it out of state.
 pub fn cancel_detached_batch() {
     mark_batch_cancelled(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst));
 }
@@ -1006,10 +1007,10 @@ impl RecordSession {
     /// Claim this session as the detached batch BEFORE the state lock is released.
     ///
     /// `finish()` never publishes, and `stop_record` drops the `RecordState` guard before it runs.
-    /// A `cancel_record` in that gap found no live session, and `cancel_detached_batch()` disowned
-    /// whatever `DETACHED_BATCH_EPOCH` still held: 0 (the cancelled clip uploaded and archived
-    /// while the UI said cancelled) or the PREVIOUS session's epoch (an earlier in-flight POST
-    /// killed and its `.wav` deleted).
+    /// A `cancel_record` in that gap would find no live session, and `cancel_detached_batch()` would
+    /// disown whatever `DETACHED_BATCH_EPOCH` still held: 0 (the cancelled clip is uploaded and
+    /// archived while the UI says cancelled) or the PREVIOUS session's epoch (an earlier in-flight
+    /// POST is disowned and its `.wav` deleted).
     ///
     /// Publishing early is safe: the device-loss salvage arm (in `start_record`) publishes with
     /// `fetch_max` ([`publish_salvaged_batch`]), so a late salvage inside `finish()`'s capture join
@@ -1356,8 +1357,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
         Err(e) => {
-            // Capped like the streaming path's `error` frames: the transport error carries
-            // `detail_from(&body)` — up to the 32 MiB body cap.
+            // Capped like the streaming path's `error` frames: the transport bounds each piece it
+            // reads, but `{e:#}` joins the whole context chain behind this prefix.
             let msg = crate::transport::bounded_server_text(
                 &format!("Transcription failed: {e:#}"),
                 crate::transport::MAX_ERROR_TEXT,
