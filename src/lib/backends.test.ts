@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { backendForAddress, backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, fatesAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
+import { backend } from "./sync/syncTestFixtures";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -158,19 +159,6 @@ describe("effectiveOverrideProfile", () => {
 // the two (`|| undefined`, `!value.trim()`, pruning an empty list) silently brings a cleared
 // prompt / glossary / target list back from the server override-profile while the editor
 // shows the field empty.
-
-const backend = (over: Partial<Backend> = {}): Backend => ({
-  id: "b1",
-  name: "Local",
-  serverUrl: "http://localhost:8000",
-  hasApiKey: false,
-  model: "large-v3",
-  endpoint: "stream",
-  language: "auto",
-  prompt: "",
-  responseFormat: "verbose_json",
-  ...over,
-});
 
 describe("backendPrompt — the Backend default's tri-state", () => {
   it("reads unset as inherit and cleared as an explicit empty", () => {

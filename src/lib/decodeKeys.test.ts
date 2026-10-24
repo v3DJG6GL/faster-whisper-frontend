@@ -34,6 +34,7 @@ import { useApp } from "./store";
 import { configuredRouteTargets } from "./dictation/chipController";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
+import { backend } from "./sync/syncTestFixtures";
 import type { Backend, DecodeOverrides, Profile } from "./types";
 
 /** The `settings` keys of GET /v1/request-default-settings, recorded from the frozen settings
@@ -228,21 +229,6 @@ it("the table is keyed by the DecodeOverrides keys (compile-time check, mirrored
 });
 
 const CATS_ALL = categorySelection(true);
-
-function backend(over: Partial<Backend> = {}): Backend {
-  return {
-    id: "b1",
-    name: "local",
-    serverUrl: "http://10.0.0.2:8000",
-    hasApiKey: false,
-    model: "large-v3",
-    endpoint: "stream",
-    language: "auto",
-    prompt: "",
-    responseFormat: "verbose_json",
-    ...over,
-  };
-}
 
 function profile(over: Partial<Profile> = {}): Profile {
   return {
