@@ -413,8 +413,8 @@ export function StatisticsView({
   const view = useApp((s) => s.usageView);
   const settings = useApp((s) => s.settings);
   const today = localTodayDay();
-  // The page's own document, only when it answers THIS query against THIS backend; until
-  // then the last one it had (or the fixed 30-day one on first visit) stays up, marked stale.
+  // The page's own document counts only when it answers THIS query against THIS backend;
+  // until then a stand-in stays up, marked stale.
   const sig = viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), query, viewerTimeZone()) : null;
   // A failed fetch for this signature keeps the last good document up (marked stale, filter bar
   // usable) and says so, instead of an "updating…" that never resolves; the next poll retries.
