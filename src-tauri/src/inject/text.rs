@@ -35,8 +35,9 @@ pub struct InjectOutcome {
     /// Windows: a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read
     /// still held it, or the remote-desktop owner or legacy write failed or timed out — a
     /// timed-out offer may still reach the clipboard later), or an insert the caller marked
-    /// `withhold_on_divert` (the hard-break separator) that would otherwise have been diverted, or
-    /// recovered after a sink that wrote nothing, before anything was written: it writes nothing,
+    /// `withhold_on_divert` (the hard-break separator, a whitespace-only live phrase) that would
+    /// otherwise have been diverted, or recovered after a sink that wrote nothing, before anything
+    /// was written: it writes nothing,
     /// and that caller drops it rather than re-sending. Or a bare auto-Enter (empty text) the
     /// mid-function divert withheld: no Return went out. A cancel before the write is not a
     /// `landed: false` cause, withheld or not.
@@ -110,14 +111,16 @@ pub(crate) async fn inject_text(
     // The CLIPBOARD form of `text`, when it differs from what goes into the field: a translated
     // live session types each block behind a phrase gap ("\n\n\n") the field owes, but the
     // clipboard is replaced, not appended to, so a copy that opened with that gap would paste
-    // three blank lines (three empty submits in a chat box). Every arm that leaves the transcript
+    // three blank lines (three empty submits in a chat box); a plain live phrase is likewise
+    // trimmed of its seam space. Every arm that leaves the transcript
     // on the clipboard for the user — the clipboard-only write, the diverts and the error-abort
     // recoveries — writes this instead of `text`; what is typed or pasted INTO the field stays
     // `text`. `None` = the same as `text`. See `clipboard_form`.
     clipboard_text: Option<String>,
     // The caller has nothing worth recovering from the clipboard (the hard-break separator, a
-    // lone " "), so it never becomes the clipboard's persistent owner over what the user copied,
-    // on any divert or recovery arm. A cancel before any write, user OR error abort, stops it with
+    // lone " "; a whitespace-only live phrase, the server's output suffix alone), so it never
+    // becomes the clipboard's persistent owner over what the user copied, on any divert or
+    // recovery arm. A cancel before any write, user OR error abort, stops it with
     // `landed: true, diverted: false` and nothing written: it is never recovered. Where a divert
     // or recovery would write it before anything has been written (the mid-function divert, the
     // Wayland write guard, the Wayland portal's letters-not-on-the-layout divert, the error-abort
@@ -667,7 +670,6 @@ pub(crate) async fn inject_text(
                     .await
                     .map_err(|e| e.to_string())?
             };
-            // A failed write returns here; the guard puts the pending restore back.
             set_res?;
             // The transcript is on the clipboard now, so this is where the paste went — see
             // LAST_PASTE_REMOTE. Recorded only here, past every bail above, so a phrase that
