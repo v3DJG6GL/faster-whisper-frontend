@@ -1014,7 +1014,7 @@ export interface FacetRow {
   pct: number;
   /** Rendered in the faint tone (an outcome that is not a success story). */
   dim?: boolean;
-  /** Overrides the accent chart colour (the translated row uses the stage hue). */
+  /** Overrides the accent chart colour (the "Translated into" language rows use the stage hue). */
   colorVar?: string;
 }
 
