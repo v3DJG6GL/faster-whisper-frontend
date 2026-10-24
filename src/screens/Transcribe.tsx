@@ -231,7 +231,7 @@ export default function Transcribe() {
   // Recent transcripts for the idle-screen strip (full list: History screen).
   const historyRecords = useTranscriptHistory((s) => s.records);
   const recentRecords = useMemo(
-    // Files only — dictations belong to the History screen's timeline.
+    // No dictations — they belong to the History screen's timeline.
     () => historyRecords.filter((r) => r.status === "done" && r.kind !== "dictation").slice(0, 3),
     [historyRecords],
   );
@@ -239,17 +239,15 @@ export default function Transcribe() {
     void loadHistory();
   }, []);
 
-  // Backend/model/language picks persist in settings.transcribe (they were
-  // component state before, so leaving the screen reset them). The saved pick
-  // only applies while that backend still exists; model/language (and the translation model
-  // below) ride on it (savedBackendOf). Every persisted option below is seeded once through
-  // seedTranscribe — the re-sync effect re-seeds through it too.
+  // Picks persist in settings.transcribe so leaving the screen keeps them. The saved pick only
+  // applies while that backend still exists; model/language (and the translation model below)
+  // ride on it (savedBackendOf).
   const [seed] = useState(() => seedTranscribe(settings.transcribe, backends));
   const [backendId, setBackendId] = useState(seed.backendId);
   // Coded at ingress the way dictation codes it (effectiveLanguage: trimmed, a word as its code,
   // a whitespace-only value kept): a synced Backend's word language ("english") or padded code
-  // (" de ") — or one persisted before this — would reach the spoken picker, the request and the
-  // link's site-subtitle match raw.
+  // (" de ") would otherwise reach the spoken picker, the request and the link's site-subtitle
+  // match raw.
   const [language, setLanguage] = useState(seed.language);
   // "" = use the Backend's configured model; anything else is a per-run pick
   // from the models the server advertised on the last connection test. Trimmed at the seed (the
@@ -393,16 +391,14 @@ export default function Transcribe() {
     };
   }, []);
 
-  // The store boots with an EMPTY backend list (store.ts) and config hydration — also how a
-  // sync pull or an import replaces it — fills it in. Re-sync the selection whenever the
-  // current id isn't in the list (on the very first hydration `backendId` is still "", so this
-  // branch also seeds the initial pick), so the Backend dropdown and language don't reference
-  // a backend that's gone. It RE-SEEDS every persisted option from the store (that hydration —
-  // the screen mounted on the empty boot store, every option seeded from nothing — or a pulled
-  // pick): applyBackendPick would prune and persist the screen's boot-state targets and clear
-  // the stored backend's model, language and translation model. When the stored pick resolves
-  // it persists nothing; a fallback to backends[0] (no stored pick, or its backend is gone) is a
-  // real switch and persists the cleared picks and the pruned stored targets.
+  // The store boots with an EMPTY backend list (store.ts); config hydration, a sync pull or an
+  // import fills it in. The re-sync effect below runs whenever the current id isn't in the list,
+  // so the Backend dropdown and language never reference a backend that's gone (on the first
+  // hydration `backendId` is still "", so it also seeds the initial pick). It RE-SEEDS every
+  // persisted option from the store: applyBackendPick would prune and persist the screen's
+  // boot-state targets and clear the stored backend's model, language and translation model. A
+  // resolving stored pick persists nothing; a fallback to backends[0] (no stored pick, or its
+  // backend is gone) is a real switch and persists the cleared picks and the pruned stored targets.
   // Every pick that names something on ONE server: the per-run whisper model,
   // a server override-profile, and the three stage-model ids. They must all
   // fall away together whenever the backend under the screen changes, or the
@@ -425,9 +421,9 @@ export default function Transcribe() {
     resetForInputChange();
     setBackendId(id);
     setTranslateExclNotice(null); // per-screen notice about a toggle made on the OLD server
-    clearBackendScopedPicks(); // model, profile and stage models all name ONE server
+    clearBackendScopedPicks();
     const b = backends.find((x) => x.id === id);
-    const lang = effectiveLanguage(undefined, b?.language ?? "auto"); // a synced word ("english") as its code, trimmed
+    const lang = effectiveLanguage(undefined, b?.language ?? "auto");
     setLanguage(lang);
     const nextT = pruneTargets(translateTo, lang);
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
@@ -528,8 +524,7 @@ export default function Transcribe() {
   const defaultDiarizationName =
     serverName(decodeDefaults?.diarization_model) ?? shortModelName(caps?.diarization_models?.[0]?.id) ?? "server model";
 
-  // Per-run model pick: "" = backend default. The advertised list comes from
-  // the shared hook (session connection cache + one background probe).
+  // The models the server advertises: session connection cache + one background probe.
   const advertised = useBackendModels(backend);
 
   // The Skip-silence row's "Default" label: what a blank vad_filter inherits.
@@ -590,9 +585,9 @@ export default function Transcribe() {
   // exist on this server (older backend / standard server).
   const translationAvailable = !isStandard && caps?.translation_enabled === true;
   const urlMeta = useTranscribeRun((s) => s.urlMeta);
-  // The link card's spoken language and its check (D86) — per link, frozen at Add link.
-  // The link card's site subtitles (D86): the panel's state per link (a new preview starts
-  // over), its input, and what derive() makes of both — the table, the chips and the run.
+  // The link card's site subtitles: the panel's state per link (a new preview starts over), its
+  // input, and what derive() makes of both — the table, the chips and the run. The link's spoken
+  // language and its check (linkLang) are per link too, frozen at Add link.
   const [siteState, setSiteState] = useState<SiteSubsState | null>(null);
   useEffect(() => {
     // `siteState` here is the old panel's (this render's): the targets drop what its Custom only
@@ -763,10 +758,9 @@ export default function Transcribe() {
   ]);
 
   // Debounced (500 ms) link preview. Add waits for it (urlPreviewLoading also covers the debounce),
-  // so the video options are on screen — defaults preselected — before a link can be queued; a
-  // click in that window used to add the link without them. A failed probe shows its reason and
-  // unlocks Add (the run itself is the authority) — except the server's link-policy refusal,
-  // which the run's own probe would repeat.
+  // so the video options are on screen — defaults preselected — before a link can be queued. A
+  // failed probe shows its reason and unlocks Add (the run itself is the authority) — except the
+  // server's link-policy refusal, which the run's own probe would repeat.
   useEffect(() => {
     const url = draftUrl;
     setUrlPreviewData(null);
@@ -860,9 +854,8 @@ export default function Transcribe() {
     return everyWhileVisible(1000, tick);
   }, [busy]);
 
-  // Pixel width of the timeline strip — the axis-label row assignment (top
-  // row vs stagger row) needs real segment widths. Measured after every
-  // commit (cheap; setState only on change) plus on window resize.
+  // Pixel width of the timeline strip (ResizeObserver) — the axis-label row assignment (top
+  // row vs stagger row) needs real segment widths.
   const stripRoRef = useRef<ResizeObserver | null>(null);
   const [stripW, setStripW] = useState(640);
   useEffect(() => () => { stripRoRef.current?.disconnect(); }, []);
@@ -1012,7 +1005,7 @@ export default function Transcribe() {
       .getState()
       .queue.some((it) => it.status === "running" || it.status === "queued");
     if (running) stageFiles(paths); // kept for the next run, the live run is untouched
-    else addFiles(paths); // changed inputs abandon any settled results
+    else addFiles(paths);
   };
 
   const removeFile = (path: string) => {
@@ -1042,7 +1035,6 @@ export default function Transcribe() {
   /** Everything the detached pump needs, frozen at run/retry time. */
   const buildCtx = (overrides: DecodeOverrides): RunContext | null => {
     if (!backend) return null;
-    // Per-run overrides win over the Backend's stored defaults.
     const merged = { ...backend.decodeOverrides, ...overrides };
     return {
       backendId: backend.id,
@@ -1053,8 +1045,7 @@ export default function Transcribe() {
       // dictation sends it (effectiveLanguage); "auto" and codes stay.
       language: effectiveLanguage(undefined, language),
       // Tri-state: unset = inherit the server DEFAULT_PROMPT (omit the field), an
-      // explicit clear = send "" (suppress it), a value = send it. `|| undefined`
-      // collapsed clear onto inherit.
+      // explicit clear = send "" (suppress it), a value = send it.
       prompt: backendPrompt(backend),
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
       // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
@@ -1092,10 +1083,9 @@ export default function Transcribe() {
     // the screen's spoken language, and each queued file would get a same-language copy track.
     const effTargets = translationAvailable ? runTargets(translateTo, knownSource) : [];
     const t2t = effTargets.length > 0;
-    // "Authoritative" now has to be SAID, not just implied by omission: the server reads
-    // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an
-    // empty chip list goes out as an explicit empty — see `translationRunOptions`, which
-    // also carries the backend glossary's own tri-state through.
+    // An empty chip list goes out as an explicit empty: the server reads an absent
+    // `translate_to` as "inherit my override-profile's TRANSLATE_TO" (`translationRunOptions`
+    // also carries the backend glossary's own tri-state through).
     const t2tOptions = translationRunOptions({
       available: translationAvailable,
       targets: effTargets,
@@ -1219,8 +1209,7 @@ export default function Transcribe() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openedKey]);
 
-  // ── render ───────────────────────────────────────────────────────────────
-  // The page assembles from four blocks so the stacked column and the studio
+  // The page assembles from blocks so the stacked column and the studio
   // two-pane arrangement can share every section unchanged.
   const header = (
     <div>
@@ -1353,16 +1342,13 @@ export default function Transcribe() {
               <Select
                 ariaLabel="Backend"
                 value={backendId}
-                // A backend change is an input change: abandon any in-flight run + clear stale
-                // results, else the prior backend's transcript/error shows under the new selection.
                 onChange={applyBackendPick}
                 disabled={busy}
                 options={withBackendChips(backendOptions(backends), backends, connections)}
               />
             </div>
             <div>
-              {/* Reset lives in the LABEL row (decode-editor treatment: accent dot
-                  = overridden, ↺ right-aligned) — under the field it added height
+              {/* Reset lives in the LABEL row: under the field it added height
                   to this cell only and broke the row's shared baseline. */}
               <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-dim">
                 <label>Model</label>
@@ -1405,7 +1391,7 @@ export default function Transcribe() {
                 ariaLabel="Language"
                 value={spoken.value}
                 multi={multiOffered}
-                // "" = send no language: the server's DEFAULT_LANGUAGE (W6).
+                // "" = send no language: the server's DEFAULT_LANGUAGE.
                 inheritLabel={inheritLabel(serverLang, "Default")}
                 disabled={busy}
                 onChange={(v) => {
@@ -1413,17 +1399,13 @@ export default function Transcribe() {
                   const { language: lang, overrides } = spoken.pick(v);
                   setLanguage(lang);
                   setRunOverrides(overrides ?? {});
-                  // The seed never targets the known source; keep that true when the
-                  // source changes AFTER seeding (a de→de stage is a no-op run). Not while
-                  // the site-subtitle panel holds the chips for a link with its OWN spoken
-                  // language (edited, detected or the site's): their source is that language
-                  // (chipSource), and translateTo is the panel's mirror — pruning by the
-                  // screen's would silently drop a valid chip for good. The re-prune effect
-                  // catches up when the panel lets go, and a run in the meantime sends the
-                  // queued files the chips less their source (runTargets). A link that only
-                  // follows the screen speaks the new screen language, so the prune is right
-                  // there: skipping it left that language as a hidden target (a de→de copy
-                  // track on the run).
+                  // Keep the seed's rule (no target is the known source: de→de is a no-op
+                  // stage) when the source changes after seeding. Skipped while the
+                  // site-subtitle panel holds the chips for a link with its OWN spoken
+                  // language: translateTo mirrors the panel, so pruning by the screen's
+                  // language would drop a valid chip for good (the re-prune effect catches
+                  // up when the panel lets go; runTargets strips the source meanwhile). A
+                  // link that follows the screen speaks the new language, so it prunes.
                   const linkOwnsSpoken =
                     linkLang.sp.source === "edited" || linkLang.sp.source === "detected" || linkLang.sp.source === "site";
                   if (siteChips && linkOwnsSpoken) {
@@ -1628,11 +1610,11 @@ export default function Transcribe() {
 
       <div className="mt-6">
         <div className="mb-2.5 font-mono text-[11px] uppercase tracking-label text-faint">processing</div>
-        {/* Rows in PIPELINE order — the card previews the run rail: separate
-            music → skip silence (analysis) → transcribe (translate is the
-            decode's task) → identify speakers. The hairline + dots say
-            "sequence" without over-claiming stages (skip-silence and translate
-            live inside the transcribe stage). */}
+        {/* Rows in PIPELINE order, previewing the run rail: separate music →
+            skip silence → translate to English (the decode's task) → identify
+            speakers → translation. The hairline + dots say "sequence" without
+            over-claiming stages (skip-silence and Whisper translate live inside
+            the transcribe stage). */}
         <Card className="px-5 py-1">
           {isStandard ? (
             <SettingRow
@@ -1656,7 +1638,7 @@ export default function Transcribe() {
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
                 {/* Header = the toggle alone; the model pick lives in the
                     expand sub-panel so the header column stays aligned with
-                    every other row (the old inline picker crushed it). */}
+                    every other row. */}
                 <SettingRow
                   title="Music source separation (MSS)"
                   desc={
@@ -1718,12 +1700,10 @@ export default function Transcribe() {
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
                 {/* Promoted view of runOverrides.vad_filter — the SAME key the
-                    Decode-overrides editor edits (one source of truth, two
-                    doors: changing it here makes the disclosure count "1 set
-                    for this run", and reset works from either place).
-                    Tri-state, not a Toggle: the server has its own default,
-                    and an unset boolean must stay distinct from an explicit
-                    false. */}
+                    Decode-overrides editor edits, so its "set for this run"
+                    count and reset work from either place. Tri-state, not a
+                    Toggle: unset (the server's default) must stay distinct
+                    from an explicit false. */}
                 <SettingRow
                   title="Skip silence (VAD)"
                   desc="Voice activity detection during audio analysis — silence never reaches the decoder: faster, and prevents made-up text in quiet parts. For this run only."
@@ -1792,8 +1772,7 @@ export default function Transcribe() {
               </div>
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
-                {/* Toggle-only header (the old header carried a model picker,
-                    two steppers AND a segmented control — the crush bug); the
+                {/* Toggle-only header, so the header column stays aligned; the
                     speaker mode + model live in the expand sub-panel. */}
                 <SettingRow
                   title="Speaker diarization"
@@ -2113,18 +2092,13 @@ export default function Transcribe() {
       </div>
 
       {(() => {
-        // Run-detail panel (per the approved design canvas): identity plus an
-        // overall pipeline bar segmented at the stage boundaries, then one
-        // instrumented row per stage — %, elapsed, ~left, throughput, model +
-        // device chips, the decoder's live tail, and the diarizer's current
-        // step. "unknown" polls never overwrite a known stage, so the panel
-        // only ever moves forward; until the first poll answers, the first
-        // stage counts as active. After the run it settles into a completed
-        // state: every row a receipt, until the input changes.
+        // Run-detail panel. "unknown" polls never overwrite a known stage, so the panel only
+        // ever moves forward; until the first poll answers, the first stage counts as active.
+        // After the run it settles into a completed state until the input changes.
         // The COMPLETED panel is pinned to the file whose clocks it shows (the pump's last
         // file): every instrument below comes from per-file stageTimes/stageMeta, so following
-        // the clicked row relabelled last-file receipts with another file's name and duration
-        // and printed an invented "×realtime". Clicking a row changes only the transcript.
+        // the clicked row would put another file's name, duration and "×realtime" on these
+        // receipts. Clicking a row changes only the transcript.
         const lastSettled = settledPanelItem(queue, lastRunPath ?? selectedPath);
         const complete =
           !busy && lastSettled?.status === "done" && Object.keys(stageTimes).length > 0;
@@ -2462,8 +2436,8 @@ export default function Transcribe() {
                             : planStage.state === "skipped" ? "skipped" : "done"
                       : i === active ? "active"
                         : i > active ? "pending" : "done";
-                // The translate row's fraction is unit-weighted (done
-                // languages in full, the running one by its own progress).
+                // The translate and diarize rows' fraction is unit-weighted (done
+                // units in full, the running one by its own progress).
                 const hasUnits = st === "translating" || st === "diarizing";
                 const frac =
                   state !== "active" ? null
@@ -2481,7 +2455,7 @@ export default function Transcribe() {
                   (planStage?.phase === "downloading" || planStage?.phase === "loading");
                 const waiting = state === "active" && progress?.stage === "waiting";
                 // Inside model.transcribe() before the first segment: audio
-                // decode + Silero VAD (used to be misattributed to "waiting").
+                // decode + Silero VAD.
                 const analyzing = state === "active" && progress?.stage === "analyzing";
                 // Metadata probe before the download starts — folds onto the
                 // Download row as a suffix (railOf maps it there).
@@ -2495,7 +2469,7 @@ export default function Transcribe() {
                 // Sanitized once and gated on what survives: a value made only of
                 // control/format characters draws no empty chip or dangling " · ".
                 const metaModel = safeDisplayText(meta?.model).trim();
-                // The chip stays keyed on the device (as before); compute only rides along.
+                // The chip is keyed on the device; compute only rides along.
                 const metaDev = safeDisplayText(meta?.device).trim();
                 const metaCompute = safeDisplayText(meta?.compute).trim();
                 const metaDevice = metaDev && (metaCompute ? `${metaDev} · ${metaCompute}` : metaDev);
@@ -2815,8 +2789,7 @@ export default function Transcribe() {
                               </span>
                             )}
                             {/* Receipts: a finished stage keeps its evidence
-                                as metric chips — number emphasized, no live
-                                leftovers. */}
+                                as metric chips, no live leftovers. */}
                             {state === "done" && dlBytes ? (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 <span className="font-medium text-text">{fmtBytes(dlBytes)}</span>
@@ -2876,10 +2849,9 @@ export default function Transcribe() {
                                 {speakerCount === 1 ? " speaker" : " speakers"}
                               </span>
                             )}
-                            {/* Neutral receipt of a user-chosen speaker mode —
-                                documents what the run did, same tone as every
-                                other rail meta (the choice is explicit in the
-                                Auto/Count/Range segment now, so no warning). */}
+                            {/* Neutral receipt of a user-chosen speaker mode, not a
+                                warning: the choice is explicit in the
+                                Auto/Count/Range segment. */}
                             {st === "diarizing" &&
                               state !== "pending" &&
                               state !== "skipped" &&
@@ -3005,8 +2977,7 @@ export default function Transcribe() {
           {/* Master list of the run's files. Selection lives on the ROW (rail
               + wash + filename weight), not on a button label — the transcript
               panel below silently follows it, so which file is open must read
-              at a glance. Finished rows are options: click anywhere, Enter/
-              Space, or ↑/↓ across the finished set. */}
+              at a glance. */}
           <div
             role="listbox"
             aria-label="Transcribed files"
@@ -3120,7 +3091,7 @@ export default function Transcribe() {
                   {it.status === "running" && (
                     <span className="font-mono text-[11px] text-think">
                       {/* The whole-pipeline number the panel shows, not the stage-local
-                          fraction: the two are on screen together and disagreed. */}
+                          fraction: the two are on screen together and must agree. */}
                       {/* A bare 0 (no server progress yet — a standard server is never
                           polled) shows the stage word: the row's only liveness signal. */}
                       {typeof runningOverall === "number" && runningOverall > 0
@@ -3252,13 +3223,10 @@ export default function Transcribe() {
     </>
   );
 
-  // Recent transcripts — kept in ONE stable slot in every state: end of the
-  // rail in studio, between the config and the transcript in stacked. It used
-  // to sit BELOW the stacked viewer, so picking a record pushed the list a
-  // full transcript-card down — reading as "the history disappeared". Above
-  // the viewer, opening a transcript changes nothing about the elements
-  // before it. A run that just finished appears here too (the history store
-  // is reactive). Full list: History screen.
+  // Recent transcripts — ONE stable slot in every state: end of the rail in
+  // studio, ABOVE the viewer in stacked, so opening a transcript never pushes
+  // the list down (below the viewer it read as "the history disappeared").
+  // A run that just finished appears here too (the history store is reactive).
   const recentStrip =
     recentRecords.length > 0 ? (
       <Card className="mt-6 overflow-hidden py-1">
