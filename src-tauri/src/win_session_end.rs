@@ -1,22 +1,22 @@
 //! Windows session end (shutdown / logoff / restart, and an installer's Restart Manager
 //! closing the running app): agree at once, clean up, and actually EXIT.
 //!
-//! Two tao behaviours make this necessary while tauri-runtime-wry holds tao at 0.35:
+//! Written for two tao 0.35 behaviours (the app now resolves tao 0.37.1, which fixes both):
 //!   * `WM_QUERYENDSESSION` — a window that answers 0 VETOES the shutdown and Windows shows
 //!     the "this app is preventing shutdown" screen. The tao revs between PR #1231 and
-//!     PR #1274 did exactly that from their thread-event-target window (see the pin's
-//!     comment in Cargo.toml). The pin is fixed; answering 1 here keeps our own window
-//!     from ever depending on a default arm again.
-//!   * `WM_ENDSESSION` — tao 0.35 tears its event loop down (`RunEvent::Exit` fires) but
-//!     never exits the process. The 50 ms chip hover poller (aux_windows/overlay.rs) then posts a user
-//!     event into the destroyed loop, which panics ("cannot move state from Destroyed").
-//!     Harmless when the OS is about to kill us anyway, a crash dialog when it was only an
-//!     installer asking us to close. tao 0.37 exits in that handler (PR #1157).
+//!     PR #1274 did exactly that from their thread-event-target window; answering 1 here
+//!     keeps our own window from ever depending on a default arm again.
+//!   * `WM_ENDSESSION` — tao 0.35 tore its event loop down (`RunEvent::Exit` fires) but
+//!     never exited the process. The 50 ms chip hover poller (aux_windows/overlay.rs) then
+//!     posted a user event into the destroyed loop, which panicked ("cannot move state from
+//!     Destroyed"): harmless when the OS is about to kill us anyway, a crash dialog when it
+//!     was only an installer asking us to close. tao 0.37 exits in that handler (PR #1157).
 //!
 //! So the main window is subclassed: query → 1, end → the same cleanup every other exit
 //! path runs, then `exit(0)`. Windows gives an app ~5 s here; `cleanup_for_exit` is bounded
 //! at ~2.5 s (the 2 s system-audio unmute flush plus the 500 ms clipboard-owner
-//! render-for-exit). Drop this module once the app builds against tao >= 0.37.
+//! render-for-exit). Under tao 0.37 the `WM_ENDSESSION` arm duplicates what tao now does
+//! itself; the query's early-write request below is what tao still does not do.
 //!
 //! The query also asks the main window (`app://session-ending`, fire-and-forget) to land its
 //! pending writes early — the debounced History edits, the coalesced History writes, the
