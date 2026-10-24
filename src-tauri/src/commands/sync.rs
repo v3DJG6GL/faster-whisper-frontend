@@ -92,11 +92,10 @@ pub async fn sync_device_info(
 /// clears it when the store says nothing is there. The result stays in memory on its way
 /// into an export the user asked for (or the sync blob) — never log it.
 ///
-/// async + spawn_blocking: a sync command runs on the MAIN thread, and a
-/// keyring read can BLOCK indefinitely (locked KWallet parks the request
-/// behind a password prompt) — that froze the whole event loop, wedging every
-/// later invoke. On a worker it can hang harmlessly; the TS caller wraps this
-/// in a 10s timeout and degrades to "no secrets".
+/// async + spawn_blocking: a sync command runs on the MAIN thread, and a keyring read can block
+/// indefinitely (a locked KWallet parks it behind a password prompt), wedging every later
+/// invoke. On a worker it hangs harmlessly; the TS caller wraps this in a 10s timeout and
+/// degrades to "no secrets".
 #[tauri::command]
 pub async fn read_backend_keys(backend_ids: Vec<String>) -> BackendKeys {
     let ids = backend_ids.clone();
@@ -143,13 +142,9 @@ pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> 
         let path = PathBuf::from(path);
         let text = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
         // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
-        // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
-        // A4 cleaned up the tmp on a rename failure but not on a write failure — and `write_private`
-        // fails AFTER creating and truncating the file (write_all / sync_all hitting ENOSPC, EIO or
-        // EDQUOT), which is the realistic case for this sink: the user points the save dialog at a
-        // nearly-full USB stick or a network share. What survives is a PARTIAL plaintext-credential
-        // file in a directory the user chose, and they see only an error toast. The 0600 does not
-        // cover it there either — FAT/exFAT removable media and most SMB mounts carry no Unix mode.
+        // holds the raw keyring secrets. A write failing on a nearly-full USB stick or share would
+        // otherwise leave a partial plaintext-credential file where the user pointed the dialog, and
+        // the 0600 does not protect it there (FAT/exFAT and most SMB mounts carry no Unix mode).
         // `write_private_atomic` removes `<path>.tmp` on both the write and the rename failure.
         config::write_private_atomic(&path, &text).map_err(|e| e.to_string())
     })
@@ -191,29 +186,23 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     // Sanity cap, not a format limit.
     const MAX_IMPORT_BYTES: u64 = 20_000_000;
     // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync/sync.ts).
-    // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
-    // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
-    // entries in the user's wallet, with the webview blocked throughout. This is the designated
-    // validator for the untrusted-file path; it should fail here, with a message.
+    // The byte cap alone admits ~130k backends, and each one with a key becomes a serial
+    // 10s-timeout keyring write in `reconcileBackendSecrets` — permanent wallet entries with the
+    // webview blocked throughout. This is the untrusted-file validator: fail here, with a message.
     const MAX_ENTRIES: usize = 500;
-    // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync/sync.ts. The count cap
-    // above bounds how MANY chords arrive, never how long one is: `de_hotkey`'s `visit_seq` pushes
-    // an unbounded sequence and `canonicalize` only sorts + dedups, which does not bound DISTINCT
-    // strings. `chordConflicts` runs in the import preview's render body — before the user has
-    // consented to anything — and `isStrictSubset` is O(k·m) in chord LENGTH, so one 20 MB file
-    // holding two profiles whose chords nest freezes the window. Rejected, not truncated, and
-    // rejected HERE rather than in `de_hotkey`: that runs on the user's own config.json every
-    // launch, where truncating would silently rewrite a valid stored chord with the autosave
-    // armed, and rejecting would refuse to load a working config.
+    // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync/sync.ts. The count
+    // cap above does not bound chord length (`de_hotkey` / `canonicalize` only sort + dedup), and
+    // the import preview runs `conflicts()` (hotkeyConflicts.ts) in its render body before consent,
+    // where `isStrictSubset` is O(k·m) in chord length — two long nested chords freeze the window.
+    // Rejected HERE, not in `de_hotkey`: that also loads the user's own config.json every launch,
+    // where truncating would silently rewrite a valid chord and rejecting would refuse a working
+    // config.
     const MAX_CHORD_CODES: usize = 16;
-    // ...and the other dimension of the same field, which the cap above does not bound: how long
-    // ONE code is. 16 codes of ~1.2 MB each pass both the count check and `isCodeList`, under the
-    // 20 MB ceiling. Same three sinks as the count: `chordConflicts` in the preview's render body
-    // before consent (where `canonicalizeCodes`' `localeCompare` tie-break and `isStrictSubset`
-    // now compare megabyte strings), a permanently ~20 MB `config.json` re-serialized on every
-    // 400ms-debounced autosave and re-parsed at every launch, and `codeToLabel`'s fall-through
-    // rendering the raw string as a key cap. Every real code is a `KeyboardEvent.code`-style
-    // token — the longest in the tree is well under 32 — so this rejects only forgeries.
+    // ...and the length of ONE code, which the count cap does not bound: 16 codes of ~1.2 MB pass it
+    // and `isCodeList` under the 20 MB ceiling, and reach the same preview scan, a ~20 MB
+    // `config.json` re-serialized on every autosave, and `codeToLabel` rendering the raw string as a
+    // key cap. Every real code is a `KeyboardEvent.code`-style token well under 32 bytes, so this
+    // rejects only forgeries.
     const MAX_CHORD_CODE_LEN: usize = 64;
     let meta = std::fs::metadata(path).map_err(|e| format!("Could not read the file: {e}"))?;
     if meta.len() > MAX_IMPORT_BYTES {
@@ -236,9 +225,8 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
                 .into(),
         );
     }
-    // Keep in sync with the frontend's `CONFIG_VERSION` (src/lib/store.ts) — the
-    // envelope now carries that value, and warning on `> 2` would flag our own
-    // exports as foreign.
+    // Keep in sync with the frontend's `CONFIG_VERSION` (src/lib/store.ts): the envelope carries
+    // that value, so a lower constant here would flag our own exports as a newer schema.
     const CURRENT_CONFIG_VERSION: u32 = 3;
     let config_version = doc
         .get("configVersion")
