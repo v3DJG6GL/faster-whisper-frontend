@@ -246,16 +246,13 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
       : undefined,
   };
 
-  // Predict how the apply resolves hotkey collisions in the WOULD-BE state (imported profiles
-  // and/or quick-add chord over the current ones): `applyBlob` never leaves a conflicting set — it
-  // switches the later colliding profile off, or keeps this device's quick-add chord over an
-  // incoming one that collides with local profiles — so `predictChordFix` runs its own
-  // `disableConflictingProfiles` (same L/R side-collapse rule: off-Windows unless evdev is live).
-  // It walks the SANITIZED profiles: this consent dialog renders before `applyBlob` sanitizes, with
-  // no error boundary, and `arr()` coerces only the container, so a raw element (a profile missing
-  // `hotkey`, a numeric code) would throw and unmount the very dialog that lets the user reject the
-  // blob. The sanitizer also bounds chord length (`isCodeList`), which keeps `isStrictSubset`'s
-  // O(k·m) scan from freezing the webview on a hand-authored file.
+  // Predict the apply's hotkey-collision fix in the WOULD-BE state (imported profiles and/or
+  // quick-add chord over the current ones). It walks the SANITIZED profiles: this consent dialog
+  // renders before `applyBlob` sanitizes, with no error boundary, and `arr()` coerces only the
+  // container, so a raw element (a profile missing `hotkey`, a numeric code) would throw and
+  // unmount the very dialog that lets the user reject the blob. The sanitizer also bounds chord
+  // length (`isCodeList`), which keeps `isStrictSubset`'s O(k·m) scan from freezing the webview on
+  // a hand-authored file.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category (see `predictChordFix` for how an
@@ -441,8 +438,8 @@ export function RestoreFromServer({
     sel.profiles && isPlainObject(blob.profiles),
   );
   const replaced = replacedNames(sel, blob, st);
-  // The apply bypasses the review gate (ignoreGates), so this is the only place a moved key or
-  // the account's stored keys replacing this device's is disclosed — ImportPreview's notices.
+  // No security review stands in front of this direct `applyBlob`, so this is the only place a
+  // moved key or the account's stored keys replacing this device's is disclosed.
   const fates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
   const keyFates = fatesAfterSuppliedKey(fates, sel.backends ? installBackends : [], keyFor);
 
