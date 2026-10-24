@@ -32,6 +32,9 @@ import { useApp } from "./store";
 import { initUsageController, openStatisticsPage, sameViewSource, TREND_DAYS } from "./usage";
 import { forgetCredential } from "./capabilities";
 
+const B1 = { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never;
+const B2 = { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never;
+
 const setHidden = (h: boolean) => {
   vis.hidden = h;
   for (const fn of vis.listeners) fn(h);
@@ -53,7 +56,7 @@ describe("usage poll gates", () => {
   beforeAll(async () => {
     vi.useFakeTimers();
     useApp.setState({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       // Not the 30-day default: its query would look exactly like the fixed document's, and
       // `calls()` could not tell the page's own fetch from it.
       usageViewQuery: { range: "90", with: [] },
@@ -417,10 +420,7 @@ describe("usage poll gates", () => {
   });
   it("refetches the page when the home profile moves the default backend under it", async () => {
     useApp.setState((s) => ({
-      backends: [
-        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-      ],
+      backends: [B1, B2],
       profiles: [
         { id: "p1", enabled: true, backendId: "b1" } as never,
         { id: "p2", enabled: true, backendId: "b2" } as never,
@@ -446,7 +446,7 @@ describe("usage poll gates", () => {
     expect(getUsageStats).not.toHaveBeenCalled();
     close();
     useApp.setState((s) => ({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       profiles: [],
       settings: { ...s.settings, homeProfileId: undefined },
     }));
@@ -455,10 +455,7 @@ describe("usage poll gates", () => {
   });
   it("a default backend moved while hidden with the page open is fetched on show, not on the next tick", async () => {
     useApp.setState((s) => ({
-      backends: [
-        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-      ],
+      backends: [B1, B2],
       profiles: [
         { id: "p1", enabled: true, backendId: "b1" } as never,
         { id: "p2", enabled: true, backendId: "b2" } as never,
@@ -494,7 +491,7 @@ describe("usage poll gates", () => {
     await settle();
     expect(getUsageStats).not.toHaveBeenCalled();
     useApp.setState((s) => ({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       profiles: [],
       settings: { ...s.settings, homeProfileId: undefined },
     }));
@@ -503,10 +500,7 @@ describe("usage poll gates", () => {
   });
   it("the show catch-up fetches the page documents at once, not behind a pass stuck on another backend", async () => {
     useApp.setState({
-      backends: [
-        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-      ],
+      backends: [B1, B2],
       usageViewBackendId: "b1",
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -543,7 +537,7 @@ describe("usage poll gates", () => {
       close();
     }
     useApp.setState({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       usageViewBackendId: null,
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -551,10 +545,7 @@ describe("usage poll gates", () => {
   });
   it("a hide and show before the page step of the pass a show started makes that step refetch the page", async () => {
     useApp.setState({
-      backends: [
-        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-      ],
+      backends: [B1, B2],
       usageViewBackendId: "b1",
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -593,7 +584,7 @@ describe("usage poll gates", () => {
       close();
     }
     useApp.setState({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       usageViewBackendId: null,
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -604,10 +595,7 @@ describe("usage poll gates", () => {
     // which fetches the page as usual.
     for (const skipped of [0, 2]) {
       useApp.setState({
-        backends: [
-          { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-          { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-        ],
+        backends: [B1, B2],
         usageViewBackendId: "b1",
       });
       await vi.advanceTimersByTimeAsync(30_000);
@@ -646,7 +634,7 @@ describe("usage poll gates", () => {
         close();
       }
       useApp.setState({
-        backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+        backends: [B1],
         usageViewBackendId: null,
       });
       await vi.advanceTimersByTimeAsync(30_000);
@@ -661,10 +649,7 @@ describe("usage poll gates", () => {
       const usage = { ...s.usage };
       delete usage.b2;
       return {
-        backends: [
-          { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-          { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-        ],
+        backends: [B1, B2],
         usage,
         usageViewBackendId: "b2",
       };
@@ -690,7 +675,7 @@ describe("usage poll gates", () => {
       close();
     }
     useApp.setState({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       usageViewBackendId: null,
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -698,10 +683,7 @@ describe("usage poll gates", () => {
   });
   it("the catch-up pass refetches the page when a range change's fetch missed after the show's direct fetch landed", async () => {
     useApp.setState({
-      backends: [
-        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
-        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
-      ],
+      backends: [B1, B2],
       usageViewBackendId: "b1",
     });
     await vi.advanceTimersByTimeAsync(30_000);
@@ -741,7 +723,7 @@ describe("usage poll gates", () => {
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
     }
     useApp.setState({
-      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      backends: [B1],
       usageViewBackendId: null,
     });
     await vi.advanceTimersByTimeAsync(30_000);
