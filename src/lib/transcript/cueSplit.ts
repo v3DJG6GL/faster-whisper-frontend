@@ -702,6 +702,9 @@ const MIXED_TOKEN = new RegExp(
   "gu",
 );
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
+/** A fullwidth letter or digit ending / starting a token: mixedTokens joins it to an ASCII one glued to it. */
+const FW_ALNUM_END = new RegExp(`[${FW_ALNUM}]$`, "u");
+const FW_ALNUM_START = new RegExp(`^[${FW_ALNUM}]`, "u");
 /** A word break: whitespace but the no-break spaces (U+00A0, U+202F, U+2007) — French sets
  *  them inside "25 000" and before ? ! : ; », and a cut or line break there would split the
  *  number or open a line with the mark. */
@@ -1435,8 +1438,8 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     else if (
       k >= 0 && !gap
       && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
-        || (/[０-９Ａ-Ｚａ-ｚ]$/u.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
-        || (/[A-Za-z0-9]$/.test(toks[k]) && /^[０-９Ａ-Ｚａ-ｚ]/u.test(w)))
+        || (FW_ALNUM_END.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
+        || (/[A-Za-z0-9]$/.test(toks[k]) && FW_ALNUM_START.test(w)))
     ) toks[k] += w;
     else {
       toks.push(w);
