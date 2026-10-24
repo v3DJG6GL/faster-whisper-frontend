@@ -91,7 +91,7 @@ pub(crate) fn hide_lang_pick(app: AppHandle) {
 /// Deliver the user's choice to the main window and hide.
 ///
 /// `targets` is the chosen list (empty = insert the original only). Forwarded verbatim;
-/// the main window is what validates it against the server's advertised languages.
+/// the main window filters it to wire-valid codes (`wireCodes`).
 #[tauri::command]
 pub fn commit_lang_pick(app: AppHandle, targets: Vec<String>) {
     let _ = app.emit("langpick://commit", targets);
