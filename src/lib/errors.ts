@@ -111,7 +111,7 @@ export function describeTransportError(
   if (msg.includes("Could not connect")) {
     return {
       title: `Could not reach ${label} — nothing was started.`,
-      // friendly_err names a rejected certificate: "is the server running?" sent a user whose
+      // friendly_err names a rejected certificate: "is the server running?" would send a user whose
       // LAN backend has a self-signed or expired certificate after the wrong problem.
       hint: msg.includes("TLS certificate")
         ? "The server's TLS certificate isn't trusted — expired, self-signed or issued for another name."
@@ -126,9 +126,9 @@ export function describeTransportError(
     const code = Number(http[1]);
     // Only a 403 whose body SAYS so is "turned off": a bare 403 on a translate job is the
     // server refusing the key (missing, wrong, or without translate permission), and
-    // telling that user to "enable translation" sent them after the wrong problem. Any other
-    // status is a failure of an enabled feature — a 400 naming LOCAL_FILES_ONLY "disabled"
-    // (an uncached model on an offline server) is not the switch.
+    // "enable translation" would send that user after the wrong problem. Any other status is a
+    // failure of an enabled feature — a 400 naming LOCAL_FILES_ONLY "disabled" (an uncached
+    // model on an offline server) is not the switch.
     const off = /\b(disabled|not enabled)\b/i.test(msg);
     if (kind === "translate" && code === 403 && off) {
       return {
