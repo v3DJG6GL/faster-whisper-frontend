@@ -39,7 +39,7 @@ describe("manifest labels match the screens' literal labels", () => {
     ["components/transcribe/TranscriptExport.tsx", "translationTiming"],
     ["components/transcribe/TranscriptExport.tsx", "revealAfterSave"], // the Save button's menu
     ["components/transcribe/TranscriptExport.tsx", "exportFormat"], // aria-label on the bespoke radiogroup
-    ["screens/Settings.tsx", "audioFolder"], // bespoke Audio-storage block heading
+    ["screens/Settings.tsx", "audioFolder"], // the bespoke Audio-storage block's row title
   ];
   for (const [file, id] of cases) {
     it(`${String(id)} ↔ ${file}`, () => {
