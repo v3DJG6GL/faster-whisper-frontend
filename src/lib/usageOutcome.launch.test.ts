@@ -1,6 +1,6 @@
 // At launch the persisted backlog posts once the config is in. The queue file is usually read
-// before the config (the smaller file), and a flush before the config posts nothing: nothing may
-// leave the backlog for the next poll pass (30 s, or 5 min started hidden in the tray).
+// before the config (the smaller file), and a flush before the config posts nothing — which must
+// not leave the backlog waiting for the next poll pass (30 s, or 5 min started hidden in the tray).
 import { expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
