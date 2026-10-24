@@ -522,6 +522,12 @@ export function TranscriptExport({
   ): Promise<boolean> => {
     const localVideo = skipLocal ? null : panelLocalVideo;
     const mine = () => exportOutcomeShowsHere(mounted.current, openRef.current, latestResult.current.owner, started);
+    /** A failure exit: in the panel while this Save's record still shows there, else `late`. */
+    const fail = (kind: string, msg: string): false => {
+      if (mine()) setMediaError({ kind, msg });
+      else late(msg);
+      return false;
+    };
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
@@ -576,16 +582,10 @@ export function TranscriptExport({
           .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
           .catch(() => {});
       } catch (e) {
-        const msg = safeDisplayText(errorText(e), 300) || "The video could not be fetched.";
-        if (mine()) setMediaError({ kind: "fetch", msg });
-        else late(msg);
-        return false;
+        return fail("fetch", safeDisplayText(errorText(e), 300) || "The video could not be fetched.");
       }
     } else {
-      const msg = "No video is available for this transcription.";
-      if (mine()) setMediaError({ kind: "none", msg });
-      else late(msg);
-      return false;
+      return fail("none", "No video is available for this transcription.");
     }
     // After the fetch: the subtitles carry the latest result (liveResult). The size check's
     // tracks are reused while nothing newer landed; a newer result (a translation or an
@@ -599,12 +599,7 @@ export function TranscriptExport({
         ? checked.tracks
         : embeddedSubtitleTracks(res, exportOptions, ids, trackNames);
     const big = reuse ? null : oversizedEmbeddedTrack(subtitles);
-    if (big) {
-      const msg = tooLargeToEmbed(big);
-      if (mine()) setMediaError({ kind: "none", msg });
-      else late(msg);
-      return false;
-    }
+    if (big) return fail("none", tooLargeToEmbed(big));
     if (embedded.length) onEmbedded?.({ res, tracks: ids });
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
@@ -671,12 +666,7 @@ export function TranscriptExport({
       // A foreign server only gets the stored id when no other source exists, so there is
       // nothing to suggest. An id this call fetched or uploaded is trBackend's own (storedId is
       // null then), so it may still be forgotten below.
-      if (storedId && serverVideoIssuer !== issuer) {
-        const msg = "The selected server doesn't have this video.";
-        if (mine()) setMediaError({ kind: "expired", msg });
-        else late(msg);
-        return false;
-      }
+      if (storedId && serverVideoIssuer !== issuer) return fail("expired", "The selected server doesn't have this video.");
       // The server dropped it: forget the id; a local copy carries on. Judged
       // against the id actually sent (an on-demand fetch's, or a busy retry's)
       // and the latest copy — the upload may have stored a newer id since.
@@ -695,9 +685,7 @@ export function TranscriptExport({
         : urlVideoOnDemand
           ? "The server no longer has this video — save again to fetch it from the link."
           : "The server no longer has this video, and this server can't fetch it again from the link.";
-      if (mine()) setMediaError({ kind: "expired", msg });
-      else late(msg);
-      return false;
+      return fail("expired", msg);
     }
     if (outcome.kind === "mp4_incompatible") {
       if (mine()) {
