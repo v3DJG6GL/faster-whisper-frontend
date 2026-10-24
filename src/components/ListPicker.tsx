@@ -1,4 +1,5 @@
-// A searchable, grouped list in a popover — the shell of the language pickers.
+// A searchable, grouped list in a popover — the shell of the language pickers and ui/form.tsx's
+// Select.
 //
 // The trigger is the caller's (renderTrigger), so a chip row's "+ language", a form field and a
 // table's "Add language" row can all open the same list. Inside, focus never leaves the search
@@ -278,9 +279,10 @@ export function ListPicker<R>({
     // Mid-composition the IME owns Esc (cancel the half-typed text), Enter (commit it) and the
     // arrows (candidate list).
     if (imeComposing(e)) return;
-    // A held key acts once, as in LangPick (the arrows keep repeating): a held Space ticked the
-    // row on and off at the key-repeat rate, a held Enter closed the list and its repeat reopened
-    // it from the trigger (the trigger swallows those below). Typing in the search still repeats.
+    // A held key acts once, as in LangPick (the arrows keep repeating): otherwise a held Space
+    // would tick the row on and off at the key-repeat rate, and a held Enter would close the list
+    // and its repeat reopen it from the trigger (the trigger swallows those below). Typing in the
+    // search still repeats.
     if (e.repeat && pickerKeyActsOnce(e.key, query.length > 0, query.length === 0)) {
       e.preventDefault();
       return;
@@ -317,7 +319,6 @@ export function ListPicker<R>({
     }
   };
 
-  // Below the trigger, or above it when the room below is short and there is more above.
   let pos: CSSProperties | null = null;
   let listMax = MAX_LIST;
   if (rect) {
