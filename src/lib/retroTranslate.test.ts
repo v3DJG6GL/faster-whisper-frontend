@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
-  runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type TranslateRunUi,
+  runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type ChunkedTranslateArgs, type TranslateRunUi,
   translateCtls, translateOptsFrom, untranslatedIndexes,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
@@ -18,16 +18,25 @@ const answer = (texts: string[], lang = "en"): TextTranslationResult => ({
   source: "de",
 });
 
+/** runChunkedTranslate over `indexes`, segment i reading "t<i>", answered by `answer`, merges ignored;
+ *  each test overrides only what it observes. */
+const chunked = (over: Partial<ChunkedTranslateArgs> & Pick<ChunkedTranslateArgs, "indexes">) =>
+  runChunkedTranslate({
+    textOf: (i) => `t${i}`,
+    translate: (texts) => Promise.resolve(answer(texts)),
+    onMerge: () => {},
+    ...over,
+  });
+
 describe("runChunkedTranslate", () => {
   it("splits 900 segments into 400/400/100 requests and merges per chunk", async () => {
     const indexes = Array.from({ length: 900 }, (_, i) => i);
     const sizes: number[] = [];
     const merges: { patchKeys: number[]; first: boolean }[] = [];
     const starts: [number[], number][] = [];
-    const r = await runChunkedTranslate({
+    const r = await chunked({
       indexes,
       chunk: 400,
-      textOf: (i) => `t${i}`,
       translate: (texts) => {
         sizes.push(texts.length);
         return Promise.resolve(answer(texts));
@@ -64,10 +73,8 @@ describe("runChunkedTranslate", () => {
 
   it("keys the patch by SEGMENT index even for a sparse stale-row set", async () => {
     const merges: Record<number, Record<string, string>>[] = [];
-    await runChunkedTranslate({
+    await chunked({
       indexes: [3, 17, 42],
-      textOf: (i) => `t${i}`,
-      translate: (texts) => Promise.resolve(answer(texts)),
       onMerge: (patch) => merges.push(patch),
     });
     expect(Object.keys(merges[0]).map(Number)).toEqual([3, 17, 42]);
@@ -78,15 +85,13 @@ describe("runChunkedTranslate", () => {
     // They become the request's ids: the server's "segment N" warnings must name the row in
     // the whole transcript, not a position in the chunk (which collided across chunks).
     const seen: [string[], number[]][] = [];
-    await runChunkedTranslate({
+    await chunked({
       indexes: [3, 7, 40, 41, 90],
       chunk: 3,
-      textOf: (i) => `t${i}`,
       translate: (texts, idxs) => {
         seen.push([texts, idxs]);
         return Promise.resolve(answer(texts));
       },
-      onMerge: () => {},
     });
     expect(seen).toEqual([
       [["t3", "t7", "t40"], [3, 7, 40]],
@@ -99,7 +104,7 @@ describe("runChunkedTranslate", () => {
     // 413s anything over 200,000, failing the viewer's Translate on a record the run translated.
     const indexes = Array.from({ length: 32 }, (_, i) => i);
     const sent: number[][] = [];
-    await runChunkedTranslate({
+    await chunked({
       indexes,
       textOf: () => "x".repeat(7_000),
       translate: (texts, idxs) => {
@@ -107,7 +112,6 @@ describe("runChunkedTranslate", () => {
         sent.push(idxs);
         return Promise.resolve(answer(texts));
       },
-      onMerge: () => {},
     });
     expect(sent.length).toBeGreaterThan(1);
     expect(sent.flat()).toEqual(indexes);
@@ -115,23 +119,21 @@ describe("runChunkedTranslate", () => {
 
   it("a lone segment over the character budget still goes out, alone", async () => {
     const sizes: number[] = [];
-    await runChunkedTranslate({
+    await chunked({
       indexes: [0, 1, 2],
       textOf: (i) => (i === 1 ? "x".repeat(190_000) : "a"),
       translate: (texts) => {
         sizes.push(texts.length);
         return Promise.resolve(answer(texts));
       },
-      onMerge: () => {},
     });
     expect(sizes).toEqual([1, 1, 1]);
   });
 
   it("drops per-segment empty results and skips an all-empty chunk's merge", async () => {
     const onMerge = vi.fn();
-    const r = await runChunkedTranslate({
+    const r = await chunked({
       indexes: [0, 1],
-      textOf: (i) => `t${i}`,
       translate: (texts) => Promise.resolve({ results: texts.map(() => ({})) }),
       onMerge,
     });
@@ -145,10 +147,9 @@ describe("runChunkedTranslate", () => {
       cancelled = true; // cancel lands right after the first chunk merged
     });
     const translate = vi.fn((texts: string[]) => Promise.resolve(answer(texts)));
-    const r = await runChunkedTranslate({
+    const r = await chunked({
       indexes: Array.from({ length: 5 }, (_, i) => i),
       chunk: 2,
-      textOf: (i) => `t${i}`,
       translate,
       onMerge,
       isCancelled: () => cancelled,
@@ -162,9 +163,8 @@ describe("runChunkedTranslate", () => {
   it("cancel during an in-flight chunk drops THAT chunk's results", async () => {
     let cancelled = false;
     const onMerge = vi.fn();
-    const r = await runChunkedTranslate({
+    const r = await chunked({
       indexes: [0, 1],
-      textOf: (i) => `t${i}`,
       translate: (texts) => {
         cancelled = true; // flag flips while the request is in flight
         return Promise.resolve(answer(texts));
@@ -178,11 +178,10 @@ describe("runChunkedTranslate", () => {
 
   it("rethrows a chunk's transport error unchanged", async () => {
     await expect(
-      runChunkedTranslate({
+      chunked({
         indexes: [0],
         textOf: () => "t",
         translate: () => Promise.reject(new Error("HTTP 403: translation disabled")),
-        onMerge: () => {},
       }),
     ).rejects.toThrow("HTTP 403");
   });
@@ -375,10 +374,9 @@ describe("kept-original + warnings threading", () => {
   it("mirrors the patch with per-index kept lists and accumulates distinct warnings", async () => {
     const kepts: Record<number, string[]>[] = [];
     const warnCalls: string[][] = [];
-    const r = await runChunkedTranslate({
+    const r = await chunked({
       indexes: [0, 1, 2, 3],
       chunk: 2,
-      textOf: (i) => `t${i}`,
       translate: (texts) =>
         Promise.resolve({
           results: texts.map((t) => ({ en: `en:${t}` })),
@@ -402,10 +400,8 @@ describe("kept-original + warnings threading", () => {
   it("a response without kept/warnings yields empty kept lists and no calls", async () => {
     const kepts: Record<number, string[]>[] = [];
     const onWarnings = vi.fn();
-    await runChunkedTranslate({
+    await chunked({
       indexes: [0, 1],
-      textOf: (i) => `t${i}`,
-      translate: (texts) => Promise.resolve(answer(texts)),
       onMerge: (_patch, _prov, _first, kept) => kepts.push(kept),
       onWarnings,
     });
@@ -476,10 +472,7 @@ describe("cancelTranslateRun", () => {
       expect(ctl.cancelled).toBe(true);
       expect(abort).toHaveBeenCalledWith({ serverUrl: "http://srv", backendId: "b1", progressId: "p1" });
       // The chunk loop reads this flag (isCancelled): the run ends after its in-flight chunk.
-      const r = await runChunkedTranslate({
-        indexes: [0, 1], chunk: 1, textOf: (i) => `t${i}`,
-        translate: (texts) => Promise.resolve(answer(texts)), onMerge: () => {}, isCancelled: () => ctl.cancelled,
-      });
+      const r = await chunked({ indexes: [0, 1], chunk: 1, isCancelled: () => ctl.cancelled });
       expect(r.cancelled).toBe(true);
       // A second press, or a key with no live run, does nothing.
       expect(cancelTranslateRun("rec-1", abort)).toBe(false);
