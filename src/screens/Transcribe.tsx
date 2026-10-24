@@ -63,6 +63,7 @@ import {
 import { OtherTranslateRuns } from "@/components/transcribe/OtherTranslateRuns";
 import { RungPicker } from "@/components/transcribe/RungPicker";
 import { StageSwitch } from "@/components/transcribe/StageSwitch";
+import { RailChip } from "@/components/transcribe/RailChip";
 import { VideoBranchRow } from "@/components/transcribe/VideoBranchRow";
 import {
   aboutLeft, AXIS_NAMES, fmtElapsed, RAIL_DESCRIPTIONS, RAIL_NAMES, STAGE_COLORS, UNIT_LABELS, UNIT_NOUN,
@@ -2748,16 +2749,8 @@ export default function Transcribe() {
                                 {extractorLabel}
                               </span>
                             )}
-                            {st === "downloading" && panelFormat && (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                {panelFormat}
-                              </span>
-                            )}
-                            {metaModel && (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                {metaModel}
-                              </span>
-                            )}
+                            {st === "downloading" && panelFormat && <RailChip>{panelFormat}</RailChip>}
+                            {metaModel && <RailChip>{metaModel}</RailChip>}
                             {metaDevice && (
                               <span
                                 className={cn(
@@ -2770,26 +2763,10 @@ export default function Transcribe() {
                             )}
                             {/* Receipts: a finished stage keeps its evidence
                                 as metric chips, no live leftovers. */}
-                            {state === "done" && dlBytes ? (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                <span className="font-medium text-text">{fmtBytes(dlBytes)}</span>
-                              </span>
-                            ) : null}
-                            {state === "done" && dlAvg ? (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                <span className="font-medium text-text">{fmtBytes(dlAvg)}/s</span> avg
-                              </span>
-                            ) : null}
-                            {state === "done" && st === "separating" && (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                vocals isolated
-                              </span>
-                            )}
-                            {state === "done" && speed ? (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                <span className="font-medium text-text">{speed.toFixed(1)}×</span> realtime avg
-                              </span>
-                            ) : null}
+                            {state === "done" && dlBytes ? <RailChip value={fmtBytes(dlBytes)} /> : null}
+                            {state === "done" && dlAvg ? <RailChip value={`${fmtBytes(dlAvg)}/s`}> avg</RailChip> : null}
+                            {state === "done" && st === "separating" && <RailChip>vocals isolated</RailChip>}
+                            {state === "done" && speed ? <RailChip value={`${speed.toFixed(1)}×`}> realtime avg</RailChip> : null}
                             {/* VAD receipt on the finished row: the win (or
                                 the warning) in one chip; the live run shows
                                 the split bar below instead. */}
@@ -2808,24 +2785,18 @@ export default function Transcribe() {
                               const tgt = (st === "diarizing" ? safeDisplayText(u.target, 16) : langText(u.target, 12)).trim();
                               if (!tgt) return null;
                               return (
-                                <span
-                                  key={u.target}
-                                  className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
-                                >
+                                <RailChip key={u.target}>
                                   <span className={cn("font-medium text-text", st === "translating" && "uppercase")}>
                                     {tgt}
                                   </span>
                                   {u.state === "instant" || u.instant
                                     ? " instant"
                                     : u.tookS != null ? ` ${fmtElapsed(u.tookS * 1000)}` : ""}
-                                </span>
+                                </RailChip>
                               );
                             })}
                             {state === "done" && st === "diarizing" && speakerCount > 0 && (
-                              <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                <span className="font-medium text-text">{speakerCount}</span>
-                                {speakerCount === 1 ? " speaker" : " speakers"}
-                              </span>
+                              <RailChip value={speakerCount}>{speakerCount === 1 ? " speaker" : " speakers"}</RailChip>
                             )}
                             {/* Neutral receipt of a user-chosen speaker mode, not a
                                 warning: the choice is explicit in the
@@ -2836,11 +2807,11 @@ export default function Transcribe() {
                               state !== "failed" &&
                               ((lastOptions?.numSpeakers ?? 0) > 0 ||
                                 (lastOptions?.minSpeakers ?? 0) > 0) && (
-                                <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
+                                <RailChip>
                                   {(lastOptions?.numSpeakers ?? 0) > 0
                                     ? `count set to ${lastOptions?.numSpeakers}`
                                     : `range ${lastOptions?.minSpeakers}–${lastOptions?.maxSpeakers}`}
-                                </span>
+                                </RailChip>
                               )}
                           </span>
                           {state !== "done" && (

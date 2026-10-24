@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 import { type VideoProgress } from "@/lib/types";
 import { videoTerminal } from "@/lib/transcribeRun";
 import { aboutLeft, fmtElapsed, STAGE_COLORS } from "@/components/transcribe/railTheme";
+import { RailChip } from "@/components/transcribe/RailChip";
 
 /** The Video row: the kept copy's own download, hanging off the Audio
  *  stage by a dashed connector — its own status word, its own clock, a
@@ -117,16 +118,8 @@ export function VideoBranchRow({
           {v.state === "queued" && <span>waiting for a download slot…</span>}
           {v.state === "done" && (
             <>
-              {v.bytes ? (
-                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
-                  <span className="font-medium text-text">{fmtBytes(v.bytes)}</span>
-                </span>
-              ) : null}
-              {v.bytes && elapsed > 1000 ? (
-                <span className="rounded-md bg-surface-2 px-2 py-0.5 text-[10.5px] text-dim">
-                  <span className="font-medium text-text">{fmtBytes(v.bytes / (elapsed / 1000))}/s</span> avg
-                </span>
-              ) : null}
+              {v.bytes ? <RailChip value={fmtBytes(v.bytes)} /> : null}
+              {v.bytes && elapsed > 1000 ? <RailChip value={`${fmtBytes(v.bytes / (elapsed / 1000))}/s`}> avg</RailChip> : null}
             </>
           )}
           {v.state === "failed" && (
