@@ -179,7 +179,7 @@ export function AppearanceRows() {
   );
 }
 
-/** One preset swatch: a radio painted with the accent that hue derives to in this theme. */
+/** One preset swatch, painted with the accent that hue derives to in this theme. */
 function HueSwatch({
   name, hue, on, dark, disabled, role = "radio", badge, onPick,
 }: {
