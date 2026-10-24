@@ -1,12 +1,9 @@
-// The suggested starter Profiles a fresh install confirms during onboarding (or
-// on the Profiles screen via the checklist path). These replaced the old silent
-// seeds: nothing is created until the user confirms. Ids keep the familiar
-// legacy strings so docs/muscle memory stay valid. Default chords (user-set
-// 2026-07-13, replacing the nested Ctrl+Shift family): hold Ctrl+Shift =
-// push-to-talk, Ctrl+Super = hands-free, Super+Alt = quick add — three independent
-// chords, so chord_engine.rs's designed nesting (hold ⊂ hands-free = in-place
-// upgrade) does not apply between the DEFAULTS; the engine still supports it for
-// a user-configured hands-free superset.
+// The suggested starter Profiles a fresh install confirms during onboarding (or on the Profiles
+// screen via the checklist path): nothing is created until the user confirms. Ids keep the
+// legacy strings so docs/muscle memory stay valid. Default chords: hold Ctrl+Shift =
+// push-to-talk, Ctrl+Super = hands-free, Super+Alt = quick add — three independent chords, so
+// chord_engine.rs's designed nesting (hold ⊂ hands-free = in-place upgrade) does not apply
+// between the DEFAULTS; the engine still supports it for a user-configured hands-free superset.
 
 import { conflicts, quickAddPeer } from "./hotkeyConflicts";
 import { needsLowLevel } from "./keys";
