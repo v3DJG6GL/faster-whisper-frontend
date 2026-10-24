@@ -278,7 +278,6 @@ describe("applyTextEdits", () => {
     const words = applyTextEdits(result, { 0: "Das ist so passiert im Velo-Navi-Test des TCS" });
     expect(words).toHaveLength(13);
     expect(words[5].word).toBe(" Velo-Navi-Test");
-    // Second segment untouched, ranges still line up.
     const ranges = segmentWordRanges(result.segments!, words);
     expect(ranges[1]).toEqual([8, 13]);
     expect(words.slice(8)).toEqual(result.words!.slice(8));
