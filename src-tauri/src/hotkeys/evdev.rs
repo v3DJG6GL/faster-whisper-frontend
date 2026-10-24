@@ -592,6 +592,21 @@ mod imp {
         // down in the window; see `debounce` and the `windows` twin.
         let mut deb =
             crate::hotkeys::debounce::Debouncer::new(crate::hotkeys::debounce::RELEASE_DEBOUNCE);
+        // Every commit of this reader carries the same reader state; only the transition varies.
+        macro_rules! commit_key {
+            ($code:expr, $down:expr, $teardown:expr) => {
+                commit(
+                    &app,
+                    &held_keys,
+                    &mut held,
+                    &mut engine,
+                    $code,
+                    $down,
+                    $teardown,
+                    generation,
+                )
+            };
+        }
 
         loop {
             let ev = match deb.next_deadline() {
@@ -616,16 +631,7 @@ mod imp {
             // Due deferred releases first, so a real release always commits before
             // whatever event (if any) woke us.
             for key in deb.expire(now) {
-                commit(
-                    &app,
-                    &held_keys,
-                    &mut held,
-                    &mut engine,
-                    key,
-                    false,
-                    false,
-                    generation,
-                );
+                commit_key!(key, false, false);
             }
             let Some(ev) = ev else { continue };
             if ev.event_type() != EventType::KEY {
@@ -637,16 +643,7 @@ mod imp {
                 _ => continue, // 2 = autorepeat
             };
             if let Some((k, d)) = deb.on_event(ev.code(), down, held.contains(&ev.code()), now) {
-                commit(
-                    &app,
-                    &held_keys,
-                    &mut held,
-                    &mut engine,
-                    k,
-                    d,
-                    false,
-                    generation,
-                );
+                commit_key!(k, d, false);
             }
         }
         // Nothing re-enumerates on its own: flag the loss for the suspend watch, which re-scans
@@ -664,16 +661,7 @@ mod imp {
         // `windows` twin). Teardown mode: the Stop is claimed via take_hold, since
         // stop_held_sessions may have emitted it.
         for key in deb.drain() {
-            commit(
-                &app,
-                &held_keys,
-                &mut held,
-                &mut engine,
-                key,
-                false,
-                true,
-                generation,
-            );
+            commit_key!(key, false, true);
         }
         // Keys still held — drop our contribution so a stale modifier can't wedge the gate.
         for &code in &held {
