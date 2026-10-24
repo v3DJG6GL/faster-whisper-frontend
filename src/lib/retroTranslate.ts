@@ -142,7 +142,7 @@ export function newTranslateRun(
   };
 }
 
-/** A new chunk request left: floor the whole-run fraction at the merged
+/** A new chunk request left: floor the whole-run fraction at the answered
  *  prefix and move the frontier to the chunk's first segment. */
 export function beginChunk(
   s: TranslateRunUi,
@@ -315,8 +315,8 @@ export interface ChunkedTranslateArgs {
 
 /** Drive a whole run in requests of at most TRANSLATE_CHUNK segments and
  *  TRANSLATE_CHUNK_CHARS characters, merging per chunk so translated rows appear
- *  as they finish. Throws the first chunk's transport error unchanged (the caller
- *  owns the toast copy). */
+ *  as they finish. A failing chunk's transport error is rethrown unchanged and ends
+ *  the run (the caller owns the toast copy). */
 export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   model?: string;
   source?: string;
