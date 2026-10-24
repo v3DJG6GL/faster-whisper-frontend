@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
-import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
+import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, PageHeader, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
 import { plural } from "@/lib/format";
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
@@ -1039,14 +1039,10 @@ export default function Dictionary() {
     <Stack gap={6} className="page page-prose">
       <header className="pb-2">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("dictionary")}</div>
-          <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text">
-            <BookA className="size-7 text-accent" aria-hidden /> {screenTitle("dictionary")}
-          </h1>
-          <p className="mt-2 text-[13.5px] text-dim">
+          <PageHeader eyebrow={screenEyebrow("dictionary")} title={screenTitle("dictionary")} icon={BookA}>
             Dictation rules a <strong className="font-semibold text-text">faster-whisper-backend</strong> server applies to every transcription,
             including replacements, word mappings, punctuation, and tidying up.
-          </p>
+          </PageHeader>
         </div>
       </header>
 
