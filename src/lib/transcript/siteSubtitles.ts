@@ -487,7 +487,7 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
   // At a full translation limit flip refuses to switch machine translation on where it would
   // be greyed or strand another language (strands) — a dead click: its badge and chip part say
   // why instead of offering it. flip returns the very same state only when it refuses; it
-  // calls model, not derive. Below the limit nothing is refused, so only then is it asked —
+  // calls model, not derive. Below the limit nothing is refused, so only a full limit is probed —
   // through flipWith on this very model, so a probe costs one trial model, not two (a link with
   // ~100 auto tracks snapshotted into Custom probes ~90 rows on every render).
   const maxMt = input.maxTargets;
@@ -504,7 +504,7 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
   }
   // The same at a full download: flip refuses switching on a site track the run doesn't
   // already fetch (through its twin) — the same O(1) test, not a flip (two model passes) per
-  // badge, which a link listing ~100 auto tracks paid on every render.
+  // badge, which a link listing ~100 auto tracks would pay on every render.
   const run = m.view.run;
   if (run && run.fetch.length >= 8) {
     const title = "At the 8-subtitle download limit — switch another subtitle off first";
@@ -701,14 +701,14 @@ export function setSubs(input: SiteSubsInput, st: SiteSubsState, subs: boolean):
 
 /** The Processing card wrote the targets itself (its Translation switch, Whisper's translate, the
  *  plain picker): every one is yours from then on, none one Custom only promoted — kept as such,
- *  a target the switch seeded again was cut by a later preset and the switch turned itself off. */
+ *  a target the switch seeded again would be cut by a later preset, turning the switch off. */
 export function writeTargets(st: SiteSubsState, targets: readonly string[]): SiteChange {
   return { state: st.promoted.length ? { ...st, promoted: [] } : st, targets: [...targets] };
 }
 
 /** The targets a new preview's panel starts from: without the ones the old panel's Custom only
- *  promoted — the panel starts over, and kept they counted as your own picks, so a later preset
- *  no longer took them out (a refetch of the same link starts over too). */
+ *  promoted — the panel starts over, and kept they would count as your own picks, so a later
+ *  preset would no longer take them out (a refetch of the same link starts over too). */
 export function resetSiteTargets(st: SiteSubsState | null, targets: readonly string[]): string[] {
   return st?.promoted.length ? targets.filter((c) => !st.promoted.includes(c)) : [...targets];
 }
