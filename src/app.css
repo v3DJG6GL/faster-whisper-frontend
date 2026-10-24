@@ -87,8 +87,8 @@
   --c-separate: #6faed9; /* music source separation (shares the think blue) */
   --c-diarize: #c68fb4;  /* speaker diarization */
   --c-download: #d9a45b; /* fetching a URL's media */
-  /* Usage-chart categorical palette, one colour per job kind (validated 2026-09-01 for
-     both themes against the surface and each other). Dictation is a deeper cut of the
+  /* Usage-chart categorical palette, one colour per job kind (validated for both themes
+     against the surface and each other). Dictation is a deeper cut of the
      stock amber, FIXED like the other kind colours — theme.ts never restamps it, so a
      custom Signal colour cannot make two series alike; files and links are fixed hues
      no stage uses; text imports are the faint neutral, hatched, because they are rare
@@ -281,7 +281,7 @@ html.accent-tick .transition-colors {
   /* Every screen fills a wide window except the label + control forms, where a wider row
      would just stretch the gap between a label and its control. */
   --w-prose: 1760px; /* History, Dictionary — lists and tables, they fill the window */
-  --w-cards: 1760px; /* card layouts — Home */
+  --w-cards: 1760px; /* card layouts — Dashboard */
   --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings */
   --w-dense: 1760px; /* self-scrolling panes side by side — Transcribe studio; Statistics */
 }
