@@ -355,10 +355,9 @@ export default function Transcribe() {
   }, []);
 
   // OS drag-and-drop: Tauri's native interception owns the events (HTML5
-  // drop never fires), so listen on the webview. Accepted files join the
-  // list like picked ones, except that a drop mid-run is ignored instead of
-  // staged (the busy drop zone shows no highlight); anything else is ignored
-  // quietly.
+  // drop never fires), so listen on the webview. A drop mid-run is ignored,
+  // not staged (the busy drop zone shows no highlight); unaccepted files are
+  // dropped without a notice.
   useEffect(() => {
     if (!isTauri) return;
     let stale = false;
@@ -1225,9 +1224,9 @@ export default function Transcribe() {
           if (v === "studio" && !wideEnough && isTauri) {
             void (async () => {
               try {
-                // Dynamic import like every other Tauri API call site — a
-                // static import here pulls window.js (and its event.js) into
-                // the main chunk and defeats their lazy loading elsewhere.
+                // Dynamic import: a static one pulls window.js (and its
+                // event.js) into the main chunk and defeats their lazy loading
+                // elsewhere.
                 const { getCurrentWindow, LogicalSize } = await import(
                   "@tauri-apps/api/window"
                 );
@@ -2473,7 +2472,7 @@ export default function Transcribe() {
                     ? planStage.estS * 1000 - stageElapsedMs
                     : null;
                 // ×-realtime: live from the decoded position; finished stages
-                // from the audio duration once the decoder reports it.
+                // from the audio duration once it is known.
                 const speed =
                   st === "transcribing" && state === "active" && progress?.position &&
                   stageElapsedMs && stageElapsedMs > 5000
@@ -2673,10 +2672,8 @@ export default function Transcribe() {
                         </div>
                       ) : null}
                       {/* Unit ledger: one line per unit (target language, or
-                          diarization sub-step) while the stage runs — status
-                          word, its own bar, elapsed and what is left — in the
-                          rail's own vocabulary. Instant = same-language
-                          verbatim copy. */}
+                          diarization sub-step) while the stage runs. Instant =
+                          same-language verbatim copy. */}
                       {state === "active" && units && units.length > 0 && (
                         <div className="mt-2 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums">
                           {units.map((u) => {
@@ -2965,9 +2962,9 @@ export default function Transcribe() {
       {queue.length > 1 && (
         <Card className="mt-6 overflow-hidden py-1">
           {/* Master list of the run's files. Selection lives on the ROW (rail
-              + wash + filename weight), not on a button label — the transcript
-              panel below silently follows it, so which file is open must read
-              at a glance. */}
+              + wash + brighter filename), not on a button label — the transcript
+              panel silently follows it, so which file is open must read at a
+              glance. */}
           <div
             role="listbox"
             aria-label="Transcribed files"
