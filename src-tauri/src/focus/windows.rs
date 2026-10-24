@@ -108,7 +108,7 @@ unsafe extern "system" fn fg_event(
 /// Read the current foreground app and fold it into the snapshot with the same
 /// semantics as the Linux `set_current`: `current` tracks the latest real app,
 /// `last_other` is written only at the transition INTO our own window — so "the app
-/// the user came from" can't go stale. (Shell surfaces never reach here: `foreground_app_id`
+/// the user came from" can't go stale. (Shell surfaces never reach the fold: `foreground_app_id`
 /// returns None for them, which keeps the previous real app current.)
 fn fold_foreground() {
     let Some(snap) = SNAP.get() else { return };
