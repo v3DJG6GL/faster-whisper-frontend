@@ -465,7 +465,7 @@ describe("parseLadderInput", () => {
   it("refuses a ladder longer than the sanitizer keeps", () => {
     expect(parseLadderInput(Array(17).fill("0").join(","), false)).toBeNull();
     expect(parseLadderInput(Array(16).fill("0").join(","), false)).toBe(Array(16).fill("0").join(","));
-    const long = Array(11).fill("0.125").join(","); // 11 rungs, 65 characters
+    const long = Array(11).fill("0.125").join(",");
     expect(long.length).toBe(65);
     expect(parseLadderInput(long, false)).toBeNull();
   });
