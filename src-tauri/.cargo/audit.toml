@@ -1,5 +1,3 @@
-# cargo-audit configuration.
-#
 # The Rust tree is where this app's real attack surface lives — TLS to an untrusted transcription
 # server, WebSocket framing, the clipboard, keystroke synthesis, the OS keyring — so it is scanned
 # on every CI run. The point of this file is to keep that signal USEFUL: each entry below is an
