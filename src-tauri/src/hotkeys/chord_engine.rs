@@ -411,7 +411,7 @@ mod tests {
     const ALT_L: u16 = 7;
 
     /// The designed family: a push-to-talk hold nested in a hands-free superset, with an
-    /// independent quick-add chord beside them (the starter shape, quick-add on Alt+Super).
+    /// independent quick-add chord beside them (the factory Alt+Super).
     fn family() -> Engine {
         Engine::new(vec![
             ChordSpec {
@@ -433,7 +433,7 @@ mod tests {
         ])
     }
 
-    /// The factory Windows set: push-to-talk Ctrl+Shift, hands-free Ctrl+Super, quick-add
+    /// The factory starter set: push-to-talk Ctrl+Shift, hands-free Ctrl+Super, quick-add
     /// Alt+Super. NOTHING nests here — the chords merely OVERLAP on Super, a topology no
     /// other fixture covers.
     fn overlapping() -> Engine {
