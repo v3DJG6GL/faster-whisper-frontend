@@ -6,7 +6,7 @@ import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
-/** The link card's quality picker (D67 B): a listbox whose rows carry the
+/** The link card's quality picker: a listbox whose rows carry the
  *  tier word on top and the facts beneath — resolution, bitrate, size,
  *  container — so nothing truncates and each rung reads in one glance. The
  *  ladder arrives rank-ordered from the server; the tier words follow that
