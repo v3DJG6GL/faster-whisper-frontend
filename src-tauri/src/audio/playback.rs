@@ -10,7 +10,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// Output buffer to ask for, in seconds of audio.
 const BUFFER_SECS: f64 = 0.05;
 /// How long the last buffer may still be sounding after the cursor ran past the end.
 const TAIL: Duration = Duration::from_millis(120);
