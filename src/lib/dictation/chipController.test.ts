@@ -98,8 +98,8 @@ describe("chipRouteTargets", () => {
   });
 
   it("drops non-strings and blanks rather than rendering them", () => {
-    // `sanitizeProfiles` type-checks `translateTo` as a whole but not its elements, and an
-    // object leaf reaching the chip would render as "Objects are not valid as a React child".
+    // The sanitizers drop non-string codes but keep blanks; an object leaf reaching the chip
+    // anyway would render as "Objects are not valid as a React child".
     const dirty = ["fr", "", "  ", null, 42, { x: 1 }] as unknown as string[];
     expect(chipRouteTargets(null, dirty)).toEqual(["fr"]);
   });
