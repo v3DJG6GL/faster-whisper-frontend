@@ -22,14 +22,14 @@ export function authoredChipTag(tag: unknown): string {
   return t ? capCodePoints(t, AUTHORED_TAG_MAX).trimEnd() : "";
 }
 
-/** The effective chip tag for a Profile: its authored tag, else derived from name.
+/** The effective chip tag for a Profile: its authored tag (`authoredChipTag`), else derived from
+ *  name.
  *
- *  The AUTHORED branch is capped at the Profiles editor's own limit (AUTHORED_TAG_MAX), so a tag
- *  the user typed shows in full; the derived branch keeps its tighter 10. The authored cap still
- *  matters: it is the branch a sync blob controls (`sanitizeProfiles` checks id/name/hotkey, not
- *  `tag`), and it feeds the `dictation://update` payload rebuilt on every level tick — an
- *  unbounded tag was re-broadcast cross-window and re-laid-out several times a second. Display
- *  only; the stored tag is untouched. An authored tag that renders blank counts as unset. */
+ *  The authored cap is the editor's own limit, so a typed tag shows in full, but it still matters:
+ *  a sync blob controls `tag` (`sanitizeProfiles` type-checks it but does not bound it), and it
+ *  feeds the `dictation://update` payload rebuilt on every level tick — an unbounded tag was
+ *  re-broadcast cross-window and re-laid-out several times a second. Display only; the stored
+ *  tag is untouched. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
   const authored = authoredChipTag(profile.tag);
   if (authored) return authored;
