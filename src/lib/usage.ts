@@ -128,8 +128,8 @@ export function viewerTimeZone(): string | undefined {
   }
 }
 
-/** The Backend the Statistics page views: the user's pick when it
- *  has usage, else the home-target backend, else the first backend that has usage. */
+/** The Backend the Statistics page views, among those that have usage: the user's pick,
+ *  else the home-target backend, else the first. */
 export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   const withUsage = s.backends.filter((b) => !!ownProp(s.usage, b.id));
   const defaultId = homeTargetProfile(s.profiles, s.settings.homeProfileId)?.backendId ?? s.backends[0]?.id;
@@ -336,9 +336,6 @@ async function refreshAll(direct?: DirectFetch): Promise<void> {
       const fetched = pendingDirect;
       pendingDirect = undefined;
       if (statsPageShown()) {
-        // The show handler fetched them a moment ago: refetching the same documents is only
-        // worth it when that fetch missed, the page no longer answers the current view, or the
-        // flush above delivered an outcome they may not include.
         const caughtUp =
           fetched !== undefined &&
           (await fetched.confirmed) &&
