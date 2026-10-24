@@ -7,7 +7,7 @@ import type { UsageKind } from "@/lib/types";
 
 const _spanDate = new Intl.DateTimeFormat("de-CH", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "numeric", timeZone: "UTC" });
-/** `1. Aug. 2026`, for the range pill and the custom-span popover. */
+/** `1. Aug. 2026`. */
 export const fmtSpanDate = (day: number) => _spanDate.format(dayToDate(day));
 export const fmtMonthYear = (day: number) => _monthYear.format(dayToDate(day));
 export const fmtDateRange = (from: number, to: number) => `${fmtSpanDate(from)} – ${fmtSpanDate(to)}`;
