@@ -5,9 +5,8 @@
 //
 // The server applies them and keeps the pair rules (inner < outer, hard break 0 or > outer);
 // the steppers keep the inner pause below the outer one (a server-locked partner is clamped
-// against, never moved), and the preview runs the values through serverTimings() (both server
-// pair rules, and the dropped client outer against a locked partner), so it never shows a pair
-// the server would rewrite.
+// against, never moved), and the preview runs the values through serverTimings(), so it never
+// shows a pair the server would rewrite.
 // Nothing here acts on the values — the preview just draws them.
 import { useId, type CSSProperties } from "react";
 import { RangeField, Stepper } from "@/components/ui";
