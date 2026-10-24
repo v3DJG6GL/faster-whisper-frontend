@@ -105,7 +105,6 @@ async fn ensure_started(vk: &VirtualKeyboard) -> Result<mpsc::UnboundedSender<Vk
     {
         let (tx, rx) = mpsc::unbounded_channel::<VkJob>();
         let (init_tx, init_rx) = oneshot::channel::<Result<(), String>>();
-        // A dedicated thread owns the (sync, !Send-across-await) Wayland connection.
         std::thread::spawn(move || imp::run_thread(rx, init_tx));
         match init_rx.await {
             Ok(Ok(())) => {
@@ -287,8 +286,9 @@ mod imp {
             // guard the X11/Windows and Wayland-paste arms already carry. `inject_text`'s last
             // own-window check (right after the held-modifier wait) ran before the latch consume,
             // the `focused_app_now` snapshot read and `ensure_started`'s thread spawn + Wayland
-            // connect — and this job may also have queued behind another. `NothingWritten` is truthful (no key has
-            // been transmitted) and makes the caller's re-send safe rather than duplicating text.
+            // connect — and this job may also have queued behind another. `NothingWritten` is
+            // truthful (no key has been transmitted) and makes the caller's re-send safe rather
+            // than duplicating text.
             if own_window_focused() {
                 tracing::info!("[vkbd] skipped before typing: our own window holds focus");
                 return Ok(crate::inject::Landed::NothingWritten);
@@ -342,10 +342,9 @@ mod imp {
                     // Follow focus while typing, not only before the job. This loop runs at ~8ms
                     // per key, so a long transcript occupies it for seconds and a click into one
                     // of our own windows part-way through otherwise lands every remaining key
-                    // there. Probed every 64 keys (~0.5s, the cadence the X11/Windows twin gets
-                    // from its 512-char chunks) rather than per key, because each probe is a round
-                    // trip to the UI thread and that coupling is the accepted cost of this
-                    // mechanism.
+                    // there. Probed every 64 keys (~0.5s) rather than per key, because each probe
+                    // is a round trip to the UI thread and that coupling is the accepted cost of
+                    // this mechanism.
                     //
                     // Also probed immediately before every Return whatever the count, a line
                     // break in the text and the FINAL key of an auto-Enter job alike (see
