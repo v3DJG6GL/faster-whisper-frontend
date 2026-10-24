@@ -1,9 +1,8 @@
-// THE model field, shared by the Backends editor, the Profiles editor and the
-// Transcribe screen. An editable combobox rather than a plain select: the server
-// list (GET /v1/models via the connection test) suggests, but a backend accepts
-// any well-formed model id — custom/HF-repo names must stay typeable, and a
-// saved name must never be dropped just because the server is down or stopped
-// listing it.
+// THE model field (transcription, translation, separation and diarization models,
+// in the editors and on Transcribe). An editable combobox rather than a plain select:
+// the server's list suggests, but a backend accepts any well-formed model id —
+// custom/HF-repo names must stay typeable, and a saved name must never be dropped
+// just because the server is down or stopped listing it.
 //
 // Commit semantics: the draft is local while typing; the parent's onChange fires
 // only on a suggestion pick, Enter, or focus leaving the picker — so call sites
@@ -30,7 +29,7 @@ export function ModelPicker({
 }: {
   value: string;
   onChange: (v: string) => void;
-  /** What the server advertised on the last connection test; empty = untested/unreachable. */
+  /** The models the server advertises; empty = no list (untested, unreachable or not offered). */
   models: ServerModel[];
   /** Inherit mode: when set, "" is a valid stored value meaning "use the
    *  inherited default", and this names it (e.g. "Default · large-v3") — shown
