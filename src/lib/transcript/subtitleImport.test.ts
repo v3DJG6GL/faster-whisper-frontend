@@ -765,7 +765,6 @@ describe("site subtitle cleanup", () => {
       ["pré-", "ou post-opératoire"],
       ["pre-", "vs. post-war"],
       ["pre-", "vs post-war"],
-      // und / oder keep it too.
       ["Ein-", "und Ausgang"],
       ["Vor-", "oder Nachteil"],
     ];
