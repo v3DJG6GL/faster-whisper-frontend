@@ -946,10 +946,8 @@ mod imp {
             r.since_offer_ms
         );
         unsafe { SetTimer(hwnd, T_NOFETCH, NOFETCH_MS, None) };
-        // The target fetched before the chord: in enforce, drop the remote's cache as a
-        // post-chord fetch would, so the paste fetches live from us; the caller's wait then ends
-        // on that render, not here. Only diag publishes the prior fetch at chord time (see
-        // `ChordReport::ends_wait`).
+        // The target fetched before the chord: enforce re-announces so the paste fetches live;
+        // only diag ends the wait here (see `ChordReport::ends_wait`).
         if let Some(v) = r.prior_fetch {
             let reannounce = v == RenderVerdict::Reannounce;
             tracing::info!(
