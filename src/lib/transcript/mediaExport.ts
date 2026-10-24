@@ -408,7 +408,7 @@ export function linkSiteName(url: string, extractor?: string | null): string {
   return ex && ex !== "generic" ? ex : "";
 }
 
-/** Sites whose name is not just capitalised. */
+/** How known sites write their name; siteDisplayName capitalises any other. */
 const SITE_DISPLAY: Record<string, string> = {
   youtube: "YouTube", srf: "SRF", rtve: "RTVE", arte: "arte", bbc: "BBC", ard: "ARD", zdf: "ZDF",
   orf: "ORF", rts: "RTS", rsi: "RSI", rai: "RAI", ndr: "NDR", wdr: "WDR", br: "BR", swr: "SWR",
