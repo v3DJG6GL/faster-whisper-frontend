@@ -12,11 +12,10 @@ import { Badge } from "@/components/ui/feedback";
 
 /** A form field with a small dim label above its control. */
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  // Like SettingRow, the caption is a sibling <label> with no htmlFor (and doesn't wrap the child),
-  // so a direct Select/TextInput child has NO accessible name — a screen reader announces only
-  // "combobox" + value. Auto-label it from `label` unless one is already set. Select takes an
-  // `ariaLabel` prop; TextInput forwards native `aria-label`. Composite children (e.g. an API-key
-  // input + reveal button wrapped in a div) fail the type check and pass through untouched.
+  // The caption is a sibling <label> with no htmlFor that doesn't wrap the child, so a direct
+  // Select/TextInput child would have NO accessible name (a screen reader announces only
+  // "combobox" + value): auto-label it from `label` unless one is set. Composite children (an
+  // API-key input + reveal button in a div) fail the type check and pass through untouched.
   let control: ReactNode = children;
   if (isValidElement(children)) {
     if (children.type === Select) {
@@ -37,7 +36,6 @@ export function Labeled({ label, children, className }: { label: string; childre
   );
 }
 
-/* ── Toggle (pill switch) ─────────────────────────────────────────────── */
 export function Toggle({
   checked,
   onChange,
@@ -87,7 +85,6 @@ export function Toggle({
   );
 }
 
-/* ── Segmented control ────────────────────────────────────────────────── */
 export function Segmented<T extends string>({
   value,
   onChange,
@@ -107,7 +104,7 @@ export function Segmented<T extends string>({
   return (
     <div
       // Name the group so a screen reader can tell otherwise-identical Inherit/On/Off triplets apart
-      // (e.g. the decode-override bools). Harmless when omitted — no name, same as before.
+      // (e.g. the decode-override bools).
       role="group"
       aria-label={ariaLabel}
       className={cn(
@@ -123,8 +120,8 @@ export function Segmented<T extends string>({
           <button
             key={o.value}
             type="button"
-            // Single-select state for screen readers (mirrors Toggle's role=switch and the Dictionary
-            // pin's aria-pressed) — otherwise the active option reads as just another plain button.
+            // Single-select state for screen readers: otherwise the active option reads as just
+            // another plain button.
             aria-pressed={active}
             disabled={off}
             title={o.title}
@@ -148,7 +145,6 @@ export function Segmented<T extends string>({
   );
 }
 
-/* ── RangeField (labelled slider with a reset) ────────────────────────── */
 /** A labelled range slider with its value, and a ↺ reset while the value
  *  differs from `defaultValue`. Reuses the Settings sliders' styling. */
 export function RangeField({
@@ -245,7 +241,6 @@ export function RangeField({
   );
 }
 
-/* ── Inputs ───────────────────────────────────────────────────────────── */
 /** `set` draws the accent edge of a field that holds its own value (an override). A choice, not a
  *  className border: cn is clsx (no merge) and the built CSS emits border-line after
  *  border-accent/55, so an appended one would lose. */
@@ -370,7 +365,6 @@ export function Select<T extends string>({
   );
 }
 
-/* ── Stepper (numeric spinner) ────────────────────────────────────────── */
 /** What a Stepper keeps of typed text: digits — a leading minus when the range goes below zero,
  *  and, when decimals are allowed, a single dot. A comma counts as the dot there (the numpad
  *  decimal key types "," on de/fr/ch layouts), so "1,5" is 1.5, not 15; an integer Stepper still
@@ -502,7 +496,6 @@ export function Stepper({
     textRef.current = String(next);
     setText(String(next));
   };
-  // Press-and-hold: one step immediately, then repeat after a short delay (held mouse/touch).
   const press = (d: number) => {
     stepBy(d);
     stopRepeat();
@@ -516,7 +509,7 @@ export function Stepper({
   useEffect(() => {
     if (!focused) setText(String(value));
   }, [value, focused]);
-  useEffect(() => stopRepeat, []); // stop any running repeat on unmount
+  useEffect(() => stopRepeat, []);
 
   // ↺ unmounts itself (it shows only while a value is set), which dropped keyboard focus to <body>:
   // after the reset re-renders, focus goes to the field instead — then its onFocus reads the reset
