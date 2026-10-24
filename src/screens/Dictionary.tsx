@@ -733,6 +733,17 @@ export default function Dictionary() {
     [editableFields, role],
   );
 
+  /** Put a fetched document on screen: its rules, fresh edits and an identical base. Returns the rules. */
+  const showDocument = useCallback((res: PipelineFetch): PipelineRule[] => {
+    setFetchRes(res);
+    const list = ruleListOf(res);
+    setRules(list);
+    const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
+    setEdits(fresh);
+    setBase(cloneEdits(fresh));
+    return list;
+  }, []);
+
   /** Fetch the backend's rules and replace the document. Resolves to the address the document now
    *  belongs to, or null when this load did not commit (a backend switch, a newer load, a move).
    *  `afterSave`: the follow-up reload of a save that landed — an address a sync moved during the
@@ -768,10 +779,7 @@ export default function Dictionary() {
             continue;
           }
           if (step === "commit") {
-            setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
-            setRules([]);
-            setEdits({});
-            setBase({});
+            showDocument({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
             setExpanded(new Set());
             setHeld(null);
             loadedUrlRef.current = serverUrl;
@@ -799,12 +807,7 @@ export default function Dictionary() {
       }
       setHeld(null); // the document is back in line with the backend's current address
       loadedUrlRef.current = serverUrl;
-      setFetchRes(res);
-      const list = ruleListOf(res);
-      setRules(list);
-      const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
-      setEdits(fresh);
-      setBase(cloneEdits(fresh));
+      const list = showDocument(res);
       getRecentWords({ serverUrl, backendId: b.id })
         .then((rw) => {
           if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
@@ -818,7 +821,7 @@ export default function Dictionary() {
       setLoading(false);
       return serverUrl;
     }
-  }, []);
+  }, [showDocument]);
 
   useEffect(() => {
     const sameAddress = !!backend && effectiveServerUrl(backend, useApp.getState().settings) === loadedUrlRef.current;
@@ -861,12 +864,7 @@ export default function Dictionary() {
     })
       .then((res) => {
         if (stale()) return;
-        setFetchRes(res);
-        const list = ruleListOf(res);
-        setRules(list);
-        const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
-        setEdits(fresh);
-        setBase(cloneEdits(fresh));
+        showDocument(res);
         setExpanded(new Set());
         setLoading(false);
       })
@@ -876,10 +874,7 @@ export default function Dictionary() {
       // working Retry) renders instead of "No rules to manage".
       .catch((err) => {
         if (stale()) return;
-        setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
-        setRules([]);
-        setEdits({});
-        setBase({});
+        showDocument({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
         setExpanded(new Set());
         setLoading(false);
       });
