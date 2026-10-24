@@ -380,7 +380,6 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
         if !p.enabled || p.hotkey.is_empty() {
             continue;
         }
-        // Code list → plugin accelerator (None = modifier-only / AltGr / multi-key → evdev/CLI only).
         let accel = match crate::config::codes_to_accelerator(&p.hotkey) {
             Some(a) => a,
             None => {
