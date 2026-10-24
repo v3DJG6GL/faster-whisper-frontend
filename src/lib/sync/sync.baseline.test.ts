@@ -449,7 +449,7 @@ describe("applyBlob keep-local (baseline)", () => {
       CATS_ALL,
     );
     expect(applied).toBe(false);
-    expect(useApp.getState().settings).toBe(before); // untouched — refused, nothing stashed
+    expect(useApp.getState().settings).toBe(before); // untouched: refused, the blob parked rather than applied
     useApp.setState({ status: "idle" });
     expect(await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL)).toBe(true);
   });
