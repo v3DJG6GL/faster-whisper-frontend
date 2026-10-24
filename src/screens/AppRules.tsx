@@ -94,7 +94,7 @@ function Editor({
 
   // Fill appId (and a label) from the most recently focused OTHER window (ours took
   // focus when the user clicked here) — AT-SPI on Linux, focus::windows on Windows.
-  // Returns null when the detector has seen nothing yet.
+  // The detector answers null when it has seen nothing yet.
   const captureCurrent = async () => {
     setCapturing(true);
     setCaptureMsg(null);
@@ -102,11 +102,8 @@ function Editor({
       const app = await getFocusedOtherApp();
       if (app?.appId) {
         const autoLabel = app.title || app.appId;
-        // Update the label too, but keep a hand-typed custom one. We tell them apart by remembering
-        // what we last auto-filled: if the current label is blank or still equals that, it's ours to
-        // refresh; otherwise the user typed it, so leave it. Lets a second "Use current" on a
-        // different app update BOTH the id and the label.
-        // Read the ref now: React may run the updater after the assignment below.
+        // Refresh the label too unless it was hand-typed: blank or still our last auto-fill means
+        // it's ours. Read the ref now: React may run the updater after the assignment below.
         const prevAuto = lastAutoName.current;
         setR((x) => ({
           ...x,
@@ -125,9 +122,9 @@ function Editor({
     }
   };
 
-  // Same normalizer the two inbound floors use, so all three agree on what the stored key is.
-  // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
-  // id through a filter that deletes such characters — so the rule read armed and matched nothing.
+  // Gated on the comparison key (built on the inbound floors' normalizer), not `trim()`: an
+  // invisible character survives trim, and this screen renders the id through a filter that
+  // deletes such characters — so the rule would read armed and match nothing.
   const canSave = detectId.length > 0;
   // Saving replaces every other rule with the same key (upsertAppRule: one rule per app, first
   // match wins), a "never type here" block included — say so before the user saves, not after.
@@ -146,8 +143,7 @@ function Editor({
     return true;
   };
 
-  // Unsaved-work guard, shared with the Profiles and Backends editors: a
-  // sidebar click used to discard a half-written rule in silence.
+  // Unsaved-work guard, shared with the Profiles and Backends editors.
   // `null` and absent both mean "inherit" for the five override keys (types.ts), and the
   // controls write `null` on every change — so compare with both spellings pruned, or a
   // set-then-revert reads as unsaved forever.
