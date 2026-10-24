@@ -70,10 +70,8 @@ fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
 }
 
-/// A server model id for a picker: dropped when empty or longer than [`MODEL_ID_MAX`] rather
-/// than cut with an ellipsis — a truncated id names no model, and the picker matches the
-/// decode-default model refs (same cap) against these ids whole. The blank check runs after the
-/// fold, so an id of invisible characters only is dropped too ([`super::model_id_within`]).
+/// A server model id for a picker under the model-id rule ([`super::model_id_within`]): the
+/// picker matches the decode-default model refs (same cap) against these ids whole.
 fn bounded_model_id(s: &str) -> Option<String> {
     super::model_id_within(s, MODEL_ID_MAX)
 }
