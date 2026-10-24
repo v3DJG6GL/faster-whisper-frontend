@@ -18,11 +18,11 @@ fn sync_state_path(dir: &Path) -> PathBuf {
     dir.join("sync-state.json")
 }
 
-/// Load the sync state: `Ok(None)` when absent/unparseable/not an object. An unparseable
-/// (or non-object — `[]`, `null`, a bare scalar) file is treated as "no state": the engine
-/// then re-pulls and rebuilds the snapshot — safe (worst case one spurious conflict
-/// prompt), so no .bak dance here. `device_info` applies the same object check: a non-object
-/// document cannot carry the device id, so a fresh one would be minted on every call.
+/// Load the sync state: `Ok(None)` when absent, unparseable or not an object (`[]`, `null`, a
+/// bare scalar). The engine then re-pulls and rebuilds the snapshot — safe (worst case one
+/// spurious conflict prompt), so no .bak dance here. `device_info` applies the same object
+/// check: a non-object document cannot carry the device id, so a fresh one would be minted on
+/// every call.
 ///
 /// A file that exists but can't be READ (a Windows AV/indexer lock outlasting the retries of
 /// `config::read_config_text`, an EIO) is an `Err`, never `None` — the same rule as
@@ -34,7 +34,6 @@ pub fn load(dir: &Path) -> std::io::Result<Option<serde_json::Value>> {
         .filter(|v| v.is_object()))
 }
 
-/// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
 pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = sync_state_path(dir);
@@ -142,7 +141,7 @@ mod tests {
     use super::*;
 
     /// A state file that is not valid UTF-8 is unparseable (rebuilt), not unreadable: the
-    /// unreadable path never saves over the file, so one stray byte paused sync on every launch.
+    /// unreadable path never saves over the file, so one stray byte would pause sync on every launch.
     #[test]
     fn a_state_file_that_is_not_utf8_reads_as_no_state() {
         let dir = std::env::temp_dir().join(format!("fwf-syncstate-utf8-{}", std::process::id()));
