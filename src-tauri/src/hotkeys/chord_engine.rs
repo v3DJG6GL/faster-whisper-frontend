@@ -326,8 +326,7 @@ pub fn register_hold_then(
 
 impl Engine {
     /// Advance the machine after a key event. `held` is the full set of
-    /// currently-down key codes; `now` stamps a new hold's `started_at`, which
-    /// `active_hold_subset` uses to pick the most recent hold as the handoff donor
+    /// currently-down key codes; `now` stamps a new hold's `started_at`
     /// (injected so tests can order holds deterministically).
     pub fn step(&mut self, held: &HashSet<u16>, now: Instant) -> Vec<Fire> {
         let n = self.chords.len();
