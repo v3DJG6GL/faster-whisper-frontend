@@ -8,6 +8,7 @@
 
 import {
   useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState,
+  type SyntheticEvent,
 } from "react";
 import {
   ArrowDownToLine, BookOpen, Check, Copy, Download, ExternalLink, Maximize2,
@@ -940,6 +941,14 @@ export function TranscriptViewer({
       setCurTime(t);
     }
   }, [setLiveTime]);
+  /** The record-switch reset's own rewind/pause echo (parkedRef): it reports no playhead. */
+  const parkedEcho = (el: HTMLMediaElement) => parkedRef.current && el.currentTime === 0;
+  /** Pause and end: a stop lands where the media really is: the frame loop is parked while the
+   *  window is hidden, and a stop there tears down its show catch-up with the [playing] effect. */
+  const onStopped = (e: SyntheticEvent<HTMLAudioElement>) => {
+    if (!parkedEcho(e.currentTarget)) syncPlayhead(e.currentTarget.currentTime, true);
+    setPlaying(false);
+  };
 
   // The highlight clock: while playing, sample audio.currentTime every frame.
   // timeupdate alone ticks only every 250-500 ms on WebKitGTK, and the search
@@ -1828,9 +1837,8 @@ export function TranscriptViewer({
             }}
             onDurationChange={(e) => takeDuration(e.currentTarget)}
             // Coarse fallback only — while playing, the rAF loop above owns the playhead.
-            // The record-switch reset's own rewind/pause echo (parkedRef) reports no playhead.
             onTimeUpdate={(e) => {
-              if (!playing && !(parkedRef.current && e.currentTarget.currentTime === 0)) {
+              if (!playing && !parkedEcho(e.currentTarget)) {
                 syncPlayhead(e.currentTarget.currentTime);
               }
             }}
@@ -1838,20 +1846,8 @@ export function TranscriptViewer({
               parkedRef.current = false;
               setPlaying(true);
             }}
-            // A stop lands where the media really is: the frame loop is parked while the window
-            // is hidden, and a stop there tears down its show catch-up with the [playing] effect.
-            onPause={(e) => {
-              if (!(parkedRef.current && e.currentTarget.currentTime === 0)) {
-                syncPlayhead(e.currentTarget.currentTime, true);
-              }
-              setPlaying(false);
-            }}
-            onEnded={(e) => {
-              if (!(parkedRef.current && e.currentTarget.currentTime === 0)) {
-                syncPlayhead(e.currentTarget.currentTime, true);
-              }
-              setPlaying(false);
-            }}
+            onPause={onStopped}
+            onEnded={onStopped}
             onError={(e) => {
               const me = e.currentTarget.error;
               onAudioError(
