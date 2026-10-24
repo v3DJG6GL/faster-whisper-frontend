@@ -161,7 +161,6 @@ fn position(win: &WebviewWindow, edge: &str) {
     let scale = monitor.scale_factor();
     let m_pos = monitor.position();
     let m_size = monitor.size();
-    // The window's logical size (fixed — see `window_size`; width capped to the monitor).
     let (w, h) = window_size(m_size.width as f64 / scale);
     let chip_w = (w * scale) as i32;
     let chip_h = (h * scale) as i32;
@@ -808,9 +807,8 @@ mod kwin {
     /// Top-left logical position to pin the chip at, on the active output — flush against the
     /// chosen edge. The top-left stays ON the output, which KWin honours: it silently DROPS a
     /// forced position whose top-left falls outside every output (so a negative/off-border
-    /// anchor never applies). The resting inset and the edge-peek tuck are pure CSS in the
-    /// webview (see Overlay.tsx), so the window itself never moves for the peek.
-    /// Also returns the window's logical size for THAT output (see [`chip_placement`]).
+    /// anchor never applies). Also returns the window's logical size for THAT output (see
+    /// [`chip_placement`]).
     pub fn chip_position(edge: &str) -> Option<((i32, i32), (f64, f64))> {
         Some(chip_placement(edge, active_output_geometry()?))
     }
