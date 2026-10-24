@@ -1,6 +1,6 @@
 // The starter chords are modifier-only: on Linux without an active evdev backend the plugin skips
-// them with only a log line, so "Keep these" / "Confirm & continue" committed shortcuts that never
-// fire. Both starter surfaces now say so.
+// them with only a log line, so "Keep these" / "Confirm & continue" would commit shortcuts that
+// never fire — both starter surfaces say so.
 import { describe, expect, it } from "vitest";
 import { needsLowLevel } from "./keys";
 import { STARTERS_LOW_LEVEL_NOTE, starterProfiles, startersClearOf, startersNeedLowLevelNote } from "./starters";
