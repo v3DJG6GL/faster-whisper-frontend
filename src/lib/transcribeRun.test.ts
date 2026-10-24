@@ -1817,6 +1817,21 @@ function resetVideoPoll(): void {
   useTranscribeRun.setState({ stageMeta: {} });
 }
 
+// Retries a re-opened link's video with the server still downloading it (50 %) and the
+// on-demand request still out (a failed one ends the poll). window's interval is captured:
+// the returned run(n) fires n poll ticks, a macrotask each.
+function pollPendingVideo(id: string, url: string): (n: number) => Promise<void> {
+  let tick: (() => void) | null = null;
+  vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+  getTranscribeProgress.mockImplementation(() => Promise.resolve({
+    stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
+  } as import("./types").BatchProgress));
+  fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
+  openFailedVideoLink(id, url);
+  retryRunVideo(url, RUN_CTX);
+  return async (n) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+}
+
 describe("an on-demand video that fails outright shows on the Video row", () => {
   it("retryRunVideo queues the row, then marks it failed with the request's error", async () => {
     vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
@@ -2045,18 +2060,9 @@ describe("an on-demand video whose request fails stays failed", () => {
 
 describe("a pending video's poll slows down once its link is off screen", () => {
   it("polls every second while painting, every fifth tick once another link is shown", async () => {
-    let tick: (() => void) | null = null;
-    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
-    getTranscribeProgress.mockImplementation(() => Promise.resolve({
-      stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
-    } as import("./types").BatchProgress));
-    // The on-demand request is still out (a failed one ends the poll).
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence";
     try {
-      openFailedVideoLink("rec-cadence", url);
-      retryRunVideo(url, RUN_CTX);
-      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+      const run = pollPendingVideo("rec-cadence", url);
       // On screen: one GET per tick.
       await run(3);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
@@ -2080,17 +2086,9 @@ describe("a pending video's poll slows down once its link is off screen", () => 
   });
 
   it("a painting link's poll also drops to every fifth tick while the window is hidden", async () => {
-    let tick: (() => void) | null = null;
-    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
-    getTranscribeProgress.mockImplementation(() => Promise.resolve({
-      stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
-    } as import("./types").BatchProgress));
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence-hidden";
     try {
-      openFailedVideoLink("rec-cadence-hidden", url);
-      retryRunVideo(url, RUN_CTX);
-      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+      const run = pollPendingVideo("rec-cadence-hidden", url);
       await run(2);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(2);
       // Closed to the tray: still the link on screen, but nobody sees it.
@@ -2114,21 +2112,16 @@ describe("a pending video's poll slows down once its link is off screen", () => 
   });
 
   it("showing the window resumes the 1 s poll at once, keeps a failure backoff, and unsubscribes at the end", async () => {
-    let tick: (() => void) | null = null;
-    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
     let answer: () => Promise<import("./types").BatchProgress> = () => Promise.resolve({
       stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
     } as import("./types").BatchProgress);
-    getTranscribeProgress.mockImplementation(() => answer());
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence-show";
     const before = hiddenListeners.size;
     const show = () => { windowHidden = false; for (const fn of [...hiddenListeners]) fn(false); };
     try {
-      openFailedVideoLink("rec-cadence-show", url);
-      retryRunVideo(url, RUN_CTX);
+      const run = pollPendingVideo("rec-cadence-show", url);
+      getTranscribeProgress.mockImplementation(() => answer());
       expect(hiddenListeners.size).toBe(before + 1);
-      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
       // A hidden poll sets the slow cadence; the show clears it: the very next tick polls.
       windowHidden = true;
       await run(1);
