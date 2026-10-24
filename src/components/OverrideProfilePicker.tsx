@@ -10,16 +10,12 @@ import type { ServerKind } from "@/lib/serverKind";
 const CUSTOM = "__custom__";
 const MAX_SHOWN_PROFILES = 500;
 
-// Picks a server-side override-profile name to reference per request. Only the
-// full faster-whisper-backend exposes profiles, so on a server KNOWN to be
-// conventional ("standard") we show a hint and no input. Otherwise — "full" OR
-// "unknown" (untested, or detection unavailable) — we honour the serverKind
-// contract ("unknown ⇒ assume full; never gate a knob we can't prove is
-// unsupported") and try a best-effort names fetch: a dropdown when the server
-// returns names (the Rust command backfills the API key from the keychain via
-// backendId), else a free-text input so a name can always be entered. This is
-// what keeps the picker usable in the Profiles editor, which has no connection
-// test of its own (the in-memory connection map is empty on a fresh launch).
+// Picks a server-side override-profile name to reference per request. Only a server
+// KNOWN to be "standard" gets a hint and no input; "unknown" is treated as full (the
+// serverKind contract) and gets a best-effort names fetch (the Rust command backfills
+// the API key from the keychain via backendId), falling back to free text so a name can
+// always be entered. The fetch keeps the picker usable in the Profiles editor, which has
+// no connection test of its own (the connection map is empty on a fresh launch).
 export function OverrideProfilePicker({
   serverUrl,
   backendId,
@@ -145,9 +141,8 @@ export function OverrideProfilePicker({
           placeholder="profile name (e.g. clinic-de)"
         />
       )}
-      {/* The signal the two-shape picker used to carry as a "· not on server" option: a stored
-          name the server did not list falls back server-side. Only when a list was fetched —
-          an empty/failed fetch proves nothing. */}
+      {/* A stored name the server did not list falls back server-side. Only when a list was
+          fetched — an empty/failed fetch proves nothing. */}
       {isCustomValue && names.length > 0 && (
         <p className="text-[12px] text-faint">Not among the profiles this server listed.</p>
       )}
