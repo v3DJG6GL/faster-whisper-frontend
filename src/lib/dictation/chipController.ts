@@ -453,8 +453,7 @@ export async function initOverlayController(): Promise<void> {
     if (pos !== "off" && (active || persistent)) {
       clearTimeout(hideTimer);
       hideTimer = undefined;
-      // (Re)place the window on first show, on session start, or when the edge changes. The
-      // window is anchored flush against that edge and never moves again for the peek — the
+      // The window is anchored flush against the edge and never moves for the peek — the
       // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
       // reliably and can't desync with an OS window-move (which Wayland applies instantly).
       if (!visible || (active && !prevActive) || pos !== shownPos) {
