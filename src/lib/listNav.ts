@@ -1,6 +1,5 @@
-// Keyboard movement through a flat option list (the language pickers, D87). Focus stays in the
-// search field; these keys only move the highlighted row, and the field carries the combobox
-// ARIA that points at it.
+// Keyboard movement through a flat option list (the pickers). Focus stays in the search field;
+// these keys only move the highlighted row, and the field carries the combobox ARIA that points at it.
 
 /** Rows PageUp/PageDown jump. */
 export const PAGE_ROWS = 8;
@@ -21,11 +20,11 @@ export function navKey(key: string, active: number, count: number): number | nul
   return Math.max(0, Math.min(count - 1, next));
 }
 
-/** Whether a language-picker key acts once per press, so its auto-repeat must be swallowed: a held
- *  Backspace past the emptied filter dropped the preselected targets one per repeat, a held Enter
- *  picked the filtered row and then committed unseen, held digits / Space flipped rows on and off.
- *  The navigation keys keep repeating, and so does the filter's own editing (`typing`: the field
- *  is focused with text in it, so its Space and digits type, and Backspace deletes while
+/** Whether a picker key acts once per press, so its auto-repeat must be swallowed: a held
+ *  Backspace past the emptied filter would drop the preselected targets one per repeat, a held
+ *  Enter would pick the filtered row and then commit unseen, held digits / Space would flip rows on
+ *  and off. The navigation keys keep repeating, and so does the filter's own editing (`typing`: the
+ *  field is focused with text in it, so its Space and digits type, and Backspace deletes while
  *  `filterEmpty` is false). */
 export function pickerKeyActsOnce(key: string, typing: boolean, filterEmpty: boolean): boolean {
   if (key === "Enter") return true;
