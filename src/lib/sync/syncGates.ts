@@ -1,6 +1,5 @@
 // Per-setting sync gating — the pure half of the granular "What this device
-// syncs" switches. Generalizes the four original sub-toggles' pattern to
-// every manifest setting:
+// syncs" switches:
 //
 //  - COMPOSE (outbound): a gated-OFF setting's fields carry the SNAPSHOT's
 //    values (the peer's state passes through untouched); when the snapshot
@@ -12,9 +11,9 @@
 //    its local values no matter what a peer pushed.
 //
 // List categories (backends/profiles/appRules) gate per-ELEMENT fields the
-// same way, keyed by element id — extending the profile-chord precedent.
+// same way, keyed by element id.
 //
-// Pure functions only (no store/api imports) — unit-tested in isolation.
+// Pure functions only (no store/api imports).
 
 import {
   DEFS,
@@ -158,7 +157,7 @@ export function repinElementFields<T extends { id: string }>(
 /** The engine's category toggles, derived from the gates. Scalar categories
  *  sync when ANY member setting does; list categories follow their LIST
  *  switch (the list IS the category — addresses/keys/defaults only modify
- *  it); dictionary follows its two field switches. */
+ *  it). */
 export function catsFromGates(gates: Gates): Record<string, boolean> {
   const cats: Record<string, boolean> = {
     backends: gates.backendList,
