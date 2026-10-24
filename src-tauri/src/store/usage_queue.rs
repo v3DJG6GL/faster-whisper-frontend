@@ -60,9 +60,7 @@ mod tests {
 
     #[test]
     fn round_trips_and_refuses_bad_shapes() {
-        let dir = std::env::temp_dir().join(format!("fwf-usage-queue-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("usage-queue");
         assert!(load(&dir).unwrap().is_none());
         let doc = serde_json::json!({"version": 1, "items": []});
         save(&dir, &doc).unwrap();
@@ -77,10 +75,7 @@ mod tests {
     #[test]
     fn an_unreadable_queue_is_an_error_not_an_empty_queue() {
         use std::os::unix::fs::PermissionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("fwf-usage-queue-unreadable-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("usage-queue-unreadable");
         let path = dir.join("usage-outcomes.json");
         let original = r#"{"version":1,"items":[{"backendId":"b"}]}"#;
         std::fs::write(&path, original).unwrap();

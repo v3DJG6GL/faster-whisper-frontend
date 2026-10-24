@@ -144,9 +144,7 @@ mod tests {
     /// unreadable path never saves over the file, so one stray byte would pause sync on every launch.
     #[test]
     fn a_state_file_that_is_not_utf8_reads_as_no_state() {
-        let dir = std::env::temp_dir().join(format!("fwf-syncstate-utf8-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("syncstate-utf8");
         let path = sync_state_path(&dir);
         std::fs::write(&path, b"\xff\xfe garbage").unwrap();
         assert!(load(&dir).unwrap().is_none());
@@ -160,9 +158,7 @@ mod tests {
 
     #[test]
     fn a_non_object_state_file_does_not_mint_a_new_device_id_every_call() {
-        let dir = std::env::temp_dir().join(format!("fwf-syncstate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("syncstate");
         std::fs::write(sync_state_path(&dir), "[]").unwrap();
         let a = device_info(&dir).device_id;
         let b = device_info(&dir).device_id;
@@ -176,10 +172,7 @@ mod tests {
     #[test]
     fn an_unreadable_state_file_is_not_written_over_by_device_info() {
         use std::os::unix::fs::PermissionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("fwf-syncstate-unreadable-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("syncstate-unreadable");
         let path = sync_state_path(&dir);
         let original = r#"{"deviceId":"old","version":7,"snapshot":{"settings":{}}}"#;
         std::fs::write(&path, original).unwrap();
@@ -197,9 +190,7 @@ mod tests {
     #[test]
     fn an_unreadable_state_file_is_an_error_not_no_state() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("fwf-syncstate-load-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("syncstate-load");
         assert!(load(&dir).unwrap().is_none()); // absent: no state yet
         let path = sync_state_path(&dir);
         let original = r#"{"deviceId":"old","version":7,"snapshot":{"settings":{}}}"#;

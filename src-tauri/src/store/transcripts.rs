@@ -1480,9 +1480,7 @@ mod tests {
 
     #[test]
     fn the_storage_readout_counts_only_what_a_wipe_would_delete() {
-        let dir = std::env::temp_dir().join(format!("fwf-store-stats-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("store-stats");
         let own = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
         std::fs::write(dir.join(format!("{own}.m4a")), b"12345").unwrap();
         std::fs::write(dir.join(format!("{own}.m4a.tmp")), b"1234567").unwrap();
@@ -1527,9 +1525,7 @@ mod tests {
 
     #[test]
     fn the_recordings_readout_counts_sidecars_as_files_but_not_as_audio() {
-        let dir = std::env::temp_dir().join(format!("fwf-rec-stats-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("rec-stats");
         for stem in ["dictation-1", "dictation-2"] {
             std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
             std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
@@ -1544,9 +1540,7 @@ mod tests {
     #[test]
     fn a_non_utf8_recording_name_is_counted_and_wiped_alike() {
         use std::os::unix::ffi::OsStrExt;
-        let dir = std::env::temp_dir().join(format!("fwf-rec-lossy-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("rec-lossy");
         let odd = dir.join(std::ffi::OsStr::from_bytes(b"dictation-\xff.wav"));
         std::fs::write(&odd, b"1234").unwrap();
         // The readout promises exactly what the wipe then removes.
@@ -1558,9 +1552,7 @@ mod tests {
 
     #[test]
     fn deleting_all_recordings_counts_audio_not_sidecars() {
-        let dir = std::env::temp_dir().join(format!("fwf-rec-wipe-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("rec-wipe");
         for stem in ["dictation-1", "dictation-2", "dictation-3"] {
             std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
             std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
@@ -1624,9 +1616,7 @@ mod tests {
 
     #[test]
     fn path_rewrite_keeps_the_record_mtime() {
-        let dir = std::env::temp_dir().join(format!("fwf-rewrite-mtime-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("rewrite-mtime");
         let rec = dir.join("aaaa1111.json");
         std::fs::write(&rec, b"{}").unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
@@ -1643,9 +1633,7 @@ mod tests {
 
     #[test]
     fn a_re_saved_record_keeps_its_date_and_a_new_one_is_dated_now() {
-        let dir = std::env::temp_dir().join(format!("fwf-resave-mtime-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("resave-mtime");
         let rec = dir.join("aaaa1111.json");
         std::fs::write(&rec, b"{}").unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
@@ -1670,10 +1658,7 @@ mod tests {
 
     #[test]
     fn prune_only_touches_old_json() {
-        let dir =
-            std::env::temp_dir().join(format!("fwf-transcripts-prune-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("transcripts-prune");
         let old = dir.join("aaaa1111.json");
         std::fs::write(&old, b"{}").unwrap();
         let keep = dir.join("notes.txt");
@@ -1693,9 +1678,7 @@ mod tests {
     #[test]
     fn media_rewrite_reports_an_unreadable_record() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("fwf-rewrite-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("rewrite");
         let lookup: std::collections::HashMap<&str, &str> =
             [("/old/files/a.wav", "/new/files/a.wav")]
                 .into_iter()
@@ -1730,9 +1713,7 @@ mod tests {
 
     #[test]
     fn a_media_fix_maps_paths_without_holding_the_record_lock() {
-        let dir = std::env::temp_dir().join(format!("fwf-fixlock-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("fixlock");
         let old = format!("/fwf-fixlock-{}/old/a.wav", std::process::id());
         let new = format!("/fwf-fixlock-{}/new/a.wav", std::process::id());
         std::fs::write(dir.join("r.json"), format!(r#"{{"mediaPath":"{old}"}}"#)).unwrap();
@@ -1759,9 +1740,7 @@ mod tests {
 
     #[test]
     fn a_media_fix_leaves_a_field_a_save_changed_meanwhile_and_notes_no_move() {
-        let dir = std::env::temp_dir().join(format!("fwf-fixrace-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("fixrace");
         let rec = dir.join("r.json");
         let old = format!("/fwf-fixrace-{}/old/a.wav", std::process::id());
         let saved = format!("/fwf-fixrace-{}/saved/a.wav", std::process::id());

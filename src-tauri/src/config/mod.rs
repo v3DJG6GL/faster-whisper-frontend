@@ -1417,15 +1417,22 @@ pub mod keys {
     }
 }
 
+/// A per-process scratch folder `fwf-{tag}-{pid}` under the temp dir, wiped and recreated.
+#[cfg(test)]
+pub(crate) fn fresh_test_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("fwf-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_config_saved_with_a_byte_order_mark_parses() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-bom-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-bom");
         let path = dir.join("config.json");
         std::fs::write(&path, b"\xEF\xBB\xBF{\"version\": 2}").unwrap();
         let text = read_config_text(&path).unwrap().unwrap();
@@ -1435,9 +1442,7 @@ mod tests {
 
     #[test]
     fn an_unusable_config_is_stashed_or_reported_unbacked() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-bak");
         let path = dir.join("config.json");
         std::fs::write(&path, b"{not json").unwrap();
         assert!(backup_unreadable(&path));
@@ -1454,9 +1459,7 @@ mod tests {
     /// raw bytes are kept aside before an auto-save can write the U+FFFD text over them.
     #[test]
     fn a_non_utf8_config_loads_and_keeps_its_raw_bytes() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-utf8-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-utf8");
         let mut json = serde_json::to_value(Config::default()).unwrap();
         json["profiles"] = serde_json::json!([{
             "id": "p1", "name": "MARKER", "activation": "hold", "enabled": true, "hotkey": []
@@ -1492,9 +1495,7 @@ mod tests {
 
     #[test]
     fn a_reset_stays_unconfirmed_until_a_config_is_saved() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-unconf-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-unconf");
         // Fresh install: no config, no backup.
         assert!(!reset_unconfirmed(&dir));
         std::fs::write(dir.join("config.json"), b"{not json").unwrap();
@@ -1507,9 +1508,7 @@ mod tests {
 
     #[test]
     fn a_mid_session_read_never_recovers() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-try-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-try");
         // Absent: the defaults (first run, or this session's reset already moved the file).
         assert!(try_load(&dir).is_some_and(|c| c.profiles.is_empty()));
         // Held so a parallel test's `load_outcome` can't flip the sticky flag under us; a
@@ -1544,9 +1543,7 @@ mod tests {
 
     #[test]
     fn a_second_reset_keeps_the_first_backup() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak2-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-bak2");
         let path = dir.join("config.json");
         std::fs::write(dir.join("config.json.bak"), b"first").unwrap();
         std::fs::write(&path, b"second").unwrap();
@@ -1571,9 +1568,7 @@ mod tests {
 
     #[test]
     fn a_config_left_in_place_is_not_backed_up_again_and_again() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak3-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-bak3");
         let path = dir.join("config.json");
         std::fs::write(&path, b"{not json").unwrap();
         assert!(backup_unreadable(&path));
@@ -1676,9 +1671,7 @@ mod tests {
 
     #[test]
     fn a_failed_config_save_leaves_no_tmp_behind() {
-        let dir = std::env::temp_dir().join(format!("fwf-cfg-tmp-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = fresh_test_dir("cfg-tmp");
         // Pre-plant the FINAL path as a non-empty directory: the tmp file is written in full
         // and the rename then fails — the cleanup this pins is the one after a successful
         // write (a planted tmp path would fail at the open and never create anything).
