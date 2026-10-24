@@ -19,10 +19,10 @@ import type { Backend } from "../types";
 import type { SyncBlob } from "./syncTypes";
 import { backend } from "./syncTestFixtures";
 
-/** pushNow runs only "in Tauri": force that flag for the sync engine, park the keyring read
- *  composeBlob makes, and record whether a PUT went out. Every other api call keeps its own
- *  (non-Tauri, no-op) module-internal behavior. `keys` answers an unparked keyring read,
- *  `pulled` is what a GET returns, and `pushed` records the last PUT's blob. */
+/** pushNow runs only "in Tauri": force that flag for the sync engine and fake the keyring and
+ *  the sync transport; every other api call keeps its own (non-Tauri, no-op) module-internal
+ *  behavior. `keys` answers an unparked keyring read, `pulled` is what a GET returns, and
+ *  `pushed` records the last PUT's blob. */
 const api = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   /** When set, `park` holds only the keyring read with this 1-based number (counted in `reads`). */
@@ -103,11 +103,9 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 
-// "Delete server copy" used to discard the transport result entirely: a failed
-// delete looked like success, cleared the local base, and the next push merged
-// the "deleted" doc right back. The message helper is the testable half of the
-// fix — every failure shape names the consequence, and server-authored text is
-// defanged before display.
+// A failed "Delete server copy" must not read as success (it would clear the local base and the
+// next push would merge the "deleted" doc right back): every failure shape names the
+// consequence, and server-authored text is defanged before display.
 describe("deleteFailureMessage", () => {
   it("unreachable server (status 0) says the settings were not deleted", () => {
     const msg = deleteFailureMessage({ ok: false, status: 0, error: "connect ECONNREFUSED" });
