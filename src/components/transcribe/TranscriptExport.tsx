@@ -290,12 +290,10 @@ export function TranscriptExport({
     () => (order.length > 1 ? order.filter((t) => chosen.includes(t)) : []),
     [order, chosen],
   );
-  /** One source of truth for Save AND the live preview: the display toggles
-   *  map onto the generator options (colors on → "line" mode; names/timestamps
-   *  gate their prefixes). */
-  // Memoized over exactly what it reads, so the preview below (and anything
-  // else keyed on it) holds across the re-renders that don't touch the export
-  // choices — playhead ticks, and a media export's progress events.
+  /** One source of truth for Save AND the live preview. Memoized over exactly what it
+   *  reads, so the preview below (and anything else keyed on it) holds across the
+   *  re-renders that don't touch the export choices: playhead ticks, and a media
+   *  export's progress events. */
   const exportOptions = useMemo((): ExportOptions => exportOptionsFor({
     format: exportFormat, speakers, renames: fileRenames, colorPicks: fileColors,
     toggles: { showTs, showNames, colorize, wordTs }, cues: cueOpts, tracks: effTracks,
