@@ -252,8 +252,6 @@ pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
     start(g);
     #[cfg(target_os = "linux")]
     {
-        // Pick the element ref for the SAME app focused_app() would report (current if not noise,
-        // else last_other), so the seed/correction targets the app the user came from — not us.
         let el = {
             let snap = g.snapshot.lock();
             match &snap.current {
