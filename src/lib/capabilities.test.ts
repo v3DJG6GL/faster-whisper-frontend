@@ -205,7 +205,6 @@ describe("forgetCaps", () => {
     const before = credentialGeneration(id);
     forgetCaps(id);
     expect(credentialGeneration(id)).toBe(before + 1);
-    // Per Backend: another id's generation does not move.
     const other = newBackendDraft().id;
     expect(credentialGeneration(other)).toBe(0);
   });
