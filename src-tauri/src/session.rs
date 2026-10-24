@@ -10,7 +10,7 @@ use crate::audio::resample::Resampler16k;
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{Device, SampleFormat, StreamConfig};
+use cpal::{Device, FromSample, Sample, SampleFormat, StreamConfig};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -713,30 +713,31 @@ fn err_cb_with_lost(
     })
 }
 
-fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
+fn downmix<T: Copy>(data: &[T], channels: usize) -> Vec<f32>
+where
+    f32: FromSample<T>,
+{
     let mut out = Vec::new();
-    downmix_into(data, channels, to_f32, &mut out);
+    downmix_into(data, channels, &mut out);
     out
 }
 
 /// Downmix to mono into a caller-owned scratch buffer (cleared first), so a per-buffer capture
 /// callback can reuse one `Vec` instead of allocating every ~10-20 ms. Mirrors `capture::analyze`.
-fn downmix_into<T: Copy>(
-    data: &[T],
-    channels: usize,
-    to_f32: impl Fn(T) -> f32,
-    out: &mut Vec<f32>,
-) {
+fn downmix_into<T: Copy>(data: &[T], channels: usize, out: &mut Vec<f32>)
+where
+    f32: FromSample<T>,
+{
     out.clear();
     if channels <= 1 {
-        out.extend(data.iter().map(|&s| to_f32(s)));
+        out.extend(data.iter().map(|&s| f32::from_sample(s)));
         return;
     }
     out.reserve(data.len() / channels + 1);
     for frame in data.chunks(channels) {
         let mut acc = 0.0;
         for &s in frame {
-            acc += to_f32(s);
+            acc += f32::from_sample(s);
         }
         out.push(acc / frame.len() as f32);
     }
@@ -855,7 +856,7 @@ fn run_capture(
             device.build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    let mono = downmix(data, channels, |s| s);
+                    let mono = downmix(data, channels);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -873,7 +874,7 @@ fn run_capture(
             device.build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    let mono = downmix(data, channels, |s| s as f32 / 32768.0);
+                    let mono = downmix(data, channels);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -891,7 +892,7 @@ fn run_capture(
             device.build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
+                    let mono = downmix(data, channels);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -909,7 +910,7 @@ fn run_capture(
             device.build_input_stream(
                 config,
                 move |data: &[i32], _| {
-                    let mono = downmix(data, channels, |s| s as f32 / 2_147_483_648.0);
+                    let mono = downmix(data, channels);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -1681,7 +1682,7 @@ fn run_record_capture(
             device.build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    downmix_into(data, channels, |s| s, &mut mono);
+                    downmix_into(data, channels, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -1708,7 +1709,7 @@ fn run_record_capture(
             device.build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    downmix_into(data, channels, |s| s as f32 / 32768.0, &mut mono);
+                    downmix_into(data, channels, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -1735,12 +1736,7 @@ fn run_record_capture(
             device.build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    downmix_into(
-                        data,
-                        channels,
-                        |s| (s as f32 - 32768.0) / 32768.0,
-                        &mut mono,
-                    );
+                    downmix_into(data, channels, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -1767,7 +1763,7 @@ fn run_record_capture(
             device.build_input_stream(
                 config,
                 move |data: &[i32], _| {
-                    downmix_into(data, channels, |s| s as f32 / 2_147_483_648.0, &mut mono);
+                    downmix_into(data, channels, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);

@@ -11,7 +11,7 @@
 //! denied or failing mic comes back as an error the mic test can end on, not a silent meter.
 
 use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{SampleFormat, StreamConfig};
+use cpal::{FromSample, Sample, SampleFormat, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -77,12 +77,10 @@ impl Recorder {
 
 /// One pass over an interleaved block: down-mix each frame to mono (appended to
 /// `mono`, which is cleared first) and return the block RMS for the level meter.
-fn analyze<T: Copy>(
-    data: &[T],
-    channels: usize,
-    to_f32: impl Fn(T) -> f32,
-    mono: &mut Vec<f32>,
-) -> f32 {
+fn analyze<T: Copy>(data: &[T], channels: usize, mono: &mut Vec<f32>) -> f32
+where
+    f32: FromSample<T>,
+{
     mono.clear();
     if data.is_empty() || channels == 0 {
         return 0.0;
@@ -91,7 +89,7 @@ fn analyze<T: Copy>(
     for frame in data.chunks(channels) {
         let mut acc = 0.0;
         for &s in frame {
-            acc += to_f32(s);
+            acc += f32::from_sample(s);
         }
         let m = acc / frame.len() as f32;
         mono.push(m);
@@ -222,7 +220,7 @@ fn run(
             device.build_input_stream(
                 config,
                 move |data: &[f32], _| {
-                    meter.push(analyze(data, channels, |s| s, &mut mono));
+                    meter.push(analyze(data, channels, &mut mono));
                     rec.push(&mono);
                 },
                 super::stream_errors::error_callback("audio", on_terminal()),
@@ -239,7 +237,7 @@ fn run(
             device.build_input_stream(
                 config,
                 move |data: &[i16], _| {
-                    meter.push(analyze(data, channels, |s| s as f32 / 32768.0, &mut mono));
+                    meter.push(analyze(data, channels, &mut mono));
                     rec.push(&mono);
                 },
                 super::stream_errors::error_callback("audio", on_terminal()),
@@ -256,12 +254,7 @@ fn run(
             device.build_input_stream(
                 config,
                 move |data: &[u16], _| {
-                    meter.push(analyze(
-                        data,
-                        channels,
-                        |s| (s as f32 - 32768.0) / 32768.0,
-                        &mut mono,
-                    ));
+                    meter.push(analyze(data, channels, &mut mono));
                     rec.push(&mono);
                 },
                 super::stream_errors::error_callback("audio", on_terminal()),
@@ -278,12 +271,7 @@ fn run(
             device.build_input_stream(
                 config,
                 move |data: &[i32], _| {
-                    meter.push(analyze(
-                        data,
-                        channels,
-                        |s| s as f32 / 2_147_483_648.0,
-                        &mut mono,
-                    ));
+                    meter.push(analyze(data, channels, &mut mono));
                     rec.push(&mono);
                 },
                 super::stream_errors::error_callback("audio", on_terminal()),
