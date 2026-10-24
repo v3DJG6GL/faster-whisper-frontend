@@ -106,11 +106,9 @@ pub fn clear_chord_lost_if_armed_before(released_at: Option<Instant>) {
 /// Consume the latch if it was armed within `ttl`. Returns whether the caller should treat the
 /// chord as still held.
 ///
-/// One-shot and self-expiring, so it can never wedge. The TTL has to cover
-/// manufactured-stop → the server returning a final → the injection, and the SERVER controls the
-/// middle leg — so it is sized against the LONGEST such leg: the batch transcription POST's 120s
-/// client timeout (the stuck-finalize watchdog is stream-only and never runs on a batch hold
-/// profile). A tighter bound would let a slow or stalling server walk the transcript past the control.
+/// One-shot and self-expiring, so it can never wedge. The TTL must cover manufactured-stop → the
+/// server's final → the injection, and the SERVER controls the middle leg, so a tight bound would let
+/// a slow server walk the transcript past the control — sizing: `inject::text::HELD_CHORD_LATCH_TTL`.
 pub fn take_lost_if_fresh(ttl: Duration) -> bool {
     let at = MODS_LOST_AT.lock().ok().and_then(|mut g| g.take());
     at.is_some_and(|at| at.elapsed() <= ttl)
