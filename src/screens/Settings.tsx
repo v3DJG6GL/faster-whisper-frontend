@@ -408,6 +408,20 @@ export default function Settings() {
       <HoverModeSegmented {...seg} disabled={chipOff} />
     </SettingRow>
   );
+  // One gated switch row: its gate greys the row and disables the switch, so the two can't drift.
+  const toggleRow = ({
+    checked,
+    onChange,
+    ...row
+  }: Omit<ComponentProps<typeof SettingRow>, "children" | "disabled"> & {
+    disabled: boolean;
+    checked: boolean;
+    onChange: (v: boolean) => void;
+  }) => (
+    <SettingRow {...row}>
+      <Toggle checked={checked} onChange={onChange} disabled={row.disabled} />
+    </SettingRow>
+  );
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
   // both on change. Rust enforces the same value on both sweeps
@@ -624,18 +638,14 @@ export default function Settings() {
             <SettingRow title={SETTING.openAtLogin.label} desc="Launch automatically when you sign in.">
               <Toggle checked={s.general.openAtLogin} onChange={(v) => updateGeneral({ openAtLogin: v })} />
             </SettingRow>
-            <SettingRow
-              title={SETTING.startMinimized.label}
-              desc="When launched at login, start hidden; reach it from the system tray. Manual starts always show the window."
-              disabled={!s.general.openAtLogin}
-              disabledReason={`Only applies to launches at login. Turn on “${SETTING.openAtLogin.label}” to use this.`}
-            >
-              <Toggle
-                checked={s.general.startMinimized}
-                onChange={(v) => updateGeneral({ startMinimized: v })}
-                disabled={!s.general.openAtLogin}
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.startMinimized.label,
+              desc: "When launched at login, start hidden; reach it from the system tray. Manual starts always show the window.",
+              disabled: !s.general.openAtLogin,
+              disabledReason: `Only applies to launches at login. Turn on “${SETTING.openAtLogin.label}” to use this.`,
+              checked: s.general.startMinimized,
+              onChange: (v) => updateGeneral({ startMinimized: v }),
+            })}
             <SettingRow title={SETTING.soundCues.label} desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
@@ -705,30 +715,22 @@ export default function Settings() {
                 />
               </SettingRow>
             )}
-            <SettingRow
-              title={SETTING.pressEnterAfter.label}
-              desc="Send a Return key once the text is inserted."
-              disabled={s.general.insertMethod === "clipboard"}
-              disabledReason={`Nothing is typed with “Clipboard only”, so there is no Return to send. Change ${SETTING.insertMethod.label} to send one.`}
-            >
-              <Toggle
-                checked={s.general.autoEnter}
-                onChange={(v) => updateGeneral({ autoEnter: v })}
-                disabled={s.general.insertMethod === "clipboard"}
-              />
-            </SettingRow>
-            <SettingRow
-              title={SETTING.restoreClipboard.label}
-              desc="Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…) and apps an App rule marks as remote desktop, where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes."
-              disabled={pasteOff}
-              disabledReason={`Only “Clipboard paste” replaces your clipboard, so only it has anything to put back. Set ${SETTING.insertMethod.label} to Clipboard paste to use this.`}
-            >
-              <Toggle
-                checked={s.general.restoreClipboard}
-                onChange={(v) => updateGeneral({ restoreClipboard: v })}
-                disabled={pasteOff}
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.pressEnterAfter.label,
+              desc: "Send a Return key once the text is inserted.",
+              disabled: s.general.insertMethod === "clipboard",
+              disabledReason: `Nothing is typed with “Clipboard only”, so there is no Return to send. Change ${SETTING.insertMethod.label} to send one.`,
+              checked: s.general.autoEnter,
+              onChange: (v) => updateGeneral({ autoEnter: v }),
+            })}
+            {toggleRow({
+              title: SETTING.restoreClipboard.label,
+              desc: "Put your previous clipboard contents back once the paste is done. Skipped inside remote-desktop clients (mstsc, Citrix, AnyDesk…) and apps an App rule marks as remote desktop, where the clipboard reaches the remote host asynchronously and a restore can be what the remote actually pastes.",
+              disabled: pasteOff,
+              disabledReason: `Only “Clipboard paste” replaces your clipboard, so only it has anything to put back. Set ${SETTING.insertMethod.label} to Clipboard paste to use this.`,
+              checked: s.general.restoreClipboard,
+              onChange: (v) => updateGeneral({ restoreClipboard: v }),
+            })}
             {/* Not gated on the insertion method: "Clipboard only", the no-text-field divert and
                 the recovery writes all put the transcript on the clipboard too. Rust reads the
                 saved value (no IPC argument), so every one of those paths obeys it. The copy
@@ -896,18 +898,14 @@ export default function Settings() {
               <Toggle checked={s.recording.saveRecordings} onChange={(v) => updateRecording({ saveRecordings: v })} />
             </SettingRow>
             <div className="pl-6">
-              <SettingRow
-                title={SETTING.trimSilence.label}
-                desc="Keep only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence."
-                disabled={!s.recording.saveRecordings}
-                disabledReason={`There is no stored audio to trim. Turn on “${SETTING.keepDictationAudio.label}” to use this.`}
-              >
-                <Toggle
-                  checked={s.recording.trimSilence}
-                  disabled={!s.recording.saveRecordings}
-                  onChange={(v) => updateRecording({ trimSilence: v })}
-                />
-              </SettingRow>
+              {toggleRow({
+                title: SETTING.trimSilence.label,
+                desc: "Keep only the parts you actually spoke (the same speech detection that drives the chip), so a long hands-free session doesn't store hours of silence.",
+                disabled: !s.recording.saveRecordings,
+                disabledReason: `There is no stored audio to trim. Turn on “${SETTING.keepDictationAudio.label}” to use this.`,
+                checked: s.recording.trimSilence,
+                onChange: (v) => updateRecording({ trimSilence: v }),
+              })}
             </div>
             <SettingRow
               title={SETTING.reportTargetApp.label}
@@ -1071,17 +1069,13 @@ export default function Settings() {
                 disabled={chipOff}
               />
             </SettingRow>
-            <SettingRow
-              title={SETTING.keepChipDocked.label}
-              desc="Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it."
-              disabled={chipOff}
-            >
-              <Toggle
-                checked={s.recording.persistentDock}
-                disabled={chipOff}
-                onChange={(v) => updateRecording({ persistentDock: v })}
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.keepChipDocked.label,
+              desc: "Keep the chip on screen as a small standby dot when you're not dictating, instead of hiding it.",
+              disabled: chipOff,
+              checked: s.recording.persistentDock,
+              onChange: (v) => updateRecording({ persistentDock: v }),
+            })}
             <SettingRow
               title={SETTING.dotSize.label}
               desc="Makes the dot larger while the chip is hidden at the screen edge. Chip size does not affect it, and the dot inside the chip keeps its normal size. The chip stays hidden while you adjust it, so you see the result."
@@ -1100,17 +1094,13 @@ export default function Settings() {
             </SettingRow>
 
             <SectionLabel className="mb-1 mt-7">Auto-hide</SectionLabel>
-            <SettingRow
-              title={SETTING.autoHideToEdge.label}
-              desc="After sitting idle, hide the chip against the screen edge so it stops covering things — hover the edge dot to bring it back."
-              disabled={chipOff}
-            >
-              <Toggle
-                checked={s.recording.overlayPeek}
-                disabled={chipOff}
-                onChange={(v) => updateRecording({ overlayPeek: v })}
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.autoHideToEdge.label,
+              desc: "After sitting idle, hide the chip against the screen edge so it stops covering things — hover the edge dot to bring it back.",
+              disabled: chipOff,
+              checked: s.recording.overlayPeek,
+              onChange: (v) => updateRecording({ overlayPeek: v }),
+            })}
             <SettingRow
               title={SETTING.hideAfter.label}
               desc="How long the chip sits idle before it hides against the edge."
@@ -1128,17 +1118,13 @@ export default function Settings() {
                 disabled={peekOff}
               />
             </SettingRow>
-            <SettingRow
-              title={SETTING.stayHiddenWhileDictating.label}
-              desc="Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript."
-              disabled={peekOff}
-            >
-              <Toggle
-                checked={s.recording.peekWhileActive}
-                disabled={peekOff}
-                onChange={(v) => updateRecording({ peekWhileActive: v })}
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.stayHiddenWhileDictating.label,
+              desc: "Keep the chip hidden against the edge as a small dot even while you dictate, instead of popping out — it just changes colour and gently pulses while you speak. Hover the edge dot to reveal the transcript.",
+              disabled: peekOff,
+              checked: s.recording.peekWhileActive,
+              onChange: (v) => updateRecording({ peekWhileActive: v }),
+            })}
 
             <SectionLabel className="mb-1 mt-7">Appearance</SectionLabel>
             <SettingRow
@@ -1210,25 +1196,13 @@ export default function Settings() {
               visibleKey: "showTargetOnOverlay",
               hoverKey: "showTargetOnHover",
             })}
-            <SettingRow
-              title={SETTING.onlyWhileSpeaking.label}
-              desc="Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows."
-              disabled={
-                chipOff ||
-                !s.recording.showTargetOnOverlay ||
-                s.recording.showTargetOnHover
-              }
-            >
-              <Toggle
-                checked={s.recording.showTargetOnlySpeaking}
-                onChange={(v) => updateRecording({ showTargetOnlySpeaking: v })}
-                disabled={
-                  chipOff ||
-                  !s.recording.showTargetOnOverlay ||
-                  s.recording.showTargetOnHover
-                }
-              />
-            </SettingRow>
+            {toggleRow({
+              title: SETTING.onlyWhileSpeaking.label,
+              desc: "Show the injection target only while you're actively dictating — hide it when armed but silent, so it doesn't flicker as you move between windows.",
+              disabled: chipOff || !s.recording.showTargetOnOverlay || s.recording.showTargetOnHover,
+              checked: s.recording.showTargetOnlySpeaking,
+              onChange: (v) => updateRecording({ showTargetOnlySpeaking: v }),
+            })}
 
             <SectionLabel className="mb-1 mt-7">Interaction</SectionLabel>
             <SettingRow
