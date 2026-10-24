@@ -95,7 +95,7 @@ pub fn stop(state: &WinHookState) {
 #[cfg(windows)]
 pub use imp::{start, stop_held_sessions};
 
-// `start`'s only call site is #[cfg(windows)] (commands::apply_bindings), so unlike
+// `start`'s only call site is #[cfg(windows)] (commands::apply_bindings_locked), so unlike
 // evdev's stubs it needs no off-platform twin; stop_held_sessions IS called
 // unconditionally from the teardown paths, so it keeps one.
 #[cfg(not(windows))]
@@ -499,7 +499,7 @@ mod imp {
         let chords = chords_from(profiles, quick_add_hotkey);
         if chords.is_empty() {
             tracing::info!("[winhook] no mappable chords; not starting");
-            return; // guard drops → lock released; *g stays None (no listener)
+            return;
         }
         let n_chords = chords.len();
 
@@ -1342,7 +1342,7 @@ mod imp {
             .copied()
             .filter(|&id| !(shift_masked && matches!(id, 0xA0 | 0xA1)) && !physically_down(id))
             .collect();
-        // Retain-then-swap: only keys up on BOTH polls are acted on.
+        // Only keys up on BOTH polls are acted on.
         let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
         // RDP liveness veto (see the doc above): every key keeps its strike and is asked again
@@ -1358,10 +1358,9 @@ mod imp {
         }
         for id in confirmed {
             up_once.remove(&id);
-            // Clear any deferred release the debouncer still holds for this key,
-            // restoring the held/pending coupling `on_event` documents: without
-            // this a stale `pending` entry swallows the user's next press of the
-            // same key (the `pending.remove` arm returns None).
+            // Restores the held/pending coupling `on_event` documents: a stale `pending`
+            // entry would swallow the user's next press of this key (the `pending.remove`
+            // arm returns None).
             deb.forget(id);
             tracing::warn!(
                 "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — releasing it \
