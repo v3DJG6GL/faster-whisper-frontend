@@ -106,8 +106,8 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 }
 
 /// Hard-ABORT the stream session: take it out and let `Drop` run (stops capture, aborts the WS task
-/// WITHOUT draining, releases the system-mute guard). Unlike `stop_stream`, no flush/drain happens —
-/// a cancel should discard the in-flight session, not fire wasted server work. Also the idempotent
+/// WITHOUT draining, releases the system-mute guard) — a cancel should discard the in-flight
+/// session, not fire wasted server work. Also the idempotent
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
 /// A recovery cancel (`user_initiated` with `discard_recording: false`: wake from sleep) keeps a
