@@ -1,5 +1,6 @@
-// The usage poll's cost gates: the Statistics page's documents only while the page is
-// open, and a hidden main window polling every HIDDEN_EVERY ticks with a catch-up on show.
+// The usage poll: its cost gates (the Statistics page's documents only while the page is
+// open, a hidden main window polling every HIDDEN_EVERY ticks with a catch-up on show), cache
+// evictions refetching, and a missed fetch marking kept documents failed instead of current.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
