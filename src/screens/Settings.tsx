@@ -151,8 +151,8 @@ function reportMoveError(e: unknown) {
 export default function Settings() {
   const [tab, setTab] = useState<Tab>("General");
   const s = useApp((st) => st.settings);
-  // The chip "off" position disables every dependent Chip-tab control; compute once (used ~27×) so
-  // a row and its control can't drift out of sync.
+  // The chip "off" position disables every dependent Chip-tab control; compute once so a row and
+  // its control can't drift out of sync.
   const chipOff = s.recording.indicatorPosition === "off";
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
@@ -277,19 +277,17 @@ export default function Settings() {
       return;
     }
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
-    // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
-    // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
-    // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
-    // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
-    // "dict" wipes only dictation records, so only their writes go; "clear" wipes only
-    // file/URL/text records, so dictation writes stay. "dict" FLUSHES first instead (like the
-    // Save-dictations toggle): a wipe that fails (an unlistable folder deletes nothing) must not
-    // have thrown an edit away, so parked writes land before the wipe and only what was parked
-    // during it is dropped, after a confirmed wipe (`done`) — and only for records that existed
-    // when the wipe began. A dictation first saved DURING the flush+wipe (its leading-edge save
-    // lands after Rust listed the folder, so it survives) keeps its parked follow-up write, or
-    // the reload below would read back its stale first version. Every record with a parked
-    // write is in the mirror (upsertRecord puts it there first), so the mirror is the snapshot.
+    // debounce or a chunk merge otherwise re-created a JSON file Rust just removed. Only the
+    // kinds that delete record JSONs drop writes, each only for the records it wipes;
+    // "files"/"links" empty a media folder and must not drop an unrelated edit debounce.
+    // "dict" FLUSHES first instead (like the Save-dictations toggle): a wipe that fails (an
+    // unlistable folder deletes nothing) must not have thrown an edit away, so parked writes
+    // land before the wipe and only what was parked during it is dropped, after a confirmed
+    // wipe (`done`) — and only for records that existed when the wipe began. A dictation first
+    // saved DURING the flush+wipe (its leading-edge save lands after Rust listed the folder, so
+    // it survives) keeps its parked follow-up write, or the reload below would read back its
+    // stale first version. Every record with a parked write is in the mirror (upsertRecord puts
+    // it there first), so the mirror is the snapshot.
     if (kind === "clear") dropPendingWrites(isFileStoreRecord);
     const preWipe =
       kind === "dict"
@@ -414,8 +412,8 @@ export default function Settings() {
   // visit so a permission granted outside the app shows up.
   useEffect(() => {
     if (tab !== "Permissions") return;
-    // A rejected probe offers "Set up", as the row did before the probe moved here (it must not
-    // stay on "Checking…"); an earlier answer from this session is kept.
+    // A rejected probe offers "Set up" (it must not stay on "Checking…"); an earlier answer from
+    // this session is kept.
     void evdevStatus()
       .then(setEvdev)
       .catch(() => setEvdev((cur) => cur ?? { available: true, permitted: false }));
@@ -613,7 +611,6 @@ export default function Settings() {
             <SettingRow title={SETTING.soundCues.label} desc="A short tone when dictation starts and stops.">
               <Toggle checked={s.general.soundEffects} onChange={(v) => updateGeneral({ soundEffects: v })} />
             </SettingRow>
-            {/* The quick-add shortcut moved to the Dictionary screen, next to the pinned list. */}
             <LoggingSection />
           </Card>
         )}
@@ -628,10 +625,9 @@ export default function Settings() {
 
         {tab === "Dictation" && (
           <Card className="px-6">
-            {/* The insertion chain, moved here from General — which mixed launch behaviour
-                with what happens to your words. These are the GLOBAL defaults: a Profile
-                overrides them for one task, and an App rule overrides both for one target
-                app (see resolveInjectionTarget for the order). */}
+            {/* The insertion chain's GLOBAL defaults: a Profile overrides them for one task,
+                and an App rule overrides both for one target app (see resolveInjectionTarget
+                for the order). */}
             <SectionLabel className="mb-1 mt-4">Insertion</SectionLabel>
             <SettingRow
               title={SETTING.typeAsISpeak.label}
@@ -725,8 +721,6 @@ export default function Settings() {
               />
             </SettingRow>
 
-            {/* Moved from Recording & history, which mixed audio RETENTION with controls
-                that only matter while a session is live. */}
             <SectionLabel className="mb-1 mt-7">While recording</SectionLabel>
             {/* PulseAudio/PipeWire-backed — `apply_mute` is a real no-op off Linux (macOS has
                 neither pactl nor wpctl), so don't show a dead switch there. The setting itself
@@ -762,12 +756,9 @@ export default function Settings() {
         {tab === "Recording & history" && (
           <>
           <Card className="px-6 pb-2">
-            {/* Grouped by SUBJECT, one retention clock per subject — see the
-                design canvas ("Recording & history, whole page", rev C). */}
+            {/* Grouped by subject, one retention clock per subject. */}
             <SectionLabel className="mb-1 mt-4">Audio storage</SectionLabel>
-            {/* The ONE home for all stored audio, with a fixed subfolder per
-                type. Its own block: header line (title + actions), then the
-                full-width split bar, legend, path and subfolder chips. */}
+            {/* The ONE home for all stored audio, with a fixed subfolder per type. */}
             <div className="border-b border-line py-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
@@ -1134,7 +1125,6 @@ export default function Settings() {
               desc="Scales the whole chip: pill, text, buttons and dot. The chip comes out of hiding while you adjust it, so you see the result."
               disabled={chipOff}
             >
-              {/* Stored as a factor (1 = 100%); shown as a percentage. */}
               <Stepper
                 ariaLabel="chip size"
                 value={Math.round((s.recording.chipScale ?? 1) * 100)}
