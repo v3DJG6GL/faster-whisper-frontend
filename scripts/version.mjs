@@ -28,18 +28,23 @@ const TAURI = join(ROOT, "src-tauri", "tauri.conf.json");
 // never a bare "version" key, so the first match is the package's own version.
 const readJsonVersion = (p) => readFileSync(p, "utf8").match(/"version":\s*"([^"]*)"/)?.[1] ?? null;
 
-// The `version = "..."` line inside the [package] table (not a dependency's version).
-const readCargoVersion = (p) => {
+// The `version = "..."` line inside the [package] table (not a dependency's version): its
+// index in `lines`, or -1. Read and write share it, so they always agree on which line it is.
+const CARGO_VERSION_RE = /^(\s*version\s*=\s*")([^"]*)(")/;
+const cargoVersionLine = (lines) => {
   let inPkg = false;
-  for (const line of readFileSync(p, "utf8").split("\n")) {
-    const s = line.trim();
+  for (let i = 0; i < lines.length; i++) {
+    const s = lines[i].trim();
     if (s.startsWith("[")) inPkg = s === "[package]";
-    else if (inPkg) {
-      const m = s.match(/^version\s*=\s*"([^"]*)"/);
-      if (m) return m[1];
-    }
+    else if (inPkg && CARGO_VERSION_RE.test(lines[i])) return i;
   }
-  return null;
+  return -1;
+};
+
+const readCargoVersion = (p) => {
+  const lines = readFileSync(p, "utf8").split("\n");
+  const i = cargoVersionLine(lines);
+  return i < 0 ? null : lines[i].match(CARGO_VERSION_RE)[2];
 };
 
 // tauri.conf.json is the authoritative one for the in-app readout, so list it first.
@@ -61,16 +66,9 @@ function writeJsonVersion(p, v) {
 
 function writeCargoVersion(p, v) {
   const lines = readFileSync(p, "utf8").split("\n");
-  let inPkg = false, done = false;
-  for (let i = 0; i < lines.length; i++) {
-    const s = lines[i].trim();
-    if (s.startsWith("[")) inPkg = s === "[package]";
-    else if (inPkg && !done && /^version\s*=\s*"[^"]*"/.test(s)) {
-      lines[i] = lines[i].replace(/(version\s*=\s*")[^"]*(")/, `$1${v}$2`);
-      done = true;
-    }
-  }
-  if (!done) throw new Error(`no [package] version found in ${p}`);
+  const i = cargoVersionLine(lines);
+  if (i < 0) throw new Error(`no [package] version found in ${p}`);
+  lines[i] = lines[i].replace(CARGO_VERSION_RE, `$1${v}$3`);
   writeFileSync(p, lines.join("\n"));
 }
 
