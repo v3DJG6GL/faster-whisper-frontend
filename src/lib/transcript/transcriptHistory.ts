@@ -157,6 +157,9 @@ function stringMap<K extends string | number>(v: unknown): Record<K, string> | u
   return Object.fromEntries(entries.filter(([, x]) => typeof x === "string")) as Record<K, string>;
 }
 
+/** The record maps keyed by segment index: they move with their segments and go with them. */
+const INDEX_KEYED = ["edits", "speakerEdits", "translationsStale", "translatedFromEdit"] as const;
+
 /** Repair the fields a malformed file would crash the History render with, keeping the record:
  *  a non-string appId throws in the search and app chips (`.toLowerCase()` / `.split()`), a
  *  non-array target list in the route badge, the provenance line and the bug report's
@@ -275,19 +278,10 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
         // A clean map is handed back as the same object (and a clean record as itself).
         const badKeys = (m: unknown) =>
           m != null && (typeof m !== "object" || Object.keys(m).some((k) => !keyOk(k)));
-        if (badKeys(out.edits)) out = { ...out, edits: remap(out.edits) };
-        if (badKeys(out.speakerEdits)) out = { ...out, speakerEdits: remap(out.speakerEdits) };
-        if (badKeys(out.translationsStale)) out = { ...out, translationsStale: remap(out.translationsStale) };
-        if (badKeys(out.translatedFromEdit)) out = { ...out, translatedFromEdit: remap(out.translatedFromEdit) };
+        for (const k of INDEX_KEYED) if (badKeys(out[k])) out = { ...out, [k]: remap<string | true>(out[k]) };
       } else {
-        out = {
-          ...out,
-          result: { ...out.result, segments: kept() },
-          edits: remap(out.edits),
-          speakerEdits: remap(out.speakerEdits),
-          translationsStale: remap(out.translationsStale),
-          translatedFromEdit: remap(out.translatedFromEdit),
-        };
+        out = { ...out, result: { ...out.result, segments: kept() } };
+        for (const k of INDEX_KEYED) out = { ...out, [k]: remap<string | true>(out[k]) };
       }
     }
   }
@@ -336,8 +330,8 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   // No segment for an index-keyed correction to land on, whether the list was damaged, is empty
   // or is missing: the maps go, or the viewer marks the record edited and rebuilds an empty text
   // for Copy/export from no segments.
-  if (!out.result?.segments?.length && (out.edits || out.speakerEdits || out.translationsStale || out.translatedFromEdit)) {
-    out = { ...out, edits: undefined, speakerEdits: undefined, translationsStale: undefined, translatedFromEdit: undefined };
+  if (!out.result?.segments?.length && INDEX_KEYED.some((k) => out[k])) {
+    for (const k of INDEX_KEYED) out = { ...out, [k]: undefined };
   }
   if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
   if (r.error != null && typeof r.error !== "string") out = { ...out, error: undefined };
