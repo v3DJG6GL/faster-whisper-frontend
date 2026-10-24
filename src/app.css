@@ -339,7 +339,7 @@ html.accent-tick .transition-colors {
   animation: rec-pulse 1.4s ease-in-out infinite;
 }
 
-/* Calm "breathing" for the armed-but-silent dot and the transcribing label —
+/* Calm "breathing" for the resting status dot and the undecided-route "?" glyph —
    OPACITY ONLY (vestibular-safe), floor 0.55 keeps the dim-amber dot ≥3:1 on the
    near-black pill, and ~0.33Hz is far under the 3Hz seizure threshold. */
 @keyframes chip-breathe {
