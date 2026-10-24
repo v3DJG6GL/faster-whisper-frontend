@@ -76,7 +76,6 @@ export function OverrideProfilePicker({
         if (!cancelled) setNames([...new Set(n)].slice(0, MAX_SHOWN_PROFILES));
       })
       .catch(() => {
-        // Best-effort, per the doc above: on failure degrade to the free-text input.
         if (!cancelled) setNames([]);
       });
     return () => {
