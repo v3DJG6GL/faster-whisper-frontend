@@ -118,8 +118,7 @@ function Editor({
   // Dictation runs a profile whose backend is gone (or unset) on the FIRST backend
   // (dictation.ts backendForProfile) — preview that one too, and say so on the field.
   const backend = boundBackend ?? backends[0];
-  // The backend's advertised models feed the per-profile model override picker
-  // (probes once per session when the connection cache is empty).
+  // Probes the backend's models once per session when the connection cache is empty.
   const models = useBackendModels(backend);
   const serverKind = backend
     ? effectiveServerKind(backend, ownProp(connections, backend.id))
@@ -220,9 +219,6 @@ function Editor({
 
   const Glyph = ACTIVATION[p.activation].icon;
 
-  // Unsaved-work guard: this form runs well past a screen height, and until it
-  // grew a top exit the only way out was a Cancel button below the fold — while
-  // a sidebar click discarded everything in silence.
   // Only a take-over the saved chord still needs: re-recording something else since leaves
   // the other binding alone. A pending one is unsaved work too — "Use it here" on the
   // profile's own stored chord leaves `p` unchanged.
@@ -290,9 +286,9 @@ function Editor({
         />
       )}
 
-      {/* Shortcut Field D80 B: the shortcut and how its keys behave are one object, beside the
-          profile's name — a tile across the full width was mostly empty strip. Name and tag are
-          short, so they take a third and the tile two. */}
+      {/* The shortcut and how its keys behave are one object, beside the profile's name — a
+          tile across the full width was mostly empty strip. Name and tag are short, so they take
+          a third and the tile two. */}
       <div className="grid grid-cols-3 items-start gap-4">
         <div className="flex flex-col gap-4">
           <Labeled label="Name">
@@ -480,8 +476,6 @@ function Editor({
           note={promptLocked && promptOverridden ? "Ignored · locked by the server" : undefined}
           wide
         >
-          {/* Tri-state: empty an existing value → "" (clear, suppresses the inherited prompt);
-              reset → undefined (inherit, ghosts the baseline). */}
           <OverrideText
             ariaLabel="Vocabulary / prompt"
             rows={2}
@@ -591,15 +585,14 @@ function Editor({
           }
           hint="Only for this profile. Inherit takes the Settings → Dictation default; an app rule still wins over both for the app you dictate into."
         >
-          {/* "Type as I speak" is the profile-scoped replacement for the old global three-way.
-              It only produces a distinct outcome on a STREAMING, HANDS-FREE profile, so the other
-              combinations say why (tooltip) rather than silently doing nothing. The gate is on
-              the PROFILE's activation for display only — the runtime value is what liveAllowed
-              tests, because the Home button and the chip's quick-launch both start a hold
-              profile hands-free. A clipboard-only hold profile injects no keys, so liveAllowed
-              lets it run live and it gets no on-release note (same as the Translation row) —
-              unless it asks for its translation targets: that hold profile answers at the
-              one-shot insert, so it inserts on release whatever the method (liveInsert below). */}
+          {/* "Type as I speak" only produces a distinct outcome on a STREAMING, HANDS-FREE profile,
+              so the other combinations say why (tooltip) rather than silently doing nothing. The
+              gate on the PROFILE's activation is for display only — liveAllowed tests the runtime
+              value, because the Home button and the chip's quick-launch both start a hold profile
+              hands-free. A clipboard-only hold profile injects no keys, so it may run live and gets
+              no on-release note (same as the Translation row) — unless it asks for its translation
+              targets: it answers those at the one-shot insert, so it inserts on release whatever
+              the method (liveInsert below). */}
           {(() => {
             const effEndpoint = p.endpoint ?? backend?.endpoint;
             const batch = effEndpoint === "batch";
@@ -709,14 +702,10 @@ function Editor({
             value={p.translationOverrides}
             onChange={(v) => set({ translationOverrides: v })}
             caps={caps}
-            // Resolved with the SAME predicate the session uses (`liveAllowed`): the
-            // profile's own opinion else the Dictation-tab default, a streaming endpoint,
-            // and a delivery that is safe while the chord may still be held — a push-to-talk
-            // profile typing via paste/direct inserts on release, so its Mode is honoured.
-            // (An app rule can still override the method per window; the editor can't
-            // know the window, so profile-else-global is the closest honest read.)
-            // A push-to-talk profile that asks for its targets answers at the one-shot
-            // insert, so it never runs live either.
+            // Resolved with the SAME predicate the session uses (`liveAllowed`). An app rule can
+            // still override the method per window; the editor can't know the window, so
+            // profile-else-global is the closest honest read. A push-to-talk profile that asks for
+            // its targets answers at the one-shot insert, so it never runs live either.
             liveInsert={!(p.askTranslationTargets && p.activation === "hold") && liveAllowed({
               wants: p.typeAsISpeak ?? globalTypeAsISpeak,
               endpoint: p.endpoint ?? backend?.endpoint ?? "stream",
@@ -863,9 +852,9 @@ export default function Profiles() {
   const moveProfile = useApp((s) => s.moveProfile);
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
-  // A low-level backend is live when evdev is enabled AND permitted (Linux) or always on Windows
-  // (same gate as Rust's apply_bindings; the Editor takes this value). Gating on `evdevEnabled`
-  // alone would accept a chord that can't fire when evdev is toggled on but not permitted. When only the plugin is live it collapses
+  // A low-level backend is live when evdev is enabled AND permitted (Linux) or always on Windows —
+  // the same gate as Rust's apply_bindings; `evdevEnabled` alone would accept a chord that can't
+  // fire when evdev is on but not permitted. Without one only the plugin is live, which collapses
   // L/R modifier sides, so the per-card conflict banner must collapse too — else a side-only-
   // different chord shows no conflict here yet silently clobbers one binding under the plugin.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
@@ -899,8 +888,7 @@ export default function Profiles() {
 
   // Feed the per-card banner the SAME synthetic quick-add peer the Editor (others, below) and the
   // save-gate (persistence.ts) use, so a profile whose chord collides with the global quick-add
-  // chord shows a banner on its own card — not just the global save freeze. All three conflict
-  // surfaces now agree.
+  // chord shows a banner on its own card — not just the global save freeze.
   const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
   // A peer that is gone reads "another profile"; one with a blank name reads as its row does.
@@ -977,8 +965,8 @@ export default function Profiles() {
             // Include the global quick-add shortcut as a pseudo-profile so capturing a chord that
             // clashes with it is WARNED: the evdev matcher silently drops the quick-add chord when
             // it duplicates a profile chord (profiles register first), so a rebind could otherwise
-            // kill quick-add with no warning. Symmetric with the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row), which
-            // already checks against the profiles.
+            // kill quick-add with no warning. Symmetric with the Dictionary screen's
+            // QuickAddShortcutField, which already checks against the profiles.
             others={withQuickAddPeer(
               profiles.filter((p) => p.id !== editingId),
               quickAddHotkey,
@@ -992,8 +980,8 @@ export default function Profiles() {
           <SectionLabel className="mb-3 mt-5">Configured</SectionLabel>
           {profiles.length === 0 ? (
             backends.length > 0 && !startersDismissed ? (
-              // Checklist path: suggest the starter pair as amber-edged drafts on the
-              // screen the user will manage them on forever. Created only on Keep.
+              // Checklist path: suggest the starter pair on the screen the user will manage them
+              // on forever. Created only on Keep.
               <Card edge="accent" className="p-5">
                 <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
                 <div className="mt-0.5 text-[12.5px] text-dim">
