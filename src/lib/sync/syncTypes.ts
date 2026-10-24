@@ -17,10 +17,10 @@ import type {
 } from "../types";
 
 /** The `general` category: settings.theme + the portable general fields.
- *  Machine-local fields (evdevEnabled) are excluded by construction — this
- *  type simply doesn't have them. The quick-add chord lived here before the
- *  `dictionary` category existed; `migrateBlob` moves it on every inbound
- *  path, so post-migration blobs never carry it here.
+ *  Machine-local fields (evdevEnabled) are excluded by construction. The
+ *  quick-add chord lived here before the `dictionary` category existed;
+ *  `migrateBlob` moves it on every inbound path, so post-migration blobs
+ *  never carry it here.
  *  EVERY field is optional on the wire: `gateComposeScalar` deletes a gated-off key the
  *  snapshot has no value for, and `gateApplyScalar` deletes gated-off keys from every
  *  inbound blob. Apply's spread keeps the device's local value for anything absent. */
