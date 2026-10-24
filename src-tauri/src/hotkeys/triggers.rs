@@ -405,8 +405,8 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
             }
         };
         // First in config order wins a duplicate chord — the same policy the evdev and Windows
-        // backends apply in `chords_from` (via `chord_engine::registration_conflict`), so the
-        // same config fires the same profile whichever backend is live.
+        // backends apply in `chords_from`. Only exact duplicates are checked here; the nesting
+        // clashes `chord_engine::registration_conflict` also drops there are not.
         if map.contains_key(&shortcut) {
             tracing::warn!("[hotkey] '{accel_log}' has the same chord as an earlier profile; ignoring it (the Profiles screen flags this as a conflict)");
             continue;
