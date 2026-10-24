@@ -412,45 +412,30 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
         // through to the normal read.
         if let Ok(acc) = el.as_accessible_proxy(&bus).await {
             if matches!(acc.get_role().await, Ok(atspi::Role::PasswordText)) {
-                return super::SelRead::Empty;
+                return Some(super::SelRead::Empty);
             }
         }
         // Build a Text proxy for the element from its (bus name, path) — same construction as
-        // `as_accessible_proxy`, but for the Text interface.
-        let Some(name) = el.name() else {
-            return super::SelRead::Unavailable;
-        };
-        let dest: zbus::names::BusName = name.clone().into();
-        let builder = match TextProxy::builder(&bus).destination(dest) {
-            Ok(b) => b,
-            Err(_) => return super::SelRead::Unavailable,
-        };
-        let builder = match builder.path(el.path().clone()) {
-            Ok(b) => b,
-            Err(_) => return super::SelRead::Unavailable,
-        };
-        let text = match builder
+        // `as_accessible_proxy`, but for the Text interface. Every failing step below answers
+        // `Unavailable` (the `None` of this block).
+        let dest: zbus::names::BusName = el.name()?.clone().into();
+        let text = TextProxy::builder(&bus)
+            .destination(dest)
+            .ok()?
+            .path(el.path().clone())
+            .ok()?
             .cache_properties(zbus::proxy::CacheProperties::No)
             .build()
             .await
-        {
-            Ok(t) => t,
-            Err(_) => return super::SelRead::Unavailable,
-        };
+            .ok()?;
         // No Text interface (terminals, canvases) → GetNSelections errors → can't tell.
-        let n = match text.get_n_selections().await {
-            Ok(n) => n,
-            Err(_) => return super::SelRead::Unavailable,
-        };
+        let n = text.get_n_selections().await.ok()?;
         if n <= 0 {
-            return super::SelRead::Empty;
+            return Some(super::SelRead::Empty);
         }
-        let (start, end) = match text.get_selection(0).await {
-            Ok(v) => v,
-            Err(_) => return super::SelRead::Unavailable,
-        };
+        let (start, end) = text.get_selection(0).await.ok()?;
         if end <= start {
-            return super::SelRead::Empty;
+            return Some(super::SelRead::Empty);
         }
         // Clamp the REQUEST too, not just the reply: the range is the focused app's choice, so a
         // select-all in a huge document would otherwise ship it all over D-Bus inside the 800 ms
@@ -458,24 +443,26 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
         // changes nothing they see; `bounded_selection` stays the backstop (some toolkits count
         // offsets in UTF-16 units, not chars).
         let end = end.min(start.saturating_add(super::SEL_MAX as i32));
-        match text.get_text(start, end).await {
+        let s = text.get_text(start, end).await.ok()?;
+        Some(if s.contains('\u{fffc}') {
             // Rich text (Thunderbird/Joplin links, images, formatting anchors) comes back with
             // U+FFFC object-replacement chars in place of the words. That's not usable plain
             // text, BUT a real selection demonstrably exists here → report Opaque so the caller
             // reads the actual rendered selection from PRIMARY (and the close-guard can still
             // trust "a selection exists in the focused app").
-            Ok(s) if s.contains('\u{fffc}') => super::SelRead::Opaque,
+            super::SelRead::Opaque
+        } else {
             // Bound at the READ, so every consumer inherits it: `get_focused_selection` hands
             // it straight across the IPC into the QuickAdd webview unbounded. SEL_MAX is far
             // above any real selection, so the cap costs nothing.
-            Ok(s) => super::SelRead::Text(super::bounded_selection(s)),
-            Err(_) => super::SelRead::Unavailable,
-        }
+            super::SelRead::Text(super::bounded_selection(s))
+        })
     };
-    match tokio::time::timeout(std::time::Duration::from_millis(800), read).await {
-        Ok(r) => r,
-        Err(_) => super::SelRead::Unavailable,
-    }
+    tokio::time::timeout(std::time::Duration::from_millis(800), read)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(super::SelRead::Unavailable)
 }
 
 /// A genuine `window:activate`: mark `app_id` foreground and fold it into the snapshot. The
