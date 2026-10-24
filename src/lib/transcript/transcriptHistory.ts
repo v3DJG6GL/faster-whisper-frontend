@@ -1,5 +1,5 @@
 // Local transcription history: every finished (or failed) batch run is kept
-// as one JSON record on disk (Rust side: transcripts.rs — atomic writes,
+// as one JSON record on disk (Rust side: store/transcripts.rs — atomic writes,
 // owner-only permissions, files are the source of truth). This module owns
 // the in-memory mirror: a module-level zustand store (same survival contract
 // as transcribeRun) plus load/upsert/delete that keep disk and mirror in step.
@@ -59,7 +59,7 @@ export interface TranscriptRecord {
    *  it marks them stale; transcribeRun's translatedFromEdit). */
   translatedFromEdit?: Record<number, true>;
   /** The export panel's dragged track order and typed track names
-   *  (lib/exportTracks TrackPrefs; read through readTrackPrefs). */
+   *  (lib/transcript/exportTracks TrackPrefs; read through readTrackPrefs). */
   exportTracks?: { order?: string[]; names?: Record<string, string> };
   // ── dictation-only metadata ──
   /** Focused app id at session start (also the filter facet). */
@@ -244,7 +244,6 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
         return k != null && (!Array.isArray(k) || k.some((x) => typeof x !== "string"));
       };
       const bad = (s: unknown) => badSpeaker(s) || badTr(s) || badKept(s);
-      // A clean segment is handed back as the same object.
       const fixSeg = (s: unknown) => {
         if (!bad(s)) return s;
         const seg = s as RawSeg;
@@ -399,12 +398,9 @@ export function historyLoadFailed(): boolean {
 }
 
 /** Load the history from disk (once; later calls are no-ops unless forced, or until a listing
- *  succeeds — a failed one is retried by the next call). A FORCED call
- *  chains onto an in-flight listing instead of adopting it: every forced caller just changed
- *  the files on disk, and the listing already running was taken before that change.
- *  Mirror changes made while a listing is in flight are replayed over the snapshot — the
- *  snapshot predates them. Until a listing has succeeded and while no forced caller has
- *  changed the disk, the whole mirror is such a change (only this session's records). */
+ *  succeeds — a failed one is retried by the next call). A FORCED call chains onto an
+ *  in-flight listing instead of adopting it: every forced caller just changed the files on
+ *  disk, and the listing already running was taken before that change. */
 export function loadHistory(force = false): Promise<void> {
   // Before the chain: a forced caller just changed the disk, so even a forced call that is
   // chained or later fails ends the session-only state.
@@ -855,7 +851,7 @@ export function appLabel(r: TranscriptRecord): string {
 /** Label for the "dictated into" chip. The chip groups by app id, so it must
  *  name the APP ("Thunderbird"), not the first grouped session's window title
  *  ("Re: invoice — Mozilla Thunderbird"), which is what `appLabel` returns for a
- *  row heading and which changed as newer sessions arrived. */
+ *  row heading and which changes as newer sessions arrive. */
 export function appChipLabel(r: Pick<TranscriptRecord, "appId" | "sourceName">): string {
   const seg = r.appId?.split(".").pop()?.trim();
   return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : appLabel(r as TranscriptRecord);
