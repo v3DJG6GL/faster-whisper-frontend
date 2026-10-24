@@ -379,7 +379,7 @@ async fn delete_at(url: String, api_key: Option<&str>) -> SyncDelete {
                 }
             } else {
                 // Pure error arm: `detail_from` extracts at most 200 characters, so the
-                // error-body ceiling matches every other non-2xx arm in the transport.
+                // error-body ceiling is enough.
                 let (_, detail) = super::error_detail(resp).await;
                 SyncDelete {
                     ok: false,
