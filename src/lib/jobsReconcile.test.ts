@@ -77,6 +77,14 @@ function serveDone(jobId = JOB_A, result: BatchResult = RESULT): void {
   getJobResult.mockResolvedValue(ok(result));
 }
 
+/** The server finishes JOB_A after its watcher was stopped: 10 s later nothing has polled it. */
+async function expectJobNoLongerPolled(): Promise<void> {
+  serveDone();
+  getJob.mockClear();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+}
+
 function records() {
   return useTranscriptHistory.getState().records;
 }
@@ -972,10 +980,7 @@ describe("reconcileJobs", () => {
       queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
   });
 
@@ -983,10 +988,7 @@ describe("reconcileJobs", () => {
     await watchEvicted();
     forgetRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
   });
 
@@ -1016,10 +1018,7 @@ describe("reconcileJobs", () => {
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records().some((x) => x.id === JOB_A && x.status === "done")).toBe(false);
   });
 
@@ -1036,10 +1035,7 @@ describe("reconcileJobs", () => {
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records().some((x) => x.id === JOB_A && x.status === "done")).toBe(false);
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
   });
@@ -1101,10 +1097,7 @@ describe("reconcileJobs", () => {
     deleteRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
   });
 
@@ -1121,10 +1114,7 @@ describe("reconcileJobs", () => {
   }
 
   async function expectNoReAdd() {
-    serveDone();
-    getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    await expectJobNoLongerPolled();
     expect(records()).toEqual([]);
   }
 
