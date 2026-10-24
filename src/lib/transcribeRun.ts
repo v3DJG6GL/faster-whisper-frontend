@@ -246,7 +246,6 @@ export function skippedStages(s: {
 }): Set<RailStage> {
   const out = new Set<RailStage>();
   const stages = railStages(s.lastOptions, s.forUrl, s.forText, s.siteTranscript);
-  // The server plan names its skipped stages outright.
   if (s.progress?.plan?.length) {
     for (const p of s.progress.plan) {
       if (p.state === "skipped" && (stages as string[]).includes(p.stage)) out.add(p.stage as RailStage);
@@ -1711,7 +1710,6 @@ export function mergeSegmentTranslations(
   updated.translatedFromEdit = get().translatedFromEdit[key];
   registerRecord(updated);
   upsertRecord(updated);
-  // Never onto another open record of the same source (patchOwnRow).
   patchOwnRow(rec, { result: updated.result });
 }
 
