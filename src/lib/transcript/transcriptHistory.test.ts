@@ -762,8 +762,8 @@ describe("per-language tracks", () => {
     expect(rec.translations).toEqual({ en: "Hello", fr: "Salut" });
     expect(rec.translationTargets).toEqual(["en", "fr"]);
     expect(rec.includeOriginal).toBe(true);
-    // result.text stays the ORIGINAL, which is why rendering both it and the
-    // blob showed the source language twice.
+    // result.text stays the ORIGINAL, so a view rendering both it and the blob
+    // would show the source language twice.
     expect(rec.result?.text).toBe(CAPTURE.text);
     expect(rec.schemaVersion).toBe(1);
   });
@@ -1249,7 +1249,7 @@ describe("patchRecord merges onto the latest copy", () => {
   it("two writers each keep the other's field (the viewer's stale-`rec` overwrite)", () => {
     upsertRecord(base);
     // The on-demand fetch stores the server id, then the local copy lands later: both
-    // are patches, so the second no longer spreads a snapshot taken before the first.
+    // are patches, so the second does not spread a snapshot taken before the first.
     patchRecord("patch-1", (r) => ({ ...r, result: { ...r.result!, sourceVideoMediaId: "m1" } }));
     patchRecord("patch-1", (r) => ({ ...r, videoPath: "/video/patch-1.mkv" }));
     const rec = currentRecord("patch-1")!;
@@ -1436,8 +1436,8 @@ describe("selectRecord (useRecord's selector)", () => {
 });
 
 // With "include original" on, the INJECTED blob already begins with the original, so
-// rendering it plus result.text showed the source language twice. recordTracks is that
-// render decision, extracted so it can be tested: there is no jsdom.
+// rendering it plus result.text would show the source language twice. recordTracks is that
+// render decision, kept pure so it can be tested: there is no jsdom.
 describe("history record display", () => {
   const base = {
     schemaVersion: 1 as const,
@@ -1468,7 +1468,6 @@ describe("history record display", () => {
         { lang: "en", text: "Hello this is a test" },
         { lang: "fr", text: "Salut c'est un test" },
       ]);
-      // The reported bug: the source text must appear in exactly one track.
       const originals = t!.filter((x) => x.text === base.result.text);
       expect(originals).toHaveLength(1);
     });
