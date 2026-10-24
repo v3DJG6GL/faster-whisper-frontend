@@ -48,9 +48,8 @@ const emptyResult = (): ImportResult => ({
 });
 
 // The envelope's declared schema version is what lets an OLDER build warn
-// "this file is newer than me" before serde silently drops unknown settings.
-// It was frozen at 2 while the app moved to 3 — pin it to CONFIG_VERSION so a
-// future bump can never leave the envelope behind again.
+// "this file is newer than me" before serde silently drops unknown settings;
+// pinned to CONFIG_VERSION so a future bump can never leave the envelope behind.
 describe("buildEnvelope", () => {
   it("stamps the app's CONFIG_VERSION, not a frozen literal", async () => {
     const { buildEnvelope } = await import("./settingsFile");
@@ -176,7 +175,6 @@ describe("exportToFile", () => {
   });
 });
 
-// ── stripMachineFolders ─────────────────────────────────────────────────────
 // Every one-shot restore (import, Restore from server, onboarding) applies with
 // the gates bypassed, so the peer's folder paths must be gone before the apply.
 describe("stripMachineFolders", () => {
@@ -204,7 +202,6 @@ describe("stripMachineFolders", () => {
   });
 });
 
-// ── applyImport ────────────────────────────────────────────────────────────
 // The import path hands the sync engine a MIGRATED blob, gates the plaintext
 // secrets on the backends checkbox, and always applies with the gates
 // bypassed (a file import is an explicit act, not a sync round).
