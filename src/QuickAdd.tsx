@@ -133,7 +133,7 @@ export default function QuickAdd() {
   const insertRef = useRef<HTMLInputElement>(null);
   // The word seeded from the source app's selection this summon (null if none). On close we run
   // the current list over it and, if it changed AND it's still selected, paste the result back —
-  // correcting the word in place. `pasteShortcut` is captured from config for that replace-paste.
+  // correcting the word in place.
   const originalSelectionRef = useRef<string | null>(null);
   // General settings + per-app rules, so correct-on-close resolves the SOURCE app's injection target
   // through the SAME shared resolver the main injection path uses (resolveInjectionTarget) — per-app
@@ -191,8 +191,8 @@ export default function QuickAdd() {
 
   /** The LOCAL half of `refresh`: theme plus the injection policy this window types under.
    *
-   *  Split out because `refresh` is skipped on a summon while a save is pending, in flight or
-   *  failed — with a persistently failing backend, for the window's whole life — and the
+   *  Split out because `refresh` is skipped on a summon while a save is pending, in flight,
+   *  failed or rejected — with a persistently failing backend, for the window's whole life — and the
    *  correction path resolves against these refs (a later `block` rule must still apply). It
    *  touches no server and never replaces `rows`, so it cannot clobber an unsaved edit.
    *
@@ -322,8 +322,8 @@ export default function QuickAdd() {
     setSaveState("saving");
     // The newest attempt decides the badge, as persistence.ts does (saveSeq). Flights run one at
     // a time: two concurrent whole-map PATCHes could land on the server out of order, and an
-    // older one landing late repainted "saved" over the newer one's "error" — the next summon
-    // then re-synced over the refused rows. A flight superseded while it queued sends nothing:
+    // older one landing late would repaint "saved" over the newer one's "error" — the next summon
+    // would then re-sync over the refused rows. A flight superseded while it queued sends nothing:
     // the newer one sends the newest rows (both read when the flight starts, as one pair).
     const mySeq = ++saveSeq.current;
     const run = saveFlight.current.then<PipelineSaveResult | string | null>(() => {
@@ -622,7 +622,6 @@ export default function QuickAdd() {
     // 576×456 panel + this margin.
     <div className="flex h-screen w-screen bg-transparent px-6 pb-9 pt-6">
       <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_12px_32px_-12px_rgba(0,0,0,0.75),0_0_32px_-12px_color-mix(in_srgb,var(--c-accent)_20%,transparent)]">
-        {/* header */}
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <Plus className="size-4 text-accent" />
           {dotHex && (
@@ -679,7 +678,6 @@ export default function QuickAdd() {
           </div>
         ) : (
           <>
-            {/* capture zone (Layout A: hero add row, accent-bordered) */}
             <div
               onKeyDown={(e) => {
                 // Enter in the find field with no dropdown selection (not yet handled
@@ -745,7 +743,6 @@ export default function QuickAdd() {
               )}
             </div>
 
-            {/* list head */}
             <div className="flex items-center justify-between px-4 pb-1 pt-3 font-mono text-[10px] uppercase tracking-wider text-faint">
               <span>in this list</span>
               <span className="rounded-pill border border-line bg-surface-2 px-2 py-0.5 text-dim">{rows.length}</span>
@@ -801,7 +798,6 @@ export default function QuickAdd() {
               )}
             </div>
 
-            {/* footer hints */}
             <div className="flex items-center gap-3 border-t border-line px-4 py-2.5 text-[12px] text-faint">
               <span className="flex items-center gap-1.5">
                 <Kbd size="sm">↵</Kbd> save &amp; add another
