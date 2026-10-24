@@ -119,8 +119,8 @@ jobs:
           # swallowed (IsActions doer), so no duplicate release run fires.
           # Fallback: if protection ever declines the bot's tag too, retry it as
           # the owner — that spawns a duplicate tag-push run, which the
-          # `concurrency: release` group + idempotent API steps absorb. The same
-          # fallback covers the case where a URL-authenticated tag push is NOT
+          # `concurrency: release` group + idempotent API steps absorb. They
+          # absorb it the same way if a URL-authenticated tag push is ever NOT
           # attributed to the actions doer and its push event is not swallowed.
           repo_path="${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git"
           owner_url="https://${PUSH_TOKEN}@${repo_path}"
