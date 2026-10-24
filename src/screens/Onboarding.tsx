@@ -124,9 +124,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   };
 
   const testAndContinue = async () => {
-    // As on the Backends screen: the submit Button is disabled while busy, but Enter in either
-    // input still fires this, and a second run would mint a duplicate backend and leave one of two
-    // keyring accounts orphaned in the OS wallet.
+    // The submit Button is disabled while busy, but Enter in either input still fires this, and a
+    // second run would mint a duplicate backend and leave one of two keyring accounts orphaned in
+    // the OS wallet.
     if (busy) return;
     const serverUrl = typedServerUrl(url);
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
