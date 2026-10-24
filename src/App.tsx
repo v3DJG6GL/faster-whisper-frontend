@@ -214,8 +214,7 @@ function SaveErrorBanner() {
 
 // The failure doorway: "Transcription failed — View logs". Set by the dictation
 // and batch-transcription error paths; "View logs" lands on /logs pre-filtered
-// to warnings+errors. Rendered before SaveErrorBanner in BottomBanners, so it
-// stacks above it. Must live inside <HashRouter> for useNavigate.
+// to warnings+errors. Must live inside <HashRouter> for useNavigate.
 function LogsDoorwayBanner() {
   const doorway = useApp((s) => s.logsDoorway);
   const setLogsDoorway = useApp((s) => s.setLogsDoorway);
