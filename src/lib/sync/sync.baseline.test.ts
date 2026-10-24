@@ -32,15 +32,10 @@ import { backend } from "./syncTestFixtures";
 import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
- *  parked, the store is live and the user can keep editing. Default is passthrough; `keys`
- *  answers an unparked read (what this device's keyring holds). `store`, when set, is a live
- *  keyring that reads, writes and deletes go through — refusing a value over wincred's 1280
- *  UTF-16 units and any write to an account in `failWrites`, and folding a lone surrogate to
- *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
- *  to an account in `parkWrites` waits on that promise before it lands. A delete waits on every
- *  `parkWrites` promise first, as api.ts's keyring turn holds it behind a parked write, and
- *  `deletes` records every account one landed for, and `reads` counts the key reads issued.
- *  `unreadable` lists the ids a read reports it FAILED on (locked wallet), not absent. */
+ *  parked, the store is live and the user can keep editing. `store`, when set, is a live keyring
+ *  that mimics the real one: it refuses a value over wincred's 1280 UTF-16 units, folds a lone
+ *  surrogate to U+FFFD as the IPC hop does, and holds a delete behind every parked write as
+ *  api.ts's keyring turn does. `unreadable` lists the ids a read reports it FAILED on (locked wallet), not absent. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
