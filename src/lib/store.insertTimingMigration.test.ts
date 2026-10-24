@@ -49,7 +49,7 @@ describe("migrateInsertTiming", () => {
 
   it("seeds the GLOBAL default too, so a profile's Inherit resolves to the old behaviour", () => {
     // Without this the editor offers "Inherit" with nothing to inherit from, and it
-    // silently means "off" — the defect that shipped in the first cut.
+    // silently means "off".
     expect(migrateInsertTiming(settingsWith("live"), []).settings.general.typeAsISpeak).toBe(true);
     expect(migrateInsertTiming(settingsWith("stop"), []).settings.general.typeAsISpeak).toBe(false);
     expect(migrateInsertTiming(settingsWith("off"), []).settings.general.typeAsISpeak).toBe(false);
