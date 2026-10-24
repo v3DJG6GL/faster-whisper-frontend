@@ -895,7 +895,7 @@ fn divert_outcome(text: &str) -> InjectOutcome {
 #[cfg(test)]
 mod tests {
     use super::{clipboard_form, clipboard_write_gate, divert_outcome};
-    use crate::inject::SinkGate;
+    use crate::inject::{cancel_lands_during, SinkGate};
 
     /// A cancel landing during the Wayland paste arm's clipboard-write own-window probe (a
     /// main-thread round trip; focus stays in the target app, so it answers false) still skips the
@@ -906,10 +906,7 @@ mod tests {
         for own in [true, false] {
             let cancelled = Cell::new(false);
             let gate = clipboard_write_gate(
-                || {
-                    cancelled.set(true); // the cancel lands while the probe runs
-                    own
-                },
+                cancel_lands_during(&cancelled, own),
                 || cancelled.get(),
                 || false, // a user cancel: no recovery wanted
                 false,

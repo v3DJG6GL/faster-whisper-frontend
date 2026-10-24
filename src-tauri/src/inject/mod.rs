@@ -1758,9 +1758,21 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
     result
 }
 
+/// A probe or wait during which a cancel lands: it raises `cancelled`, then answers `answer`.
+#[cfg(test)]
+pub(crate) fn cancel_lands_during(
+    cancelled: &std::cell::Cell<bool>,
+    answer: bool,
+) -> impl Fn() -> bool + '_ {
+    move || {
+        cancelled.set(true);
+        answer
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sanitize_injected;
+    use super::{cancel_lands_during, sanitize_injected};
 
     /// A cancel that lands during `paste`'s stuck-read wait (up to 1s on Windows) must write
     /// nothing: the discarded transcript would go out with no prior read to restore.
@@ -1770,13 +1782,7 @@ mod tests {
         use std::cell::Cell;
         for idle in [true, false] {
             let cancelled = Cell::new(false);
-            let gate = idle_wait_gate(
-                || {
-                    cancelled.set(true); // the cancel lands while the wait runs
-                    idle
-                },
-                || cancelled.get(),
-            );
+            let gate = idle_wait_gate(cancel_lands_during(&cancelled, idle), || cancelled.get());
             assert_eq!(gate, Some(Landed::Yes), "idle={idle}");
         }
         assert_eq!(
@@ -1796,13 +1802,7 @@ mod tests {
         use std::cell::Cell;
         for own in [true, false] {
             let cancelled = Cell::new(false);
-            let gate = sink_gate(
-                || {
-                    cancelled.set(true); // the cancel lands while the probe runs
-                    own
-                },
-                || cancelled.get(),
-            );
+            let gate = sink_gate(cancel_lands_during(&cancelled, own), || cancelled.get());
             // A cancel also wins over our own focused window: dropped, not diverted.
             assert_eq!(gate, SinkGate::Cancelled, "own={own}");
         }
@@ -1827,10 +1827,7 @@ mod tests {
         {
             let gate = typing_gate(
                 i > 0,
-                || {
-                    cancelled.set(true); // the cancel lands while the probe runs
-                    false // focus stayed in the target app
-                },
+                cancel_lands_during(&cancelled, false), // focus stayed in the target app
                 || cancelled.get(),
             );
             if gate != SinkGate::Proceed {
@@ -1860,10 +1857,7 @@ mod tests {
             let writes = Cell::new(0);
             let (tx, rx) = std::sync::mpsc::sync_channel(1);
             serve_transcript(
-                || {
-                    cancelled.set(true); // the cancel lands while the wait runs
-                    idle
-                },
+                cancel_lands_during(&cancelled, idle),
                 || cancelled.get(),
                 |_| writes.set(writes.get() + 1),
                 tx,
