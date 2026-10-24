@@ -80,11 +80,8 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
 /// guard in `lib.rs` keeps it from being destroyed. Not an IPC command: nothing in the
 /// webview calls it, and commit/abort are the only ways a picker should close.
 pub(crate) fn hide_lang_pick(app: AppHandle) {
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("langpick") {
-            crate::aux_windows::visibility::hide(&win);
-        }
+    let _ = super::on_main_window(&app, "langpick", |win| {
+        crate::aux_windows::visibility::hide(win)
     });
 }
 

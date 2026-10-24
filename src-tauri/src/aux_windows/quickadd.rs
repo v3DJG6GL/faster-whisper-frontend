@@ -238,12 +238,8 @@ pub fn show(app: &AppHandle) {
 fn show_now(app: &AppHandle) {
     // Reached from arbitrary threads (shortcut/hook workers, the Windows grab threads),
     // so hop to the main thread for the GTK window ops.
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let Some(win) = handle.get_webview_window("quickadd") else {
-            return;
-        };
-        crate::aux_windows::position::center_on_monitor(&win, QA_W, QA_H);
+    let _ = super::on_main_window(app, "quickadd", |win| {
+        crate::aux_windows::position::center_on_monitor(win, QA_W, QA_H);
         let _ = win.set_always_on_top(true);
         // KDE-Wayland ignores client keep-above: KWin rule on QA_TITLE (see the module docs). The
         // config write can block, so it runs off-thread.
@@ -252,14 +248,14 @@ fn show_now(app: &AppHandle) {
             let _ = win.set_title(QA_TITLE);
             std::thread::spawn(kwin::install_keep_above);
         }
-        crate::aux_windows::visibility::show(&win);
+        crate::aux_windows::visibility::show(win);
         // set_always_on_top(true) above is a no-op on Windows (tao only acts on a CHANGED
         // flag) and show() never raises — see topmost.rs.
         #[cfg(windows)]
-        crate::aux_windows::topmost::assert_topmost(&win);
+        crate::aux_windows::topmost::assert_topmost(win);
         let _ = win.unminimize();
         let _ = win.set_focus();
-        let _ = handle.emit("quickadd://shown", ());
+        let _ = win.app_handle().emit("quickadd://shown", ());
     });
 }
 
@@ -267,11 +263,8 @@ fn show_now(app: &AppHandle) {
 /// the close-to-hide guard in `lib.rs` keeps it from being destroyed.
 pub fn hide(app: &AppHandle) {
     app.state::<SeedRendezvous>().clear();
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("quickadd") {
-            crate::aux_windows::visibility::hide(&win);
-        }
+    let _ = super::on_main_window(app, "quickadd", |win| {
+        crate::aux_windows::visibility::hide(win)
     });
 }
 

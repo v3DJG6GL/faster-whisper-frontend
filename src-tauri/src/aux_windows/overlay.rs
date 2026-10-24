@@ -300,12 +300,11 @@ pub fn repair_topmost(app: &AppHandle) {
     if !win_hover::is_visible() {
         return;
     }
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(win) = handle.get_webview_window("overlay") {
-            crate::aux_windows::topmost::repair_if_covered(&win);
-        }
-    });
+    let _ = super::on_main_window(
+        app,
+        "overlay",
+        crate::aux_windows::topmost::repair_if_covered,
+    );
 }
 
 /// Make the whole chip window click-through so the big mostly-transparent window
@@ -662,14 +661,10 @@ mod win_hover {
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
             if want != INTERACTIVE.load(Ordering::SeqCst) {
                 INTERACTIVE.store(want, Ordering::SeqCst);
-                let handle = app.clone();
-                if app
-                    .run_on_main_thread(move || {
-                        if let Some(win) = handle.get_webview_window("overlay") {
-                            let _ = win.set_ignore_cursor_events(!want);
-                        }
-                    })
-                    .is_err()
+                if super::super::on_main_window(&app, "overlay", move |win| {
+                    let _ = win.set_ignore_cursor_events(!want);
+                })
+                .is_err()
                 {
                     // The hop never ran, so the window state did not change —
                     // un-lie the flag instead of leaving it permanently desynced.

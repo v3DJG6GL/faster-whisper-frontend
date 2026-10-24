@@ -193,7 +193,7 @@ mod sni {
     use ksni::{menu::StandardItem, Handle, Icon, MenuItem, ToolTip, TrayMethods};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
-    use tauri::{App, AppHandle, Manager};
+    use tauri::{App, AppHandle};
 
     /// The running tray, for tooltip updates. Unset while connecting and when there is none.
     static HANDLE: OnceLock<Handle<SniTray>> = OnceLock::new();
@@ -379,13 +379,10 @@ mod sni {
     /// still connecting) comes back minimized, so the taskbar can reach it.
     fn mark_missing(app: &AppHandle) {
         MISSING.store(true, Ordering::Relaxed);
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Some(window) = handle.get_webview_window("main") {
-                if !window.is_visible().unwrap_or(true) {
-                    crate::aux_windows::visibility::show(&window);
-                    let _ = window.minimize();
-                }
+        let _ = crate::aux_windows::on_main_window(app, "main", |window| {
+            if !window.is_visible().unwrap_or(true) {
+                crate::aux_windows::visibility::show(window);
+                let _ = window.minimize();
             }
         });
     }
@@ -423,13 +420,10 @@ pub(crate) fn show_main(app: &AppHandle) {
     // calls off the main thread can crash/hang. run_on_main_thread queues onto the loop, so
     // the already-on-main callers (tray menu events, the sync show_main_at_screen command)
     // stay correct without deadlocking.
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(window) = handle.get_webview_window("main") {
-            crate::aux_windows::visibility::show(&window);
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
+    let _ = crate::aux_windows::on_main_window(app, "main", |window| {
+        crate::aux_windows::visibility::show(window);
+        let _ = window.unminimize();
+        let _ = window.set_focus();
     });
 }
 
@@ -437,16 +431,12 @@ pub(crate) fn show_main(app: &AppHandle) {
 /// otherwise bring it up like `show_main`. Hiding goes through the same visibility notice as the
 /// close-to-tray path, so the webview knows it went to the tray.
 pub(crate) fn toggle_main(app: &AppHandle) {
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let Some(window) = handle.get_webview_window("main") else {
-            return;
-        };
+    let _ = crate::aux_windows::on_main_window(app, "main", |window| {
         let up = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
         if up && !tray_missing() {
-            crate::aux_windows::visibility::hide(&window);
+            crate::aux_windows::visibility::hide(window);
         } else {
-            crate::aux_windows::visibility::show(&window);
+            crate::aux_windows::visibility::show(window);
             let _ = window.unminimize();
             let _ = window.set_focus();
         }
