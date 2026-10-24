@@ -310,8 +310,7 @@ export function effectiveServerUrl(backend: Backend, settings: AppSettings): str
   // and `.trim()` on it throws in render. The id sanitizer's `__..__` filter does not reject those.
   const raw = settings.sync?.urlOverrides?.[backend.id];
   // Stored form, as Server URL is saved: a schemeless `host:8000` typed into "Address on this
-  // device" gains `http://` — the Rust transport only trims and reqwest refuses an address
-  // without a scheme.
+  // device" gains `http://` too.
   const override = typeof raw === "string" ? storedTypedUrl(raw) : "";
   return override ? override : backend.serverUrl;
 }
