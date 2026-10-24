@@ -23,5 +23,5 @@ ignore = [
 
 # `unmaintained` and `unsound` advisories are reported but do NOT fail the build. The GTK3 binding
 # family (gtk / gdk / atk / glib 0.18) is unmaintained-but-deliberate — Cargo.toml pins it to
-# tao/wry's ABI and renovate.json lists it in ignoreDeps — so "fixing" it would mean breaking the
-# webview. Leaving them visible-but-non-fatal is what keeps the list worth reading.
+# tao/wry's ABI — so "fixing" it would mean breaking the webview. Leaving them
+# visible-but-non-fatal is what keeps the list worth reading.
