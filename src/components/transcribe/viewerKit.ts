@@ -3,7 +3,7 @@
 import { capCodePoints, stripControlChars } from "@/lib/sanitize";
 
 /** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
- *  the light/dark theme): readable text, a soft fill, and a solid dot. */
+ *  the light/dark theme): readable text on a soft fill. */
 export function chipStyle(color: string) {
   return { color, backgroundColor: `color-mix(in srgb, ${color} 12%, transparent)` };
 }
@@ -26,19 +26,17 @@ export function speakerRenameValue(draft: string): string {
   return capCodePoints(name, SPEAKER_NAME_MAX).trim();
 }
 
-/** The rename field's next draft: maxLength's behaviour, counted in code points (an input's
- *  maxLength counts UTF-16 units, which stopped an emoji or CJK Ext-B name at 20). An edit that
- *  grows the draft past the cap keeps only as much of the inserted run as fits: a paste fills
- *  the field to the cap, and a keystroke at the cap inserts nothing — cutting the tail instead
- *  deleted the name's end on a mid-string typo fix. `insertEnd` is the field's caret after the
- *  input (UTF-16 index into `typed`), where the inserted run ends: everything after it is the
- *  text that was already there. A prefix/suffix diff alone cannot tell where a paste starting
- *  with the characters after the caret ends, and cut the name's own tail instead. Without a
- *  caret (or one the text after it contradicts) the run is the part between the common prefix
- *  and suffix of `prev` and `typed`. `caret` is where the kept insertion ends (UTF-16 index),
- *  null when the draft is `typed` as the browser has it. A shorter or equal value (a deletion,
- *  or a name stored before the cap being trimmed) and an open IME composition (cutting it
- *  mid-composition ends or duplicates it) pass as typed: the commit caps (speakerRenameValue). */
+/** The rename field's next draft: maxLength's behaviour counted in code points (an input's
+ *  maxLength counts UTF-16 units, halving the cap for an emoji or CJK Ext-B name). An edit that
+ *  grows the draft past the cap keeps only as much of the inserted run as fits — a paste fills
+ *  the field to the cap, a keystroke at the cap inserts nothing — rather than cutting the tail,
+ *  which deleted the name's end on a mid-string typo fix. `insertEnd` is the caret after the
+ *  input (UTF-16 index into `typed`): the text after it was already there, which a prefix/suffix
+ *  diff alone cannot tell for a paste that starts with the characters after the caret. Without a
+ *  usable caret the run is what lies between the common prefix and suffix of `prev` and `typed`.
+ *  Returned `caret` = where the kept insertion ends (UTF-16), null when the draft is `typed` as
+ *  is. A shorter or equal value and an open IME composition (cutting it mid-composition ends or
+ *  duplicates it) pass as typed: the commit caps (speakerRenameValue). */
 export function speakerRenameEdit(
   prev: string,
   typed: string,
