@@ -59,8 +59,6 @@ export function contentStates(a: {
       ...(!a.hasSpeakers ? noSpeakers
         : siteOnly ? siteNoSpeakers
           : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
-            // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
-            // names an original line as a voice tag, which players may hide (vttExport).
             : { ...toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
               : vttNames === "mixed"
                 ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"
