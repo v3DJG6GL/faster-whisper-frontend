@@ -1,4 +1,6 @@
-// Backend-resolution helpers shared by transport call sites.
+// Backend helpers: server-address cleaning and storage, the not-encrypted warning, the fresh-Backend
+// factory, the effective per-run values (language, override profile, translation model, URL) and
+// the pickers' collision-proof labels.
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
@@ -286,7 +288,6 @@ export function backendPromptFields(
   return { prompt: v ?? "", promptCleared: v === "" ? true : undefined };
 }
 
-/** A human default name for a backend at `url` — its host, or a fallback. */
 export function nameFromUrl(url: string): string {
   try {
     return new URL(url).host || "My server";
