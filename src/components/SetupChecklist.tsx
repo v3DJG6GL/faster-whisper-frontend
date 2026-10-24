@@ -1,10 +1,9 @@
 // Home's "Finish setting up" card — the permanent foundation under the
-// first-run gate (design v4, "B standing on C"). Shows whenever the app lacks
-// a backend or any profile: after "Skip for now", after a partial onboarding,
-// or after deleting the last backend months in. Steps deep-link to the REAL
-// screens so setup teaches the app's geography; quick add is an explicitly
-// optional third row that never blocks the done state (the counter reads n/2
-// on purpose). Completing both required steps retires the card entirely.
+// first-run gate. Shows whenever the app lacks a backend or any profile:
+// after "Skip for now", after a partial onboarding, or after deleting the last
+// backend months in. Steps deep-link to the REAL screens so setup teaches the
+// app's geography; quick add is an explicitly optional third row that never
+// blocks the done state (the counter reads n/2 on purpose).
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
