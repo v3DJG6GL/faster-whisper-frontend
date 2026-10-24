@@ -548,9 +548,9 @@ function resetUtteranceHistory(): void {
 
 // Dictation translation (per-profile "Translate output"), frozen per session from
 // Backend→Profile translationOverrides; target set = every injection carries the translation
-// instead of the original. All doc bookkeeping (committedDoc/injectedText/seenDoc/clipBaseline)
-// stays in ORIGINAL text — only the outbound copy is swapped — so phrase diffing, history
-// capture and recovery paths are structurally untouched.
+// (the original first only with includeOriginal). All doc bookkeeping (committedDoc/injectedText/
+// seenDoc/clipBaseline) stays in ORIGINAL text — only the outbound copy is swapped — so phrase
+// diffing, history capture and recovery paths are structurally untouched.
 /** The session's resolved translation context WITHOUT targets, kept so a settle-time pick
  *  can create a translation the Profile didn't configure (`applySessionTargets`). Set at
  *  every session start, even when `sessionTranslation` itself is null. */
@@ -1150,7 +1150,7 @@ let phraseDeferSince: number | null = null;
 // await. Cleared on every fresh start and on cancel so a stale flip can't latch an unrelated session.
 let pendingReclassify: Profile | null = null;
 // Chord family, the other answer: the hands-free superset needs a session the hold's can't be
-// upgraded into (another backend/language/…, see dictation.ts `sessionShape`). A restart that
+// upgraded into (another backend/language/…, see `sessionShape`). A restart that
 // lands during the start prologue waits here until the prologue settles; startLive's `finally`
 // then cancels the hold session (if it came up) and runs this to start the hands-free one.
 // Cleared on every fresh start and on cancel, like pendingReclassify.
@@ -1193,9 +1193,8 @@ function enqueueInject(fn: () => Promise<void>): boolean {
   return true;
 }
 
-/** Enqueue a real Enter into the window focused NOW. Empty text routes through the keystroke
- *  path (no clipboard), so the per-phrase Enter never clobbers the clipboard. Clipboard-only
- *  types nothing, so it no-ops there. */
+/** Enqueue a real Enter (pressReturn) into the window focused NOW. Clipboard-only types
+ *  nothing, so it no-ops there. */
 function enqueueAutoEnter(): void {
   // Capture the session token SYNCHRONOUSLY so the task bails on a cancel (insertCfg→null) AND on
   // a cancel-then-restart (a NEW insertCfg) landing during the await — else a stray Enter fires into
@@ -1482,7 +1481,7 @@ export function resolveInjectionTarget(
  *  paste-shortcut to use RIGHT NOW. Called per injection — NOT once at dictation start — so
  *  per-app rules follow window switches mid-session: a hands-free/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
- *  whatever was focused when dictation began. Shares resolveInjectionTarget with startLive. */
+ *  whatever was focused when dictation began. */
 async function resolveTarget(cfg: InsertCfg | null): Promise<
   // Every field resolveInjectionTarget resolves, minus the two only the chip readout reads — spread
   // rather than re-listed, so a new per-app insertion field can't be silently dropped here.
@@ -2034,8 +2033,8 @@ async function ensureListeners(): Promise<void> {
       if (latestLevel > MIC_LIVE_LEVEL) {
         if (++micLiveHits >= MIC_LIVE_CONFIRM) {
           clearWarmTimer();
-          // Real audio flowed → the mic genuinely went live. micLive gates the start/stop cues so
-          // they don't fire for a session that starts/ends during warm-up (mic never live).
+          // micLive gates the start/stop cues so they don't fire for a session that starts/ends during
+          // warm-up (mic never live).
           setDictation({ warming: false, micLive: true });
         }
       } else {
@@ -2242,9 +2241,8 @@ async function ensureListeners(): Promise<void> {
       const queued = enqueueInject(async () => {
         const t = await resolveTarget(cfg);
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
-        // window, and don't let the bookkeeping/catches below touch the next session (insertCfg!==cfg
-        // catches both a cancel→null and a cancel-then-restart→new object; stopLive keeps cfg, so a
-        // normal end-of-session phrase still lands).
+        // window, and don't let the bookkeeping/catches below touch the next session (stopLive keeps
+        // cfg, so a normal end-of-session phrase still lands).
         if (insertCfg !== cfg) return;
         // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
         // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
@@ -2259,9 +2257,8 @@ async function ensureListeners(): Promise<void> {
           const live = reopen?.landed ? reopen : null;
           const phraseClip = live ? reopenClip : plainClip;
           const clipFrom = Math.max(0, (live ? reopenStartRaw : plainStartRaw) - lead);
-          // Copy just the current hard-break window (everything since the last pause), never the whole
-          // session, and pulse the chip's clipboard glyph per phrase. `grew` is false for a re-sent final
-          // (the drain's flush final at hands-free end), so that doesn't re-copy and re-pulse the last phrase.
+          // Pulse the chip's clipboard glyph per phrase; `grew` keeps a re-sent final (the drain's flush
+          // final at hands-free end) from re-copying and re-pulsing the last phrase.
           //
           // A final that only appends the server's output_suffix ("\n" or " ") is skipped too: the window
           // it would copy is already on the clipboard (or is the closed window a release reopens), and
@@ -2517,9 +2514,9 @@ async function ensureListeners(): Promise<void> {
               // paste should already have left the transcript there (Rust skips the restore on a failed paste,
               // and the teardown drops the snapshot unrestored), but ASK, don't assert: a clipboard write can
               // fail (`landed: false`), so asserting would promise a recovery exactly where the clipboard is
-              // broken. Re-copying cannot duplicate text — the paste already failed. The copy takes the same
-              // clipboard form Rust's own writes take (`clipboardText`). Whitespace alone is not copied: a lone
-              // "\n" over the user's clipboard, flashing "on the clipboard" for nothing. The teardown still runs.
+              // broken. Re-copying cannot duplicate text — the paste already failed. Whitespace alone is not
+              // copied: a lone "\n" over the user's clipboard, flashing "on the clipboard" for nothing. The
+              // teardown still runs.
               const recoverable = !spacingOnly && await recoverToClipboard(
                 clipboardText ?? typeOut,
                 t,
@@ -2562,8 +2559,7 @@ async function ensureListeners(): Promise<void> {
             if (delivered && diverted) {
               // Rust wrote a persistent clipboard owner INSTEAD of pasting, so our transcript is what the
               // user must now paste and no restore is owed (as on the clipboard-only path): the end-of-phrase
-              // restore would put the user's old clipboard back over it. The copy is the `clipboardText` Rust
-              // was handed, without the field's phrase gap.
+              // restore would put the user's old clipboard back over it.
               clipDirty = false;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
               // dictation (this phrase sits on the clipboard), and Enter would submit that part —
@@ -2729,8 +2725,7 @@ async function ensureListeners(): Promise<void> {
     // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
     // detached WS drain can still emit a late boundary, which must not bank into (or type a
     // separator for) a session that already ended. Cancel and stream://error both null insertCfg,
-    // but the bank and clear below run before any insertCfg check, so only process a boundary
-    // while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
+    // but the bank and clear below run before any insertCfg check.
     if (!inSession()) return;
     // Long-silence hard break: the server reset its document.
     const sep = e.payload || "";
@@ -3283,9 +3278,10 @@ async function ensureListeners(): Promise<void> {
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on error failed:", err));
     // Stop-timing streaming injects the whole transcript only from the `closed` tail, which never runs
-    // after an error — so copy it to the clipboard (swap only) or it is lost. Read synchronously:
-    // committedDoc/bankedDoc survive the error path and reset only on the next startLive. Live mode
-    // injected per-phrase → "". endInjection above is a no-op in stop mode (nothing snapshotted).
+    // after an error — so copy it to the clipboard (swap only) or it is lost. Read synchronously,
+    // before a later cancel / startLive can clear committedDoc/bankedDoc (the error path itself
+    // keeps them). Live mode injected per-phrase → "". endInjection above is a no-op in stop mode
+    // (nothing snapshotted).
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
     // No `closed` settles this session, so book its usage outcome here. Claim it before the teardown:
     // a cancel during the error linger would otherwise book first. With stop-mode text to recover the
@@ -3859,7 +3855,6 @@ async function startLiveInner(
     micFallback: null,
     targetApp: insertCfg.targetApp,
     targetSkip,
-    // Clear any prior session's done marker / pulse / note so the fresh session starts clean.
     lastInsert: null,
     sessionOutcome: null,
     sessionNote: null,
@@ -3894,8 +3889,6 @@ async function startLiveInner(
   // the live `final` handler), so it tracks the clipboard at each phrase and a session that starts
   // in a non-paste window still restores once it pastes.
 
-  // Per-device address override ("use this URL on this device") wins over the
-  // synced canonical serverUrl for the actual connection.
   const sessionServerUrl = effectiveServerUrl(backend, useApp.getState().settings);
   startInvokeInFlight = true;
   cancelDuringStartInvoke = null;
@@ -4283,9 +4276,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
     // A user Cancel ABORTS, not finishes: skip the drain (streaming) / the transcription POST
     // (batch) — they'd produce a result we immediately throw away — and release the system-mute
     // guard right away. A recovery cancel (keepRecording) keeps the audio instead (see CancelOpts).
-    // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
-    // right now — in stop-timing mode the session is already gone by then, and the flag is
-    // the only thing that distinguishes this from the closed handler's release.
+    // `true`: this is a cancel (recovery ones included), so Rust also aborts a transcript that is
+    // being typed right now — in stop-timing mode the session is already gone by then, and the
+    // flag is the only thing that distinguishes this from the closed handler's release.
     if (owedToStart) {
       // startLiveInner's post-invoke cancel
     } else if (endpoint === "batch") await cancelRecord(true, !opts?.keepRecording);
