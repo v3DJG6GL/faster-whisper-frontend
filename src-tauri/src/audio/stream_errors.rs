@@ -67,7 +67,7 @@ impl ErrorGate {
         }
 
         // Per-second buckets for the storm breaker. A hot bucket only counts toward a storm when
-        // the next one follows straight on; a quiet gap in between resets the streak.
+        // the next one opens within a second of its end; a longer quiet gap resets the streak.
         match self.sec_start {
             Some(start) if now.duration_since(start) < Duration::from_secs(1) => {}
             _ => {
