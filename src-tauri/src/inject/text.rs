@@ -1,7 +1,7 @@
 //! Inserting one transcript into the focused app: the work behind the `inject_text` command.
 //! The Tauri command itself stays a thin wrapper in `commands/inject.rs`.
 
-use crate::commands::{own_window_focused, read_selection_bounded};
+use crate::commands::{blocking, own_window_focused, read_selection_bounded};
 use crate::inject::wayland::WaylandTyper;
 use crate::inject::{sink_gate, SinkGate};
 use tauri::{AppHandle, Manager, State};
@@ -81,9 +81,7 @@ impl InjectOutcome {
 /// `inject_text` is async, so calling it inline parks a runtime worker for that long. Still
 /// awaited in place, so every call site keeps its ordering and its Ok/Err handling.
 pub(crate) async fn persist_off_runtime(text: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || crate::inject::set_clipboard_persistent(&text))
-        .await
-        .map_err(|e| e.to_string())?
+    blocking(move || crate::inject::set_clipboard_persistent(&text)).await
 }
 
 /// `persist_off_runtime` for a write gated on a cancel: `cancelled` is asked again after the
@@ -93,11 +91,7 @@ async fn persist_off_runtime_unless(
     text: String,
     cancelled: impl Fn() -> bool + Send + 'static,
 ) -> Result<bool, String> {
-    tokio::task::spawn_blocking(move || {
-        crate::inject::set_clipboard_persistent_unless(&text, cancelled)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    blocking(move || crate::inject::set_clipboard_persistent_unless(&text, cancelled)).await
 }
 
 /// The body of the `inject_text` command (see [`crate::commands::inject_text`] for the
@@ -624,9 +618,7 @@ pub(crate) async fn inject_text(
             let set_res = if remote_target {
                 persist_off_runtime(clip).await
             } else {
-                tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
-                    .await
-                    .map_err(|e| e.to_string())?
+                blocking(move || crate::inject::set_clipboard(&clip)).await
             };
             set_res?;
             // The transcript is on the clipboard now, so this is where the paste went — see
