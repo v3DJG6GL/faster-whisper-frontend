@@ -49,6 +49,15 @@ import {
 import type { UsageHourCell, UsageSeriesPoint, UsageStage } from "./types";
 
 const T = (words = 0, sessions = 0, audio_s = 0) => ({ sessions, requests: sessions, errors: 0, words, audio_s, processing_s: 0 });
+const translatingStage = (targets: UsageStage["targets"], over: Partial<UsageStage> = {}): UsageStage => ({
+  stage: "translating",
+  runs: 10,
+  of_runs: 10,
+  audio_s: 0,
+  secs: 0,
+  targets,
+  ...over,
+});
 const pt = (day: number, dict = 0, file = 0): UsageSeriesPoint => ({
   day,
   all: T(dict + file, (dict ? 1 : 0) + (file ? 1 : 0)),
@@ -476,7 +485,7 @@ describe("usageDerive", () => {
   });
 
   it("stage helpers: findStage ignores zero-run rows; shares and pct", () => {
-    const st: UsageStage = { stage: "translating", runs: 10, of_runs: 40, audio_s: 0, secs: 0, targets: [{ code: "en", runs: 6 }, { code: "fr", runs: 3 }, { code: "it", runs: 0 }] };
+    const st = translatingStage([{ code: "en", runs: 6 }, { code: "fr", runs: 3 }, { code: "it", runs: 0 }], { of_runs: 40 });
     expect(findStage([st], "translating")).toBe(st);
     expect(findStage([{ ...st, runs: 0 }], "translating")).toBeUndefined();
     expect(findStage(undefined, "vad")).toBeUndefined();
@@ -489,14 +498,7 @@ describe("usageDerive", () => {
   });
 
   it("targetShares: trims, clips to 12 like translationRows and drops blank codes", () => {
-    const st: UsageStage = {
-      stage: "translating",
-      runs: 10,
-      of_runs: 10,
-      audio_s: 0,
-      secs: 0,
-      targets: [{ code: " zh-Hant-TW ", runs: 5 }, { code: "", runs: 4 }, { code: "  ", runs: 3 }, { code: "de", runs: 1 }],
-    };
+    const st = translatingStage([{ code: " zh-Hant-TW ", runs: 5 }, { code: "", runs: 4 }, { code: "  ", runs: 3 }, { code: "de", runs: 1 }]);
     expect(targetShares(st)).toEqual([
       { code: "ZH-HANT-TW", pct: 50 },
       { code: "DE", pct: 10 },
@@ -552,14 +554,7 @@ describe("usageDerive", () => {
     expect(rows[0].label).toBe("DE");
     expect(rows[0].title?.startsWith("DE ·")).toBe(true);
     expect(rows[1].label).toBe("Kept original"); // the bidi-only code is dropped, not a blank row
-    const st: UsageStage = {
-      stage: "translating",
-      runs: 10,
-      of_runs: 10,
-      audio_s: 0,
-      secs: 0,
-      targets: [{ code: "‮", runs: 6 }, { code: "​ fr", runs: 3 }, { code: "😀".repeat(13), runs: 1 }],
-    };
+    const st = translatingStage([{ code: "‮", runs: 6 }, { code: "​ fr", runs: 3 }, { code: "😀".repeat(13), runs: 1 }]);
     expect(targetShares(st)).toEqual([
       { code: "FR", pct: 30 },
       { code: "😀".repeat(12), pct: 10 },
@@ -569,14 +564,7 @@ describe("usageDerive", () => {
   it("a joiner-only target code yields no language row or pill", () => {
     const rows = translationRows({ targets: [{ code: "\u200d", runs: 3, kept_original: 0 }] });
     expect(rows.map((r) => r.label)).toEqual(["Kept original", "Not asked"]);
-    const st: UsageStage = {
-      stage: "translating",
-      runs: 10,
-      of_runs: 10,
-      audio_s: 0,
-      secs: 0,
-      targets: [{ code: "\u200d", runs: 3 }, { code: " \u200c de", runs: 2 }],
-    };
+    const st = translatingStage([{ code: "\u200d", runs: 3 }, { code: " \u200c de", runs: 2 }]);
     expect(targetShares(st)).toEqual([{ code: "DE", pct: 20 }]);
   });
 
