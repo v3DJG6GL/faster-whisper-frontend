@@ -89,7 +89,7 @@ export default function QuickAdd() {
   const [find, setFind] = useState("");
   const [insert, setInsert] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  // What the server named when it rejected the rows (a 422) — the "not saved" badge's reason.
+  // Why the rows were not saved (a 422 or dictionary cap, or a case twin held back) — the "not saved" badge's reason.
   const [rejectReason, setRejectReason] = useState("");
   // A list edit refused because the server's word-list schema would reject it (mapEntryProblem),
   // and why — shown under that row until its next accepted edit.
@@ -178,11 +178,10 @@ export default function QuickAdd() {
     }
   }, []);
 
-  // Memoized so editing the insert field or a list row doesn't rebuild the Set + filtered pool
-  // (and hand a fresh array into Combobox, re-running its rank) on every keystroke. Mirrors the
-  // Dictionary RuleCard's usedKeys/keySuggestions memos.
   // Render cap only — `rows` stays whole because mapBodyFromRows sends it back as the ENTIRE map,
   // so trimming the state itself would delete the server's other entries on the next save.
+  // The memos below keep a keystroke in the insert field or a list row from rebuilding the Set +
+  // filtered pool (and handing a fresh array into Combobox, re-running its rank).
   const shownRows = useMemo(() => rows.slice(0, MAX_SHOWN_ROWS), [rows]);
   const usedKeys = useMemo(() => new Set(rows.map((r) => r.k.trim().toLowerCase()).filter(Boolean)), [rows]);
   const suggestions = useMemo(() => recent.filter((w) => !usedKeys.has(w.toLowerCase())), [recent, usedKeys]);
@@ -236,8 +235,6 @@ export default function QuickAdd() {
         generalRef.current = cfg.settings.general;
         appRulesRef.current = wellFormedAppRules(cfg.appRules);
       }
-      // Per-device address override wins for the connection (cfg is this
-      // window's own readConfig snapshot — the quick-add webview has no store).
       const t = quickAddTargetOnLoad(target.current, cfg);
       target.current = t;
       if (!t) {
@@ -407,7 +404,7 @@ export default function QuickAdd() {
       // Don't re-fetch over unsaved rows: refresh() replaces `rows` with the server map (and resets
       // saveState to "idle", dropping the only retry signal), and a still-armed 600ms saveTimer
       // would then re-save the stale server rows. Unsaved = timer armed, PATCH in flight
-      // ("saving"), failed ("error"), or "rejected" (a 422: the user's rows to fix, never
+      // ("saving"), failed ("error"), or "rejected" (the rows themselves refused: the user's to fix, never
       // auto-retried — the same rows would be rejected again). A "pinned" save is not: the server
       // will never take those rows, so re-sync to what it serves.
       // refreshLocalConfig runs unconditionally, ahead of the branch: the policy this window types
