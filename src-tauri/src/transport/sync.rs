@@ -56,7 +56,7 @@ const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 ///
 /// The other bounds on this data sit on CONSUMERS (`MAX_SYNCED_ENTRIES` = 500 entries per
 /// category, the render caps, the per-field caps), never on the blob, which would otherwise take
-/// the transcription-sized [`MAX_BODY`] (32 MiB). A sanitizer-passing blob of that size (500
+/// the transcription-sized [`super::MAX_BODY`] (32 MiB). A sanitizer-passing blob of that size (500
 /// backends × 60 KB prompt ≈ 29 MiB) costs ~1.5-2 s of main-thread block per pull, on a route that
 /// runs UNATTENDED at startup and on every window focus, and is persisted to `sync-state.json` as
 /// the 3-way merge base, re-read and re-hashed at every launch.
