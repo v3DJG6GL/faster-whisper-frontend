@@ -273,6 +273,11 @@ function vttClass(lang: string): string {
   return codeSlug(lang.toLowerCase(), 12, "x");
 }
 
+/** The generated WebVTT class of the speaker at `index` in ctx.order (spk1, spk2, …) — never user text. */
+function spkClass(index: number): string {
+  return `spk${index + 1}`;
+}
+
 /** Cue text lines for one segment across the included tracks, in track order.
  *  `mt` renders a translated line; the speaker is language-independent, so the
  *  color modes style it exactly as they style the original. */
@@ -567,7 +572,7 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     // browsers; players like mpv/VLC degrade to plain text.
     out.push("STYLE");
     ctx.order.forEach((label, i) => {
-      out.push(`::cue(.spk${i + 1}) { color: ${colorOf(ctx, label)}; }`);
+      out.push(`::cue(.${spkClass(i)}) { color: ${colorOf(ctx, label)}; }`);
     });
     out.push("");
   }
@@ -575,7 +580,7 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     /** An escaped line in the original's speaker markup (the original and site tracks). */
     const plain = (text: string): string => {
       if (!text || !seg.speaker || !ctx.hasSpeakers) return text; // no bare name on a blank line
-      const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
+      const cls = spkClass(Math.max(0, ctx.order.indexOf(seg.speaker)));
       if (!ctx.names) return mode === "off" ? text : `<c.${cls}>${text}</c>`;
       const name = vttEscape(nameOf(ctx, seg.speaker));
       if (mode === "off") return `<v ${name}>${text}</v>`;
@@ -596,7 +601,7 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
       if (mode === "off") {
         return `<c.${mt}>${ctx.names ? `${name}: ` : ""}${escaped}</c>`;
       }
-      const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
+      const cls = spkClass(Math.max(0, ctx.order.indexOf(seg.speaker)));
       if (!ctx.names) return `<c.${mt}.${cls}>${escaped}</c>`;
       if (mode === "name") return `<c.${cls}>${name}:</c> <c.${mt}>${escaped}</c>`;
       if (mode === "line") return `<c.${mt}.${cls}>${name}: ${escaped}</c>`;
