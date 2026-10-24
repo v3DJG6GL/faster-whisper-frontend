@@ -1,5 +1,3 @@
-# .forgejo/workflows/mirror-gh-releases.yml
-#
 # Reconciling one-way sync of published releases (metadata + installer
 # assets) from this instance to the git mirror at
 # github.com/v3DJG6GL/faster-whisper-frontend. The repo mirror only moves
@@ -33,20 +31,18 @@
 #   * Drafts are skipped (release.yml stages uploads in a draft before
 #     flipping it live — mirroring one would leak a half-built release).
 #   * Existing GitHub releases get name/body/prerelease drift patched.
-#   * Assets are matched by name (neither the Forgejo nor the GitHub release
-#     API exposes a digest for an attachment); every downloaded byte is
-#     verified against the release's own SHA256SUMS file before it is pushed
-#     on. The SHA256SUMS files themselves are compared by CONTENT: their size
-#     never changes within a tag (fixed-width digests + version-stamped
-#     names). Every other asset is compared by size AND by its digest in the
-#     source sums vs the GitHub copy of the sums — since f752520 those describe
-#     exactly the bytes a previous run verified and uploaded (a manual run
-#     with verify_bytes hashes GitHub's installers to repair older mirrors),
-#     so a rebuilt release whose installer kept its byte count (sector-padded
-#     MSI) is still caught without downloading the GitHub installer. Any mismatch means an
-#     interrupted upload or a rebuilt release, so the GitHub copy is replaced.
-#     The sums are uploaded after the installers of their release, so GitHub
-#     only ever gets new sums once the installers they describe are in place.
+#   * Assets are matched by name (Forgejo's release API exposes no digest
+#     for an attachment); every downloaded byte is verified against the
+#     release's own SHA256SUMS file before it is pushed on. The SHA256SUMS
+#     files themselves are compared by CONTENT: their size never changes
+#     within a tag (fixed-width digests + version-stamped names). Every other
+#     asset is compared by size AND by its digest in the source sums vs the
+#     GitHub copy of the sums, which describe exactly the bytes a previous run
+#     verified and uploaded — so a rebuilt installer that kept its byte count
+#     (sector-padded MSI) is caught without downloading it. Any mismatch means
+#     an interrupted upload or a rebuilt release: the GitHub copy is replaced.
+#     The sums are uploaded after their release's installers, so GitHub only
+#     ever gets new sums once the installers they describe are in place.
 #     An asset with no published digest (a release older than SHA256SUMS) is
 #     skipped with a warning, never uploaded.
 #   * Releases are processed oldest-first so GitHub's "latest release"
@@ -75,8 +71,8 @@ on:
   workflow_dispatch:
     inputs:
       verify_bytes:
-        # Releases mirrored before the sums-based installer check (f752520) may hold an
-        # old same-size installer next to new sums — the sums check cannot see that. A
+        # Releases mirrored before the sums-based installer check may hold an old
+        # same-size installer next to new sums — the sums check cannot see that. A
         # manual run with this on hashes GitHub's installer bytes once and repairs it.
         description: Also download and hash GitHub's installers (one-time repair of older mirrors)
         type: boolean
@@ -129,7 +125,6 @@ jobs:
           dget() { curl -fsS --retry 3 --retry-delay 5 --retry-connrefused --retry-all-errors -H "$DST_HDR" "$@"; }
           dput() { curl -fsS -H "$DST_HDR" "$@"; }
 
-          # ---- list source releases (paginated), drafts dropped ----------
           page=1
           : > src.ndjson
           while :; do
@@ -145,7 +140,6 @@ jobs:
             exit 1
           fi
 
-          # ---- list destination releases (paginated) ---------------------
           page=1
           : > dst.ndjson
           while :; do
@@ -198,21 +192,17 @@ jobs:
 
             # The release publishes a SHA256SUMS file per build leg. Pull them first so every
             # other asset can be checked against a real digest rather than just its byte count —
-            # the API exposes no digest of its own on either side (verified: Forgejo's Attachment
-            # schema has none, and neither does GitHub's).
+            # Forgejo's Attachment schema exposes no digest of its own.
             : > allsums.txt
             : > gh-allsums.txt
             # Each fetched sums file is also kept as src-<name> (and GitHub's copy as gh-<name>)
             # for the comparisons in the asset loop below; clear the previous release's copies.
             rm -f src-SHA256SUMS* gh-SHA256SUMS*
             sumsfound=0
-            # `done < <(jq …)` is a PROCESS SUBSTITUTION, whose exit status `set -euo pipefail`
-            # does not observe either — the same class of exemption as the if-condition noted
-            # below, one step upstream. Go marshals a nil slice as `null`, so a release whose
-            # `.assets` came back malformed made jq error while BOTH loops ran zero iterations:
-            # allsums.txt stayed empty, no asset was mirrored, and the job reported success.
-            # A plain assignment IS checked, so a malformed payload now fails the job while
-            # `// []` keeps a legitimately asset-less release a quiet no-op.
+            # A plain assignment, not `done < <(jq …)`: `set -euo pipefail` ignores a process
+            # substitution's exit status, so a malformed `.assets` (Go marshals a nil slice as
+            # `null`) would run both loops zero times and report success. `// []` keeps a
+            # legitimately asset-less release a quiet no-op.
             # sort_by is stable and false < true: the SHA256SUMS files go last (see header), so a
             # run that dies replacing an installer never leaves GitHub's new sums beside it.
             assets=$(jq -c '.assets // [] | sort_by((.name // "") | startswith("SHA256SUMS")) | .[]' <<<"$rel")
@@ -224,19 +214,16 @@ jobs:
                 *) continue ;;
               esac
               sumsfound=$((sumsfound + 1))
-              # NOT inside an `if`: a command in an if-condition is exempt from `set -e`, so a
-              # 404 or a persistent 5xx used to leave allsums.txt short and the per-asset check
-              # below then silently degraded to a size comparison — exactly the failure someone
-              # tampering with a release would induce. Fail the job instead.
+              # NOT inside an `if` (exempt from `set -e`): a 404 or persistent 5xx must fail the
+              # job, not leave allsums.txt short and silently degrade the per-asset check to a
+              # size comparison — exactly the failure someone tampering with a release would induce.
               sget -o "src-$sname" "$(jq -r '.browser_download_url' <<<"$sasset")"
               cat "src-$sname" >> allsums.txt
-              # GitHub's copy of the same file. Unlike the source fetch above, this one IS inside
-              # an `if` on purpose: a GitHub sums asset that cannot be read (an upload GitHub keeps
-              # listed in "starter" state, a persistent 5xx) must not abort the job — releases are
-              # walked oldest-first, so one bad old asset would block every newer release (the
-              # run-848 class). A missing copy only reads as drift: the sums and every installer
-              # of this release are re-uploaded from verified source bytes. A size mismatch is
-              # drift already, so it is not even downloaded.
+              # GitHub's copy, deliberately inside an `if`: an unreadable GitHub sums asset (an
+              # upload stuck in "starter" state, a persistent 5xx) must not abort the job — releases
+              # are walked oldest-first, so one bad old asset would block every newer release. A
+              # missing copy just reads as drift (re-uploaded from verified source bytes); a size
+              # mismatch is drift already, so it is not even downloaded.
               smatch=$(jq -c --arg n "$sname" '.[] | select(.name == $n)' <<<"$dassets")
               if [ -n "$smatch" ] && [ "$(jq -r '.size' <<<"$smatch")" = "$(jq -r '.size' <<<"$sasset")" ] &&
                 dget -L -H 'Accept: application/octet-stream' -o "gh-$sname" \
@@ -288,19 +275,13 @@ jobs:
                 esac
               fi
               if [ -z "$want" ] && [ "${aname#SHA256SUMS}" = "$aname" ]; then
-                # No digest for this asset. Every release built since SHA256SUMS was introduced
-                # publishes one per leg, so this now means either a release predating that, or an
-                # asset someone added to the release out of band. Refuse to mirror it: a size
-                # check cannot tell a correct installer from a same-size replacement, and the job
-                # summary claims every byte is verified.
-                #
-                # Skip the asset rather than fail the job: releases are walked oldest-first, so
-                # an `exit 1` here on one OLD (pre-SHA256SUMS) release whose asset is missing on
-                # the GitHub side stopped every newer release from mirroring, forever (run 848:
-                # v0.1.36 blocked 80 releases). The guarantee is unchanged — unverified bytes are
-                # never uploaded (nor even downloaded: this runs before the fetch) — and the
-                # warning plus the summary count keep it visible. Resolve it by publishing a
-                # SHA256SUMS for that release or deleting the entry.
+                # No digest: a release predating SHA256SUMS, or an asset added out of band.
+                # Refuse to mirror it — a size check cannot tell a correct installer from a
+                # same-size replacement, and the summary claims every byte is verified. Skip
+                # rather than fail: releases are walked oldest-first, so an `exit 1` on one old
+                # release would block every newer one forever. Unverified bytes are never
+                # uploaded (nor downloaded: this runs before the fetch); resolve it by publishing
+                # a SHA256SUMS for that release or deleting the entry.
                 echo "::warning::[$tag] $aname has no published sha256 (release published ${sumsfound} SHA256SUMS asset(s)) — not mirroring unverified bytes"
                 unverified=$((unverified + 1))
                 continue
