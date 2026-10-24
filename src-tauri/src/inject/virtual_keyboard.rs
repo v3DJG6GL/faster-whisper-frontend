@@ -190,11 +190,11 @@ mod imp {
             let failed = res.is_err();
             let _ = job.reply.send(res);
             if failed {
-                // A type_text error means a roundtrip/flush failed — the wl connection is likely dead.
+                // Most type_text errors are a failed roundtrip/flush — the wl connection is likely dead.
                 // Break so rx drops; ensure_started sees the closed channel (tx.is_closed) and respawns
                 // a fresh connection on the next call (mirrors wayland::session_loop's self-heal),
-                // instead of every later injection silently falling back to the portal. A rare
-                // non-fatal error just costs one reconnect.
+                // instead of every later injection silently falling back to the portal. A non-fatal
+                // one (the size cap, a memfd failure) just costs one reconnect.
                 break;
             }
         }
