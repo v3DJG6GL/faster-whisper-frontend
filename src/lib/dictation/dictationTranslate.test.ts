@@ -37,6 +37,10 @@ const deps = (translate: TranslateDeps["translate"]) => ({
   newId: () => PID,
 });
 
+/** A translate that answers `answer(texts, langs)` after `ms` (fake timers). */
+const answerAfter = (ms: number, langs?: string[]): TranslateDeps["translate"] => (a) =>
+  new Promise<TextTranslationResult>((res) => setTimeout(() => res(answer(a.texts, langs)), ms));
+
 describe("pricedMs", () => {
   // The server translates every submitted segment for every target; pricing one
   // pass over the phrase alone would make short multi-target phrases lose the
@@ -269,12 +273,7 @@ describe("runDictationTranslate", () => {
     });
 
     it("a translation that lands inside the ceiling never cancels", async () => {
-      const d = deps(
-        (a) =>
-          new Promise<TextTranslationResult>((res) =>
-            setTimeout(() => res(answer(a.texts)), 5_000),
-          ),
-      );
+      const d = deps(answerAfter(5_000));
       const p = runDictationTranslate(req({ oneShot: true }), d);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(await p).toEqual({
@@ -290,12 +289,7 @@ describe("runDictationTranslate", () => {
       // never abandoned.
       let pct = 0;
       const d = {
-        ...deps(
-          (a) =>
-            new Promise<TextTranslationResult>((res) =>
-              setTimeout(() => res(answer(a.texts)), 40_000),
-            ),
-        ),
+        ...deps(answerAfter(40_000)),
         pollProgress: async () => ({ stage: "translating", progress: (pct += 0.01) }),
       };
       const p = runDictationTranslate(req({ warm: true, oneShot: true }), d);
@@ -325,12 +319,7 @@ describe("runDictationTranslate", () => {
       // completion, silent for its whole pass — progressing, not wedged.
       const text = "x".repeat(1_600);
       const d = {
-        ...deps(
-          (a) =>
-            new Promise<TextTranslationResult>((res) =>
-              setTimeout(() => res(answer(a.texts)), 12_000),
-            ),
-        ),
+        ...deps(answerAfter(12_000)),
         pollProgress: async () => ({ stage: "translating", progress: 0 }),
       };
       const p = runDictationTranslate(req({ text, warm: true, oneShot: true }), d);
@@ -344,12 +333,7 @@ describe("runDictationTranslate", () => {
     it("a per-target tick (step/target change) counts as progress", async () => {
       let polls = 0;
       const d = {
-        ...deps(
-          (a) =>
-            new Promise<TextTranslationResult>((res) =>
-              setTimeout(() => res(answer(a.texts, ["en", "fr"])), 13_000),
-            ),
-        ),
+        ...deps(answerAfter(13_000, ["en", "fr"])),
         // Frozen fraction; only the target moves on, after 6 s.
         pollProgress: async () => ({ stage: "translating", progress: 0, target: ++polls <= 6 ? "en" : "fr" }),
       };
@@ -378,12 +362,7 @@ describe("runDictationTranslate", () => {
     it("polls the progress id it minted, and stops polling once settled", async () => {
       const seen: string[] = [];
       const d = {
-        ...deps(
-          (a) =>
-            new Promise<TextTranslationResult>((res) =>
-              setTimeout(() => res(answer(a.texts)), 3_000),
-            ),
-        ),
+        ...deps(answerAfter(3_000)),
         pollProgress: async (a: { progressId: string }) => {
           seen.push(a.progressId);
           return { stage: "translating", progress: seen.length / 100 };
