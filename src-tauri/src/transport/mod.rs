@@ -355,7 +355,6 @@ pub struct UsageKindTotals {
     /// Seconds of audio (the client renders minutes/hours).
     #[serde(default)]
     pub audio_s: f64,
-    /// Seconds of server processing time.
     #[serde(default)]
     pub processing_s: f64,
 }
