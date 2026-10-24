@@ -120,7 +120,7 @@ export function TranscriptExport({
   /** History's "Save audio…/Save video…" opens the panel on that media for this visit only
    *  (initialExport): never persisted, dropped on the user's own pick and on a record switch. */
   const [mediaOverride, setMediaOverride] = useState<MediaChoice | null>(null);
-  // Media section (audio / video / video + subtitle tracks), from the persisted picks.
+  // Media section (none / audio / video), from the persisted picks.
   const mediaChoice: MediaChoice = mediaOverride ?? settings.transcribe?.exportMedia ?? "none";
   const container: MediaContainer = settings.transcribe?.exportContainer ?? "mkv";
   const subtitleMode: SubtitleMode = settings.transcribe?.exportSubtitleMode ?? "embedded";
@@ -238,7 +238,7 @@ export function TranscriptExport({
   /** With Video on, only subtitle formats stay live — a TXT/LRC/JSON pick exports
    *  as SRT and the footer says so (`switchNote`, beside `writtenFormat` below). Derived,
    *  never persisted, like `effMedia`: the pick is global, and writing the coercion back
-   *  lost it for every record without a video. */
+   *  would lose it for every record without a video. */
   const exportFormat: ExportFormat = effMedia === "video" && !isSubtitleFormat(formatPick) ? "srt" : formatPick;
   const mp4Why = effMedia === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
   /** The container this export can honour: an MP4 pick this server or video can't do
@@ -262,7 +262,7 @@ export function TranscriptExport({
   }, [open, effMedia, serverVideoId, streams, trBackend?.id]);
   // A different record: forget its predecessor's facts, picks and outcome.
   // Keyed on record identity, not `result`: every retro-translate chunk merge
-  // hands in a fresh result object, and resetting on those wiped the track
+  // hands in a fresh result object, and resetting on those would wipe the track
   // picks mid-selection every few seconds.
   useEffect(() => {
     setStreams(null);
@@ -547,7 +547,7 @@ export function TranscriptExport({
      *  (Save audio fetches it), so a link's video goes to `sourceVideoMediaId`; a file's
      *  upload is its retained source. It merges onto the LATEST copy of the record, never
      *  onto `rec`: that is the render's snapshot, and spreading it (the video fetch lands
-     *  after an earlier write) erased the id just stored. */
+     *  after an earlier write) would erase the id just stored. */
     const rememberUpload = (id: string, exp: number | undefined) => patchRecord(rec.id, (r) => ({
       ...r,
       result: {
@@ -683,10 +683,9 @@ export function TranscriptExport({
       // Only the server that issued a STORED id may say it is gone (as Save audio's guard):
       // trBackend falls back to the first backend for a record whose own one is missing or
       // unrecorded, and that server's "expired" says nothing about an id its issuer may
-      // still hold. A foreign server only gets the stored id when no
-      // other source exists (above), so there is nothing to suggest. An id this call
-      // fetched or uploaded is trBackend's own (storedId is null then), so it may still be
-      // forgotten below.
+      // still hold. A foreign server only gets the stored id when no other source exists
+      // (above), so there is nothing to suggest. An id this call fetched or uploaded is
+      // trBackend's own (storedId is null then), so it may still be forgotten below.
       if (storedId && serverVideoIssuer !== issuer) {
         const msg = "The selected server doesn't have this video.";
         if (mine()) setMediaError({ kind: "expired", msg });
@@ -754,7 +753,7 @@ export function TranscriptExport({
   const doExport = async () => {
     // Over the embedded-track cap the server refuses the request after the save dialog:
     // no path (the Save button, the "Save as MKV" retry) may get that far. Nor a second
-    // click while this record's Save is still running (a double-click opened two dialogs
+    // click while this record's Save is still running (a double-click would open two dialogs
     // and could queue the same video twice) — keyed by record, since another record's
     // Save must still work (and queue) while a long video export of this one runs.
     if (tooManyEmbedded || exportingFor.current === owner) return;
@@ -878,7 +877,7 @@ export function TranscriptExport({
   // from 560 px), MEASURED rather than CSS container queries: WebKit(GTK)
   // first lays a query container out with its content unsized, and the page
   // scroller clamps its scrollTop on that collapsed pass — opening Export or
-  // expanding the preview yanked the page up until the panel's top sat at
+  // expanding the preview would yank the page up until the panel's top sat at
   // the bottom of the window. Measured before paint; kept while closed.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [panelW, setPanelW] = useState(0);
