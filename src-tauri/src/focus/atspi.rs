@@ -50,25 +50,17 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
     // one for long sessions) suspend/resume drops the bus. If we just returned, the task
     // would exit forever and the snapshot would freeze on the last-seen app (looked like
     // "worked for a while, then everything became konsole"). So we always reconnect.
-    // Repeated failures log dedup'd (first + every 30th) — a broken bus otherwise floods
-    // the journal at one warn per retry (2 s, backing off to 30 s) for as long as the
-    // outage lasts.
     let mut failures: u32 = 0;
     loop {
-        // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events.
-        // Without this, Qt/GTK/Chromium stay dormant and the event stream is silent (this is
-        // what libatspi's init does). Best-effort; left on after exit — benign, and KDE's
-        // QT_ACCESSIBILITY=1 already implies it. This makes app detection work WITHOUT deep
-        // detection; deep detection then only adds the Chromium/Electron poke.
-        // Inside the reconnect loop, not once before it: a restarted at-spi-bus-launcher
-        // comes back with IsEnabled=false, so after a bus restart we must re-assert it or
-        // freshly started apps never bridge and we reconnect onto a silent bus forever.
-        // Time-bounded + retried: on a congested/half-wedged session bus this call can hang
-        // or error. run_once below will happily connect to a SILENT stream if it never
-        // lands, and a silent stream never "ends", so the reconnect loop alone wouldn't
-        // retry it. Bounded so a permanently-failing call (unsupported, or already implied
-        // by KDE's QT_ACCESSIBILITY=1 — which succeeds on the first try) still lets us
-        // proceed to connect.
+        // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events —
+        // without it Qt/GTK/Chromium stay dormant and the stream is silent (libatspi's init
+        // does the same). Left on after exit: benign, KDE's QT_ACCESSIBILITY=1 implies it.
+        // This is what makes app detection work without deep detection.
+        // Inside the reconnect loop: a restarted at-spi-bus-launcher comes back with
+        // IsEnabled=false, and new apps would never bridge.
+        // Time-bounded + retried: on a wedged session bus this call can hang, and a silent
+        // stream never "ends", so the reconnect loop alone wouldn't retry it. Capped at 3
+        // tries so a permanently-failing call still lets us connect.
         for _ in 0..3 {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -82,12 +74,10 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
         }
         let started = std::time::Instant::now();
         let outcome = run_once(snapshot.clone(), deep.clone()).await;
-        // A stream that ENDS is a failure shape too (bus restart): count it, and clear
-        // the counter only after a connection that actually pumped for a while — a fast
-        // end (or an Err/Ok alternation) would otherwise reset past the gate and flood at
-        // one warn per retry (2 s, backing off to 30 s). Both outcomes: a long-lived connection that finally dies
-        // with an ERROR opens a new incident whose first warn must not be swallowed by a
-        // counter an earlier outage left at 45.
+        // A stream that ENDS counts as a failure too (bus restart). Resetting only after a
+        // long-lived connection keeps a fast end or Err/Ok alternation from flooding the log,
+        // yet lets a new incident's first warn through instead of a counter an earlier
+        // outage left at 45.
         failures = next_failures(
             failures,
             started.elapsed() >= std::time::Duration::from_secs(60),
@@ -153,24 +143,16 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     tracing::info!("[atspi] focus listener started");
 
     // Resolve focus OFF the event loop, in a single COALESCING task that always works on
-    // the LATEST focus. Why: resolving one focus is several sequential D-Bus round-trips
-    // serviced on the *target app's* UI thread, so a busy window (a terminal streaming
-    // output, the dev server) can take >1s. Doing it inline made the loop await each
-    // resolve serially — under load every resolve timed out, `set_current` never ran,
-    // and the snapshot FROZE on the last app that did resolve. That looked like "every
-    // window is Firefox and it stopped typing": the stale `editable=Some(false)` then
-    // coerced injection to clipboard, so nothing was typed. (Confirmed from the debug log:
-    // a long unbroken run of resolve-timeouts with ZERO snapshot updates.) Now the loop
-    // only records the newest focus and nudges the resolver; a slow app can stall just
-    // that one task (bounded), never freezing detection of other apps — the resolver
-    // always grabs the CURRENT focus, not a backlog of stale events.
-    // Three coalescing slots — latest window:activate, window:deactivate, and element focus.
-    // Each is its OWN slot so a burst can't drop the activate/deactivate that drive foreground
-    // tracking (the bug a single shared slot caused). Resolved OFF the event loop (a11y
-    // round-trips run on the target app's UI thread). Processed per cycle in the order
-    // activate → deactivate → focus so the foreground mark is right before focus is gated —
-    // except when the deactivate ARRIVED first (a same-app window switch: deactivate A, then
-    // activate A): replaying it after the activate would clear A's mark although A is in front.
+    // the LATEST focus. Resolving one focus is several D-Bus round-trips serviced on the
+    // *target app's* UI thread, so a busy window (a terminal streaming output) can take >1s;
+    // resolved inline, every resolve timed out under load and the snapshot froze on the last
+    // app that did resolve (its stale `editable=Some(false)` then coerced injection to
+    // clipboard). Now a slow app stalls only this task, and it never works off a backlog.
+    // Three slots — latest window:activate, window:deactivate, element focus — so a burst
+    // can't coalesce away the activate/deactivate that drive foreground tracking. Processed
+    // activate → deactivate → focus so the mark is right before focus is gated — except when
+    // the deactivate ARRIVED first (same-app window switch: deactivate A, then activate A),
+    // where replaying it after the activate would clear A's mark although A is in front.
     // The window slots carry an arrival sequence number for that check.
     type Slots = (
         Option<(u64, ObjectRefOwned)>,
@@ -278,11 +260,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
             ev = stream.next() => {
                 let Some(ev) = ev else { break Ok(()) }; // stream ended → reconnect
                 let Ok(ev) = ev else { continue };
-                // Route the event to its slot: element focus (carries a real field),
-                // window:activate (marks foreground), window:deactivate (clears it). Separate
-                // slots so a burst can't coalesce away the activate/deactivate. window:activate
-                // is ESSENTIAL: without it, switching windows without changing the focused
-                // element wouldn't update detection.
+                // window:activate is ESSENTIAL: without it, switching windows without changing
+                // the focused element wouldn't update detection.
                 let routed = {
                     let mut p = pending.lock();
                     match ev {
@@ -309,21 +288,15 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                         _ => false,
                     }
                 };
-                // Nudge the resolver only if we actually stored an event. Never blocks on the
-                // a11y round-trips themselves.
                 if routed {
                     notify.notify_one();
                 }
             }
             _ = ticker.tick() => {
-                // Deep detection only adds the poke now (accessibility is enabled at
-                // startup). Spawn it so a slow poke over many apps can't stall this loop.
-                // Single-flight + time-bounded: poke_all walks every app on the bus with
-                // unbounded D-Bus reads, so on a congested/wedged bus one poke can stall for
-                // a long time. Without a guard a fresh task would spawn every tick and pile
-                // up (untracked, and they outlive this connection — resolver.abort() below
-                // doesn't touch them). The flag skips a new poke while the previous is still
-                // running; the timeout caps any single poke so ≤1 short-lived task is in flight.
+                // Spawned so a slow poke over many apps can't stall this loop. Single-flight +
+                // time-bounded: poke_all's unbounded D-Bus reads can stall on a wedged bus, and
+                // unguarded tasks would pile up every tick and outlive this connection
+                // (resolver.abort() below doesn't touch them).
                 if deep.load(Ordering::Relaxed) && !poke_busy.swap(true, Ordering::AcqRel) {
                     let bus2 = bus.clone();
                     let busy = poke_busy.clone();
@@ -417,11 +390,8 @@ async fn resolve_focus(
 /// whole read is time-bounded so an unresponsive app can't hang the caller. Distinguishes a
 /// genuinely-empty selection (`Empty`) from "no Text interface / proxy error" (`Unavailable`).
 pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
-    // Bound the connect too — not just the read below. A wedged a11y bus can make
-    // AccessibilityConnection::new() hang indefinitely (same reason run_once bounds it),
-    // and read_selection is awaited inline by get_quickadd_seed / get_focused_selection,
-    // so an unbounded connect would hang the command — the exact failure this fn's
-    // "whole read is time-bounded" contract promises to avoid.
+    // Bound the connect too: a wedged a11y bus can make AccessibilityConnection::new() hang,
+    // and get_quickadd_seed / get_focused_selection await this inline.
     let conn = match tokio::time::timeout(
         std::time::Duration::from_millis(800),
         AccessibilityConnection::new(),
@@ -429,7 +399,7 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
     .await
     {
         Ok(Ok(c)) => c,
-        _ => return super::SelRead::Unavailable, // timed out or connect error → degrade
+        _ => return super::SelRead::Unavailable,
     };
     let bus = conn.connection().clone();
     let read = async move {
@@ -492,12 +462,9 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
             // reads the actual rendered selection from PRIMARY (and the close-guard can still
             // trust "a selection exists in the focused app").
             Ok(s) if s.contains('\u{fffc}') => super::SelRead::Opaque,
-            // Bound at the READ, so every consumer inherits it (H13's shape, applied to
-            // `resolve_focus` in this file and missed here). `start`/`end` are chosen by the
-            // focused app itself, so the reply length is that app's choice: `get_quickadd_seed`
-            // bounds it via `sanitize_seed`, but `get_focused_selection` hands it straight
-            // across the IPC into the QuickAdd webview, where it is only ever compared for
-            // equality. SEL_MAX is far above any real selection, so the cap costs nothing.
+            // Bound at the READ, so every consumer inherits it: `get_focused_selection` hands
+            // it straight across the IPC into the QuickAdd webview unbounded. SEL_MAX is far
+            // above any real selection, so the cap costs nothing.
             Ok(s) => super::SelRead::Text(super::bounded_selection(s)),
             Err(_) => super::SelRead::Unavailable,
         }
@@ -588,8 +555,8 @@ pub(super) struct Parked {
 /// than that slack is a background app's stray one (the "chromium ghost" the gate rejects), and
 /// replaying it on the next mark change — the user summoning Quick-Add minutes later — would make
 /// an app the user never focused `current`, then `last_other` with its per-app rule and selection.
-/// 2 s (was 5 s): twice the resolve budget still covers a busy terminal's late deactivate, while a
-/// stray background focus stays replayable for less than half as long.
+/// 2 s: twice the resolve budget still covers a busy terminal's late deactivate, while keeping a
+/// stray background focus replayable only briefly.
 const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
@@ -667,11 +634,9 @@ fn set_current(
     let fa = super::FocusedApp {
         title: app_id.clone(),
         app_id,
-        // A `window:activate` carries no field info (editable=None). On a same-app re-activation
-        // (Alt-Tab back) carry the editable flag we already hold — in lockstep with the
-        // current_el preservation below — so we don't wipe a known Some(false)/Some(true) to
-        // unknown and degrade the field guard. (fa is built before snap.current.take() runs, so
-        // snap.current still holds the prior FocusedApp here.)
+        // Same-app re-activation keeps the known editable flag (in lockstep with current_el
+        // below) rather than wiping it to unknown and degrading the field guard. snap.current
+        // still holds the prior FocusedApp here (take() runs later).
         editable: if reactivating_same {
             editable.or_else(|| snap.current.as_ref().and_then(|c| c.editable))
         } else {
