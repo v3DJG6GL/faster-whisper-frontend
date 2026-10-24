@@ -1179,7 +1179,8 @@ fn persist_transcript_unless(
     });
     // Normally sub-millisecond: this waits for a local connect, not for a paste. The bound exists
     // so a wedged compositor cannot park an injection, and it is long enough that a slow one still
-    // gets to answer for itself rather than being reported as broken.
+    // gets to answer for itself rather than being assumed fine (a timeout fails open — see
+    // `set_clipboard_persistent`).
     let bound = if cfg!(windows) {
         CLIP_IDLE_WAIT + Duration::from_millis(250)
     } else {
