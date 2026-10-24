@@ -105,7 +105,8 @@ pub enum OfferError {
 /// What `await_target_fetch` saw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchWait {
-    /// The target fetched after our chord (see [`RenderReport::ends_wait`]).
+    /// The target fetched after our chord (see [`RenderReport::ends_wait`]), or — diag only —
+    /// before it, published at 0 ms (see [`ChordReport::ends_wait`]).
     Fetched {
         after_chord_ms: u64,
         /// A re-announce was scheduled for this offer (enforce).
@@ -439,7 +440,8 @@ mod imp {
     static DOWN: AtomicBool = AtomicBool::new(false);
 
     /// Where `await_target_fetch` waits. Written by the owner thread on the first post-chord
-    /// target fetch (or on loss of ownership / a newer offer).
+    /// target fetch (in diag also at chord time, for a pre-chord fetch), or on loss of
+    /// ownership / a newer offer / shutdown.
     struct FetchSlot {
         id: u64,
         fetched: Option<(u64, bool)>,
