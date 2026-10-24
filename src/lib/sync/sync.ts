@@ -917,6 +917,11 @@ function isReservedBackendId(id: unknown): boolean {
 /** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
 const CONTEXT_SEGMENTS_MAX = 10;
 
+/** A finite number clamped to [lo, hi]; anything else is `undefined` (= drop, keep local). */
+function clampedIn(v: unknown, lo: number, hi: number): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
+}
+
 /** A finite number rounded and clamped to [lo, hi]; anything else is `undefined` (= drop, keep local). */
 function roundedIn(v: unknown, lo: number, hi: number): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : undefined;
@@ -1847,10 +1852,9 @@ export async function applyBlob(
           ...cur,
           ...typedLike(lg as Partial<typeof cur>, cur),
           logLevel: oneOf(lg.logLevel, LOG_LEVELS, cur.logLevel),
-          keepDays:
-            typeof lg.keepDays === "number" && Number.isFinite(lg.keepDays)
-              ? Math.min(3650, Math.max(0, Math.floor(lg.keepDays)))
-              : cur.keepDays,
+          keepDays: ((d) => (d === undefined ? cur.keepDays : Math.floor(d)))(
+            clampedIn(lg.keepDays, 0, 3650),
+          ),
           logDir:
             gates.logFolder && (typeof lg.logDir === "string" || lg.logDir === null)
               ? lg.logDir
@@ -1880,14 +1884,8 @@ export async function applyBlob(
           // Bounded like the Settings steppers: a peer's 50× chip would cover the screen
           // (Rust clamps chipScale again at the window; dotScale is CSS-only, so this is
           // its only bound on this path).
-          chipScale:
-            typeof chip.chipScale === "number" && Number.isFinite(chip.chipScale)
-              ? Math.min(2, Math.max(0.75, chip.chipScale))
-              : settings.recording.chipScale,
-          dotScale:
-            typeof chip.dotScale === "number" && Number.isFinite(chip.dotScale)
-              ? Math.min(3, Math.max(1, chip.dotScale))
-              : settings.recording.dotScale,
+          chipScale: clampedIn(chip.chipScale, 0.75, 2) ?? settings.recording.chipScale,
+          dotScale: clampedIn(chip.dotScale, 1, 3) ?? settings.recording.dotScale,
         },
       };
     }
