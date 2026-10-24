@@ -9,8 +9,6 @@ import {
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 
-/* ── Appearance ────────────────────────────────────────────────────────── */
-
 /** The slider's rainbow track: fixed OKLCH lightness/chroma, hue sweeping 0→360 —
  *  the same cut the swatches are derived from, so the track predicts the result. */
 const HUE_TRACK = `linear-gradient(90deg, ${[0, 60, 120, 180, 240, 300, 360]
@@ -74,8 +72,7 @@ export function AppearanceRows() {
   };
 
   // "Custom" is a mode, not a hue: a preset's exact degree is still "custom" once the
-  // wheel swatch was clicked (before, the ring only appeared after the slider had moved
-  // off every preset), and picking a preset leaves the mode again.
+  // wheel swatch was clicked, and picking a preset leaves the mode again.
   const preset = ACCENT_PRESETS.find(([, h]) => h === hue);
   const [customMode, setCustomMode] = useState(!preset);
   const custom = customMode || !preset;
@@ -217,8 +214,6 @@ function HueSwatch({
   );
 }
 
-/* ── Motion ────────────────────────────────────────────────────────────── */
-
 /** The dropdown's tiers (seconds per turn); "custom" opens the log slider. */
 const MOTION_TIERS: { value: string; label: string }[] = [
   { value: "0", label: "Still" },
@@ -250,7 +245,7 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** The Motion cost notice (D71–D73), under the Custom speed row while Custom is picked
+/** The Motion cost notice, under the Custom speed row while Custom is picked
  *  (so the slider above it never moves) and under Motion otherwise. It fades and folds
  *  its height in and out instead of popping, and keeps the last text while it fades out. */
 function CostNotice({ cost }: { cost: ReturnType<typeof motionCostNote> }) {
@@ -335,8 +330,8 @@ function MotionRows({
     commit({ period: Number(v) });
   };
 
-  // What the speed costs, said under the Motion row (D71–D73). Follows the slider while it
-  // is dragged, before the debounced commit lands; reduced motion runs Still, so no cost.
+  // What the speed costs. Follows the slider while it is dragged, before the debounced
+  // commit lands; reduced motion runs Still, so no cost.
   const livePeriod = custom ? sliderToSec(slider) : motion.period;
   const cost = reduced ? null : motionCostNote(livePeriod);
 
