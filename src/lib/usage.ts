@@ -63,9 +63,9 @@ let yearFreshSig: string | null = null;
 /** A direct page fetch (the show handler's, or a page mount's): `sentOutcomeCount()` at `at`, and
  *  `confirmed` settles to whether both documents landed. */
 type DirectFetch = { at: number; confirmed: Promise<boolean> };
-// The show handler's direct fetch for the running pass, whether that show started the pass or found
-// it running: the pass's next page step takes it (one step only — a rerun fetches the page as
-// usual). A hide drops it: the documents it fetched may be old by the next show.
+// A direct fetch for the running pass — the show handler's (whether that show started the pass or
+// found it running) or a page mount's: the pass's next page step takes it (one step only — a rerun
+// fetches the page as usual). A hide drops it: the documents it fetched may be old by the next show.
 let pendingDirect: DirectFetch | undefined;
 // A Statistics page mounted while hidden with no pass running (Tray → Statistics navigates
 // before or after the show): its own fetch, for the pass the show that follows starts. Trusted
@@ -260,8 +260,8 @@ async function refreshOne(backend: Backend): Promise<void> {
     // this server has no usage, so numbers kept from before would read as current forever on
     // Home and the chip — and keep the backend viewable on Statistics, which fetches live. Clear
     // them once: an entry already null is left alone, or every poll would churn a cross-window
-    // dictation://update. Own-property test: `in` is true for `constructor`/`toString`/… via
-    // the prototype, so that write would never run.
+    // dictation://update. Own-property test, not `in`: `in` is true for `constructor`/`toString`/…
+    // via the prototype.
     if (!hasOwn(usage, backend.id) || usage[backend.id] !== null) setUsage(backend.id, null);
     return;
   }
