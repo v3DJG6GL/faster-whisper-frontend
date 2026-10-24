@@ -567,6 +567,11 @@ function echoElementKeys<T extends { id: string }>(list: T[], snapList: unknown,
 
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
 
+/** Did any slice `hydrate` overwrites change identity between two store reads? */
+function storeSlicesMoved(a: StoreSlice, b: StoreSlice): boolean {
+  return a.settings !== b.settings || a.backends !== b.backends || a.profiles !== b.profiles || a.appRules !== b.appRules;
+}
+
 /** A keyring read that answered for every id: each one is either read or reported ABSENT. Only
  *  then does a missing key mean "no key stored" rather than "could not tell" (a timeout is null). */
 function keyReadFailedNowhere(read: BackendKeyRead | null): read is BackendKeyRead {
@@ -1927,14 +1932,7 @@ export async function applyBlob(
       // (none of the four slice identities below), so a session started during the
       // reconcileBackendSecrets await slips the guard and `hydrate` replaces profiles,
       // backends and appRules under a session that is actively reading them.
-      if (
-        live.status !== "idle" ||
-        live.settings !== settings ||
-        live.backends !== st.backends ||
-        live.profiles !== st.profiles ||
-        live.appRules !== st.appRules ||
-        gen !== myGen
-      ) {
+      if (live.status !== "idle" || storeSlicesMoved(st, live) || gen !== myGen) {
         staleRestart = retries > 0 && gen === myGen;
         staleAbort = true;
         throw STALE;
@@ -2796,13 +2794,7 @@ async function composeLive(
       passThrough,
       { includeSecrets: true, sub: subSettings(), gates: settingGates() },
     );
-    const now = useApp.getState();
-    const moved =
-      now.settings !== s.settings ||
-      now.backends !== s.backends ||
-      now.profiles !== s.profiles ||
-      now.appRules !== s.appRules;
-    if (!moved || attempt >= 3) return blob;
+    if (!storeSlicesMoved(s, useApp.getState()) || attempt >= 3) return blob;
   }
 }
 
@@ -4045,12 +4037,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
   const localNow = await composeLive(cats, passThroughFor(r.remote));
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
-  const st1 = useApp.getState();
-  const movedMid =
-    st0.settings !== st1.settings ||
-    st0.backends !== st1.backends ||
-    st0.profiles !== st1.profiles ||
-    st0.appRules !== st1.appRules;
+  const movedMid = storeSlicesMoved(st0, useApp.getState());
   // The keyring can lock between the raise and this approval: a degraded compose carries the
   // base's (or remote's) backends category, not this device's list, so the merge reads backends
   // as "local unchanged" and the apply below wrote that list over every backend added here.
@@ -4517,12 +4504,7 @@ export async function initSync(): Promise<void> {
   // but compose excludes it, so the hash check discards the push.
   useApp.subscribe((s, prev) => {
     if (applyingRemote) return;
-    if (
-      s.settings === prev.settings &&
-      s.backends === prev.backends &&
-      s.profiles === prev.profiles &&
-      s.appRules === prev.appRules
-    ) {
+    if (!storeSlicesMoved(s, prev)) {
       // A pull-apply parked while dictation ran: re-pull once the session lands back at idle
       // rather than re-applying a held blob. That direct re-apply ran outside the engine lock
       // and adopted no base, so a pull landing a newer version during its keyring wait got the
