@@ -247,18 +247,15 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   };
 
   // Predict how the apply resolves hotkey collisions in the WOULD-BE state (imported profiles
-  // and/or quick-add chord over the current ones): `applyBlob` never leaves a conflicting set for
-  // the save gate to trip on — it switches the later colliding profile off, or keeps this
-  // device's quick-add chord over an incoming one that collides with local profiles. Run its own
-  // `disableConflictingProfiles` (same L/R collapse off-Windows) so the notice names what happens.
-  // Run the SAME sanitizers `applyBlob` runs. This dialog is the consent step, so it renders
-  // strictly BEFORE them — and `arr()` coerces only the CONTAINER, so every element was
-  // attacker-shaped at the point `conflicts()` walked it, in a render body, with no error
-  // boundary anywhere in the tree. A profile missing `hotkey` threw on `p.hotkey.length` and a
-  // numeric code threw in `canonicalizeCodes`' `localeCompare` tie-break — unmounting the very
-  // window whose job is to let the user REJECT this blob. The same call also bounds chord LENGTH
-  // (`isCodeList`), which is what keeps `isStrictSubset`'s O(k·m) scan from freezing the webview
-  // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
+  // and/or quick-add chord over the current ones): `applyBlob` never leaves a conflicting set — it
+  // switches the later colliding profile off, or keeps this device's quick-add chord over an
+  // incoming one that collides with local profiles — so `predictChordFix` runs its own
+  // `disableConflictingProfiles` (same L/R collapse off-Windows). It walks the SANITIZED profiles:
+  // this consent dialog renders before `applyBlob` sanitizes, with no error boundary, and `arr()`
+  // coerces only the container, so a raw element (a profile missing `hotkey`, a numeric code)
+  // would throw and unmount the very dialog that lets the user reject the blob. The sanitizer also
+  // bounds chord length (`isCodeList`), which keeps `isStrictSubset`'s O(k·m) scan from freezing
+  // the webview on a hand-authored file.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category (see `predictChordFix` for how an
@@ -343,13 +340,11 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           settings in the file (chip position, paste shortcuts, server addresses) come in with their
           category.
         </Notice>
-        {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
-            every present category to ON and both apply through `applyBlob` — which REPLACES rather
-            than merges. A file carrying `"backends": {"list": []}` renders as a pre-checked row
-            reading "Backends · Server connections incl. API keys (0)", with no incoming-addresses
-            block (it returns null on an empty list) and no missing-key warning, and on Import
-            deletes every configured backend, nulls every profile's backendId and takes the keyring
-            association with it. Nothing in the dialog said the selection replaces rather than adds. */}
+        {/* Every present category starts checked and `applyBlob` REPLACES rather than merges: a file
+            carrying `"backends": {"list": []}` shows a pre-checked "(0)" row with no address block and
+            no missing-key warning, yet deletes every configured backend, nulls every profile's
+            backendId and drops the keyring association. Only this notice says the selection
+            replaces rather than adds. */}
         {replaced.length > 0 && (
           <Notice tone="warn">
             Selected categories replace what&apos;s on this device — your current{" "}
@@ -360,9 +355,8 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           <IncomingAddresses list={categories.backends.list} />
         )}
         <KeyFateNotices fates={keyFates} source="file" />
-        {/* These interpolate a backend name straight out of the imported file. The missing-keys
-            line above renders the same field through backendDisplayName; this one did not, so a bidi
-            override could rewrite the sentence the user reads to decide whether to import. */}
+        {/* These interpolate a backend name straight out of the imported file: sanitized so a bidi
+            override cannot rewrite the sentence the user reads to decide whether to import. */}
         {result.warnings.slice(0, 20).map((w) => (
           <Notice key={w} tone="warn">
             {safeDisplayText(w, 300)}
@@ -435,11 +429,9 @@ export function RestoreFromServer({
       : undefined,
   };
 
-  // Same would-be-state hazard previews as ImportPreview: how the apply resolves
-  // hotkey collisions, and (new here) whether a selected category overwrites data the
-  // device already has — on an empty app the restore is warning-free.
-  // Same reasoning as ImportPreview above: sanitize with `applyBlob`'s own helpers, because this
-  // dialog renders before them and `conflicts()` walks the elements in a render body.
+  // Same would-be-state hazard previews as ImportPreview (hotkey collisions, replaced data — so on
+  // an empty app the restore is warning-free), on the sanitized lists for the same reason: this
+  // dialog renders before `applyBlob` sanitizes and `conflicts()` walks the elements in a render body.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && blob.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category, as in ImportPreview.
@@ -553,7 +545,7 @@ export function RestoreFromServer({
 
 /** Maximum category rows shown in the SecurityReviewDialog change list. */
 const MAX_REVIEW_ROWS = 50;
-/** Alias for `safeDisplayText` — every string in this dialog came from the untrusted blob. */
+/** Alias for `safeDisplayText` — every string this screen renders through it came from an untrusted blob or file. */
 const safeText = safeDisplayText;
 
 /** A peer device's name as this screen shows it, or "" when it would read as this device's own
@@ -569,20 +561,17 @@ const remoteArmLabel = (device: string | null): string => peerName(device) || "O
 const LOCAL_ARM_LABEL = "This device";
 
 
-/** The addresses an incoming blob would install, shown BEFORE it is applied.
- *
- *  SecurityReviewDialog gets this because it is where the user decides whether to trust an
- *  address. Its siblings — Restore from server, Import preview, Onboarding's restore — apply the
- *  same attacker-authored `backends.list` through the same `applyBlob`, with no `securityChanges`
- *  gate in front of them, and disclosed only a COUNT. A URL's real authority is whatever follows
- *  the last `@`, so `http://localhost:8000@evil.tld/v1` reads as loopback until it is parsed. */
+/** The addresses an incoming blob would install, shown BEFORE it is applied by Restore from
+ *  server, Import preview and Onboarding's restore — they apply the same attacker-authored
+ *  `backends.list` through `applyBlob` with no `securityChanges` review in front. A URL's real
+ *  authority is whatever follows the last `@`, so `http://localhost:8000@evil.tld/v1` reads as
+ *  loopback until it is parsed. */
 export function IncomingAddresses({ list }: { list: unknown }) {
   // Takes the RAW inbound list and derives the rows itself, so every caller lists the same thing:
   // what `applyBlob` would install (`sanitizeBackends` — run here BEFORE consent, since a `[null]`
-  // element or a non-string address once threw in this render body and unmounted the very dialog
-  // that lets the user refuse the blob), at the address this device would CONNECT to (a surviving
-  // id's "Address on this device" override wins over the canonical one). The three callers used to
-  // respell this derivation each, and drifted.
+  // element or a non-string address would throw in this render body and unmount the dialog that
+  // lets the user refuse the blob), at the address this device would CONNECT to (a surviving id's
+  // "Address on this device" override wins over the canonical one).
   const settings = useApp.getState().settings;
   const all = sanitizeBackends(list).map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, settings) }));
   const backends = all.slice(0, MAX_SHOWN_ADDRESSES);
@@ -609,15 +598,10 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           return (
             <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
               {backendDisplayName(b.name, 60)} →{" "}
-              {/* The host through the IDENTITY helper, which marks a truncation. The plain display
-                  filter cuts at 80 code points with no ellipsis, and `serverUrl` has no length cap
-                  on the sync/import path — so a padded, fully resolvable hostname
-                  (`sync.internal.corp.example.com.<padding>.evil.tld`) rendered as a
-                  trusted-looking PREFIX of itself with the real suffix invisible, on the dialog
-                  whose whole job is to disclose where dictation would go. Its sibling in the
-                  security-review dialog below gets the same treatment: that one's detail line
-                  carries the full address, but at the same markerless 200-code-point cap — and for
-                  a repoint the detail is TWO addresses sharing that budget. */}
+              {/* The host through the IDENTITY helper, which marks a truncation: `serverUrl` has no
+                  length cap on the sync/import path, and the plain filter's markerless 80-code-point
+                  cut would show a padded hostname (`sync.internal.corp.example.com.<padding>.evil.tld`)
+                  as a trusted-looking PREFIX of itself on the dialog that discloses where dictation goes. */}
               <span className="font-semibold">{auth ? safeIdentityText(auth.host, 80) : "unreadable address"}</span>
               {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
               {warn ? ` · ${warn}` : ""}
@@ -633,11 +617,8 @@ export function IncomingAddresses({ list }: { list: unknown }) {
 }
 
 /** The restore offers' disclosure chips (Onboarding and the Backends restore offer): the
- *  categories a pulled blob carries, by display name. Migrated once per blob, not per category
- *  per render, so pre-split categories (chip, dictionary, recording/fileTranscriptions) show.
- *  "Present" is applyBlob's own arm test (a plain object), same as presentSel, so the chips
- *  never name a category the restore skips (a `null`/scalar section migrateBlob passes on).
- *  Same predicate as the offers' gates (`restorableCategories`), so an offer never shows empty. */
+ *  categories a pulled blob carries, by display name. Same predicate as the offers' gates
+ *  (`restorableCategories`), so the chips never name a category the restore skips. */
 export function SyncedCategoryChips({ blob }: { blob: SyncBlob | null | undefined }) {
   const present = useMemo(() => restorableCategories(blob), [blob]);
   return (
@@ -662,11 +643,9 @@ const MAX_PREVIEW_PEERS = 500;
  *  device's (`qaKept`).
  *
  *  `incomingQa` is the blob's `dictionary.quickAddHotkey` when that category is applied, else
- *  `undefined`. An absent or malformed chord keeps this device's chord, as `applyBlob` does —
- *  predicting an EMPTY chord there hid the conflict the apply then resolves by switching the
- *  colliding imported profiles off. `qaKept` needs a chord that actually arrives and differs:
- *  the collision pass also "rejects" this device's OWN chord when it is the fallback, and the
- *  apply then just re-pins the identical chord — blaming the file or backup for that warned about nothing. */
+ *  `undefined`. An absent or malformed chord keeps this device's chord, as `applyBlob` does.
+ *  `qaKept` needs a chord that actually arrives and differs: the collision pass also "rejects"
+ *  this device's OWN chord when it is the fallback, and the apply then just re-pins it. */
 export function predictChordFix(
   wouldProfiles: Profile[],
   incomingQa: unknown,
@@ -769,15 +748,10 @@ function SecurityReviewDialog() {
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
-                {/* `safeIdentityText`: on the `api-key` arm `securityChanges` pushes no `url`,
-                    so the "Would connect to" line above does not render and this NAME is the
-                    row's only identity — while the row decides whether an incoming plaintext key
-                    is written to the OS keyring. `sanitizeBackends` length-caps nothing and a
-                    rename raises no security change, so a prior pull can set
-                    `"Work" + 100 spaces + "EvilCorp"` and the markerless cut lands in the
-                    padding. Its two neighbours in this same block were already converted.
-                    The detail's cap comes from `consentDetailCap`: a typed-text row shows the
-                    whole value that would be typed, never a head with the rest behind a "…". */}
+                {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
+                    identity while it decides whether a plaintext key reaches the OS keyring — and
+                    names are uncapped (a rename raises no review), so a markerless cut could hide
+                    a padded suffix. `consentDetailCap`: a typed-text row shows the whole value. */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
                 {safeIdentityText(c.detail, consentDetailCap(c.kind))}
               </div>
@@ -940,9 +914,8 @@ export function SyncTab() {
   const lastSyncedAt = useApp((st) => st.lastSyncedAt);
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
   const lastSyncFrom = peerName(lastSyncDevice);
-  // "Last synced …" is relative to now, and nothing else re-renders this tab between syncs (there
-  // is no periodic pull), so it read "just now" for as long as the tab stayed open. Hidden (closed
-  // to the tray): skip the redraw, and catch up at once on show.
+  // "Last synced …" is relative to now and nothing else re-renders this tab between syncs (no
+  // periodic pull). Hidden (closed to the tray): skip the redraw, and catch up at once on show.
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!lastSyncedAt) return;
@@ -1067,7 +1040,6 @@ export function SyncTab() {
             onChange={(v) =>
               updateSync({
                 enabled: v,
-                // First enable with nothing picked: default to the first backend.
                 backendId: sync.backendId ?? backends[0]?.id ?? null,
               })
             }
