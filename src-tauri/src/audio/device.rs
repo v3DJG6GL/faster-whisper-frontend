@@ -366,10 +366,9 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
     })
 }
 
-/// The config to capture with: the device's default, unless that sample format is one the capture
-/// loops don't convert (they take F32 / I16 / U16 / I32) — then F32, I16, U16 or I32 at the same
-/// rate and channel count, if offered (cpal ranks I24 above I16, so a raw hw: path offering S16_LE
-/// and S24_LE defaults to I24).
+/// The config to capture with: the device's default, unless the capture loops can't convert its
+/// sample format — then the first of F32 / I16 / U16 / I32 offered at the same rate and channel
+/// count (cpal ranks I24 above I16, so a raw hw: path offering S16_LE and S24_LE defaults to I24).
 pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, String> {
     let def = device.default_input_config().map_err(|e| e.to_string())?;
     if matches!(
