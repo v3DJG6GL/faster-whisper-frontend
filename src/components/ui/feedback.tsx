@@ -5,12 +5,12 @@ import { cn } from "@/lib/cn";
 import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { routeParts } from "@/lib/routeParts";
 
-// The pill's shape, shared with RouteBadge below. Exported as a STRING rather than
-// widening Badge with a className/tone: Badge has neither by design, it is used on
-// nearly every screen, and a per-site escape hatch on it would be the end of that.
-// `max-w-[16ch]` + `truncate`: badges carry remote-authored leaves (a backend's
+// The pill's shape, shared with RouteBadge below. A string rather than widening Badge
+// with a className/tone: Badge has neither by design, it is used on nearly every screen,
+// and a per-site escape hatch on it would be the end of that.
+// `truncate` + each pill's max-w: badges carry remote-authored leaves (a backend's
 // language, a profile's tag) whose sanitizers bound the LIST length, not the per-field
-// length — and `languageLabel` returns an unknown code unchanged. Unbounded here, one
+// length — and `languageLabel` returns an unknown code unchanged. Unbounded, one
 // field pushed the Test/Edit/Remove controls off the card it labels.
 const BADGE_BASE =
   "inline-block align-bottom rounded-md px-2 py-0.5 font-mono text-[10.5px] uppercase tracking-wider truncate";
@@ -73,7 +73,7 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
   const r = routeParts(source, targets);
   if (!r.source && r.targets.length === 0) return null;
   return (
-    // max-w is raised over BADGE_BASE's 16ch because this pill legitimately holds a
+    // max-w is raised over Badge's 16ch because this pill legitimately holds a
     // route, not a single leaf — each PART is bounded by routeParts instead.
     <span className={cn(BADGE_BASE, "max-w-[34ch] bg-surface-2")}>
       <span className="text-dim">{r.source || "auto"}</span>
@@ -90,8 +90,7 @@ export function RouteBadge({ source, targets }: { source: string; targets?: stri
   );
 }
 
-/** An inline status banner: a tinted, rounded box with a leading icon and content.
- *  `warn` (default) = caution amber + AlertTriangle; `ok` = success + Check. */
+/** An inline status banner: a tinted, rounded box with a leading icon and content. */
 export function Notice({
   tone = "warn",
   className,
