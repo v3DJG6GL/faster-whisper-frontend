@@ -465,9 +465,9 @@ export default function Overlay() {
   // The collapse-linger effect lives below the note / pulse effects: it reads the hold deadline
   // they stamp, and effects run in declaration order, so on a settle edge it sees this commit's.
 
-  // Hover-to-reveal: holding the cursor over the chip for hoverRevealMs expands it to show the
-  // language + stream/batch detail beside the tag. Under Tauri this only fires once the chip's
-  // input region is shaped (overlay.rs / setChipHitRegion).
+  // Hover-to-reveal: holding the cursor over the chip for hoverRevealMs un-tucks it and shows the
+  // detail beside the tag, the quick-launch row and every "on hover" item. Under Tauri this only
+  // fires once the chip's input region is shaped (overlay.rs / setChipHitRegion).
   const [hoverReveal, setHoverReveal] = useState(false);
   const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -713,7 +713,7 @@ export default function Overlay() {
   // a few retries when a session starts or the chip moves (the overlay window
   // realizes its GdkWindow asynchronously on show).
   // The chip is interactive (hoverable / clickable) whenever it's on screen: during a
-  // session, or — with the dock on — in standby too. Outside Tauri the calls no-op.
+  // session, or — with the dock on — in standby too.
   const interactive = state.status !== "idle" || (state.persistentDock && state.position !== "off");
   // `state.status` MUST be a dependency: show_overlay re-applies set_ignore_cursor_events(true) on
   // every (re)show — including the standby→session re-center in chipController.ts — which WIPES the input
@@ -1209,7 +1209,6 @@ export default function Overlay() {
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
-        {/* The route (or what stands in for it), beside the tag — see routeSlot. */}
         {routeSlot && <span className="ml-1.5 flex items-center">{routeSlot}</span>}
         <AnimatePresence>
           {hoverReveal && detail && (
@@ -1275,10 +1274,10 @@ export default function Overlay() {
           )}
           title={targetWarn ? skipLabel : undefined}
         >
-          {/* `safeIdentityText`, not the plain display filter: this IDENTITY tells the user where the
-              transcript is about to be typed, beside the blocked / not-a-text-field trust signal. The
-              display filter truncates with no marker and does not collapse whitespace, while this
-              `truncate` span (`white-space: nowrap`) still COLLAPSES runs — so
+          {/* `targetName` uses `safeIdentityText`, not the plain display filter: this IDENTITY tells the
+              user where the transcript is about to be typed, beside the blocked / not-a-text-field trust
+              signal. The display filter truncates with no marker and does not collapse whitespace, while
+              this `truncate` span (`white-space: nowrap`) still COLLAPSES runs — so
               `"kate" + 190 spaces + "evil-term"` would cut inside the padding and render as exactly
               `kate`. `AppRules` renders this same class of string the defanged way. */}
           {targetName}
