@@ -314,8 +314,8 @@ fn bound_codes(v: Vec<String>, max: usize) -> Vec<String> {
 }
 
 /// The packaging detail block carries one server string rendered as a UI
-/// label (the off-reason) and a container list the export panel matches by
-/// name — bound both, clamp the counts.
+/// label (the off-reason, length-bounded) and a container list the export panel
+/// matches by name (only the two known containers kept); the track count is clamped.
 fn bound_media_package(m: super::MediaPackageCaps) -> super::MediaPackageCaps {
     super::MediaPackageCaps {
         containers: m
@@ -417,12 +417,9 @@ fn iana_zone_ok(tz: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'+'))
 }
 
-/// The caller's own usage document (`GET /v1/usage`, full backend only): today + total
-/// per kind, the per-kind daily series, stage usage, dictation facets, apps, the
-/// activity calendar and streak. Best-effort: any error (endpoint absent on a
-/// standard/old server, unauthorized, unreachable) → None, so the UI simply hides the
-/// stats surfaces (Home section + chip line). Query params are omitted when None so the
-/// server applies its own defaults.
+/// The caller's own usage document (`GET /v1/usage`, full backend only). Best-effort: any
+/// error (endpoint absent on a standard/old server, unauthorized, unreachable) → None, so the
+/// UI hides the stats surfaces.
 pub async fn get_usage_stats(
     server_url: &str,
     api_key: Option<&str>,
