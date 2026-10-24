@@ -2,8 +2,8 @@
 // by kind, off the fixed 30-day document) and the Statistics page (one filter bar —
 // range · kind · with-stages — the measure tiles, the stacked columns by kind bucketed to
 // the window, the Stages / Dictation / Calendar / Busy panels, off the page's own
-// document). Both read from the store (fed by lib/usage.ts) and render nothing when
-// unsupported.
+// document). Both read from the store (fed by lib/usage.ts); with no backend reporting usage
+// the Home strip hides and the page shows an empty state.
 //
 // Numbers come from lib/usageDerive.ts (pure, tested); this file only lays them out.
 // The backend series is SPARSE (only days that had usage) — densified client-side into
@@ -75,7 +75,7 @@ import { fmtDateRange, fmtSpanDate, kindFill } from "@/components/stats/chartKit
 import { Eyebrow, HatchDef, Num, Panel, Pill, Swatch } from "@/components/stats/primitives";
 import { tileSpecs } from "@/components/stats/tileSpecs";
 
-/** Window runs per kind: the densified series summed. */
+/** Window totals per kind: the densified series summed. */
 function windowKinds(dense: readonly UsageKinds[]): UsageKinds {
   const out = zeroKinds();
   for (const p of dense) {
