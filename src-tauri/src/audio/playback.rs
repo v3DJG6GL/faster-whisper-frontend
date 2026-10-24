@@ -1,9 +1,8 @@
 //! Play a short mono f32 buffer on the default output device (sound cues, mic-test replay).
 //!
-//! This used to be rodio. rodio pinned cpal to 0.17, and all we used of it was "play this mono
-//! buffer at this rate", so this does the four things rodio did for us, straight on cpal:
-//! pick an output config, ask for a ~50 ms buffer (ALSA's default buffer can be seconds long),
-//! resample linearly to the device rate, and copy the mono signal to every output channel.
+//! Straight on cpal rather than rodio, which pinned cpal to 0.17: pick an output config, ask for a
+//! ~50 ms buffer (ALSA's default buffer can be seconds long), resample linearly to the device rate,
+//! and copy the mono signal to every output channel.
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{BufferSize, FromSample, SampleFormat, SizedSample, SupportedBufferSize};
