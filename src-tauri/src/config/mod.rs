@@ -54,15 +54,21 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
 /// e.g. on a full volume).
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
-    if let Err(e) = write_private(&tmp, contents) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+    replace_via_tmp(&tmp, path, |t| write_private(t, contents))
+}
+
+/// Fill `tmp` with `fill`, then rename it over `dest`. `tmp` is removed when the fill OR the
+/// rename fails (a fill can fail after creating it).
+pub(crate) fn replace_via_tmp(
+    tmp: &Path,
+    dest: &Path,
+    fill: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let done = fill(tmp).and_then(|()| std::fs::rename(tmp, dest));
+    if done.is_err() {
+        let _ = std::fs::remove_file(tmp);
     }
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
+    done
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

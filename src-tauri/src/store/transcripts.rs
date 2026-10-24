@@ -977,18 +977,15 @@ pub async fn save_transcript_media(
         let ext = media_copy_ext(&src);
         let dest = dir.join(format!("{id}.{ext}"));
         let tmp = dir.join(format!("{id}.{ext}.tmp"));
-        if let Err(e) = std::fs::copy(&src, &tmp) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
-        }
-        // Owner-only like the records themselves (copy inherits source perms). On Windows the
-        // file inherits the DACL of a `files/` folder that may have pre-existed the pick (a
-        // restored or synced tree), so it gets the same per-file DACL the recordings get.
-        crate::audio::restrict_file_private(&tmp);
-        if let Err(e) = std::fs::rename(&tmp, &dest) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
-        }
+        crate::config::replace_via_tmp(&tmp, &dest, |t| {
+            std::fs::copy(&src, t)?;
+            // Owner-only like the records themselves (copy inherits source perms). On Windows the
+            // file inherits the DACL of a `files/` folder that may have pre-existed the pick (a
+            // restored or synced tree), so it gets the same per-file DACL the recordings get.
+            crate::audio::restrict_file_private(t);
+            Ok(())
+        })
+        .map_err(|e| e.to_string())?;
         Ok(Some(dest.to_string_lossy().to_string()))
     })
     .await

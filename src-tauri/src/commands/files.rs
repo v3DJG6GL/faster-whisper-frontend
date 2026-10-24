@@ -549,7 +549,7 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
 fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
     use std::io::Write as _;
     let tmp = crate::transport::media::tmp_sibling(path);
-    let write = || -> std::io::Result<()> {
+    let write = |t: &std::path::Path| -> std::io::Result<()> {
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);
         #[cfg(target_os = "linux")]
@@ -557,19 +557,11 @@ fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), Strin
             use std::os::unix::fs::OpenOptionsExt;
             opts.custom_flags(libc::O_NOFOLLOW);
         }
-        let mut f = opts.open(&tmp)?;
+        let mut f = opts.open(t)?;
         f.write_all(contents.as_bytes())?;
         f.sync_all()
     };
-    if let Err(e) = write() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+    crate::config::replace_via_tmp(&tmp, path, write).map_err(|e| e.to_string())
 }
 
 /// Read a text/subtitle source file for a translate-only run. Size-capped —
