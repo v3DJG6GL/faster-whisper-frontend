@@ -6,7 +6,6 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/buttons";
 import { Segmented, Select, Toggle } from "@/components/ui/form";
 
-/* ── Card ─────────────────────────────────────────────────────────────── */
 export function Card({
   className,
   edge,
@@ -41,7 +40,6 @@ export function Card({
   );
 }
 
-/* ── Section heading ──────────────────────────────────────────────────── */
 export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
@@ -55,7 +53,6 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
   );
 }
 
-/* ── Page header ──────────────────────────────────────────────────────── */
 /** The eyebrow + title + lede triple at the top of a screen. Renders a fragment so it
  *  drops into either a bare container or the inner div of a flex header row unchanged. */
 export function PageHeader({ eyebrow, title, icon: Icon, children }: { eyebrow: string; title: string; icon?: LucideIcon; children: ReactNode }) {
@@ -71,7 +68,6 @@ export function PageHeader({ eyebrow, title, icon: Icon, children }: { eyebrow: 
   );
 }
 
-/* ── ListScreenHeader ─────────────────────────────────────────────────── */
 /**
  * The header row shared by the list screens (Backends / Profiles / Per-app rules):
  * a {@link PageHeader} on the left and an optional accent "Add …" button on the right.
@@ -111,19 +107,15 @@ export function ListScreenHeader({
   );
 }
 
-/* ── EditorHeader ─────────────────────────────────────────────────────── */
 /**
  * The header of a full-page editor (Profiles / Backends / Per-app rules), where
  * the editor REPLACES the list it came from.
  *
- * It pins to the top of the scroll container, because that is the whole point:
- * these forms run past a screen height, and the only way out used to be a
- * Cancel button below the fold. It also names what you're editing — the page
- * header behind it keeps saying "Profiles", which is a lie once the editor is
- * open — and shows whether there is unsaved work.
- *
- * The bottom Save/Cancel pair stays: that's where a form finishes. This adds a
- * way out from the top, it doesn't move the finish line.
+ * It pins to the top of the scroll container because these forms run past a
+ * screen height, so a way out stays in reach. It names what you're editing (the
+ * page header behind it still says "Profiles") and shows whether there is
+ * unsaved work. The bottom Save/Cancel pair stays where the form finishes; this
+ * only adds a way out from the top.
  */
 export function EditorHeader({
   onBack,
@@ -170,7 +162,6 @@ export function EditorHeader({
   );
 }
 
-/* ── ConfirmLeave ─────────────────────────────────────────────────────── */
 /**
  * The prompt an editor raises when you try to leave with unsaved changes.
  * Three named outcomes rather than "Are you sure?" — every button says what it
@@ -340,7 +331,7 @@ export function DisclosureCard({
         onClick={onToggle}
         title={hint}
         aria-expanded={open}
-        aria-controls={open ? panelId : undefined} // the panel node exists only while open (Combobox rule)
+        aria-controls={open ? panelId : undefined} // the panel node exists only while open; never point at a missing id
         className={cn(
           "group ring-signal flex w-full items-center gap-2 text-left",
           nested ? "rounded-[11px] px-4 py-3 text-[13px]" : "rounded-[13px] px-[18px] py-3.5 text-[14px]",
@@ -366,14 +357,9 @@ export function DisclosureCard({
   );
 }
 
-/* ── Stack (vertical rhythm) ──────────────────────────────────────────── */
-// Spacing between stacked siblings is a CONTAINER responsibility, not a per-
-// element one (margin is a property of the *relationship* between two elements).
-// A Stack owns the vertical gap so its children stay margin-free; `gap` (not
-// `space-y`) avoids margin-collapse + first/last-child leaks and self-heals when
-// children are added/removed/reordered. Pick from a deliberate inner-≤-outer
-// scale (bigger gaps for bigger/outer groups). Opt-in per container — NOT a
-// global default — so existing tuned screens are unaffected.
+// A Stack owns the vertical gap between its children so they stay margin-free; `gap`
+// (not `space-y`) avoids margin-collapse and first/last-child leaks. Inner gaps ≤ outer
+// ones. Opt-in per container, not a global default, so existing tuned screens are unaffected.
 const STACK_GAP = {
   1: "gap-1", //  4px — label ↔ control
   2: "gap-2", //  8px — rows / fields in a tight group
@@ -396,7 +382,6 @@ export function Stack({
   return <div className={cn("flex flex-col", STACK_GAP[gap], className)}>{children}</div>;
 }
 
-/* ── Setting row ──────────────────────────────────────────────────────── */
 export function SettingRow({
   title,
   desc,
@@ -413,29 +398,20 @@ export function SettingRow({
   children: ReactNode;
   last?: boolean;
   disabled?: boolean;
-  /** WHY this row is inactive, shown at full contrast IN PLACE OF `desc`.
-   *
-   *  A dimmed row with no explanation is the defect this exists to fix: the reader can
-   *  see that a control is unavailable and has no way to learn what would make it
-   *  available. Greying is kept — Microsoft's guidance endorses disabling subordinate
-   *  controls, and GNOME/elementary both prefer insensitive over hidden for "available
-   *  once a condition is met" — but greying ALONE is what fails. Two sentences, in the
-   *  shape Microsoft's balloon guidance recommends: the condition, then how to change it.
-   *
-   *  Not dimmed with the rest of the block: the reason is the one thing on a dead row
-   *  that must stay readable, and WCAG's contrast exemption for inactive controls makes
-   *  a dim explanation conformant but useless. */
+  /** WHY this row is inactive, shown at full contrast IN PLACE OF `desc`: a dimmed row
+   *  alone never tells the reader what would make it available. Greying stays (Microsoft
+   *  and GNOME guidance prefer insensitive over hidden for "available once a condition is
+   *  met"). Two sentences: the condition, then how to change it. Not dimmed with the row —
+   *  WCAG's contrast exemption for inactive controls makes a dim reason conformant but useless. */
   disabledReason?: string;
   /** Sub-panel rendered INSIDE the row, below the header flex line — the
    *  row's border-b stays underneath it, so an expanded row reads as one
    *  unit instead of the panel floating between two rows. */
   expand?: ReactNode;
 }) {
-  // A bare role="switch" Toggle, an unlabeled <select> or a role="group" Segmented has no accessible
-  // name (the title is a sibling <div>, not a <label htmlFor>). Auto-label a direct Toggle, Select
-  // or Segmented child with the row title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
-  // other control types untouched. (A control wrapped in its own <div> — e.g. the mic select with its
-  // Refresh button — isn't a direct child, so those pass ariaLabel at the call site instead.)
+  // A Toggle, Select or Segmented has no accessible name here (the title is a sibling <div>, not
+  // a <label htmlFor>), so a DIRECT child of those types gets the row title. A control wrapped in
+  // its own <div> (the mic select with its Refresh button) is not direct and passes ariaLabel itself.
   const control =
     isValidElement(children) &&
     (children.type === Toggle || children.type === Select || children.type === Segmented)
@@ -443,15 +419,9 @@ export function SettingRow({
           ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
         })
       : children;
-  // Grid, not flex: the control used to take whatever width it wanted and hand
-  // the text the remainder, so a wide Segmented starved the description at ANY
-  // page width — the "Insertion method" row wrapped to eight lines. A capped
-  // control column gives the description a stable measure that doesn't shift as
-  // controls change.
-  //
-  // Measured as a CONTAINER query on the row, not a viewport breakpoint: the
-  // same component sits in Settings' full-width cards and in the Transcribe
-  // studio's 420px rail, and only the row's own width says which layout fits.
+  // Grid with a capped control column, not flex: in flex a wide Segmented starves the
+  // description at any page width. A CONTAINER query on the row, not a viewport breakpoint:
+  // the row sits both in Settings' full-width cards and in the Transcribe studio's 420px rail.
   // Under 640px the control drops underneath instead of squeezing the text.
   return (
     <div className={cn("@container py-4", !last && "border-b border-line")}>
@@ -465,8 +435,6 @@ export function SettingRow({
           >
             {title}
           </div>
-          {/* The reason REPLACES the description and keeps full contrast — see the prop's
-              doc. When there's no reason, the description dims with the rest of the row. */}
           {disabled && disabledReason ? (
             <div className="mt-0.5 text-[12.5px] leading-snug text-warn">{disabledReason}</div>
           ) : (
