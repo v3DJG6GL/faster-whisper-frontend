@@ -17,6 +17,7 @@
 
 import {
   DEFS,
+  LIST_SWITCH,
   settingsOfCategory,
   type SettingDef,
   type SettingId,
@@ -159,14 +160,10 @@ export function repinElementFields<T extends { id: string }>(
  *  switch (the list IS the category — addresses/keys/defaults only modify
  *  it). */
 export function catsFromGates(gates: Gates): Record<string, boolean> {
-  const cats: Record<string, boolean> = {
-    backends: gates.backendList,
-    profiles: gates.profileList,
-    appRules: gates.rulesThisOs,
-  };
+  const cats: Record<string, boolean> = {};
+  for (const [cat, sw] of Object.entries(LIST_SWITCH)) cats[cat] = gates[sw as SettingId];
   for (const d of DEFS) {
-    if (d.localOnly) continue;
-    if (d.category === "backends" || d.category === "profiles" || d.category === "appRules") continue;
+    if (d.localOnly || LIST_SWITCH[d.category]) continue;
     cats[d.category] = (cats[d.category] ?? false) || gates[d.id as SettingId];
   }
   return cats;
@@ -200,7 +197,7 @@ export const PROFILE_INSERTION_FIELDS = ["typeAsISpeak", "insertionOverrides"] a
 
 /** The list switches: each IS its category (`catsFromGates`), so turning one on is a category
  *  coming on whole, never one setting inside it. */
-const LIST_SWITCHES: readonly string[] = ["backendList", "profileList", "rulesThisOs"];
+const LIST_SWITCHES: readonly string[] = Object.values(LIST_SWITCH) as string[];
 
 /** Does this setting actually travel under these gates: its switch on, its category synced, and —
  *  for the quick-add pin, which is slaved to the server list (`extractDictionary`) — that list too. */

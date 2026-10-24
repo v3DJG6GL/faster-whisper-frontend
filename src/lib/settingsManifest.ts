@@ -486,8 +486,8 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
   return DEFS.filter((d) => d.category === cat && !d.localOnly);
 }
 
-/** The switch that IS each list category (syncGates' catsFromGates hard-codes the same three). */
-const LIST_SWITCH: Partial<Record<WireCategory, SettingId>> = {
+/** The switch that IS each list category. */
+export const LIST_SWITCH: Partial<Record<WireCategory, SettingId>> = {
   backends: "backendList",
   profiles: "profileList",
   appRules: "rulesThisOs",
