@@ -176,7 +176,7 @@ pub enum UploadOutcome {
         media_id: String,
         expires_at: Option<i64>,
     },
-    /// A status the panel can name (413 too large, 429 rate, 403 off, 503 no ffmpeg).
+    /// Any non-2xx answer; the panel names 413 (too large), 429 (rate), 403 (off) and 503 (no ffmpeg).
     Http { status: u16, detail: String },
 }
 
