@@ -25,10 +25,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
 
-/// Logical size declared for the `overlay` window in tauri.conf.json. The chip pill is
-/// centred in this (transparent, click-through) strip and capped to it; widened so a full
-/// readout (tag │ lang · mode │ stats │ target) plus up to ~6 quick-launch buttons fits
-/// on one line without the last button being clipped.
+/// Logical size of the chip strip at "Chip size" 1 (the window in tauri.conf.json is this ×
+/// `CHIP_SCALE_MAX`, see `window_size`). The pill is centred in it and capped to it; widened
+/// so a full readout (tag │ lang · mode │ stats │ target) plus up to ~6 quick-launch buttons
+/// fits on one line without the last button being clipped.
 const CHIP_W: f64 = 820.0;
 const CHIP_H: f64 = 132.0;
 
@@ -152,8 +152,7 @@ const CHIP_TITLE: &str = "fwf-dictation-chip";
 /// edge, so the webview can CSS-slide the chip between its resting inset and the edge-peek
 /// tuck — where only the status dot's outer half stays on-screen (the rest is clipped by the
 /// viewport). The window itself never moves for the peek: a Wayland window-move can't be
-/// tweened, and KWin silently DROPS an off-output/negative forced position (so the old
-/// "raise the window off the border" trick never actually applied). A no-op on native
+/// tweened, and KWin silently DROPS an off-output/negative forced position. A no-op on native
 /// Wayland (the compositor decides).
 fn position(win: &WebviewWindow, edge: &str) {
     let Some(monitor) = crate::aux_windows::position::monitor_of(win) else {
@@ -183,7 +182,7 @@ fn position(win: &WebviewWindow, edge: &str) {
 /// lands (hundreds of ms of external tool calls). On later runs the previous session's rule
 /// persists in kwinrulesrc and already covers the first map, so this mainly fixes run one
 /// (and a changed edge/monitor since last quit). Detached thread — the kwrite/dbus tools
-/// can block (see `place_chip`'s comment); the show path never waits on this.
+/// can block (see `show_overlay`'s KDE branch); the show path never waits on this.
 #[cfg(target_os = "linux")]
 pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
     use crate::config::IndicatorPosition;
@@ -312,13 +311,6 @@ pub fn repair_topmost(app: &AppHandle) {
     });
 }
 
-// The edge-peek never moves the window. The window is anchored FLUSH against the screen edge
-// (an on-output position KWin honours) and the chip slides between its resting inset and the
-// dot-only tuck purely in CSS, clipped by the viewport edge (see Overlay.tsx). Two earlier
-// approaches failed: moving the window for the peek teleported (Wayland can't tween a move),
-// and raising the window off the border to fake the overflow was silently DROPPED by KWin
-// (it discards a forced position whose top-left is outside every output).
-
 /// Make the (display-only) chip click-through so the big mostly-transparent window
 /// never swallows clicks meant for the app beneath. MUST be called only AFTER
 /// `show()` — on GTK/KDE-Wayland calling it on a still-hidden (unrealized) window
@@ -336,7 +328,6 @@ pub fn set_overlay_scale(app: AppHandle, scale: f64) {
     }
 }
 
-/// Hide the chip.
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
@@ -347,17 +338,16 @@ pub fn hide_overlay(app: AppHandle) {
 }
 
 /// Shape the chip window's *input* region to a single rectangle = the visible chip
-/// bounds (in the window's logical px, as measured by the webview). Only that
-/// rectangle captures the cursor; the rest of the big transparent strip stays
-/// click-through. This is what lets the chip be *hovered* (to reveal the active
-/// Profile's language/mode) without the window swallowing clicks meant for apps
-/// beneath it.
+/// bounds (reported by the webview in CSS px). Only that rectangle captures the cursor;
+/// the rest of the big transparent strip stays click-through. This is what lets the chip
+/// be *hovered* (to reveal the active Profile's language/mode) without the window
+/// swallowing clicks meant for apps beneath it.
 ///
 /// Linux applies it as a GDK input shape; Windows has no input-shape API, so the
 /// rect instead feeds the `win_hover` poller, which flips whole-window cursor
-/// pass-through at the rect's boundary. On any failure — or other platforms — it
-/// falls back to full click-through (`set_ignore_cursor_events(true)`), i.e. the
-/// persistent tag still shows, only hover-reveal is unavailable. Never panics.
+/// pass-through at the rect's boundary. On any failure — or other platforms — nothing
+/// changes: the window stays fully click-through from show time, so the tag still shows
+/// and only hover-reveal is unavailable. Never panics.
 #[tauri::command]
 pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persist: bool) {
     let Some(win) = app.get_webview_window("overlay") else {
@@ -454,7 +444,7 @@ pub fn chip_pointer_over(app: AppHandle) -> bool {
 
 /// The most recent chip hit region (logical px) requested by the webview, so a (re)show can
 /// restore it the instant `ignore_cursor` wipes the input shape (the webview also re-reports its
-/// exact bounds a beat later). `Mutex::new` is const, so no lazy init is needed.
+/// exact bounds a beat later).
 #[cfg(target_os = "linux")]
 static LAST_HIT_REGION: std::sync::Mutex<Option<(f64, f64, f64, f64)>> =
     std::sync::Mutex::new(None);
@@ -512,14 +502,11 @@ fn install_crossing_forwarder(win: &WebviewWindow, gtk_win: &gtk::ApplicationWin
     });
 }
 
-/// Apply a rectangular GDK input region to the overlay's underlying window. GDK
-/// input regions live in the window's *logical* coordinate space (GDK applies
-/// HiDPI scaling itself), so the webview's CSS-px `getBoundingClientRect` maps
-/// straight through. A small pad makes the hit area forgiving at the chip edges.
+/// Apply a rectangular GDK input region (window-logical px — GDK applies HiDPI scaling
+/// itself) to the overlay's underlying window. A small pad makes the hit area forgiving
+/// at the chip edges.
 #[cfg(target_os = "linux")]
 fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Option<()> {
-    // `.window()` is a GtkWidget method (WidgetExt); `input_shape_combine_region`
-    // is an inherent method on gdk::Window, so no gdk trait import is needed.
     use gtk::prelude::WidgetExt;
 
     let gtk_win = match win.gtk_window() {
@@ -533,7 +520,7 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
         // EXPECTED at startup: the webview reports the chip's bounds as soon as
         // it paints, which is before GTK realizes the overlay toplevel. The
         // caller does nothing and a later report applies the shape, so this is
-        // a retry note, not a warning (it fired 5× per launch in the log view).
+        // a retry note, not a warning.
         tracing::debug!("[overlay] no GdkWindow yet (window not realized?)");
         return None;
     };
@@ -558,12 +545,12 @@ fn apply_hit_region(win: &WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> Opti
 
 /// Windows stand-in for the GDK input shape: tao's only click-through control there
 /// is whole-window `set_ignore_cursor_events`, so the chip would be either fully
-/// click-through (never hoverable/clickable — the pre-fix behavior) or an
-/// 820×132 click-stealing strip. Instead the window STAYS click-through and a
-/// poller watches the global cursor against the webview-reported chip rect,
-/// enabling cursor events exactly while the cursor is over the chip — so
-/// hover-reveal and the quick-launch buttons work, while clicks anywhere else on
-/// the transparent strip keep reaching the app beneath.
+/// click-through (never hoverable/clickable) or a whole-strip click-stealer (see
+/// `window_size`). Instead the window STAYS click-through and a poller watches the
+/// global cursor against the webview-reported chip rect, enabling cursor events
+/// exactly while the cursor is over the chip — so hover-reveal and the quick-launch
+/// buttons work, while clicks anywhere else on the transparent strip keep reaching
+/// the app beneath.
 ///
 /// Pure tauri + std (no Win32 types), so it compiles on every platform and the
 /// Linux dev loop type-checks it — only the call sites are `#[cfg(windows)]`.
@@ -590,11 +577,11 @@ mod win_hover {
     /// mirroring LAST_HIT_REGION's persist semantics on Linux.
     static REGION: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
     static PERSIST: Mutex<Option<(f64, f64, f64, f64)>> = Mutex::new(None);
-    /// Window geometry (scale factor, outer x, outer y) cached at show / re-place time.
-    /// `scale_factor` and `outer_position` are NOT cheap syscalls from the poller thread —
-    /// each is a user message posted to the event loop plus a blocking channel read — and
-    /// they only change when the chip is re-placed, so the 50 ms poll reads them from here
-    /// and asks the event loop for the cursor position alone (three round-trips → one).
+    /// Window geometry (scale factor, outer x, outer y) cached on show and on every region
+    /// report. `scale_factor` and `outer_position` are NOT cheap from the poller thread —
+    /// each is a user message posted to the event loop plus a blocking channel read — so the
+    /// 50 ms poll reads them from here and asks the event loop for the cursor position alone
+    /// (three round-trips → one).
     static GEOM: Mutex<Option<(f64, i32, i32)>> = Mutex::new(None);
 
     /// Refresh the cached geometry from the window (main-thread or not — it is a one-off).
@@ -682,8 +669,6 @@ mod win_hover {
             let want = visible && cursor_in_chip(&app).unwrap_or(false);
             if want != INTERACTIVE.load(Ordering::SeqCst) {
                 INTERACTIVE.store(want, Ordering::SeqCst);
-                // Window mutations go through the main thread, matching the rest of
-                // the codebase (show_overlay's own GTK-hazard note).
                 let handle = app.clone();
                 if app
                     .run_on_main_thread(move || {
