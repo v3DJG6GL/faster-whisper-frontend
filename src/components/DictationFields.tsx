@@ -4,12 +4,10 @@
 // keeps its own two-state rows; it imports `METHOD_OPTIONS` (lib/dictation/insertion) so the method's labels and
 // order are pinned there too, and takes its row labels from the same manifest entries.
 //
-// One module because the surfaces had already drifted: App Rules called the method
-// "Insert method" while Settings called it "Insertion method", and listed the same three
-// options in a DIFFERENT order, with nothing pinning either. Labels now come from the
-// settings manifest, so a rename reaches every surface by construction.
+// One module so the surfaces cannot drift apart on labels or option order: labels come from
+// the settings manifest, so a rename reaches every surface by construction.
 //
-// Two structural rules, both learned from DecodeFields:
+// Two structural rules:
 //  1. The cells are plain FUNCTIONS called inline, never nested components. Rendering them
 //     as <Cell/> gives a fresh element type each keystroke, remounting the focused control.
 //  2. This yields BARE Select/Toggle elements and lets each surface wrap them. SettingRow
@@ -44,12 +42,9 @@ export interface DictationFieldsProps {
   inherited?: Partial<Pick<InsertionOverrides, "insertMethod" | "pasteShortcut" | "autoEnter" | "restoreClipboard">>;
 }
 
-/** The four insertion controls as an object of ready-to-place elements, so each surface
- *  can lay them out in its own row component without this one owning the chrome.
- *
- *  Deliberately NOT a component that renders rows: Settings uses SettingRow, the Profile
- *  editor uses a Labeled grid, and App Rules uses its own flat stack. Returning elements
- *  keeps one definition of each CONTROL while leaving the three layouts alone. */
+/** The four insertion controls as ready-to-place elements, deliberately NOT a component that
+ *  renders rows: the surfaces lay them out differently (SettingRow, a Labeled grid, a flat
+ *  stack), so this keeps one definition of each CONTROL and leaves the layouts alone. */
 export function dictationControls({ value, onChange, disabled, inherited }: DictationFieldsProps) {
   // A cleared control writes `undefined` and the key is PRUNED: "inherit" is the ABSENCE of a
   // value, which is what makes a later change to the layer below propagate. (App Rules map the
