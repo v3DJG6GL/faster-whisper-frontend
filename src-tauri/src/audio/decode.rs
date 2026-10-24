@@ -186,7 +186,7 @@ fn cache_tmp_pid(name: &str) -> Option<u32> {
 }
 
 /// Keep the playback cache under `MAX_CACHE_BYTES`, deleting oldest-modified
-/// first and never the file just written. Best-effort housekeeping.
+/// first and never `keep` (the file about to be played). Best-effort housekeeping.
 fn prune_cache(dir: &std::path::Path, keep: &std::path::Path) {
     prune_cache_to(dir, keep, MAX_CACHE_BYTES)
 }
