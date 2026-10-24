@@ -1,11 +1,12 @@
-// Usage-stats controller (runs in the main window). Keeps the active backend's
+// Usage-stats controller (runs in the main window). Keeps each backend's
 // usage (GET /v1/usage) fresh in the store so BOTH the Home stats section
 // (React) and the chip readout (the separate overlay webview, fed via
-// chipController.ts) can read it. Like chipController.ts it's a store-subscribed singleton.
+// dictation/chipController.ts) can read it. Like chipController.ts it's a store-subscribed singleton.
 //
-// Two documents per backend: a FIXED 30-day one for the Home strip and the chip
-// (`usage[backendId]`), and — for the viewed backend only — the Statistics page's own
-// (`usageView`), fetched for whatever range / custom span / stage filter the page has set
+// A FIXED 30-day document per backend for the Home strip and the chip
+// (`usage[backendId]`), and — for the viewed backend only — the Statistics page's own two
+// (`usageView`, plus the calendar's 365-day `usageYear` unless the range already is 1 year
+// or All), fetched for whatever range / custom span / stage filter the page has set
 // (`usageViewQuery`) and refetched when that changes or the poll ticks. The kind filter
 // is client-side and never refetches. Best-effort throughout: a standard/old server (no
 // /v1/usage) or any error yields null and the stats surfaces simply hide.
@@ -126,7 +127,7 @@ export function viewerTimeZone(): string | undefined {
   }
 }
 
-/** The Backend the usage poll fetches stats for: the user's pick when it
+/** The Backend the Statistics page views: the user's pick when it
  *  has usage, else the home-target backend, else the first backend that has usage. */
 export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   const withUsage = s.backends.filter((b) => !!ownProp(s.usage, b.id));
@@ -278,10 +279,9 @@ async function refreshOne(backend: Backend): Promise<void> {
   const st = useApp.getState();
   const cur = st.backends.find((x) => x.id === backend.id);
   if (!cur || cur.serverUrl !== backend.serverUrl || cur.hasApiKey !== backend.hasApiKey) return;
-  // …and the URL OVERRIDE, which is where this request actually went. It is the third
-  // invalidation trigger `setUrlOverride` fires on, and comparing only `serverUrl` let a fetch
-  // already in flight against the old address resolve afterwards and re-install its counters
-  // under a backend that now points somewhere else — undoing the invalidation that just ran.
+  // …and the URL OVERRIDE, which is where this request actually went: setUrlOverride
+  // invalidates too, and a fetch still in flight against the old address must not re-install
+  // its counters under a backend that now points somewhere else.
   if (effectiveServerUrl(cur, st.settings) !== target) return;
   // …and the CREDENTIAL: /v1/usage is per caller, and a rotated key moves neither the address nor
   // key presence. A fetch sent with the old key must not re-install the old caller's numbers —
