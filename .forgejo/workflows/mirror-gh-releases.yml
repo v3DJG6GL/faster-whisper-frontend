@@ -277,11 +277,10 @@ jobs:
               if [ -z "$want" ] && [ "${aname#SHA256SUMS}" = "$aname" ]; then
                 # No digest: a release predating SHA256SUMS, or an asset added out of band.
                 # Refuse to mirror it — a size check cannot tell a correct installer from a
-                # same-size replacement, and the mirror only ships verified bytes (see header).
+                # same-size replacement (this runs before the fetch, so it is not even downloaded).
                 # Skip rather than fail: releases are walked oldest-first, so an `exit 1` on one
-                # old release would block every newer one forever. Unverified bytes are never
-                # uploaded (nor downloaded: this runs before the fetch); resolve it by publishing
-                # a SHA256SUMS for that release or deleting the entry.
+                # old release would block every newer one forever. Resolve it by publishing a
+                # SHA256SUMS for that release or deleting the entry.
                 echo "::warning::[$tag] $aname has no published sha256 (release published ${sumsfound} SHA256SUMS asset(s)) — not mirroring unverified bytes"
                 unverified=$((unverified + 1))
                 continue
@@ -304,8 +303,7 @@ jobs:
                 echo "::error::[$tag] $aname downloaded $dl bytes, expected $asize"
                 exit 1
               fi
-              # And the bytes themselves, when the release published a digest for this name. A
-              # size check alone cannot tell a correct installer from a same-size replacement.
+              # And the bytes themselves, when the release published a digest for this name.
               if [ -n "$want" ]; then
                 got=$(sha256sum asset.bin | cut -d" " -f1)
                 if [ "$want" != "$got" ]; then
