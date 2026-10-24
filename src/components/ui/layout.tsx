@@ -69,8 +69,8 @@ export function PageHeader({ eyebrow, title, icon: Icon, children }: { eyebrow: 
 }
 
 /**
- * The header row shared by the list screens (Backends / Profiles / Per-app rules):
- * a {@link PageHeader} on the left and an optional accent "Add …" button on the right.
+ * The header shared by the list screens (Backends / Profiles / Per-app rules):
+ * a {@link PageHeader} and an optional accent "Add …" button.
  */
 export function ListScreenHeader({
   eyebrow,
