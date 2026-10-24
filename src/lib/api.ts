@@ -1121,9 +1121,9 @@ export async function reregisterShortcuts(): Promise<void> {
   await inShortcutOrder(() => invoke("reregister_shortcuts"));
 }
 
-/** Like reregisterShortcuts, but a no-op while a binding capture is in progress — used by
- *  cancelLive's resume-recovery so cancelling a session on system://resumed can't re-arm the
- *  hotkeys (and clear the capture suspension) mid-capture. */
+/** Like reregisterShortcuts, but a no-op while a binding capture is in progress — for callers
+ *  that can fire mid-capture (cancelLive on system://resumed, a config save resolving late), so
+ *  they can't re-arm the hotkeys (and clear the capture suspension) mid-capture. */
 export async function reregisterShortcutsUnlessCapturing(): Promise<void> {
   if (!isTauri) return;
   await inShortcutOrder(() => invoke("reregister_shortcuts_unless_capturing"));
@@ -1136,8 +1136,9 @@ export async function suspendShortcuts(): Promise<void> {
   await inShortcutOrder(() => invoke("suspend_shortcuts"));
 }
 
-/** Whether a code-list chord (["ControlLeft","KeyH"]) can be registered via the
- *  global-shortcut plugin. Modifier-only / AltGr chords return false (evdev-only). */
+/** Whether a code-list chord (["ControlLeft","KeyH"]) can be registered by the platform's
+ *  registrar: on Windows the hook backend (modifier-only / AltGr included); elsewhere the
+ *  global-shortcut plugin, where modifier-only / AltGr chords return false (evdev-only). */
 export async function validateCodes(codes: string[]): Promise<boolean> {
   if (!isTauri) return true;
   return invoke<boolean>("validate_codes", { codes });
@@ -1584,8 +1585,8 @@ export async function readBackendKeyStates(backendIds: string[]): Promise<Backen
   return invoke<BackendKeyRead>("read_backend_keys", { backendIds });
 }
 
-/** Bulk keyring read: the stored API keys of the given Backends (ids without a
- *  readable key are omitted). Feeds export-with-secrets and the synced blob. */
+/** Bulk keyring read: the stored keys of the given ids. An unreadable key and an absent one are
+ *  both just omitted — use `readBackendKeyStates` where that difference matters. */
 export async function readBackendKeys(backendIds: string[]): Promise<Record<string, string>> {
   return (await readBackendKeyStates(backendIds)).keys;
 }
