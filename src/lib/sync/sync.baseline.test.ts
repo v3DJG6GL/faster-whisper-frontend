@@ -546,9 +546,9 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("a peer cannot arm the post-paste Return through a PROFILE override either", async () => {
-    // The twin of the `general` strip above. `autoEnter` moved onto Profile and AppRule as
-    // an override, and `sanitizeProfiles` carries unlisted leaves through by reference — so
-    // without an explicit drop this is a way around the very defense the general strip is.
+    // The twin of the `general` strip above. `autoEnter` is also a Profile and AppRule override,
+    // and `sanitizeProfiles` carries unlisted leaves through by reference — so without an
+    // explicit drop this is a way around the very defense the general strip is.
     useApp.setState({
       settings: settings(),
       profiles: [
@@ -966,7 +966,7 @@ describe("applyBlob keep-local (baseline)", () => {
     // `"backends": []` / a string / a number are all truthy: without the isPlainObject
     // guard `sanitizeBackends(undefined)` returned [] and the dangling-reference scrub
     // then read that as "every profile's backend is gone".
-    useApp.setState({ profiles: [profile({ activation: "hold" })] }); // "toggle" is not a valid kind
+    useApp.setState({ profiles: [profile({ activation: "hold" })] });
     const before = useApp.getState();
     await applyBlob(
       { backends: [] as never, profiles: "x" as never, appRules: 5 as never },
@@ -1109,9 +1109,9 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("side-differing inbound chords are only collapsed where the registrar collapses them", async () => {
-    // The sanitizer calls `conflicts(peers, !IS_WINDOWS)` and switches the later member of
-    // each collision off. Windows' low-level hook registers LCtrl+Space and RCtrl+Space as
-    // distinct chords, so collapsing there disabled a WORKING pair on every pull.
+    // The collision pass switches the later member of each collision off. Windows' low-level hook
+    // registers LCtrl+Space and RCtrl+Space as distinct chords, so collapsing sides there disabled
+    // a WORKING pair on every pull.
     useApp.setState({ settings: settings(), profiles: [] });
     await applyBlob(
       {
