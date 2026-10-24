@@ -68,14 +68,7 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
   // `e.kind` rendered as a React child), and with no error boundary in either webview a
   // non-string leaf unmounts the window. Require string leaves here, at the choke point.
   recording.quickLaunch = Array.isArray(recording.quickLaunch)
-    ? recording.quickLaunch.filter(
-        (e) =>
-          !!e &&
-          typeof e === "object" &&
-          typeof (e as { id?: unknown }).id === "string" &&
-          typeof (e as { kind?: unknown }).kind === "string" &&
-          typeof (e as { target?: unknown }).target === "string",
-      )
+    ? recording.quickLaunch.filter((e) => hasStringFields(e, "id", "kind", "target"))
       // First entry per id wins: the editor keys rows and removes by id, so a foreign blob's
       // duplicate ids would make Remove delete both rows (and collide React keys in editor and chip).
       // One pass (a Set): it runs before the ceiling below, on whatever length the blob carries.
@@ -158,9 +151,7 @@ function wellFormedProfiles(v: unknown): Profile[] {
   return v
     .filter(
       (p): p is Profile =>
-        !!p && typeof p === "object" &&
-        typeof (p as Profile).id === "string" &&
-        typeof (p as Profile).name === "string" &&
+        hasStringFields(p, "id", "name") &&
         // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
         // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
         // the debounced save.
@@ -185,9 +176,7 @@ function wellFormedBackends(v: unknown): Backend[] {
   return v
     .filter(
       (b): b is Backend =>
-        !!b && typeof b === "object" &&
-        typeof (b as Backend).id === "string" &&
-        typeof (b as Backend).serverUrl === "string" &&
+        hasStringFields(b, "id", "serverUrl") &&
         // A backend id is used verbatim as a keyring account name; the reserved `__…__` namespace
         // is our own snapshot stash. Same rejection the sync path makes.
         !isReservedId((b as Backend).id),
@@ -201,6 +190,11 @@ function wellFormedBackends(v: unknown): Backend[] {
       const serverUrl = serverUrlFromPeer(b.serverUrl) || b.serverUrl;
       return serverUrl === b.serverUrl ? b : { ...b, serverUrl };
     });
+}
+
+/** A non-null object whose `keys` all hold strings: the shape floors' shared first check. */
+function hasStringFields(v: unknown, ...keys: string[]): boolean {
+  return !!v && typeof v === "object" && keys.every((k) => typeof (v as Record<string, unknown>)[k] === "string");
 }
 
 function isStringList(v: unknown): v is string[] {
