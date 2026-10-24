@@ -319,8 +319,6 @@ export async function urlPreview(args: ServerTarget & {
   }, new Error("Not running in the desktop app."));
 }
 
-// ── Media export (audio / video / video + subtitle tracks) ─────────────────
-
 export interface SubtitleTrackIn {
   lang: string;
   label?: string;
@@ -397,7 +395,6 @@ export async function cancelMediaExport(): Promise<void> {
   await invoke("cancel_media_export");
 }
 
-/** Subscribe to export progress events; returns the unsubscribe. */
 export async function onMediaExportProgress(
   cb: (p: MediaExportProgress) => void,
 ): Promise<() => void> {
@@ -629,7 +626,7 @@ export async function getDecodeDefaults(args: ServerTarget & {
   }, null);
 }
 
-/** P17: the post-processing ("Dictionary") rules the caller may view + edit
+/** The post-processing ("Dictionary") rules the caller may view + edit
  *  (GET /v1/pipeline-rules). Returns a structured result with the HTTP status so
  *  the screen can branch (see PipelineFetch: `ok` = state present, 0 = unreachable,
  *  401/403 = gated, 404 = standard/old server). Outside Tauri → an unreachable result. */
@@ -637,7 +634,7 @@ export async function getPipelineRules(args: ServerTarget): Promise<PipelineFetc
   return invokeServer<PipelineFetch>("get_pipeline_rules", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
-/** P18: recently-transcribed word/phrase suggestions for the Dictionary's
+/** Recently-transcribed word/phrase suggestions for the Dictionary's
  *  spoken-symbol key field (GET /v1/recent-words), scoped to the Backend's API
  *  key via the keyring. Best-effort: `{ words: [] }` outside Tauri or on any
  *  error (old/standard server, no history) — the field just becomes a plain input. */
@@ -645,7 +642,7 @@ export async function getRecentWords(args: ServerTarget): Promise<RecentWords> {
   return invokeServer<RecentWords>("get_recent_words", args, {}, { words: [] });
 }
 
-/** P28: the caller's own usage document (GET /v1/usage) — per-kind today/total,
+/** The caller's own usage document (GET /v1/usage) — per-kind today/total,
  *  the daily series, stages, dictation facets, apps, calendar and streak — for the
  *  Home strip, the Statistics page and the optional chip readout. Best-effort: null
  *  outside Tauri or on any error (endpoint absent / standard server / unreachable) —
@@ -751,7 +748,7 @@ export async function saveUsageOutcomes(queue: unknown): Promise<void> {
   await usageOutcomesTurn(() => invoke("save_usage_outcomes", { queue }));
 }
 
-/** P17: apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
+/** Apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
  *  {rules_patch, fingerprints} object built from the user's edits. Returns
  *  saved / conflicts / requires_restart, plus 422 `errors` or a 400/403/500
  *  `detail`. A 2xx with `ok: false` LANDED (see PipelineSaveResult): branch on
@@ -858,8 +855,6 @@ export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
 export async function onMicTestEnded(cb: (reason: string) => void): Promise<() => void> {
   return subscribe<string>("audio://test-ended", (reason) => cb(reason));
 }
-
-// ── In-app log viewer (Logs screen) ─────────────────────────────────────────
 
 /** One captured log line from the Rust ring buffer. `ts` is ms since epoch. */
 export interface LogLine {
@@ -984,20 +979,17 @@ export async function startStream(args: ServerTarget & {
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
   /** Declares that this session's utterances WILL be translated on a separate
-   *  request. The server then holds each per-utterance log receipt open and
-   *  merges the translation into it, instead of logging a receipt and four
-   *  orphan [translate] lines with nothing linking them. Omitted → the server
-   *  logs immediately, exactly as it always has, which is what keeps an older
-   *  backend's behaviour unchanged. */
+   *  request, so the server holds each per-utterance log receipt open and merges
+   *  the translation into it instead of logging unlinked [translate] lines.
+   *  Omitted → the server logs immediately (an older backend's behaviour). */
   translateExpect?: {
     targets: string[];
     include_original: boolean;
     /** Whether a translate request will arrive for EVERY utterance (live
      *  mode) or once for the whole transcript (stop-timing). The server holds
      *  a log receipt open per utterance only in the first case — in the second
-     *  nothing would ever claim them and they would all release on the idle
-     *  timeout. Absent on older clients, where the server assumes per-utterance
-     *  because that is what it already did. */
+     *  nothing would claim them before the idle timeout. Absent → the server
+     *  assumes per-utterance. */
     per_utterance: boolean;
   } | null;
   /** Client-minted session id (32 hex) → the handshake's `client_job`, so the server
@@ -1295,11 +1287,10 @@ export async function getFocusedApp(): Promise<FocusedApp | null> {
 }
 
 /** Whether ALL of this chord's modifier keys are physically held right now, per the
- *  low-level hotkey backends' shared HeldKeys signal (hotkeys::evdev / hotkeys::windows; always false
- *  when only the plugin backend runs, or when the chord has no modifiers — non-modifier
- *  members are ignored, projected onto the modifier subset for cross-backend parity
- *  (held_keys::modifier_code)). Consumer: the queued fast re-press start — fire only while
- *  the pressed chord itself is still down. */
+ *  low-level hotkey backends' shared HeldKeys signal (hotkeys::evdev / hotkeys::windows).
+ *  Non-modifier members are ignored; always false when only the plugin backend runs or the
+ *  chord has no modifiers. Consumer: the queued fast re-press start — fire only while the
+ *  pressed chord itself is still down. */
 export async function shortcutModsHeld(codes: string[]): Promise<boolean> {
   if (!isTauri) return false;
   return await invoke<boolean>("shortcut_mods_held", { codes });
@@ -1335,7 +1326,6 @@ export async function setOverlayScale(scale: number): Promise<void> {
   await invoke("set_overlay_scale", { scale });
 }
 
-/** Hide the dictation chip overlay. */
 export async function hideOverlay(): Promise<void> {
   if (!isTauri) return;
   await invoke("hide_overlay");
@@ -1535,8 +1525,6 @@ export async function pickRecordingsDir(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-// ── P30: settings export/import + server sync ──────────────────────────────
-
 /** Pull the account's synced settings blob (GET /v1/synced-client-settings). Structured
  *  result: 0 = unreachable, 200 = ok (version 0 = empty store), 401 = key,
  *  404 = the backend build predates sync. Outside Tauri → unreachable. */
@@ -1633,7 +1621,7 @@ export async function pickExportPath(
   return typeof selected === "string" ? selected : null;
 }
 
-/** Native "save file" dialog → absolute path (or null if cancelled / not in Tauri). */
+/** Save dialog for a settings export (.json) → absolute path (or null if cancelled / not in Tauri). */
 export function pickSavePath(defaultName: string): Promise<string | null> {
   return pickExportPath(defaultName, "Settings export", "json");
 }
@@ -1734,15 +1722,14 @@ export async function deleteAllDictations(audioBase: string | null): Promise<num
   return await invoke<number>("delete_all_dictations", { audioBase });
 }
 
-/** "Delete all transcriptions" — every file/link record + its audio. */
+/** "Delete all transcriptions" — every file/link/text record + its audio. */
 export async function clearFileTranscriptions(audioBase: string | null): Promise<number> {
   if (!isTauri) return 0;
   return await invoke<number>("clear_file_transcriptions", { audioBase });
 }
 
 /** "Delete audio from … transcriptions" — empties one media subfolder
- *  ("file" → files/, "url" → links/, "video" → video/; any other kind empties all three);
- *  transcripts stay. */
+ *  ("file" → files/, "url" → links/, "video" → video/); transcripts stay. */
 export async function removeTranscriptMedia(
   kind: "file" | "url" | "video",
   audioBase: string | null,
