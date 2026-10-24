@@ -168,12 +168,10 @@ export function sidecarSource(
   return { res, tracks: tracksAtWrite(planned, picked, res, opts) };
 }
 
-/** One single-language SRT per chosen track (in track order), generated
- *  exactly as the panel's own SRT export would (edits, renames and speaker
- *  colouring included), so the embedded tracks match SRT sidecars byte for
- *  byte. `names` = the user's track titles by track id. A cue-less track is
- *  dropped BEFORE planning: its language's next track is then the plain one
- *  (default flag, bare title). */
+/** One single-language SRT per chosen track (in track order), via trackSubtitle, so the
+ *  embedded tracks match SRT sidecars byte for byte. `names` = the user's track titles by
+ *  track id. A cue-less track is dropped BEFORE planning: its language's next track is then
+ *  the plain one (default flag, bare title). */
 export function embeddedSubtitleTracks(
   result: BatchResult,
   opts: ExportOptions,
@@ -222,10 +220,10 @@ export function sidecarNames(
   return trackFileSuffixes(planTracks(result, tracks), format).map((suffix) => (stem) => stem + suffix);
 }
 
-/** One sidecar file per chosen track, in track order, in the panel's subtitle format — the
- *  same per-language content the embedded tracks carry (from the same result and tracks:
- *  sidecarSource). Named over the cue-bearing tracks only: a language whose first track is
- *  empty still gets its plain `stem.fr.srt`. */
+/** One sidecar file per chosen track that holds a cue, in track order, in the panel's subtitle
+ *  format — the same per-language content the embedded tracks carry (from the same result and
+ *  tracks: sidecarSource). Empty tracks are dropped before naming, so a language whose first
+ *  track is empty still gets its plain `stem.fr.srt`. */
 export function sidecarFiles(
   result: BatchResult,
   opts: ExportOptions,
