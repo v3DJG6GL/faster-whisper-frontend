@@ -164,7 +164,7 @@ describe("attachLogStream while the window is hidden", () => {
 describe("sessionLineCount", () => {
   it("counts the whole session, not the lines the view still keeps", async () => {
     const detach = await attachLogStream();
-    // A 25k-line session read "10,000 lines this session", the buffer's cap.
+    // Counting the buffer would cap the session count at LOG_BUFFER_CAP.
     const many = Array.from({ length: LOG_BUFFER_CAP + 50 }, (_, i) => line(i + 2));
     emit?.({ lines: many });
     expect(visibleLines()).toHaveLength(LOG_BUFFER_CAP);
