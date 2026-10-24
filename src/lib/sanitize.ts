@@ -120,13 +120,12 @@ export const dropJoiners = (s: string): string => s.replace(/[\u200c\u200d]/g, "
  *  U+034F, U+17B4-B5, U+2800 and the variation selectors all survive `safeDisplayText` and render
  *  empty, so `"konsole️"` stores whole, draws as exactly `konsole`, and matches nothing.
  *
- *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
- *  Arabic/Syriac format characters that one deliberately excludes and minus ZWNJ/ZWJ (U+200C/D),
- *  which shape scripts and emoji sequences, so they stay in the stored key and interior text and are
- *  dropped only where they join nothing (a display head via `trimLeadingInvisible`, a run
- *  `safeIdentityText` folds), from a language code's display text, and from the COMPARISON key
- *  (`appRuleKey` / Rust `rule_key`) — state that when extending either, so the next omission is
- *  visible.
+ *  Together with `isDeceptiveFormatChar`'s list this covers every `Default_Ignorable_Code_Point`
+ *  except ZWNJ/ZWJ (U+200C/D), which shape scripts and emoji sequences, so they stay in the stored
+ *  key and interior text and are dropped only where they join nothing (a display head via
+ *  `trimLeadingInvisible`, a run `safeIdentityText` folds), from a language code's display text,
+ *  and from the COMPARISON key (`appRuleKey` / Rust `rule_key`) — state that when extending either,
+ *  so the next omission is visible.
  *
  *  Deliberately NOT added to `isDeceptiveFormatChar`: that list is the declared mirror of Rust's
  *  `sanitize_injected`, and deleting U+FE0F there would strip emoji-presentation selectors out of
@@ -148,8 +147,8 @@ function isInvisibleKeyChar(code: number): boolean {
  *
  *  `safeDisplayText` truncates at `max` with no marker at all, unlike its Rust twin
  *  `bounded_server_text`, which appends an ellipsis. That is fine for a label and wrong for an
- *  identity: an app-rule key of `"konsole" + 80 spaces + "evil"` is stored whole (the matcher is
- *  exact equality on the full 200-char key) while the audit row renders the first 80 code points —
+ *  identity: an app-rule key of `"konsole" + 80 spaces + "evil"` is stored whole (the matcher
+ *  compares the full 200-char key) while the audit row renders the first 80 code points —
  *  and CSS collapses the run, so the row reads exactly `konsole`, claims "Blocked — never typed
  *  here", and matches nothing. Same shape for a hostname padded to push its real suffix past the
  *  cut in a consent dialog.
