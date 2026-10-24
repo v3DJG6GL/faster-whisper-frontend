@@ -54,9 +54,9 @@ export function OverrideProfilePicker({
   const gen = requestCredentialGen(backendId, apiKey);
   // The target the shown names were fetched for: a refetch of the SAME target (a `refresh`
   // bump, or a first test reclassifying its kind "unknown" → "full") keeps them until the answer
-  // lands — blanking them made a listed stored value flash into the "Custom name" text field for
-  // the round trip. The kind is not part of the target (the listing does not take it); a kind
-  // change still refetches through the deps.
+  // lands, or a listed stored value would flash into the "Custom name" text field for the round
+  // trip. The kind is not part of the target (the listing does not take it); a kind change still
+  // refetches through the deps.
   const fetchedFor = useRef<string | null>(null);
 
   useEffect(() => {
