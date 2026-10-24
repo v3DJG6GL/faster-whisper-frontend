@@ -213,25 +213,22 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
     // (the app quit mid-request) is forgotten without one.
     const app = useApp.getState();
     if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
-      stop();
-      if (opts.attached) {
-        setReattachStop(null);
-        failJob(row, BACKEND_GONE_ERROR, { attached: true });
-      } else if (opts.lost) {
-        failJob(row, BACKEND_GONE_ERROR, { attached: false });
-      } else {
-        const lost = await lostRecord(row);
-        // Stopped during the listing (a retry of its file, a delete of its record): stopOrphan
-        // already forgot the row, and a settle now would re-point the file at the old job.
-        if (stoppedIds.has(row.jobId)) return;
-        // The listing failed: keep the row (no longer watched, an earlier launch's) for a
-        // later reconcile pass — scheduled here, nothing else would run one — or the next launch.
-        if (lost === "unknown") {
-          scheduleRetry();
-          return;
-        }
-        if (lost === "failed") failJob(row, BACKEND_GONE_ERROR, { attached: false });
+      if (opts.attached || opts.lost) {
+        await giveUp(BACKEND_GONE_ERROR);
+        return;
       }
+      stop();
+      const lost = await lostRecord(row);
+      // Stopped during the listing (a retry of its file, a delete of its record): stopOrphan
+      // already forgot the row, and a settle now would re-point the file at the old job.
+      if (stoppedIds.has(row.jobId)) return;
+      // The listing failed: keep the row (no longer watched, an earlier launch's) for a
+      // later reconcile pass — scheduled here, nothing else would run one — or the next launch.
+      if (lost === "unknown") {
+        scheduleRetry();
+        return;
+      }
+      if (lost === "failed") failJob(row, BACKEND_GONE_ERROR, { attached: false });
       await forgetRow(row.jobId);
       return;
     }
