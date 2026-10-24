@@ -285,9 +285,7 @@ mod tests {
         clear_chord_lost_if_armed_before(Some(Instant::now()));
         assert!(!take_lost_if_fresh(Duration::from_secs(60)));
 
-        // A WIPE does not arm. The loss is recorded at the manufactured stop, never at the wipe —
-        // otherwise an unrelated sync pull landing while the user merely holds Shift to select text
-        // would divert a phrase that was never at risk.
+        // A WIPE does not arm: the loss is recorded at the manufactured stop (see `MODS_LOST_AT`).
         let held = HeldKeys::default();
         held.writer().set(SHORTCUT_MOD_CODES[0], true);
         assert!(held.any_held(&SHORTCUT_MOD_CODES));
