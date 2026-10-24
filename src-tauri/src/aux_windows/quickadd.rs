@@ -1,9 +1,10 @@
 //! The quick-add word-mapping window (label `quickadd`): a small, focusable,
 //! always-on-top webview for adding spoken→symbol mappings to the pinned
 //! "Spoken symbols" list with the fewest clicks. Defined statically in
-//! `tauri.conf.json` (visible:false) so it's prewarmed — we only own showing,
-//! hiding, and centering it, plus emitting `quickadd://shown` so the webview can
-//! (re)focus its field and refresh the list on every summon.
+//! `tauri.conf.json` (visible:false) so it's prewarmed — we own showing, hiding,
+//! and centering it, emitting `quickadd://shown` so the webview can (re)focus its
+//! field and refresh the list on every summon, and (Windows) seeding that field from
+//! the source app's selection (`win_seed`).
 //!
 //! Unlike the chip overlay, this window DOES take focus (the user types into it).
 //! On native Wayland `set_position` / `set_always_on_top` are no-ops (the compositor
@@ -235,9 +236,8 @@ pub fn show(app: &AppHandle) {
 }
 
 fn show_now(app: &AppHandle) {
-    // Callable from any context — the chip command (main thread), the global-shortcut
-    // handler, the single-instance CLI callback, or an evdev reader task — so hop to the
-    // main thread for the GTK window ops.
+    // Reached from arbitrary threads (shortcut/hook workers, the Windows grab threads),
+    // so hop to the main thread for the GTK window ops.
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let Some(win) = handle.get_webview_window("quickadd") else {
@@ -1037,9 +1037,8 @@ pub(crate) mod win_seed {
                 }
             }
         }
-        // Non-Windows twin (never called — the call sites are #[cfg(windows)] — but kept
-        // compiling so the Linux dev loop type-checks the module): the old text-diff poll,
-        // which cannot distinguish "same text re-copied" from "no copy".
+        // Non-Windows twin (never called; see the module docs): a text-diff poll, which
+        // cannot distinguish "same text re-copied" from "no copy".
         #[cfg(not(windows))]
         loop {
             std::thread::sleep(Duration::from_millis(25));
@@ -1075,7 +1074,6 @@ pub(crate) mod win_seed {
 mod kwin {
     use std::sync::atomic::AtomicBool;
 
-    // The keep-above rule body and KConfig/KWin primitives are shared via crate::aux_windows::kwin.
     pub use crate::aux_windows::kwin::is_kde_wayland;
 
     const GROUP: &str = "fwf-quick-add";
