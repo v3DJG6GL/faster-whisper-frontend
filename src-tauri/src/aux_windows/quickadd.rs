@@ -549,8 +549,7 @@ pub(crate) mod win_seed {
             .any(|&vk| unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000 != 0)
     }
 
-    /// Non-Windows twin (never called — `grab`'s only call sites are `#[cfg(windows)]` —
-    /// but kept so the Linux dev loop type-checks the module, like `grab`'s enigo injection twin.
+    /// Non-Windows twin (never called; see the module docs).
     #[cfg(not(windows))]
     fn modifier_physically_down() -> bool {
         false
@@ -1050,9 +1049,7 @@ pub(crate) mod win_seed {
     }
 }
 
-/// KDE-Wayland keep-above for the quick-add window (see the module docs). Unlike the chip's
-/// rule it forces only `above` + `skiptaskbar` and deliberately does NOT touch focus, since the
-/// user types into this window.
+/// KDE-Wayland keep-above for the quick-add window (see the module docs).
 #[cfg(target_os = "linux")]
 mod kwin {
     use std::sync::atomic::AtomicBool;
