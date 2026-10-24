@@ -72,8 +72,8 @@ interface ChipState {
   mode?: "stream" | "batch";
   // The translation route's targets (ISO codes). Present whenever this session — or, on the
   // standby dock, the Profile the next chord press would run — turns the spoken words into
-  // another language. Empty/absent = no translation, and the identity row reads exactly as
-  // it always did. Already bounded by chipPayload (count and per-code length).
+  // another language. Empty/absent = no translation. Already bounded by chipPayload (count
+  // and per-code length).
   translateTo?: string[];
   // How many further targets `translateTo` left out (rendered as "+N"), so a bounded route
   // never reads as the whole route.
@@ -87,18 +87,18 @@ interface ChipState {
   // Qualifies the done marker: without it, text inserted in the ORIGINAL because the
   // translate failed is indistinguishable from a translation that succeeded.
   translateFailure?: string;
-  // P28: a tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
+  // A tiny preformatted usage readout (e.g. "1.2k words"), absent unless the
   // chip-stats setting is on and the backend supports it. Neutral grey — never amber.
   statsLine?: string;
-  // P33: when true, the readout is shown only while the chip is hover-revealed (else always).
+  // When true, the readout is shown only while the chip is hover-revealed (else always).
   statsOnHover?: boolean;
-  // P16/D: the app dictation is typing into (→ readout) + why it's coerced to clipboard
+  // The app dictation is typing into (→ readout) + why it's coerced to clipboard
   // ("blocked" by a per-app rule / "notEditable" by deep detection). Empty = nothing to show.
   targetTitle?: string;
   targetSkip?: "blocked" | "notEditable" | "";
   targetOnlySpeaking?: boolean; // hide the target unless the chip is expanded (actively dictating)
   targetOnHover?: boolean; // reveal the target only while the chip is hover-revealed (else always)
-  // P19: per-phrase "inserted" pulse trigger (seq bumps on each landed phrase) + the truthful
+  // Per-phrase "inserted" pulse trigger (seq bumps on each landed phrase) + the truthful
   // end-of-session done marker (✓ typed / clipboard glyph / nothing).
   lastInsert?: { kind: "typed" | "clipboard"; seq: number } | null;
   sessionOutcome?: "typed" | "clipboard" | "none" | null;
@@ -147,12 +147,10 @@ const TONE_BG: Record<DictationTone, string> = {
   translate: "bg-translate",
 };
 
-// The dot's glow, keyed off the SAME tone as its fill. These used to be an if-chain
-// hand-rolled from `vis.state`, which meant a new tone got the fill from the map above
-// and a glow from whichever branch happened to catch it — teal dot, blue halo. Keyed
-// off `vis.tone`, the two cannot disagree. Alphas match the old chain's. The halo mixes the
-// per-theme state token itself, as the fill does: a dark-theme rgba literal would wear a lighter
-// hue around the light theme's darker dot (a #bf6f12 armed dot in a #ff9e2c halo).
+// The dot's glow, keyed off the SAME tone as its fill so a new tone can't get a mismatched
+// halo (teal dot, blue halo). The halo mixes the per-theme state token itself, as the fill
+// does: a dark-theme rgba literal would wear a lighter hue around the light theme's darker
+// dot (a #bf6f12 armed dot in a #ff9e2c halo).
 const glow = (blur: number, token: string, pct: number) =>
   `0 0 ${blur}px color-mix(in srgb, var(--c-${token}) ${pct}%, transparent)`;
 const TONE_GLOW: Record<DictationTone, string> = {
@@ -171,10 +169,9 @@ const TONE_GLOW: Record<DictationTone, string> = {
 const COLLAPSE_LINGER_MS = 2000;
 
 // The chip morph: one element fluidly grows from a calm dot into the full pill
-// (Motion `layout` → FLIP/transform, smooth on WebKit). Spring tuned snappy-but-
-// settled (Apple-fluid). We deliberately DON'T use backdrop-blur — on WebKitGTK
-// over a transparent window it re-blurs every frame during the resize (jitter)
-// and barely shows behind a ~96% opaque fill anyway.
+// (Motion `layout` → FLIP/transform, smooth on WebKit). No backdrop-blur: on WebKitGTK
+// over a transparent window it re-blurs every frame during the resize (jitter) and
+// barely shows behind a ~96% opaque fill anyway.
 // A short, monotonic tween rather than a spring: spring overshoot scales the pill
 // past its target and bounces back, which re-rasterizes the rounded clip many times
 // on WebKitGTK (the morph "flicker"). A brief ease-out is smooth and too quick to
@@ -220,8 +217,8 @@ const PEEK_ACTIVE_SETTLE_MS = 700;
 const HOVER_WATCHDOG_MS = 1500;
 
 /**
- * The dictation chip — a frameless, transparent, always-on-top window painted by
- * Rust at the top-center of the screen, fed `dictation://update` (status, level,
+ * The dictation chip — a frameless, transparent, always-on-top window placed by
+ * Rust at the top or bottom centre of the screen, fed `dictation://update` (status, level,
  * partial, error). Amber = mic-active (the OS "mic in use" convention); green =
  * actively speaking; red = error ONLY. Armed-but-silent is a calm dim-amber
  * breathing dot that smoothly EXPANDS into a pill with green voice-reactive bars +
@@ -230,9 +227,7 @@ const HOVER_WATCHDOG_MS = 1500;
 export default function Overlay() {
   // Pre-handshake placeholder. It mirrors the STORE defaults (store.ts recording block) —
   // if the first real update is ever missed, the chip must impersonate a calm docked idle
-  // dot with auto-hide armed, not a fake "armed" session that sits on screen forever
-  // (the old placeholder said status:"listening" + auto-hide off, which is exactly what
-  // users saw frozen mid-screen from app start until their first dictation).
+  // dot with auto-hide armed, not a fake "armed" session that sits on screen forever.
   const [state, setState] = useState<ChipState>({
     status: "idle",
     level: 0,
@@ -258,8 +253,7 @@ export default function Overlay() {
   // and re-arms the drift interval, applyTheme writes ~11 custom properties).
   const prevHueRef = useRef<number>(DEFAULT_ACCENT_HUE);
   // A KEY, not the object: the payload crosses Tauri IPC, so `accentMotion` is a fresh
-  // deserialised object on every tick and a reference compare never blocks (which quietly
-  // defeated this guard for the motion term).
+  // deserialised object on every tick and a reference compare would never match.
   const prevMotionRef = useRef<string>("");
   const prevThemeRef = useRef<ThemeName>("auto");
   // The size refs below start from the REC placeholder and follow every payload until one built
@@ -271,7 +265,6 @@ export default function Overlay() {
   // as two Settings adjustments (default, then saved).
   const scalesSeeded = useRef(false);
 
-  // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
     if (!isTauri) return;
     let cancelled = false;
@@ -283,9 +276,6 @@ export default function Overlay() {
           const hue = e.payload.accentHue ?? DEFAULT_ACCENT_HUE;
           const mot = e.payload.accentMotion;
           const motKey = motionKey(mot);
-          // Only re-apply accent/theme when the values actually change —
-          // the level stream fires ~30 Hz and each call tears down the drift
-          // timer and writes ~11 custom properties on the document root.
           if (hue !== prevHueRef.current || motKey !== prevMotionRef.current || theme !== prevThemeRef.current) {
             prevHueRef.current = hue;
             prevMotionRef.current = motKey;
@@ -362,12 +352,12 @@ export default function Overlay() {
     };
   }, []);
 
-  // Track live OS scheme flips while the app theme is "auto" — the chip is long-lived
-  // and would otherwise only pick the change up on its next dictation://update.
   // The chip's own drift clock: same wall-clock arithmetic as the main window, no message needed.
   useEffect(() => startAccentDrift(), []);
-  // Read the APPLIED theme (prevThemeRef, "auto" like main.tsx's first stamp) — not
-  // state.theme, whose placeholder is "dark" until the first update — and subscribe once.
+  // Track live OS scheme flips while the app theme is "auto" — the long-lived chip would
+  // otherwise only pick them up on its next dictation://update. Read the APPLIED theme
+  // (prevThemeRef, "auto" like main.tsx's first stamp) — not state.theme, whose placeholder
+  // is "dark" until the first update.
   useEffect(() => watchSystemTheme(() => prevThemeRef.current), []);
 
   // Standalone demo animation (browser preview only).
@@ -383,7 +373,7 @@ export default function Overlay() {
       setState({
         status: "listening",
         level,
-        speaking: true, // the demo level never dips below the detector's floor
+        speaking: true,
         partial: sample.slice(0, chars),
         dictationError: "",
         position: "top",
@@ -459,10 +449,9 @@ export default function Overlay() {
     return () => clearInterval(id);
   }, [phaseKey]);
 
-  // Collapsed = armed but silent (or idle, when the window is hidden anyway). Warming
-  // expands too, so "warming up…" is actually visible. See chipRules.chipExpansion for
-  // the processing rule (sub-second stages still never pop a minimized chip; a stage
-  // that will visibly last does).
+  // Collapsed = armed but silent, or idle (the standby dock). Warming expands, so "warming up…"
+  // is actually visible. See chipRules.chipExpansion for the processing rule (sub-second
+  // stages never pop a minimized chip; a stage that will visibly last does).
   const wantExpanded = chipExpansion({
     status: state.status,
     warming: state.warming,
@@ -476,11 +465,9 @@ export default function Overlay() {
   // The collapse-linger effect lives below the note / pulse effects: it reads the hold deadline
   // they stamp, and effects run in declaration order, so on a settle edge it sees this commit's.
 
-  // Hover-to-reveal: holding the cursor over the chip for the configured delay
-  // (hoverRevealMs, default 500 ms) expands it to show
-  // the language + stream/batch detail beside the tag. (Under Tauri this only fires
-  // once the chip's input region is shaped — see overlay.rs / setChipHitRegion;
-  // in the browser preview there's no click-through, so it works directly.)
+  // Hover-to-reveal: holding the cursor over the chip for hoverRevealMs expands it to show the
+  // language + stream/batch detail beside the tag. Under Tauri this only fires once the chip's
+  // input region is shaped (overlay.rs / setChipHitRegion).
   const [hoverReveal, setHoverReveal] = useState(false);
   const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -491,11 +478,9 @@ export default function Overlay() {
   const peekGraceUntil = useRef(0);
   // Deep-idle edge-peek: true when the chip has tucked to the screen edge (driven below).
   const [peeked, setPeeked] = useState(false);
-  // True while restoring a *tucked* chip via hover — captured at pointer-enter (was it peeked?).
-  // Anchors the restored pill flush to the edge so it stays under the edge-parked cursor through
-  // the un-tuck slide; otherwise the pill slides inward to its rest inset and the cursor (still at
-  // the edge) falls off it, dropping the hover before it can reveal. A non-tucked hover leaves it
-  // false → the pill keeps its normal rest inset (no jump out from under the cursor).
+  // True while a hover restores a *tucked* chip (captured at pointer-enter). Anchors the pill flush
+  // to the edge through the un-tuck slide: sliding in to its rest inset would leave the edge-parked
+  // cursor behind and drop the hover before it reveals. A non-tucked hover keeps the rest inset.
   const [peekRestoring, setPeekRestoring] = useState(false);
   // Adjusting "Chip size" in Settings brings the chip out of hiding for the hover grace
   // period, at full opacity — otherwise the user would be resizing something tucked away or
@@ -524,8 +509,8 @@ export default function Overlay() {
     peekGraceUntil.current = 0;
     setSizeNudge((n) => n + 1);
   }, [state.dotScale]);
-  // Every "the cursor is definitely gone" path funnels here: a real pointerleave, the
-  // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
+  // Every "the cursor is definitely gone" path funnels here: a real pointerleave, a native GDK
+  // leave, and the lost-leave safety nets (failed dwell verify, non-interactive reset, watchdog).
   const clearHover = useCallback(() => {
     hoverEpoch.current++;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -586,14 +571,12 @@ export default function Overlay() {
       unlisten?.();
     };
   }, [clearHover]);
-  // `language` is sync-authored and type-checked only — `sanitizeBackends`/`sanitizeProfiles`
-  // clamp neither its length nor its character set, and a language edit raises no security-review
-  // prompt, so it lands unattended. It is the one segment of the identity row with no cap of its
-  // own, in a `shrink-0` row next to the `min-w-0` cell that holds the live preview: unbounded, it
-  // squeezes out the very surface the user reads to supervise what is about to be typed. Same
-  // treatment as its `targetTitle` neighbour. A set language that sanitizes to blank (only format
-  // characters, or a whitespace-only Backend language) is still sent verbatim, so it reads "??"
-  // like the Profiles/Backends/LanguagePicker labels rather than vanishing from the detail.
+  // `language` is sync-authored and lands unattended — the sanitizers clamp neither its length nor
+  // its character set, and a language edit raises no security-review prompt — and it sits in a
+  // `shrink-0` row beside the `min-w-0` live-preview cell: unbounded, it squeezes out the surface
+  // the user reads to supervise what is about to be typed. A set language that sanitizes to blank
+  // (format characters only, or a whitespace-only Backend language) is still sent verbatim, so it
+  // reads "??" like the Profiles/Backends/LanguagePicker labels rather than vanishing from the detail.
   const lang = state.language ? langText(state.language, 40).trim() || "??" : "";
   const detail = [lang, state.mode].filter(Boolean).join(" · ");
   // The translation route, shown BESIDE the tag rather than inside the hover-revealed detail.
@@ -662,7 +645,7 @@ export default function Overlay() {
       )}
     </span>
   ) : null;
-  // P16/D target readout: chipController.ts only sends `targetTitle` while a session is active AND the
+  // Target readout: chipController.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
   // The "only while speaking" and "on hover" reveal gates stack on top.
@@ -746,13 +729,11 @@ export default function Overlay() {
     // the zoom it holds at that moment — the late retries land after both have settled.
   }, [reportBounds, interactive, state.status, state.position, peeked, state.chipScale, state.dotScale]);
 
-  // Safety net for a lost pointerleave. `hovering`/`hoverReveal` are reset ONLY in
-  // onPointerLeave, so any event that drops the leave strands them true (chip stuck
-  // expanded, never dims, never peeks). The full-window hover region above prevents the
-  // common morph-race; this covers the rarer case where the window hides at session end
-  // (or its input shape is wiped on re-show) while the cursor is over the chip — when the
-  // chip isn't interactive it can't be hovered, so clear the hover state to be sure it
-  // comes back clean rather than stuck.
+  // Safety net for a lost leave: a dropped leave strands `hovering`/`hoverReveal` true (chip
+  // stuck expanded, never dims, never peeks). The full-window hover region above prevents the
+  // common morph-race; this covers the window hiding at session end (or its input shape being
+  // wiped on re-show) with the cursor over the chip — a non-interactive chip can't be hovered,
+  // so clear the hover state and let it come back clean.
   useEffect(() => {
     if (interactive) return;
     clearHover();
@@ -791,18 +772,14 @@ export default function Overlay() {
     // resting states (silent listening → idle) is still a state change and restarts the timer.
   }, [expanded, hovering, restingIdle, state.status, speaking, srvBusy, state.dimAfterSec, sizeNudge]);
 
-  // Post-speech "working" phase: the server is finalizing the transcript and/or it's
-  // being written out to the focused field. There's no audio to react to, so the chip
-  // shows a self-driven processing motion (sweeping bars + a quicker pulsing dot)
-  // rather than the frozen-looking bars it used to.
+  // Post-speech "working" phase: the server is finalizing the transcript and/or it's being
+  // written out to the focused field. No audio to react to, so the chip shows a self-driven
+  // motion (sweeping bars + a quicker pulsing dot).
   const processing = isProcessing(state.status);
-  // The chip dot + waveform should also self-animate during warm-up (dictationVisual maps warming to
-  // a pulse + the dim "machine working" tone), else "warming up…" shows a frozen dot + flat bars while
-  // every other working state moves. The cancel-✕ and transcript text-dim must NOT engage during
-  // warm-up, so only the motion uses this wider flag; those keep bare `processing`.
-  // …and likewise while the server reports work behind a "listening" status (srvBusy): the dot
-  // takes the quicker "thinking" pulse and the bars self-sweep, as Home's do (its waveProcessing
-  // keys off the same dictationVisual state). Speech ends srvBusy, so the bars answer to the
+  // The motion also runs during warm-up and while the server works behind a "listening" status
+  // (srvBusy — as Home's waveProcessing does, off the same dictationVisual state), so no working
+  // state shows a frozen dot + flat bars. The cancel-✕ and transcript text-dim must NOT engage
+  // during warm-up, so they keep bare `processing`. Speech ends srvBusy, so the bars follow the
   // voice again the moment there is one.
   const working = processing || !!state.warming || srvBusy;
   const standby = state.status === "idle"; // only ever visible when persistentDock is on
@@ -894,10 +871,10 @@ export default function Overlay() {
     }
   }, [state.sessionOutcome, state.translateFailure]);
 
-  // "not inserted" note: a "none" outcome that was NOT a cancel — the translate-to picker
-  // was aborted after release, the words were kept. Its own edge + timer (like the
-  // untranslated pulse): it qualifies an outcome the pulse machinery above deliberately
-  // treats as "nothing to show", so it cannot ride `pulse`.
+  // Session note (store.ts sessionNote: "not inserted" after an aborted translate-to picker,
+  // or "incomplete" on any outcome). Its own edge + timer, like the untranslated pulse: it
+  // qualifies an outcome — including "none", which the pulse machinery above deliberately
+  // shows nothing for — and can show alongside a pulse, so it cannot ride `pulse`.
   const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | "incomplete" | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNote = useRef(state.sessionNote);
@@ -928,15 +905,12 @@ export default function Overlay() {
       setExpanded(true);
       return;
     }
-    // Linger so the FINAL words stay readable — but only when there ARE words. With nothing
-    // to show (a no-speech session ending), collapse at once instead of holding an empty pill
-    // that would fall through to the "listening" label after the session is already over —
-    // unless a note or the untranslated pulse is still SHOWING: the label lives in the expanded
-    // body, so with live transcript off (no words) a 0 linger never painted it. Keyed on the
-    // deadline the note/pulse timers above were armed with (declared after them, so a settle
-    // edge's stamp is already in), NOT on the payload fields: those persist until the next
-    // session's reset, so an error flash clearing to idle seconds after the settle would hold
-    // an empty pill for the full note hold. The payload deps only re-run this when a note
+    // Linger so the FINAL words stay readable — but only when there ARE words; a no-speech end
+    // collapses at once rather than holding an empty pill that falls back to "listening".
+    // Exception: a note or the untranslated pulse still SHOWING (its label lives in the expanded
+    // body) holds until the deadline its timer above was armed with — this effect is declared
+    // after those, so a settle edge's stamp is already in. Not the payload fields: they persist
+    // until the next reset (collapseLingerMs). The payload deps only re-run this when a note
     // lands in a later write than the idle edge.
     const holdUntil = Math.max(noteHoldUntil.current, pulseHoldUntil.current);
     const now = Date.now();
@@ -956,9 +930,9 @@ export default function Overlay() {
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
-  // While the "untranslated" done-pulse plays, the label slot carries the REASON — with priority
-  // over the retained transcript: settleIdle keeps `partial` for the 2 s collapse linger, so
-  // without that the words held the slot and the pulse's explanation was never painted. `translateFailure` is our own closed vocabulary
+  // While the "untranslated" done-pulse plays, the label slot carries the REASON, ahead of the
+  // retained transcript (settleIdle keeps `partial` for the 2 s collapse linger, so the words
+  // would otherwise hold the slot). `translateFailure` is our own closed vocabulary
   // (dictationTranslate.ts), so it needs no bound; anything unrecognized degrades to the
   // generic phrasing rather than being rendered raw.
   const failureLabel =
@@ -971,7 +945,7 @@ export default function Overlay() {
   // "empty" or "cancelled" translation isn't announced as one that "did not finish".
   const untranslatedPhrase =
     `${state.sessionOutcome === "clipboard" ? "Copied" : "Inserted"} untranslated — translation ${failureLabel}`;
-  // The "not inserted" note takes the slot the same way, for the same reason.
+  // The session note takes the slot the same way, for the same reason.
   const noteLabel =
     note === "incomplete"
       ? "last phrase may be missing"
@@ -1100,10 +1074,9 @@ export default function Overlay() {
 
   // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
   // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
-  // race. Measuring scrollWidth on fast-updating text on WebKitGTK ran short and left the newest
-  // words clipped (the bug); letting the flexbox keep the child's end at the container's right edge
-  // is timing-independent. This effect only drives the cosmetic left-fade: show it when the text
-  // actually overflows its box (the span is wider than the clip).
+  // race: measuring scrollWidth on fast-updating text on WebKitGTK ran short and clipped the
+  // newest words, while the flexbox is timing-independent. This effect only drives the cosmetic
+  // left-fade: show it when the span is wider than the clip.
   // Mirrors the JSX gate on the transcript SLOT only (phase row, then pulse/note, then words) —
   // not the full mount condition: the body wrapper's `!peeked` gate and the error branch sit
   // above it, and are tracked as their own deps below.
@@ -1149,17 +1122,14 @@ export default function Overlay() {
     const keepMin = state.overlayPeek && state.peekWhileActive && state.position !== "off";
     // Only an undisturbed armed-but-silent session, or a persistent standby dock, ever peeks —
     // unless keep-minimized is on, where any active state stays tucked too. A tucked chip
-    // un-tucks on hover via `hoverReveal` (the dwell-delayed hover-intent flag), NOT raw
-    // `hovering` — so restoring it waits the SAME delay as the body/detail reveal. Keying it on
-    // `hovering` made a tucked ("hidden") chip pop out the instant the cursor grazed it while a
-    // resting ("minimized") dot correctly waited out hoverRevealMs; the two felt inconsistent and
-    // a fly-over flicked the pill open. An error always pops out so its message is readable.
+    // un-tucks on `hoverReveal` (the dwell-delayed hover intent), NOT raw `hovering`, so it waits
+    // the same hoverRevealMs as a resting dot and a fly-over doesn't flick the pill open.
+    // An error always pops out so its message is readable.
     // Already tucked + the session is wrapping up (finalize/insert): hold the tuck so a minimized
-    // chip just hides from the edge instead of sliding out to flash a sub-second end state (the
-    // "it pops open for a quarter second" glitch). Only affects an already-peeked chip.
-    // …EXCEPT for a stage that will visibly last (a cold translate): the user is about to
-    // wait, and the pill is where the elapsed clock and the ✕ live. See chipRules —
-    // peekWhileActive still wins below, via keepMin.
+    // chip just hides from the edge instead of sliding out to flash a sub-second end state —
+    // EXCEPT for a stage that will visibly last (a cold translate): the user is about to wait,
+    // and the pill is where the elapsed clock and the ✕ live. See chipRules — peekWhileActive
+    // still wins below, via keepMin.
     const endFlash = chipTuckHold({ peeked, status: state.status, phase: state.phase, now: Date.now() });
     const blocked =
       !state.overlayPeek ||
@@ -1226,10 +1196,8 @@ export default function Overlay() {
     else void emitOverlayAction(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
   };
 
-  // Edge-peek slide offset (CSS translateY). The window is anchored flush at the screen edge
-  // (overlay.rs); at rest the chip is inset EDGE_MARGIN from it, and tucking slides it so the
-  // status dot's centre lands on the edge — only the dot's outer half stays on-screen (the
-  // rest is clipped by the viewport edge). Mirrored for the bottom edge.
+  // Edge-peek slide offset (CSS translateY; geometry at EDGE_MARGIN / PEEK_TUCK). Mirrored for
+  // the bottom edge.
   const restY = state.position === "bottom" ? -EDGE_MARGIN : EDGE_MARGIN;
   const tuckY = state.position === "bottom" ? PEEK_TUCK : -PEEK_TUCK;
   // Restoring a tucked chip via hover: anchor the pill FLUSH to the edge (not the rest inset) so
@@ -1247,11 +1215,8 @@ export default function Overlay() {
   if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
-        {/* `chipTagFor` caps an authored tag at 16 code points (a derived one at 10). It drops only an
-            authored tag's invisible head and swaps a blank-rendering one for a tag derived from the
-            display-filtered name (`profileDisplayName`), so the body of an authored tag still reaches
-            here unfiltered, and `sanitizeProfiles` checks id/name/hotkey, not `tag`. That makes it
-            the second unstripped leaf in the row. */}
+        {/* `chipTagFor` drops only an authored tag's invisible head and `sanitizeProfiles` never
+            checks `tag`, so the body of an authored tag reaches here unfiltered. */}
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
@@ -1289,8 +1254,6 @@ export default function Overlay() {
       </span>,
     );
   }
-  // "On hover" mode: only surface the usage readout once the chip is hover-revealed;
-  // "always" mode (statsOnHover false) shows it whenever it's present.
   if (state.statsLine && (!state.statsOnHover || hoverReveal)) {
     idGroups.push(
       <span key="stats" className="whitespace-nowrap normal-case tabular-nums text-dim">
@@ -1323,20 +1286,12 @@ export default function Overlay() {
           )}
           title={targetWarn ? skipLabel : undefined}
         >
-          {/* The only remaining render of remote-authored identity that was not defanged. On
-              Linux `focus::atspi` already runs the app name through `bounded_server_text`; on
-              Windows `fold_foreground` sets `title` straight from `exe_basename`, which only
-              lowercases and strips `.exe`. H13's refutation ("an NTFS filename cannot contain
-              control characters") holds for Cc but not for U+202E/U+2066/U+200B — and this is the
-              segment that tells the user WHERE the transcript is about to be typed, sitting right
-              next to the blocked / not-a-text-field trust signal. */}
-          {/* `safeIdentityText`, not the plain display filter: this is an IDENTITY beside a trust
-              decision, which is the distinction Q1 drew and Q21 fixed the helper for. The display
-              filter truncates with no marker and does not collapse whitespace, and the span is
-              `truncate` (`white-space: nowrap` suppresses wrapping but still COLLAPSES runs) — so
-              `"kate" + 190 spaces + "evil-term"` cuts inside the padding and renders as exactly
-              `kate`. `AppRules` already renders this same class of string the defanged way; the
-              chip disagreed with it about the same app. */}
+          {/* `safeIdentityText`, not the plain display filter: this IDENTITY tells the user where the
+              transcript is about to be typed, beside the blocked / not-a-text-field trust signal. The
+              display filter truncates with no marker and does not collapse whitespace, while this
+              `truncate` span (`white-space: nowrap`) still COLLAPSES runs — so
+              `"kate" + 190 spaces + "evil-term"` would cut inside the padding and render as exactly
+              `kate`. `AppRules` renders this same class of string the defanged way. */}
           {targetName}
         </span>
         {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
@@ -1395,8 +1350,8 @@ export default function Overlay() {
             // is the flex element that shrinks to make the pill fit (min-w-0 chain → its own
             // justify-end clip box then drops the OLDEST off the left instead).
             // 64px = 32px a side: the shadow below reaches 32px sideways (40 blur − 8 spread), and
-            // the transparent window CLIPS what is painted past its edge — at the old 12px a side
-            // a full-width pill's shadow ended in a hard vertical cut (the quick-add bug).
+            // the transparent window CLIPS what is painted past its edge — any less and a
+            // full-width pill's shadow ends in a hard vertical cut.
             "inline-flex h-[42px] max-w-[calc(min(100vw,820px)-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
             // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
             peeked
@@ -1412,8 +1367,8 @@ export default function Overlay() {
             ref={dotRef}
             style={{ boxShadow: dotGlow, width: 10 * dotK, height: 10 * dotK }}
             className={cn(
-              // 10px base (was size-2.5); width/height join the colour transition so the
-              // tucked ↔ open size change (dotK) eases instead of snapping.
+              // width/height join the colour transition so the tucked ↔ open size change
+              // (dotK) eases instead of snapping.
               "shrink-0 rounded-full transition-[width,height,color,background-color,border-color] duration-300",
               // A landed phrase / session end flashes the dot: green = typed, amber = clipboard,
               // amber = landed untranslated (the words arrived, just not in the asked-for language).
@@ -1433,10 +1388,6 @@ export default function Overlay() {
             )}
           />
 
-          {/* Identity row: the Profile tag (hover-dwell reveals "│ language · mode", which animates
-              its WIDTH open so the text never scales), the usage readout, and the P16/D injection
-              target — each its own group, joined by thin vertical rules so they don't blur into one
-              chain. The tag│language seam rides the hover-reveal (inside the tag group above). */}
           {idGroups.length > 0 && !peeked && (
             <div className="ml-2 flex shrink-0 items-center gap-2.5 font-mono text-[11px] leading-none tracking-[0.12em]">
               {idGroups.map((g, i) => (
@@ -1583,16 +1534,12 @@ export default function Overlay() {
                                     reordered while the copy that actually lands is cleaned by
                                     `sanitize_injected`. `stripControlChars` is that function's TS
                                     mirror and keeps Tab/LF, so wrapping is unaffected. */}
-                                {/* Code-point-safe tail: slice(-400) counts UTF-16 units and
-                                    can split a surrogate pair, producing a lone low surrogate
-                                    that renders as U+FFFD. Spread → slice → join iterates
-                                    code points, matching safeDisplayText's contract.
-                                    `chipPayload` already caps `state.partial` to its last 800
-                                    UTF-16 units, cut on a code-point boundary (tailUnits); the
-                                    same cut here is belt-and-braces so this ~30 Hz render never
-                                    spreads an unbounded string (>=400 code points; a lone
-                                    leading low surrogate from this unit cut is dropped by the
-                                    code-point slice). */}
+                                {/* Code-point-safe tail: a UTF-16 slice(-400) could split a
+                                    surrogate pair (→ U+FFFD), so spread → slice → join counts
+                                    code points. The slice(-800) unit cut first (chipPayload
+                                    already caps at 800) keeps this ~30 Hz render from spreading
+                                    an unbounded string; a lone low surrogate it leaves at the
+                                    head is dropped by the code-point slice. */}
                                 {stripControlChars([...state.partial.slice(-800)].slice(-400).join(""))}
                               </span>
                             </div>
