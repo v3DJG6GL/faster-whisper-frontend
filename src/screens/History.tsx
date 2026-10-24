@@ -1,5 +1,5 @@
 // History: one day-bucketed timeline for BOTH record kinds — file
-// transcriptions and dictation sessions — filtered by an All/Files/Links/Dictations
+// transcriptions and dictation sessions — filtered by an All/Files/Links/Text/Dictations
 // segment (the call-log pattern) plus "dictated into" app chips. File rows
 // open the full workbench; dictation rows expand INLINE: full text, the saved
 // recording playable in place, Copy as the main action, and "Open in
@@ -287,7 +287,6 @@ export default function History() {
   const [segment, setSegment] = useState<Segment>(viewMemory.segment);
   const [appFilter, setAppFilter] = useState<string | null>(viewMemory.appFilter);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // Two-step delete: first click arms the row, second click deletes.
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Quick export's failure, per record — the dialog already confirmed a save,
@@ -454,13 +453,9 @@ export default function History() {
     copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
   };
 
-  /** Copy what the session actually put into the target app.
-   *
-   *  This used to copy recordText(rec) — the ORIGINAL transcript — under a
-   *  button labelled "Copy the dictated text", even when what was dictated
-   *  into the field was all three languages. For a translated session the
-   *  dictated text IS the injected join, so that is what the clipboard gets;
-   *  a single language stays one hover away on each track. */
+  /** Copy what the session actually put into the target app: for a translated session the
+   *  dictated text IS the injected join, not the original; a single language stays one hover
+   *  away on each track. */
   const copyText = (rec: TranscriptRecord) => {
     const text = rec.translatedText || recordText(rec);
     void navigator.clipboard
@@ -520,9 +515,8 @@ export default function History() {
     try {
       // EVERY track the record has (not the viewer's visible pick — the export panel writes
       // that), in the viewer's order (a dragged order included), site tracks named from the
-      // link. Inside the try: an
-      // on-disk record is unvalidated, and a throw here must land in the row's export note
-      // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
+      // link. Inside the try: an on-disk record is unvalidated, and a throw here must land in
+      // the row's export note rather than escape the fire-and-forget `void quickExport(rec)`.
       const result = withTrackSites(recordEditedResult(live), live.sourcePath, extractor);
       const all = transcriptTracks(result);
       const tg = displayToggles(t);
@@ -612,11 +606,9 @@ export default function History() {
     return parts.join(" · ");
   };
 
-  // The profile-tag pill, gated on what it would SHOW and read as the chip reads an authored tag
-  // (`authoredChipTag`: invisible head dropped, capped at 16): `profileTag` is stored after a
-  // plain trim, which keeps the format-only characters safeDisplayText deletes and a U+2800
-  // padding, so a raw-truthy tag of only those rendered an empty coloured pill and a padded one
-  // lost its visible part to the cut.
+  // Gated on what the pill would SHOW, read as the chip reads an authored tag: `profileTag` is
+  // stored after a plain trim, so it can keep format-only characters and U+2800 padding — a
+  // raw-truthy check would draw an empty pill or cut a padded tag's visible part.
   const tagBadge = (rec: TranscriptRecord) => {
     const tag = safeDisplayText(authoredChipTag(rec.profileTag), 16).trim();
     return tag ? <Badge tone="accent">{tag}</Badge> : null;
@@ -648,11 +640,8 @@ export default function History() {
   };
 
   const dictationExpanded = (rec: TranscriptRecord) => {
-    // Each name by the shared display-name rule the other screens use (invisible head dropped; a
-    // recorded-but-blank one reads "Untitled profile"/"Untitled backend"; the backend as the
-    // pickers name it, with its host suffix when two configured backends share a name). The labels
-    // stay gated on there being one: a record without a (string) profile name, or whose backend is
-    // gone, shows no label.
+    // Names by the shared display-name rule the other screens use; a record without a (string)
+    // profile name, or whose backend is gone, shows no label.
     const profileShown = typeof rec.profileName === "string" ? profileDisplayName(rec.profileName, 40) : "";
     const backendShown = backendLabelById(backends, rec.backendId) ?? "";
     const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
@@ -688,14 +677,10 @@ export default function History() {
           </div>
         )}
         {tracks ? (
-          /* One track per language, the original included as a track of its
-             own. Previously this rendered the INJECTED blob (which, with
-             "include original" on, already begins with the original) and then
-             rendered result.text again beneath it under an "original" label —
-             so the source language appeared twice, under a heading naming only
-             the targets. Hairline dividers rather than blank lines, because a
-             transcript contains its own line breaks and a blank line does not
-             read as a language boundary. */
+          /* One track per language, the original as a track of its own (not the
+             injected blob, which may already begin with the original). Hairline
+             dividers rather than blank lines: a transcript has its own line
+             breaks, so a blank line does not read as a language boundary. */
           <div className="mt-3 grid max-h-56 grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-x-2 overflow-y-auto">
             {tracks.map(({ lang, text, orig }, i) => {
               // A format-only code (file-borne, or a synced translateTo entry) displays as nothing
@@ -738,10 +723,9 @@ export default function History() {
             })}
           </div>
         ) : rec.translatedText ? (
-          /* A record written before per-language tracks existed. The blob is
-             an unsplittable join, so the honest rendering is one untitled
-             block — but result.text is NOT repeated beneath it any more, which
-             was the duplicate the user saw. */
+          /* A record written before per-language tracks existed: the blob is an
+             unsplittable join, so it renders as one block, and result.text is not
+             repeated beneath it (the blob may already contain the original). */
           <div className="mt-3 max-h-56 overflow-y-auto">
             <span
               className="font-mono text-[10px] uppercase tracking-wider"
@@ -762,12 +746,9 @@ export default function History() {
         ) : (
           <>
             {/* Translation was configured but produced nothing: the body below IS the
-                original, and whatever reached the field (typed, or left on the clipboard) was
-                the original too — the tail names which, and says nothing when the text was
-                never delivered ("not inserted" in the meta line). Saying so — with the cause —
-                is the difference between "this session had no translation" and "the
-                translation you asked for didn't happen"; without it the record silently
-                presents the original as the intended output. */}
+                original, and so was whatever reached the field — the tail names how (nothing
+                when never delivered; the meta line says "not inserted"). Without this note the
+                record silently presents the original as the intended output. */}
             {rec.translationAttempted && (
               <div className="mt-3 font-mono text-[11px] text-warn">
                 translation to {targetsText(rec.translationTarget, 40) || "the target language"} failed
@@ -857,9 +838,8 @@ export default function History() {
             {safeDisplayText(appLabel(rec), 60)}
           </span>
           {tagBadge(rec)}
-          {/* Which languages this dictation produced. Without it a translated
-              session and a plain one look identical in the list, and the only
-              way to find out was to expand every row. */}
+          {/* The session's translation targets: without it a translated session and a
+              plain one look identical in the list. */}
           {rec.translationTargets?.length ? (
             <RouteBadge source={rec.language ?? ""} targets={rec.translationTargets} />
           ) : null}
@@ -1108,9 +1088,8 @@ export default function History() {
             (entries may be missing or already removed).
           </div>
           <div className="mt-2 flex items-center gap-2">
-            {/* Non-forced: while no listing has succeeded and nothing forced has changed the
-                disk, a retry keeps this session's records (their saves may not be on disk);
-                after a forced call it replaces the list. loadHistory never rejects. */}
+            {/* Non-forced, so a retry before any successful listing keeps this session's
+                records (their saves may not be on disk). loadHistory never rejects. */}
             <Button
               variant="ghost"
               size="sm"
