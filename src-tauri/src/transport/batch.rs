@@ -21,6 +21,10 @@ pub(crate) const FILE_TRANSCRIBE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 /// A BCP-47 tag; the longest real ones are ~35 characters.
 const LANGUAGE_MAX: usize = 64;
+/// A server-supplied language CODE (plan/progress target, translation source/targets, the
+/// translations-map keys, kept-original markers): one width everywhere so the same code compares
+/// equal across them. Equal to `is_lang_code`'s upper bound, so a screened code is never cut.
+pub(crate) const LANG_CODE_MAX: usize = 16;
 /// Speaker labels are identity-adjacent server strings ("SPEAKER_00" or
 /// whatever a third-party server invents) — bound them like `language`.
 const SPEAKER_MAX: usize = 64;
@@ -907,7 +911,7 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
                         // (a null target crashes the Transcribe screen).
                         let target = u
                             .target
-                            .map(|s| super::bounded_server_text(&s, 16))
+                            .map(|s| super::bounded_server_text(&s, LANG_CODE_MAX))
                             .filter(|s| !s.trim().is_empty())?;
                         let state = u.state.filter(|s| PLAN_UNIT_STATES.contains(&s.as_str()))?;
                         Some(PlanUnit {
@@ -1057,7 +1061,9 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
         compute: parsed.compute.map(|s| super::bounded_server_text(&s, 32)),
         // ~4 stage names in the protocol; take(4) is defensive.
         skipped: parsed.skipped.map(|v| bound_texts(&v, 4, 32)),
-        target: parsed.target.map(|s| super::bounded_server_text(&s, 16)),
+        target: parsed
+            .target
+            .map(|s| super::bounded_server_text(&s, LANG_CODE_MAX)),
         target_progress: fin_frac(parsed.target_progress),
         // The row's bar width / percent label and the VAD share read these raw.
         progress: fin_frac(parsed.progress),
@@ -1536,7 +1542,7 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
                 // capped at the translate target ceiling.
                 s.translations_kept = s
                     .translations_kept
-                    .map(|v| bound_texts(&v, super::MAX_TARGETS, 16));
+                    .map(|v| bound_texts(&v, super::MAX_TARGETS, LANG_CODE_MAX));
                 s
             })
             .collect(),
@@ -1568,8 +1574,10 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
             model: t
                 .model
                 .and_then(|m| super::model_id_within(&m, super::MODEL_ID_MAX)),
-            targets: bound_texts(&t.targets, super::MAX_TARGETS, 16),
-            source: t.source.map(|s| super::bounded_server_text(&s, 16)),
+            targets: bound_texts(&t.targets, super::MAX_TARGETS, LANG_CODE_MAX),
+            source: t
+                .source
+                .map(|s| super::bounded_server_text(&s, LANG_CODE_MAX)),
             mode: t.mode.map(|m| super::bounded_server_text(&m, 16)),
         }),
         plan: parsed.plan.map(bound_plan),
@@ -1582,7 +1590,7 @@ pub(crate) fn bound_translation_keys(
     m: std::collections::BTreeMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
     m.into_iter()
-        .map(|(k, v)| (super::bounded_server_text(&k, 16), v))
+        .map(|(k, v)| (super::bounded_server_text(&k, LANG_CODE_MAX), v))
         .collect()
 }
 

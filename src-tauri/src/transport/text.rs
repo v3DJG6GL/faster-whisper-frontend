@@ -10,6 +10,7 @@ use std::time::Duration;
 /// Client-side ceiling — the server has its own (4 MiB JSON body, 200k chars
 /// total); this just keeps an accidental monster request from leaving the app.
 const MAX_TEXTS: usize = 512;
+use super::batch::LANG_CODE_MAX;
 use super::MAX_TARGETS;
 
 /// Generous per-request ceiling, like batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a request
@@ -205,7 +206,7 @@ fn align_segments(
         results[at] = super::batch::bound_translation_keys(seg.translations);
         // Kept-original markers are language codes — bound like the
         // translation keys, capped at the target ceiling.
-        kept[at] = super::batch::bound_texts(&seg.kept_original, MAX_TARGETS, 16);
+        kept[at] = super::batch::bound_texts(&seg.kept_original, MAX_TARGETS, LANG_CODE_MAX);
     }
     (results, kept)
 }
@@ -293,7 +294,7 @@ pub async fn translate_texts(
             .translation
             .as_ref()
             .and_then(|t| t.source.as_deref())
-            .map(|s| bounded_server_text(s, 16)),
+            .map(|s| bounded_server_text(s, LANG_CODE_MAX)),
         warnings: super::batch::bound_notices(&parsed.warnings),
         plan: parsed.plan.map(super::batch::bound_plan),
     })
