@@ -55,10 +55,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-platform-verifier = "0.7"
 
 # Microphone capture + the synthesised start/stop/error cues (audio/playback.rs plays them
-# straight through cpal -- rodio used to, but it pinned cpal to 0.17, whose ALSA worker
-# busy-looped on POLLERR and froze dictation). WASAPI on Windows, CoreAudio on macOS; on
-# Linux the `pulseaudio` host (below) talks to pipewire-pulse / PulseAudio, with ALSA as the
-# fallback when no sound server runs.
+# straight through cpal, not rodio: rodio pins cpal to 0.17, whose ALSA worker busy-looped
+# on POLLERR and froze dictation). WASAPI on Windows, CoreAudio on macOS; on Linux the
+# `pulseaudio` host (below) talks to pipewire-pulse / PulseAudio, with ALSA as the fallback
+# when no sound server runs.
 cpal = "0.18"
 
 # Last-resort playback decode: WebKitGTK without the proprietary GStreamer
@@ -110,8 +110,8 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 enigo = "0.6.1"
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 
-# Linux-only: XDG RemoteDesktop portal for native Wayland text injection (KWin
-# accepts NotifyKeyboardKeysym directly — no libei/EIS needed).
+# Linux-only. `ashpd`: the XDG RemoteDesktop portal for native Wayland text injection
+# (KWin accepts NotifyKeyboardKeysym directly — no libei/EIS needed).
 [target.'cfg(target_os = "linux")'.dependencies]
 # cpal's PulseAudio host + the same pure-Rust protocol client (no libpulse, no build-time C deps)
 # for the mic list: cpal's own device description lacks the source props we need (monitor flag,
@@ -172,7 +172,7 @@ ksni = "0.3.6"
 # focused RDP client's keyboard capture) and the foreground-app tracker
 # (focus/windows.rs — per-app rules + the chip's target readout; Accessibility is
 # where SetWinEventHook lives). windows-sys 0.61 is already in the dependency
-# tree (mio, muda, socket2, rustls-platform-verifier …; 0.60 too, via arboard/
+# tree (mio, muda, socket2, arboard, rustls-platform-verifier …; 0.60 too, via
 # keyring/rfd), so this adds no new crate version.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
