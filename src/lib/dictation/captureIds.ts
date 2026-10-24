@@ -21,8 +21,7 @@
 //
 // Both frames carry the server's utterance ordinal, so keying on it makes the
 // pairing exact instead of positional. Best-effort throughout: an older backend
-// sends no ordinal, and a translation carrying no id simply completes nothing —
-// which is the pre-existing behaviour.
+// sends no ordinal, and a translation carrying no id simply completes nothing.
 
 /** How long a phrase waits for its own capture id before giving up on the
  *  receipt. The frame is normally already here — the queue's `resolveTarget`
