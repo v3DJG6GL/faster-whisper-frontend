@@ -3153,11 +3153,11 @@ async function ensureListeners(): Promise<void> {
             else if (pick.kind === "aborted") {
               sessionInsertSkipped = true;
               // Settle NOW rather than flashing "inserting…" for MIN_INJECT_VISIBLE_MS over a
-              // session that inserts nothing. Safe from inside the task: settleIdle only
-              // flips state + releases the lease, and `settleToIdleAfterInjection` (attached
-              // to this same chain) then finds status "idle" and does nothing. The queued
-              // hold-start it may fire resets `injectChain` for its own session; this task
-              // returns right after and never touches the chain again.
+              // session that inserts nothing. Safe from inside the task: settleIdle queues no
+              // injection work (History, outcome, state flip, lease), and
+              // `settleToIdleAfterInjection` (attached to this same chain) then finds status
+              // "idle" and does nothing. The queued hold-start it may fire resets `injectChain`
+              // for its own session; this task returns right after and never touches the chain again.
               settleIdle();
               return;
             }
@@ -4156,10 +4156,10 @@ export async function stopLive(): Promise<void> {
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on stop failed:", err));
     console.error("stop dictation failed:", e);
-    // Mirror the stream://error recovery: no `closed` follows a rejected stop (epoch retired above +
-    // closed bails on "error"), so the stop-timing transcript would be silently lost. Copy the
-    // assembled committedDoc+bankedDoc to the clipboard. endInjection above is a no-op in stop mode
-    // (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc aren't reset by stopLive.
+    // Mirror the stream://error recovery (copy committedDoc+bankedDoc to the clipboard), or the
+    // stop-timing transcript is silently lost (closed also bails on "error"). endInjection above is
+    // a no-op in stop mode (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc
+    // aren't reset by stopLive.
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
     // No `closed` settles this session either: claim its usage outcome before the teardown (as the
     // stream://error handler does) and book the copy's answer, or what already landed.
