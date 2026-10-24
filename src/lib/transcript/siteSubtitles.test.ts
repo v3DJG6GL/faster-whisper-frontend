@@ -495,12 +495,11 @@ describe("tracks and switches", () => {
     expect(flip(i2, s2, "ex:ja")).toEqual({ state: s2, targets: i2.targets });
     const v = derive(i2, s2);
     expect(v.run!.mtTargets).not.toContain("ja");
-    const ja = v.rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!;
+    const ja = badge(i2, s2, "ja", "ex:ja");
     expect(ja.title).toBe("At the 8-subtitle download limit — switch another subtitle off first");
     // Below the cap the same click works.
     const [i3, s3] = apply(i2, flip(i2, s2, "ex:fr"));
-    expect(derive(i3, s3).rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!.title)
-      .toBe("Click to switch it on");
+    expect(badge(i3, s3, "ja", "ex:ja").title).toBe("Click to switch it on");
     const [i4, s4] = apply(i3, flip(i3, s3, "ex:ja"));
     expect(derive(i4, s4).run!.fetch).toContain("ja");
   });
@@ -510,17 +509,17 @@ describe("tracks and switches", () => {
     // French off, Japanese on, French's machine translation off: Japanese is the eighth track.
     const [i1, s1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:fr"));
     const [i2, s2] = apply(i1, flip(i1, s1, "ex:ja"));
-    const [i3, s3] = derive(i2, s2).rows.find((r) => r.code === "fr")!.badges.find((b) => b.key === "mt:fr")!.state === "active"
+    const [i3, s3] = badge(i2, s2, "fr", "mt:fr").state === "active"
       ? apply(i2, flip(i2, s2, "mt:fr")) : [i2, s2];
     const v = derive(i3, s3);
     expect(v.run!.fetch).toEqual(["de", "es", "it", "pt", "nl", "ru", "pl", "ja"]);
     // French back on would push Japanese past the cap (machine translation in its place): refused.
     expect(flip(i3, s3, "ex:fr")).toEqual({ state: s3, targets: i3.targets });
-    const fr = v.rows.find((r) => r.code === "fr")!.badges.find((b) => b.key === "ex:fr")!;
+    const fr = badge(i3, s3, "fr", "ex:fr");
     expect(fr.title).toBe("At the 8-subtitle download limit — switch another subtitle off first");
     expect(v.run!.mtTargets).not.toContain("ja");
     // A fetched track's own badge (switching it off) is never titled with the limit.
-    const ja = v.rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!;
+    const ja = badge(i3, s3, "ja", "ex:ja");
     expect(ja.title).not.toMatch(/download limit/);
   });
   it("a preset machine-translates into at most the server's limit, your targets first", () => {
