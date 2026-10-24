@@ -2,7 +2,8 @@
 // both): the setting's name — its server ENV name where it has one — with the backend's short
 // description under it, and the control on the right. An accent dot marks a field that holds an
 // override; "clear" writes the explicit EMPTY override (text only), "reset" goes back to inherit.
-// A field the server admin locked shows a lock whose reason is the control's description.
+// A locked field (an admin lock, or live dictation's pin) shows a lock whose reason is the
+// control's description.
 //
 // Nothing else explains a setting in prose: a row that cannot be used right now says why in its
 // tooltip (`disabledTitle`).
