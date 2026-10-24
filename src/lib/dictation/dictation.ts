@@ -1,7 +1,6 @@
-// Shared dictation controller. Resolves a Profile → its Backend (applying the
-// Profile's language/prompt overrides) and starts/stops the session, reusing the
-// streaming/batch path. Driven by global triggers (CLI / hotkeys) and in-app
-// affordances.
+// Shared dictation controller. Resolves a Profile → its Backend and starts/stops the
+// session through streaming.ts (which applies the Profile's overrides). Driven by global
+// triggers (CLI / hotkeys) and in-app affordances.
 
 import { useApp } from "../store";
 import {
@@ -132,7 +131,6 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // the in-flight session's activeProfile — mislabeling its chip identity + usage attribution — and
   // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
   // the prologue via requestStopIfStarting; this is the START path's equivalent.
-  // An open picker counts as busy too (see `pickerOpen`).
   if (isBusy() || isStarting() || pickerOpen) {
     // Key chatter: a re-press of the SAME chord during its own start prologue supersedes the
     // phantom release recorded milliseconds earlier — the chord is still physically held, so
