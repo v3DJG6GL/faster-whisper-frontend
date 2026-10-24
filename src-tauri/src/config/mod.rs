@@ -995,8 +995,8 @@ pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     }))
 }
 
-/// `read_config_text`'s retrying read, with the raw bytes (the identifier migration keeps them
-/// aside when they are not valid UTF-8).
+/// `read_config_text`'s retrying read, with the raw bytes (the launch load and the identifier
+/// migration keep them aside when they are not valid UTF-8).
 pub(crate) fn read_config_bytes(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     let mut attempt = 0;
     loop {
@@ -1152,15 +1152,12 @@ fn decode_keeping_invalid_utf8(path: &Path, bytes: &[u8]) -> String {
 /// their settings were reset instead of silently losing them. Before any reset it is false for a
 /// clean load, a migration, and a genuine first-run (absent file).
 pub fn load_outcome(dir: &Path) -> (Config, bool) {
-    // Sticky for the process: once a corrupt config is backed up + reset, EVERY later load this
-    // session reports `recovered` — even a caller that came after the recovery. setup() runs the
-    // launch load before any webview exists, and the main window's initConfig (the `load_config`
-    // command) loads again after it. Without this, setup's recovery renames config.json → .bak,
-    // then the main window's read sees NotFound → `(default, false)`, so the reset banner
-    // (surfaced ONLY by the main window's initConfig on `recovered`) never shows and its armed
-    // auto-save silently persists the defaults over the user's backed-up config. (The
-    // Quick-Add window reads through `read_config` → `try_load`, which never recovers.)
-    // Held across the whole read+rename so two loads can't interleave the destructive recovery.
+    // Sticky for the process: setup() loads before any webview exists, then the main window's
+    // `load_config` loads again. Setup's recovery renamed config.json → .bak, so that second load
+    // would see NotFound → `(default, false)`: the reset banner (shown ONLY on its `recovered`)
+    // never appears and its armed auto-save persists the defaults over the backed-up config.
+    // (Quick-Add reads through `try_load`, which never recovers.) Held across the whole
+    // read+rename so two loads can't interleave the destructive recovery.
     let mut recovered = RECOVERED_THIS_SESSION
         .lock()
         .unwrap_or_else(|e| e.into_inner());
