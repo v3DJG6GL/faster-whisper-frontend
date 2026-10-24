@@ -262,8 +262,8 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
           stop();
           return;
         }
-        // Back off like a status error (failures is not reset on "done", so a result
-        // that keeps failing slows down to MAX_BACKOFF_MS instead of polling at base until maxAge).
+        // Back off like a status error, so a result that keeps failing slows down to
+        // MAX_BACKOFF_MS instead of polling at base until maxAge.
         failures += 1;
         delay = Math.min(base * 2 ** failures, MAX_BACKOFF_MS);
         return;
