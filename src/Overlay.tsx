@@ -266,91 +266,74 @@ export default function Overlay() {
   // as two Settings adjustments (default, then saved).
   const scalesSeeded = useRef(false);
 
-  useEffect(() => {
-    if (!isTauri) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event")
-      .then(({ listen, emit }) => {
-        const registered = listen<ChipState>("dictation://update", (e) => {
-          const theme = e.payload.theme ?? "auto";
-          const hue = e.payload.accentHue ?? DEFAULT_ACCENT_HUE;
-          const mot = e.payload.accentMotion;
-          const motKey = motionKey(mot);
-          if (hue !== prevHueRef.current || motKey !== prevMotionRef.current || theme !== prevThemeRef.current) {
-            prevHueRef.current = hue;
-            prevMotionRef.current = motKey;
-            prevThemeRef.current = theme;
-            applyAccentAndTheme(hue, mot, theme);
-          }
-          if (e.payload.configLoaded === false) scalesSeeded.current = false;
-          if (!scalesSeeded.current) {
-            lastChipScale.current = e.payload.chipScale ?? REC.chipScale;
-            lastDotScale.current = e.payload.dotScale ?? REC.dotScale;
-            if (e.payload.configLoaded !== false) scalesSeeded.current = true;
-          }
-          setState({
-            ...e.payload,
-            warming: e.payload.warming ?? false,
-            capturing: e.payload.capturing ?? false,
-            speaking: e.payload.speaking === true,
-            // Narrowed, not trusted: it selects a visual state, and the payload is just JSON.
-            serverWork: asServerWork(e.payload.serverWork),
-            dictationError: e.payload.dictationError ?? "",
-            phase: e.payload.phase ?? null,
-            position: e.payload.position ?? "top",
-            theme,
-            persistentDock: e.payload.persistentDock ?? REC.persistentDock,
-            overlayPeek: e.payload.overlayPeek ?? REC.overlayPeek,
-            peekTimeoutSec: finiteIn(e.payload.peekTimeoutSec, 1, 600, REC.peekTimeoutSec),
-            peekWhileActive: e.payload.peekWhileActive ?? REC.peekWhileActive,
-            // 0 = never dim.
-            dimAfterSec: finiteIn(e.payload.dimAfterSec, 0, 600, REC.dimAfterSec),
-            hoverRevealMs: finiteIn(e.payload.hoverRevealMs, 0, 3000, REC.hoverRevealMs),
-            chipScale: e.payload.chipScale ?? REC.chipScale,
-            dotScale: e.payload.dotScale ?? REC.dotScale,
-            quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,
-            canStart: e.payload.canStart ?? true,
-            startHint: e.payload.startHint ?? "",
-            canCycle: e.payload.canCycle ?? true,
-            cycleHint: e.payload.cycleHint ?? "",
-            targetTitle: e.payload.targetTitle ?? "",
-            targetSkip: e.payload.targetSkip ?? "",
-            targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
-            targetOnHover: e.payload.targetOnHover ?? false,
-            lastInsert: e.payload.lastInsert ?? null,
-            sessionOutcome: e.payload.sessionOutcome ?? null,
-            sessionNote: e.payload.sessionNote ?? null,
-            statsOnHover: e.payload.statsOnHover ?? false,
-            profileOnHover: e.payload.profileOnHover ?? false,
-            routeOnHover: e.payload.routeOnHover ?? false,
-            previewOnHover: e.payload.previewOnHover ?? false,
-            translateTo: e.payload.translateTo ?? [],
-            translateMore: e.payload.translateMore ?? 0,
-            routePending: e.payload.routePending ?? "",
-            translateFailure: e.payload.translateFailure ?? "",
-          });
-        });
-        return registered.then((un) => {
-          // Handshake with the main window's controller: a Tauri emit with no registered
-          // listener is dropped (never queued), and this webview boots in parallel with the
-          // main one — so the first broadcast often outran this listen(). Announce readiness
-          // AFTER registration; the controller answers with a fresh full-state push.
-          void emit("overlay://ready").catch(() => {});
-          return un;
-        });
-      })
-      .then((un) => {
-        // If the effect was torn down before listen() resolved (StrictMode's
-        // mount→unmount→remount), drop the subscription instead of leaking it.
-        if (cancelled) un();
-        else unlisten = un;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
+  useTauriListener(async () => {
+    if (!isTauri) return () => {};
+    const { listen, emit } = await import("@tauri-apps/api/event");
+    const un = await listen<ChipState>("dictation://update", (e) => {
+      const theme = e.payload.theme ?? "auto";
+      const hue = e.payload.accentHue ?? DEFAULT_ACCENT_HUE;
+      const mot = e.payload.accentMotion;
+      const motKey = motionKey(mot);
+      if (hue !== prevHueRef.current || motKey !== prevMotionRef.current || theme !== prevThemeRef.current) {
+        prevHueRef.current = hue;
+        prevMotionRef.current = motKey;
+        prevThemeRef.current = theme;
+        applyAccentAndTheme(hue, mot, theme);
+      }
+      if (e.payload.configLoaded === false) scalesSeeded.current = false;
+      if (!scalesSeeded.current) {
+        lastChipScale.current = e.payload.chipScale ?? REC.chipScale;
+        lastDotScale.current = e.payload.dotScale ?? REC.dotScale;
+        if (e.payload.configLoaded !== false) scalesSeeded.current = true;
+      }
+      setState({
+        ...e.payload,
+        warming: e.payload.warming ?? false,
+        capturing: e.payload.capturing ?? false,
+        speaking: e.payload.speaking === true,
+        // Narrowed, not trusted: it selects a visual state, and the payload is just JSON.
+        serverWork: asServerWork(e.payload.serverWork),
+        dictationError: e.payload.dictationError ?? "",
+        phase: e.payload.phase ?? null,
+        position: e.payload.position ?? "top",
+        theme,
+        persistentDock: e.payload.persistentDock ?? REC.persistentDock,
+        overlayPeek: e.payload.overlayPeek ?? REC.overlayPeek,
+        peekTimeoutSec: finiteIn(e.payload.peekTimeoutSec, 1, 600, REC.peekTimeoutSec),
+        peekWhileActive: e.payload.peekWhileActive ?? REC.peekWhileActive,
+        // 0 = never dim.
+        dimAfterSec: finiteIn(e.payload.dimAfterSec, 0, 600, REC.dimAfterSec),
+        hoverRevealMs: finiteIn(e.payload.hoverRevealMs, 0, 3000, REC.hoverRevealMs),
+        chipScale: e.payload.chipScale ?? REC.chipScale,
+        dotScale: e.payload.dotScale ?? REC.dotScale,
+        quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,
+        canStart: e.payload.canStart ?? true,
+        startHint: e.payload.startHint ?? "",
+        canCycle: e.payload.canCycle ?? true,
+        cycleHint: e.payload.cycleHint ?? "",
+        targetTitle: e.payload.targetTitle ?? "",
+        targetSkip: e.payload.targetSkip ?? "",
+        targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
+        targetOnHover: e.payload.targetOnHover ?? false,
+        lastInsert: e.payload.lastInsert ?? null,
+        sessionOutcome: e.payload.sessionOutcome ?? null,
+        sessionNote: e.payload.sessionNote ?? null,
+        statsOnHover: e.payload.statsOnHover ?? false,
+        profileOnHover: e.payload.profileOnHover ?? false,
+        routeOnHover: e.payload.routeOnHover ?? false,
+        previewOnHover: e.payload.previewOnHover ?? false,
+        translateTo: e.payload.translateTo ?? [],
+        translateMore: e.payload.translateMore ?? 0,
+        routePending: e.payload.routePending ?? "",
+        translateFailure: e.payload.translateFailure ?? "",
+      });
+    });
+    // Handshake with the main window's controller: a Tauri emit with no registered
+    // listener is dropped (never queued), and this webview boots in parallel with the
+    // main one — so the first broadcast often outran this listen(). Announce readiness
+    // AFTER registration; the controller answers with a fresh full-state push.
+    void emit("overlay://ready").catch(() => {});
+    return un;
   }, []);
 
   // The chip's own drift clock: same wall-clock arithmetic as the main window, no message needed.
