@@ -88,6 +88,12 @@ export function pinnedName(id: string | null, savedLabel: string | null | undefi
   return isLegacyPin(id) ? id : techId(id);
 }
 
+/** Every path group in the inventory: each microphone's paths, then the paths of no listed mic.
+ *  Mics come first; a lookup by id takes the first match. */
+function pathGroups(inv: MicInventory | null): { label: string; paths: MicPath[] }[] {
+  return [...(inv?.mics ?? []), ...(inv?.otherPaths ?? [])];
+}
+
 export function buildMicView(
   inv: MicInventory | null,
   selectedId: string | null,
@@ -97,10 +103,9 @@ export function buildMicView(
 ): MicView {
   const name = pinnedName(selectedId, savedLabel);
   const mics = inv?.mics ?? [];
-  const paths: { mic: string; path: MicPath }[] = [
-    ...mics.flatMap((m) => m.paths.map((path) => ({ mic: m.label, path }))),
-    ...(inv?.otherPaths ?? []).flatMap((g) => g.paths.map((path) => ({ mic: g.label, path }))),
-  ];
+  const paths: { mic: string; path: MicPath }[] = pathGroups(inv).flatMap((g) =>
+    g.paths.map((path) => ({ mic: g.label, path })),
+  );
   const selMic = selectedId ? mics.find((m) => m.id === selectedId) : undefined;
   const selPath = selectedId && !selMic ? paths.find((p) => p.path.id === selectedId) : undefined;
   const missing = !!inv && !!selectedId && !selMic && !selPath;
@@ -122,10 +127,7 @@ export function buildMicView(
     rows.push({ type: "mic", value: m.id, label: m.label, bluetooth: m.bluetooth, missing: false });
   }
   if (advanced && inv?.advancedSupported) {
-    const groups = [
-      ...mics.map((m) => ({ label: m.label, paths: m.paths })),
-      ...inv.otherPaths,
-    ].filter((g) => g.paths.length > 0);
+    const groups = pathGroups(inv).filter((g) => g.paths.length > 0);
     for (const g of groups) {
       rows.push({ type: "group", label: `${g.label} — all paths` });
       for (const p of g.paths) {
@@ -156,7 +158,7 @@ export function buildMicView(
 export function labelForPick(inv: MicInventory | null, id: string): string | null {
   const mic = inv?.mics.find((m) => m.id === id);
   if (mic) return mic.label;
-  for (const g of [...(inv?.mics ?? []), ...(inv?.otherPaths ?? [])]) {
+  for (const g of pathGroups(inv)) {
     const p = g.paths.find((x) => x.id === id);
     if (p) return p.kind === "server" ? g.label : `${g.label} · ${techId(p.id)}`;
   }
