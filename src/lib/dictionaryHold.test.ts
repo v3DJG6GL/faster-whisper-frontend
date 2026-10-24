@@ -170,8 +170,8 @@ describe("dictionaryConflictText", () => {
   });
 });
 
-// Run #77 F14-1: a follow-up reload that committed nothing (a peer deleted the backend during the
-// save, or its address kept moving) leaves the pre-save edits on screen — no clause may claim a reload.
+// A peer deleted the backend during the save, or its address kept moving: the pre-save edits stay
+// on screen.
 describe("a post-save reload that did not commit", () => {
   it("never claims the rules were reloaded", () => {
     const conflict = dictionaryConflictText("http://a:8000", null, false, false, false);
@@ -184,8 +184,7 @@ describe("a post-save reload that did not commit", () => {
     expect(landed).toContain("Check http://a:8000 for your changes");
   });
 
-  // Run #79 F14-1: a save that stored some rules and conflicted on others draws both notices; the
-  // "not reloaded" sentence goes on the Saved line only, once.
+  // A save that stored some rules and conflicted on others draws both notices.
   it("says it once when the Saved notice is drawn above the conflict notice", () => {
     const saved = dictionarySavedText(3, "http://a", null, false);
     const conflict = dictionaryConflictText("http://a", null, false, false, true);
