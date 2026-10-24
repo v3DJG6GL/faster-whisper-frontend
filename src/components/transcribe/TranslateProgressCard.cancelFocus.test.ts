@@ -1,5 +1,5 @@
 // The translate runs' Cancel buttons must not drop keyboard focus to <body>: a native `disabled`
-// set on the FOCUSED button by the very press that cancels did, until the run's card unmounted.
+// set on the FOCUSED button by the very press that cancels would, until the run's card unmounts.
 import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the cards in.
 import cardSrc from "./TranslateProgressCard.tsx?raw";
