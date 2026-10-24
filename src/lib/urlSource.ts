@@ -3,8 +3,7 @@
 //
 // Identity model: a URL item's key IS its normalized URL string, living in
 // the same `path` slot files use everywhere (queue, overlays, history,
-// viewer). Nothing else changes — only display and transport dispatch branch
-// on kind, via isSourceUrl().
+// viewer); code that must tell the two kinds apart branches on isSourceUrl().
 
 import { safeDisplayText } from "./sanitize";
 import { fmtDuration, fmtDurationExact } from "./format";
