@@ -1,4 +1,4 @@
-// P30: the settings-sync engine — composes the synced blob, 3-way merges,
+// The settings-sync engine — composes the synced blob, 3-way merges,
 // applies pulls, and drives the automatic triggers (startup pull, focus pull,
 // debounced push). File export/import reuses the same extract/apply core
 // (lib/sync/settingsFile.ts).
@@ -171,8 +171,6 @@ function gateScalars(b: SyncBlob, gates: Gates): SyncBlob {
 const MY_BUCKET: "linux" | "windows" = IS_WINDOWS ? "windows" : "linux";
 const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 
-// ── canonical hash ──────────────────────────────────────────────────────────
-
 import { stableStringify } from "../stable";
 import { forgetCredential } from "../capabilities";
 
@@ -190,19 +188,17 @@ function hashBlob(v: unknown): string {
 
 export { isPlainObject } from "./syncGates";
 
-/** Category equality — the test that decides whether a category conflicts and prompts, or merges
- *  silently. Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string
- *  first and then folds it to 32 bits, so the digest comparison was strictly more work for a
- *  probabilistic answer — on inputs one of which (the base) is the server's own last blob. */
+/** Category equality — decides whether a category conflicts and prompts, or merges silently.
+ *  Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string and then
+ *  folds it to 32 bits, so comparing digests is more work for a merely probabilistic answer. */
 const catEqual = (a: unknown, b: unknown) => stableStringify(a ?? null) === stableStringify(b ?? null);
 
-/** Bound an await that may never settle. The ONLY unbounded await in the
- *  engine is the keyring read (a locked KWallet parks the request behind a
- *  password prompt indefinitely); everything else rides reqwest's timeout.
- *  Without this, one blocked read wedges the engine for the whole session
- *  (`inFlight` never clears — the finally never runs on a never-settling
- *  promise). Degrading to `fallback` (push without secrets) is always safer
- *  than never pushing again. */
+/** Bound an await that may never settle — chiefly keyring calls (a locked
+ *  KWallet parks the request behind a password prompt indefinitely); network
+ *  calls ride reqwest's timeout. Without this, one blocked call wedges the
+ *  engine for the whole session (`inFlight` never clears — the finally never
+ *  runs on a never-settling promise). Degrading to `fallback` is always safer
+ *  than never syncing again. */
 function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   return Promise.race([
@@ -210,8 +206,6 @@ function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
     new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); }),
   ]);
 }
-
-// ── blob migration: pre-split shapes → the current category layout ──────────
 
 const CHIP_FIELD_SET: ReadonlySet<string> = new Set(CHIP_FIELDS);
 
@@ -266,7 +260,7 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
       out.dictionary = { ...(dict ?? {}), quickAddHotkey } as typeof out.dictionary;
     }
   }
-  // v0.1.63 shipped ONE `transcription` category carrying the history flags
+  // Old blobs carry ONE `transcription` category holding the history flags
   // too; they now live with their subject (dictation clock → `recording`,
   // file clock → `fileTranscriptions`). Split an old-shape entry, existing
   // new-shape entries winning — same contract as the chip split above.
@@ -322,8 +316,6 @@ export function restorableCategories(blob: SyncBlob | null | undefined): SyncCat
   const m = migrateBlob(blob);
   return ALL_CATEGORIES.filter((c) => isPlainObject(m[c]));
 }
-
-// ── extract: live config → category payloads ───────────────────────────────
 
 function extractGeneral(settings: AppSettings): SyncGeneral {
   const g = settings.general;
@@ -467,12 +459,12 @@ function extractProfiles(
 /** The quick-add pointers. Chord: live when the sub-toggle is on, snapshot
  *  passthrough when off (same never-erase rule as recordingsDir).
  *
- *  The pin is SLAVED to the backends category (`syncPin` = cats.backends),
- *  exactly as when it rode inside that payload: it references a backend id,
- *  so on a device that doesn't sync its backend list the ids differ per
- *  machine — syncing the pin there would make every pull null the local pin
- *  through the dangling-reference scrub and every push overwrite the peer's,
- *  a slow ping-pong that destroys both pins. Backends OFF → passthrough. */
+ *  The pin is SLAVED to the backends category (`syncPin` also needs it on):
+ *  it references a backend id, so on a device that doesn't sync its backend
+ *  list the ids differ per machine — syncing the pin there would make every
+ *  pull null the local pin through the dangling-reference scrub and every
+ *  push overwrite the peer's, a slow ping-pong that destroys both pins.
+ *  Backends OFF → passthrough. */
 function extractDictionary(
   settings: AppSettings,
   syncChord: boolean,
@@ -602,8 +594,8 @@ export async function composeBlob(
     ? extractDictionary(
         cfg.settings,
         opts.sub.quickAddHotkey,
-        // The pin needs its referent list AND its own "Pinned word mappings" switch (which
-        // nothing read before). `gates` is absent on the export path, deliberately all-on.
+        // The pin needs its referent list AND its own "Pinned word mappings" switch.
+        // `gates` is absent on the export path, deliberately all-on.
         cats.backends && (opts.gates?.pinnedMappings ?? true),
         snapshot,
       )
@@ -668,16 +660,14 @@ export async function composeBlob(
       if (Object.keys(secrets).length > 0 && complete) {
         blob.backends.secrets = secrets;
       } else if (blob.backends.list.some((b) => b.hasApiKey)) {
-        // Same erase-the-server's-keys hazard as the pass-through branch below, on the branch
-        // that actually runs by default: when the wallet is locked the read above degrades to
-        // `{}`, and pushing this list without secrets replaces the server's copy with a keyless
-        // one — which pushNow then records as the new snapshot, orphaning the stash. If this
-        // device believes it HAS keys and we read none back, re-push the SNAPSHOT's category
-        // (the server's own last content, unchanged). NOT `undefined`: the transport is a
-        // whole-blob PUT and the client does the merge, so an omitted key does not "leave the
-        // server's copy alone" — JSON.stringify drops it and the stored list AND its keys are
-        // erased, then recorded as the new merge base. On the export path (no snapshot) the
-        // local list travels without secrets — a backup must never silently lose the server list.
+        // A locked wallet degrades the read above to `{}`: pushing this list without secrets
+        // replaces the server's copy with a keyless one — which pushNow then records as the new
+        // snapshot, orphaning the stash. So when this device believes it HAS keys and could not
+        // read them all, re-push the SNAPSHOT's category (the server's own last content). NOT
+        // `undefined`: the transport is a whole-blob PUT and the client does the merge, so an
+        // omitted key erases the stored list AND its keys and becomes the new merge base. On the
+        // export path (no snapshot) the local list travels without secrets — a backup must never
+        // silently lose the server list.
         blob.backends = snapshot ? snapshot.backends : { list: cfg.backends };
         // Marked for the merge callers (`backendsDegraded`): not by reference identity, because
         // the per-setting gate pass below rebuilds `blob.backends` into a fresh object.
@@ -795,8 +785,7 @@ export async function composeBlob(
   // FORWARD-COMPAT: carry top-level categories this app version doesn't know
   // through from the snapshot verbatim. Without this, a device one release
   // behind rebuilds the blob from ALL_CATEGORIES and silently DROPS a newer
-  // device's category on every push (server-side ping-pong). Shipped ahead of
-  // the first new category (`logging`) on purpose.
+  // device's category on every push (server-side ping-pong).
   if (snapshot) {
     const known = new Set<string>(ALL_CATEGORIES);
     for (const [k, v] of Object.entries(snapshot)) {
@@ -971,20 +960,16 @@ export function sanitizeProfiles(list: unknown): Profile[] {
     )
     .map((p) => ({
       ...p,
-      // The three fields above were the ones an earlier run tripped over; every OTHER leaf was
-      // carried through by reference. Two sinks, both reached from the same unattended pull:
-      // `GLYPH[p.activation]` in Home (the DEFAULT route) is rendered AS A COMPONENT, so an
-      // unknown value is `React.createElement(undefined)` — "Element type is invalid" — and with
-      // no error boundary anywhere in the tree that unmounts the main window; and `ActivationType`
-      // is a two-variant serde enum with no fallback, so the same value makes `save_config`'s
-      // typed parse reject the WHOLE config and every later save fails for the session.
-      // "hold" is the fail-safe fallback: push-to-talk never live-types.
+      // Two sinks for an unknown activation: `GLYPH[p.activation]` in Home is rendered AS A
+      // COMPONENT, so it throws "Element type is invalid" and, with no error boundary, unmounts
+      // the main window; and `ActivationType` is a serde enum with no fallback, so `save_config`
+      // rejects the WHOLE config for the session. "hold" is the fail-safe: push-to-talk never
+      // live-types.
       //
-      // `"handsfree"` was spelled `"latch"` between two earlier versions, so a peer that
-      // hasn't updated still sends that. It must be NORMALIZED, not merely rejected: falling
-      // through to the "hold" fallback would silently demote every hands-free profile on the
-      // receiving device to push-to-talk — a behavior change from a spelling change. Rust's
-      // `#[serde(alias = "latch")]` covers the config-file path; this covers the sync one.
+      // An older peer still sends `"latch"` for `"handsfree"`. It must be NORMALIZED, not
+      // rejected: the "hold" fallback would silently demote every hands-free profile to
+      // push-to-talk. Rust's `#[serde(alias = "latch")]` covers the config-file path; this
+      // covers the sync one.
       activation: canonicalActivation((p as Profile).activation) ?? "hold",
       // Rendered as React CHILDREN (`<Badge>{p.endpoint}</Badge>`, `languageLabel(p.language)`,
       // which returns its argument unchanged when the code is unknown) — an object leaf throws
@@ -998,11 +983,10 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       askTranslationTargets: p.askTranslationTargets == null ? undefined : p.askTranslationTargets === true,
       // Per-Profile insertion overrides get the same clamps their per-app twins do —
       // `save_config` parses into a typed Rust struct with no serde fallback, so ONE bad
-      // enum here wedges every later save for the session. Everything not listed rides the
-      // `...p` spread unvalidated, which is exactly the gap this closes.
+      // enum here wedges every later save for the session.
       //
-      // `autoEnter` is dropped rather than clamped, for the same reason as the app-rule
-      // twin above: a peer must not be able to arm a post-paste Return.
+      // `autoEnter` is dropped rather than clamped, as in `sanitizeAppRules`: a peer must
+      // not be able to arm a post-paste Return.
       insertionOverrides: p.insertionOverrides
         ? {
             insertMethod:
@@ -1024,11 +1008,9 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       model: typeof p.model === "string" ? p.model : undefined,
       language: typeof p.language === "string" ? p.language : undefined,
       prompt: typeof p.prompt === "string" ? p.prompt : undefined,
-      // The two leaves the pass above still carried by reference. `enabled` is a bare `bool`
-      // with no serde default, so a wrong type wedges every later save; before that a truthy
-      // non-bool also makes the profile count as ACTIVE in `conflicts()`. `overrideProfile`
-      // has a default, so an absent key is fine — but a present non-string still fails the
-      // typed parse, and its Backend twin below is already clamped this way.
+      // `enabled` is a bare `bool` with no serde default, so a wrong type wedges every later
+      // save, and a truthy non-bool counts as ACTIVE in `conflicts()`. `overrideProfile` has a
+      // default, but a present non-string still fails the typed parse.
       enabled: p.enabled === true,
       // Trimmed, blank → unset: what every editor saves and the UI label shows. Untrimmed, a peer's
       // "clinic-de " displayed as clinic-de but was sent verbatim, missing the server profile.
@@ -1036,14 +1018,11 @@ export function sanitizeProfiles(list: unknown): Profile[] {
         typeof p.overrideProfile === "string" && p.overrideProfile.trim()
           ? p.overrideProfile.trim()
           : undefined,
-      // Same clamp as the Backend twin: the leaf rode the `...p` spread untouched, and Rust
-      // forwards it into every session request as opaque JSON.
+      // Same clamp as the Backend twin: Rust forwards it into every session request as opaque JSON.
       decodeOverrides: clampDecodeOverrides(p.decodeOverrides),
-      // `backendId` rode the `...p` spread too. Rust's `backend_id` is `Option<String>`,
-      // and the dangling-reference scrub in `applyBlob` is NOT a type check standing in for one:
-      // it is gated on `p.backendId &&`, so a FALSY non-string (`0`, `false`) skips it entirely
-      // and reaches the typed parse, which rejects the whole `Config`. `null` is the app's own
-      // "no backend chosen" value, so the scrub still runs on whatever survives here.
+      // Rust's `backend_id` is `Option<String>`, and `applyBlob`'s dangling-reference scrub is no
+      // type check: it is gated on `p.backendId &&`, so a FALSY non-string (`0`, `false`) skips it
+      // and rejects the whole `Config`. `null` is the app's own "no backend chosen" value.
       backendId: typeof p.backendId === "string" ? p.backendId : null,
     }))
     )
@@ -1081,8 +1060,6 @@ export function isCodeList(v: unknown): v is string[] {
   );
 }
 
-/** Ceiling on the codes in ONE chord. Every real binding is ≤6 (modifiers + a key); the capture
- *  UI cannot produce more. */
 /** A chord as the capture UI produces it: a list of `KeyboardEvent.code` strings.
  *
  *  The LENGTH bound matters as much as the element type. `Profile.hotkey` is canonicalized
@@ -1107,11 +1084,9 @@ const MAX_CHORD_CODE_LEN = 64;
  *  collision with the (possibly also inbound) quick-add chord. See the call site for why a
  *  conflicting set is worse than a malformed one.
  *
- *  `collapseSides: true` deliberately over-detects: the save gate picks it from the live backend
- *  (evdev vs the plugin) and this runs before that is known, so matching the stricter side keeps
- *  the sanitizer a superset of the gate — which is the whole point, since anything the gate
- *  catches and this misses freezes saving. Two chords differing only by modifier side are in any
- *  case broken on the plugin backend, where one silently never registers. */
+ *  Side-collapsing follows the save gate's rule (`evdevLive` carries the live backend), so the
+ *  sanitizer catches at least what the gate does — anything the gate catches and this misses
+ *  freezes saving. */
 export function disableConflictingProfiles(
   profiles: Profile[],
   quickAddHotkey: string[],
@@ -1330,13 +1305,9 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
 function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
   const out: Record<string, unknown> = Object.create(null);
   for (const [k, v] of Object.entries(incoming as Record<string, unknown>)) {
-    // OWN properties on both reads. `k` comes from `Object.entries` over the blob, and
-    // `JSON.parse` makes `__proto__` / `constructor` / `toString` ordinary own enumerable keys —
-    // while `in` and a bare index both consult the prototype chain, so those keys used to compare
-    // against `Object.prototype`'s members instead of against "absent". It fails CLOSED today
-    // (every prototype member is a function, and JSON cannot produce one, so the `typeof`
-    // mismatch arm swallows them) — this is the last inbound site still reading that way, which
-    // is exactly the hygiene `own.ts` exists for and `securityChanges` was converted to.
+    // OWN properties on both reads: `JSON.parse` makes `__proto__` / `constructor` / `toString`
+    // ordinary own keys, while `in` and a bare index consult the prototype chain and would
+    // compare them against `Object.prototype`'s members instead of against "absent".
     const ref = ownProp(local as Record<string, unknown>, k);
     // A key this version does not know: pass it through untouched, `null` included. Rust ignores
     // unrecognised fields, so it cannot wedge the parse, and swallowing it would erase a newer
@@ -1345,13 +1316,10 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
       out[k] = v;
       continue;
     }
-    // JSON has no `undefined`, so `null` is exactly what a hostile server puts on the wire — and
-    // this arm used to pass it straight through on the strength of "nullable either side",
-    // without ever checking that the LOCAL field is nullable. `#[serde(default)]` fills an ABSENT
+    // Pass `null` only where the LOCAL field is nullable too. `#[serde(default)]` fills an ABSENT
     // key; a PRESENT `null` still goes through `deserialize_bool` and errors, so a single
-    // `{"general":{"soundEffects":null}}` rejected the whole `Config` — the same session-long
-    // save freeze this function exists to prevent. Keep this device's value instead, exactly as
-    // `oneOf` does for an unknown variant.
+    // `{"general":{"soundEffects":null}}` rejects the whole `Config`. Keep this device's value
+    // instead, as `oneOf` does for an unknown variant.
     if (v == null) {
       if (ref == null) out[k] = v; // genuinely nullable here too
       continue;
@@ -1363,11 +1331,10 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
     if (typeof v !== typeof ref) continue;
     if (Array.isArray(ref) !== Array.isArray(v)) continue;
     if (typeof v === "number" && !Number.isFinite(v)) continue;
-    // JS has ONE number type; Rust does not. `typeof` agreeing is not enough for the two
+    // JS has ONE number type; Rust does not. `typeof` agreeing is not enough for the
     // fields Rust holds as `u32` — `-1`, `0.5` and `5e9` all pass the check above and then
-    // fail serde on the whole `Config`, which is the same session-long save freeze `oneOf`
-    // exists to prevent (its own docstring names `hoverRevealMs: -1`). The f64 fields need
-    // no bound: serde accepts any finite double, so they cannot wedge the parse.
+    // fail serde on the whole `Config`. The f64 fields need no bound: serde accepts any
+    // finite double, so they cannot wedge the parse.
     if (U32_KEYS.has(k) && !(Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 0xff_ff_ff_ff)) continue;
     out[k] = v;
   }
@@ -1402,30 +1369,16 @@ export function sanitizeBackends(list: unknown): Backend[] {
     // have no serde fallback, so an unknown variant wedges every later save for the session.
     .map((b) => ({
       ...b,
-      // Inbound addresses are stored VERBATIM — `normalizeUrl` runs only on what the user
-      // types — and go straight to the transport. Blank one that carries a scheme this app
-      // does not speak: prefixing `http://` to `https:/evil.tld` makes every helper here read
-      // the host as "https" while reqwest resolves evil.tld, so the card and the consent
-      // dialog would name a different server from the one receiving the key and the audio.
-      // Blank, not dropped: the entry keeps its id and therefore its keyring association, and
-      // an empty address is the app's existing "not configured yet" state.
-      //
-      // STORE THE CLEANED STRING, not the raw one. `stripUrlNoise` removes exactly what WHATWG
-      // and Rust's `url` crate remove before parsing (interior tab/LF/CR, leading/trailing C0),
-      // so this device's copy already reads the way the transport will resolve it. Cleaning here
-      // rather than only inside `normalizeUrl` is deliberate: `securityChanges` detects a
-      // repointed address with `normalizeUrl(cur) !== normalizeUrl(next)`, so if the STORED value
-      // stayed dirty while the comparison saw a cleaned one, a dirty→clean swap of the same host
-      // would compare equal and the consent prompt would not fire for the very transition it
-      // exists to catch.
-      // …and the SCHEMELESS form the keyboard path accepts ("host:8000") is stored the way
-      // that path stores it — with the `http://` `normalizeUrl` prepends. Stored bare, every
-      // display helper re-normalised it for the UI while the transport handed reqwest a
-      // scheme-less string and every request failed with an opaque URL-parse error.
-      // …and a LENIENT http(s) scheme (`http:/host`, `HTTPS:\\host`, `http:host`) is canonicalised
-      // the way the editor stores it rather than blanked: older builds stored it verbatim and
-      // the transport reads it as `http(s)://host`, so the canonical form names the very host
-      // reqwest connects to — blanking broke a working backend and pushed the "" back to the peer.
+      // Inbound addresses are stored VERBATIM and go straight to the transport, so store the
+      // form `serverUrlFromPeer` canonicalises. A scheme this app does not speak is BLANKED
+      // (`https:/evil.tld` would read as host "https" here while reqwest resolves evil.tld, so
+      // the card and consent dialog would name another server than the one receiving the key) —
+      // blanked, not dropped: the entry keeps its id and keyring association, and "" is the
+      // existing "not configured yet" state. The CLEANED string is stored because
+      // `securityChanges` compares `normalizeUrl(cur) !== normalizeUrl(next)`: a dirty stored value
+      // would let a dirty→clean swap of the same host compare equal and skip the consent prompt.
+      // A lenient http(s) scheme (`http:/host`) is canonicalised, not blanked: the transport
+      // already reads it as that host, and blanking broke a working backend.
       serverUrl: serverUrlFromPeer(b.serverUrl),
       name: typeof b.name === "string" ? b.name : "",
       model: typeof b.model === "string" ? b.model : "",
@@ -1444,10 +1397,9 @@ export function sanitizeBackends(list: unknown): Backend[] {
         typeof b.overrideProfile === "string" && b.overrideProfile.trim()
           ? b.overrideProfile.trim()
           : undefined,
-      // The one backend enum this pass had missed. `Option<BackendKind>` defaults when the key
-      // is ABSENT, but a present unknown string (or a non-string) has no serde fallback and
-      // fails the typed parse like its two siblings above. Keep undefined = "infer from the
-      // connection test", which is what an absent key already means.
+      // `Option<BackendKind>` defaults only when the key is ABSENT; a present unknown string (or a
+      // non-string) has no serde fallback and fails the typed parse. undefined = "infer from the
+      // connection test".
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
       decodeOverrides: clampDecodeOverrides(b.decodeOverrides),
       translationOverrides: clampTranslationOverrides(b.translationOverrides),
@@ -1456,10 +1408,10 @@ export function sanitizeBackends(list: unknown): Backend[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
-/** Drop inbound app rules that aren't shaped like rules. `appId` is only checked for existence
- *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
- *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
- *  inserted again, including in the editor the user would need to remove it. */
+/** Drop inbound app rules that aren't shaped like rules. Rust never checks a rule's fields (the
+ *  importer only checks each bucket is an array; the pull path not at all), yet every injection
+ *  resolves through `rule.appId.toLowerCase()` — one malformed entry throws there and no
+ *  transcript is ever inserted again, including in the editor the user would need to remove it. */
 export function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
   return rules
@@ -1471,15 +1423,12 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
     )
     .map((r) => ({
       ...r,
-      // The rule's KEY, and the only field the form used to normalize (`appId.trim()` in `save()`)
-      // while every inbound path left it verbatim. See `normalizeAppId`.
+      // The rule's KEY, normalized as the editor does (see `normalizeAppId`).
       appId: normalizeAppId(r.appId),
       block: r.block === true,
-      // `name` rode in through the spread unchecked while its neighbours were clamped, and the
-      // rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
-      // number or an object, so one malformed rule unmounts the very screen a user opens to
-      // audit which apps have a forced insert method. App rules have no consent gate, so this
-      // arrives silently.
+      // The rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
+      // number or object, so one malformed rule unmounts the audit screen. App rules have no
+      // consent gate, so this arrives silently.
       name: typeof r.name === "string" ? r.name : undefined,
       pasteShortcut:
         r.pasteShortcut == null
@@ -1516,23 +1465,15 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
     // key: a joiner-only appId keeps its joiner when stored but keys to "".
     .filter((r) => appRuleKey(r.appId).length > 0)
     // Rules are MATCHED by appId and `resolveInjectionTarget` takes the FIRST match, so two rules
-    // sharing an appId shadow each other. `upsertAppRule` knows this and dedupes on the local
-    // editor path — with a comment naming the hazard — and this inbound twin had neither that
-    // guard nor Q12's `dedupeById` (which was applied to backends/profiles only, and keys on `id`,
-    // so it would not catch two distinct ids sharing an appId anyway).
-    //
+    // sharing an appId shadow each other (`dedupeById` keys on `id`, so it can't catch this).
     // Without it a peer prepends `{appId:"konsole", block:false, insertMethod:"direct"}` ahead of
-    // the user's own `{appId:"konsole", block:true}`: the resolver picks the attacker's entry and
-    // TYPES the transcript into the app the user marked "never type here", while AppRules.tsx
-    // still draws the Ban icon and "Blocked — never typed here" for the shadowed rule. App rules
-    // raise no SecurityChange, so this lands on the unattended startup/focus pull.
-    //
-    // Keep-FIRST on both keys, which is what the resolver already does — so the surviving row is
-    // the one that was being enforced, and display goes back into agreement with enforcement.
-    // Behaviour-preserving for every legitimate config: duplicates are unreachable from the UI,
-    // `upsertAppRule` guarantees uniqueness. Placed in the sync sanitizer only, never in
-    // `wellFormedAppRules` — that floor runs over the user's own config.json at every launch with
-    // the autosave armed (Q12's rule).
+    // the user's `{appId:"konsole", block:true}`: the resolver TYPES into the app the user marked
+    // "never type here" while AppRules.tsx still shows the shadowed rule as blocked — and app
+    // rules raise no SecurityChange, so it lands on the unattended startup/focus pull.
+    // Keep-FIRST on both keys, as the resolver does, so display agrees with enforcement.
+    // Unreachable for legitimate configs (`upsertAppRule` keeps appIds unique). Sync sanitizer
+    // only, never `wellFormedAppRules`: that floor runs over the user's own config.json at every
+    // launch with the autosave armed.
     .filter(
       (() => {
         const ids = new Set<string>();
@@ -1549,16 +1490,12 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
-/** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` would write it: a
- *  non-empty string, own property of a plain-object container. `secrets` is the one container in
- *  the blob with no shape check on either side — Rust forwards the blob as an opaque Value, and the
- *  file-import path's `as_object()` floor has no sync-path twin — so a STRING container iterated
- *  with `Object.entries` expanded per code unit: a 4 MiB value measured 4M entries, ~8s of frozen
- *  main thread and +575 MB, on the pull that runs unattended at startup and on every window focus.
- *  Reading by id is also own-property (`secrets.constructor` is a truthy function otherwise). The
- *  review gate (`securityChanges`) reads through this too — a non-string value or a string
- *  container raised an api-key row whose approval wrote nothing and whose rejection re-raised on
- *  every pull. */
+/** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` writes it: a non-empty
+ *  string, own property of a plain-object container. `secrets` has no shape check on either side
+ *  (Rust forwards the blob as opaque JSON), so a STRING container iterated with `Object.entries`
+ *  expands per code unit — seconds of frozen main thread on the unattended startup/focus pull.
+ *  Own-property because `secrets.constructor` is otherwise a truthy function. `securityChanges`
+ *  reads through this too, so it never raises an api-key row whose approval would write nothing. */
 function inboundSecret(secrets: unknown, id: string): string | undefined {
   const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
   return typeof key === "string" && key ? key : undefined;
@@ -1733,8 +1670,7 @@ export async function applyBlob(
   let staleRestart = false;
   let staleAbort = false;
   // A thrown sentinel (not `return`) is the only way to leave the try AND still
-  // reach the retry tail below — `return` inside the try skips it, which is
-  // exactly how the documented stale-restart retry sat dead until now.
+  // reach the retry tail below — `return` inside the try skips it.
   const STALE = Symbol("stale-restart");
   try {
     const settings = st.settings;
@@ -1759,14 +1695,10 @@ export async function applyBlob(
     let nextProfiles = st.profiles;
     let nextAppRules = st.appRules;
 
-    // `isPlainObject`, not truthiness: Rust forwards the blob as opaque JSON (`transport/sync.rs`
-    // — "Blobs pass through as opaque JSON"), so `general` arrives as whatever the server put
-    // there. A STRING is truthy, and object rest-destructuring boxes it into one key per code
-    // unit — so a 4 MiB string (the `SYNC_MAX_BODY` ceiling) becomes 4,194,304 keys, twice over
-    // for the two rest-spreads, and `typedLike` then copies every one of them into the store
-    // because "0", "1", … are not in `settings.general`. This is Q11's `backends.secrets` fix
-    // applied to the two containers it never reached, on a pull that runs unattended at startup
-    // and on every window focus.
+    // `isPlainObject`, not truthiness: Rust forwards the blob as opaque JSON, so `general` is
+    // whatever the server put there. A STRING is truthy, and object rest-destructuring boxes it
+    // into one key per code unit — a 4 MiB string (`SYNC_MAX_BODY`) becomes ~4M keys that
+    // `typedLike` then copies into the store, on the unattended startup/focus pull.
     if (cats.general && isPlainObject(blob.general)) {
       const { theme, accentHue, accentMotion, ...incoming } = blob.general as SyncGeneral;
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
@@ -1854,14 +1786,10 @@ export async function applyBlob(
       nextSettings = {
         ...nextSettings,
         recording: {
-          // Merge over THIS DEVICE'S current block, the way the `general` arm above already
-          // does. Replacing it wholesale meant an omitted key fell through to `hydrate`'s
-          // `withSettingsDefaults`, which refills from the FACTORY defaults — where
-          // `saveRecordings` is true. So a blob that simply left the field out raised no
-          // security change (undefined is falsy), applied silently, and turned permanent
-          // plaintext archiving back on for a user who had deliberately turned it off; the same
-          // omission silently reset trimSilence / muteSystemAudio / handsFreeAutoStopMin too.
-          // A peer that genuinely wants it off still sends the literal `false`.
+          // Merge over THIS DEVICE'S block, like the `general` arm: an omitted key would otherwise
+          // fall through to `hydrate`'s factory defaults — `saveRecordings: true` — and silently
+          // re-enable plaintext archiving with no security change raised. A peer that wants it
+          // off sends the literal `false`.
           ...settings.recording,
           ...typedLike(rec as Partial<typeof settings.recording>, settings.recording),
           // The folder is a machine path: applied only when this device's sub-toggle opts in
@@ -1899,10 +1827,8 @@ export async function applyBlob(
       // model, which looks the same as a real pick, so that pair applies until every device
       // runs this version.
       if (!opts.ignoreGates && typeof pulled.backendId !== "string") delete pulled.translationModel;
-      // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
-      // above already routed the dictation-history flags in here, and rebuilding from
-      // the pre-apply settings discarded them on every ordinary pull (the
-      // fileTranscriptions arm below had the right idiom).
+      // Over nextSettings.transcribe, not settings.transcribe: the recording arm above
+      // already routed the dictation-history flags in here.
       const transcribe = { ...nextSettings.transcribe, ...pulled };
       // The picks travel as one unit behind backendId. A peer's backend pick CLEARS its language
       // (an untouched one follows the Backend's) and JSON drops the undefined key, so a pick the
@@ -1987,9 +1913,9 @@ export async function applyBlob(
         },
       };
     }
-    // isPlainObject, like every scalar arm: a malformed container (`"backends": []` or a
-    // string) is truthy, and `sanitizeBackends(undefined)` then returned `[]` — which the
-    // dangling-reference scrub below turned into "every profile's backend is gone".
+    // isPlainObject, like every scalar arm: a malformed container (`[]`, a string) is truthy,
+    // and `sanitizeBackends` would return `[]`, which the dangling-reference scrub below turns
+    // into "every profile's backend is gone".
     if (cats.backends && isPlainObject(blob.backends)) {
       let inboundBackends = sanitizeBackends(blob.backends.list);
       // Element-wise keep-local for the gated backend aspects (the profile
@@ -2015,27 +1941,15 @@ export async function applyBlob(
       // or removed counts too: hydrate would evict it, but moves no credential generation, so
       // the generation-keyed readers (the editor's verdict, decode defaults) kept the old caller.
       for (const id of reconciled.rotated) forgetCredential(id);
-      // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
-      // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
-      // entries against a locked keyring park here for a long time. Everything above was
-      // computed from a snapshot taken BEFORE that wait, and `hydrate` below replaces
-      // `settings` wholesale — so anything the user changed meanwhile is silently reverted
-      // and then written to disk by the persistence subscriber. That includes turning sync
-      // OFF (`settings.sync` is part of `settings`) and deleting the offending backend, i.e.
-      // the blob would hold the disconnect switch down for as long as it keeps the apply
-      // running. Restart rather than merge: re-entering recomputes every derived value above
-      // (the dangling-reference scrub and the conflict pass included) against current state,
-      // whereas merging a stale `nextSettings` onto the live store would have to re-run both
-      // by hand or leave dangling ids behind. Bounded, and on exhaustion the apply is dropped
-      // rather than applied stale — the next pull brings the blob back.
-      // Check every slice `hydrate` overwrites, not just `settings`. `nextProfiles` and
-      // `nextAppRules` are still the PRE-wait snapshot whenever their category is toggled off,
-      // and `upsertProfile`/`patchProfile`/`upsertAppRule`/`removeAppRule` all return only
-      // `{profiles}` / `{appRules}` — `settings` stays byte-identical, so a user deleting the
-      // app rule this very blob installed slipped the check and had their deletion hydrated
-      // away and written to disk. `backends` too: `nextBackends` is the inbound list re-pinned
-      // against the PRE-wait `st.backends` (the wait only re-derives `hasApiKey`), so a backend
-      // added, repointed or deleted while the apply was parked was hydrated away the same way.
+      // The ONLY await in this function, and the blob sizes it (sequential keyring writes, 10s
+      // timeout apiece, up to 500 entries). Everything above came from a snapshot taken BEFORE
+      // the wait and `hydrate` replaces it wholesale, so anything the user changed meanwhile —
+      // including turning sync OFF — would be reverted and persisted. Restart rather than merge:
+      // re-entering recomputes every derived value (dangling-reference scrub, conflict pass)
+      // against current state. Bounded; on exhaustion the apply is dropped, not applied stale —
+      // the next pull brings the blob back.
+      // Compare every slice `hydrate` overwrites, not just `settings`: profile/app-rule edits
+      // leave `settings` identical, and `nextBackends` is re-pinned against the PRE-wait list.
       const live = useApp.getState();
       // Also check `status`: starting a dictation touches only `status`/`activeProfile`
       // (none of the four slice identities below), so a session started during the
@@ -2087,10 +2001,9 @@ export async function applyBlob(
           ? p
           : { ...p, insertionOverrides: { ...p.insertionOverrides, autoEnter: mine } };
       });
-      // `??` only replaces null/undefined, so a JSON `0` or `false` survived it — and the scrub
-      // below is gated on truthiness, so a falsy non-string skipped that too and reached Rust's
-      // `Option<String>`. Same wedge as `quickAddList`. "Home profile" gate
-      // off: keep this device's pick regardless of the blob.
+      // String-or-null only: a falsy non-string would skip the truthiness-gated scrub below
+      // and wedge Rust's `Option<String>` (same as `quickAddList`). "Home profile" gate off:
+      // keep this device's pick regardless of the blob.
       nextSettings = {
         ...nextSettings,
         homeProfileId: !gates.homeProfile
@@ -2117,10 +2030,9 @@ export async function applyBlob(
       // serde default, so `{"backendId":"<known>","slug":7}` would reject the whole `Config`
       // and freeze every later save for the session; `safeQuickAddTarget` clamps to null.
       //
-      // Applied only when a backends LIST arrived in the same blob (`cats.backends &&
-      // blob.backends`) — the pre-split gating, when the pin rode inside that payload. Without
-      // the referent list, the dangling-reference scrub below can only compare against THIS
-      // device's backends, and a peer's perfectly valid pin would null the local one.
+      // Applied only when a backends LIST arrived in the same blob: without the referent list,
+      // the dangling-reference scrub below can only compare against THIS device's backends, and
+      // a peer's perfectly valid pin would null the local one.
       if (
         gates.pinnedMappings &&
         cats.backends &&
@@ -2141,10 +2053,9 @@ export async function applyBlob(
         rules = repinElementFields(rules, st.appRules, APP_RULE_PASTE_FIELDS, true);
       // UNGATED, unlike the two above: `autoEnter` is forced back to this device's value on
       // every inbound path, because a post-paste Return submits whatever the server-authored
-      // transcript put in the buffer. `sanitizeAppRules` already drops the field; this is the
-      // second half — without it, a rule the peer knows and we don't would arrive with no
-      // local value to inherit and the field would simply be absent, which is the right
-      // outcome, while a rule we DO know keeps ours. Same contract as the `general` strip.
+      // transcript put in the buffer. `sanitizeAppRules` already drops the field; this re-pins
+      // ours on a rule we know (a rule only the peer knows stays without it). Same contract as
+      // the `general` strip.
       rules = repinElementFields(rules, st.appRules, APP_RULE_LOCAL_ONLY_FIELDS, true);
       nextAppRules = rules;
     }
@@ -2164,17 +2075,12 @@ export async function applyBlob(
     }
     // A well-formed blob is still not a SAFE blob. `profiles` and `quickAddHotkey` have no
     // consent gate, so an unattended pull can install a binding set that collides with itself
-    // (two enabled profiles on one chord, or one chord a strict subset of another). Nothing here
-    // is malformed — it passes every check above — but the app's OWN save gate then refuses to
-    // persist a conflicting set, and that gate was written for a local editing mistake the user
-    // can see and undo. Applied from a pull it freezes config persistence for the whole session:
-    // later edits are dropped behind a banner blaming "a shortcut", `pushNow` short-circuits on
-    // the held save so the device can never push a correction, shortcut re-registration (which
-    // only runs on the save-success path) stops, and because `settings.sync` is itself part of
-    // `settings`, the user cannot even persist turning sync OFF — so the same blob returns on the
-    // next launch. Disable the later member of each colliding pair instead: the profile stays
-    // visible in the editor for the user to inspect and re-enable, saving keeps working, and the
-    // local gate is left alone so a genuine local mistake still stops the write.
+    // (two enabled profiles on one chord, or one chord a strict subset of another). The app's
+    // own save gate then refuses every later save for the session — including turning sync OFF
+    // (`settings.sync` is part of `settings`) and the push of a correction — so the same blob
+    // returns on the next launch. Disable the later member of each colliding pair instead: the
+    // profile stays visible to re-enable, saving keeps working, and the local gate still stops
+    // a genuine local mistake.
     //
     // "Profile shortcuts" off re-pinned every known profile to THIS device's chord above — but a
     // peer can still switch one on, or change its kind, so the pass compares those against this
@@ -2229,8 +2135,8 @@ export async function applyBlob(
     // re-syncs via save_config; theme is reactive; hotkeys re-register via the
     // persistence subscriber.)
     // From what was APPLIED, not the raw wire value: a gated-off or absent field is deleted
-    // from the blob before this point, and invoking the typed Rust arg with `undefined` was a
-    // silently swallowed failure on every unattended pull.
+    // from the blob before this point, and the typed Rust arg rejects `undefined` (silently,
+    // given the catch).
     if (cats.general && isPlainObject(blob.general)) {
       void setDeepFieldDetection(nextSettings.general.deepFieldDetection).catch(() => {});
     }
@@ -2251,8 +2157,6 @@ export async function applyBlob(
   if (staleAbort) return false;
   return true;
 }
-
-// ── engine state ─────────────────────────────────────────────────────────────
 
 let started = false;
 let applyingRemote = false;
@@ -2539,20 +2443,15 @@ function canSync(): boolean {
 /** Re-resolve the sync target AT the request and return its address, or `null` if the backend the
  *  caller captured is no longer the one to talk to.
  *
- *  `pullNow`/`pushNow` capture `backend` once at entry and then await real IPC — `ensureStateFor`
- *  (a keyring delete + `saveSyncState` on first contact) and, on push, `composeBlob`'s
- *  `readBackendKeys`, which carries a 10s timeout precisely because a locked wallet parks it. The
- *  address is only built afterwards, and `effectiveServerUrl(backend, live settings)` then mixes a
- *  LIVE override map with the STALE `backend.serverUrl` — the two halves of one address disagreeing.
- *  Any store change schedules a push 3s later (a pull schedules one too), so a push is routinely in
- *  flight while the user is in Settings; correcting the sync backend's address there makes
- *  `upsertBackend` build a new array whose subscriber only calls `schedulePush()`, which the
- *  `inFlight` gate drops — and the in-flight PUT still goes to the ABANDONED host, where
- *  `sync_push` attaches that backend's stored bearer key and uploads a body that on the
- *  `cats.backends` path carries EVERY backend's plaintext key.
+ *  `pullNow`/`pushNow` capture `backend` once at entry and then await real IPC (`ensureStateFor`,
+ *  `composeBlob`'s up-to-10 s keyring read) before building the address, so
+ *  `effectiveServerUrl(backend, live settings)` would mix a LIVE override map with a STALE
+ *  `backend.serverUrl`. A push is routinely in flight while the user edits Settings, and a
+ *  corrected sync address only schedules another push (dropped by the `inFlight` gate) — the
+ *  in-flight PUT would still go to the ABANDONED host, with that backend's bearer key and, on the
+ *  `cats.backends` path, EVERY backend's plaintext key in the body.
  *
- *  This is the same live-target check K5/Q13/R13/R14/R15/R16 applied across the screens; the `gen`
- *  epoch does not cover it, because both `myGen` checks run only after the request has been sent. */
+ *  The `gen` epoch does not cover this: both `myGen` checks run only after the request was sent. */
 function liveSyncTarget(captured: Backend): string | null {
   const live = syncBackend();
   if (!live || live.id !== captured.id || live.serverUrl !== captured.serverUrl) return null;
@@ -2561,9 +2460,8 @@ function liveSyncTarget(captured: Backend): string | null {
 
 /** Keyring account holding the snapshot's API keys. The snapshot is the 3-way merge base and,
  *  for a toggled-OFF backends category, the source of what gets pushed back — so it has to keep
- *  the real keys. It does NOT have to keep them in a FILE: sync-state.json sat next to config.json
- *  as plaintext, defeating the whole point of the OS secret store. In memory the snapshot is
- *  unchanged; only the on-disk copy is stripped. */
+ *  the real keys, but not in plaintext sync-state.json. In memory the snapshot is unchanged; only
+ *  the on-disk copy is stripped. */
 const SNAPSHOT_SECRETS_ACCOUNT = "__sync_snapshot_secrets__";
 
 /** True when the last snapshot load found recorded key ids but could not read their values back
@@ -2675,19 +2573,14 @@ async function dropSnapshotChunks(from: number, to: number): Promise<void> {
 }
 
 /** Write the stash `chunks` over a previous stash of `prevChunks` accounts. Every write is issued
- *  in the same tick, like `dropSnapshotChunks`: api.ts's keyring turn sends keyring writes one at a
- *  time in call order, so they all queue ahead of a `clearSnapshotSecrets` delete a reset issues
- *  afterwards.
- *  Awaiting each before issuing the next let that delete overtake the later chunks, which then
- *  landed after it with no recorded count left to ever remove them. The outcome settles on the
- *  first failed (or timed out) write, or once every write landed: waiting out every bound kept a
- *  sync parked for 10 s per chunk behind a locked wallet, long after the first `false` decided it.
- *  A failed write deletes every chunk either stash may hold — the drop is issued after all the
- *  writes, and that issue order (not an await) queues it behind them; it is not awaited, so the
- *  outcome still settles at the first failure: a half-written stash, or the OLDER complete one left paired with the new
- *  ids, would otherwise be read back on the next launch — the first as garbage, the second as
- *  stale keys restored into the merge base. With nothing there, the next launch reads the stash
- *  as missing and latches `snapshotSecretsUnavailable`. */
+ *  in the same tick: api.ts's keyring turn runs keyring calls one at a time in call order, so they
+ *  all queue ahead of a `clearSnapshotSecrets` delete a reset issues afterwards (awaiting each in
+ *  turn let that delete overtake later chunks, orphaning them). The outcome settles on the first
+ *  failed (or timed out) write, or once every write landed, so a locked wallet does not park a
+ *  sync for 10 s per chunk. A failed write deletes every chunk either stash may hold: a
+ *  half-written stash, or the OLDER complete one paired with the new ids, would otherwise be read
+ *  back on the next launch as garbage or as stale keys in the merge base; with nothing there it
+ *  reads as missing and latches `snapshotSecretsUnavailable`. */
 async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promise<void> {
   const writes = chunks.map((c, i) =>
     withTimeout(
@@ -2711,10 +2604,8 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
   );
   const to = Math.max(chunks.length, prevChunks);
   // Success: only the tail an earlier, larger stash left behind; no write is parked, so awaited.
-  // Failure: everything. Issue order, not the await, queues it behind any write still parked and
-  // ahead of a later reset or persist, so it is not awaited: on that turn each delete would run
-  // out its own bound after chunk 0's, and a locked wallet gives up at chunk 0's bound instead.
-  // It never rejects: every delete is caught and bounded.
+  // Failure: everything, not awaited — issue order already queues it behind any parked write, and
+  // awaiting would run out each delete's bound behind a locked wallet. It never rejects.
   if (ok) await dropSnapshotChunks(chunks.length, to);
   else void dropSnapshotChunks(0, to);
 }
@@ -2737,23 +2628,18 @@ async function restoreSnapshotSecrets(): Promise<void> {
   } catch {
     secrets = {};
   }
-  // A PRESENT empty string is the legacy stash format, not a missing key: builds before
-  // `persistState` narrowed its writer to `inboundSecret` recorded a blank key's id and stashed
-  // `{id: ""}`, and counting it as missing latched the flag below on every launch (the `initSync`
-  // migration never re-ran, since the ids exist). Skip those ids instead. The recorded list is left
-  // as is: the next `persistState` re-derives it from the snapshot, and a still-set list is what
-  // makes it drop a stash left with nothing in it.
+  // A PRESENT empty string is the legacy stash format (older builds stashed a blank key as
+  // `{id: ""}`), not a missing key — counting it as missing would latch the flag below on every
+  // launch. The recorded list is left as is: the next `persistState` re-derives it, and a
+  // still-set list is what makes it drop a stash left with nothing in it.
   const want = isPlainObject(secrets)
     ? ids.filter((id) => ownProp(secrets as Record<string, unknown>, id) !== "")
     : ids;
   if (want.length === 0) return;
   // Read with the same `inboundSecret` rule `persistState` writes with — own-property, non-empty
-  // string, plain-object container. Own-property matters: `secrets` is JSON-parsed, so a backend id
-  // of `constructor`/`toString`/… would read a truthy function off the prototype and be counted as
-  // PRESENT in a read-back that does not contain it. That defeats the only thing this function
-  // does — with a locked wallet the read-back is `{}`, the partial-read flag would never fire, and
-  // the pass-through push would upload a secrets map missing that key (the `Object` function does
-  // not survive JSON), erasing the server's copy. Exactly the hazard the flag exists to prevent.
+  // string, plain-object container. Own-property matters: a backend id of `constructor`/`toString`
+  // would read a function off the prototype of a locked wallet's `{}` read-back, the partial-read
+  // flag would never fire, and the pass-through push would erase the server's copy of that key.
   const got = want.filter((id) => inboundSecret(secrets, id) !== undefined);
   // A PARTIAL read-back is not a success: the whole point of the flag is to stop a pass-through
   // push from erasing the server's keys, and a partial map erases exactly the ones that are
@@ -2786,29 +2672,14 @@ let stashing: Promise<void> | null = null;
 /** Split the snapshot's secrets out to the keyring (the file gets ids only) — `persistState`'s
  *  stash step. `prevChunks`: the accounts the stash spanned before the patch. */
 async function stashSnapshot(prevChunks: number): Promise<void> {
-  // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
-  // Same reason as `reconcileBackendSecrets`: `Object.keys` on a server-supplied STRING yields one
-  // id per code unit, and these ids are PERSISTED — a 4 MiB value becomes a ~40 MB sync-state.json
-  // that is re-read and re-expanded on every launch, long after the blob that caused it is gone.
-  //
-  // R2 gave this read the SHAPE check and no COUNT cap, and it is the one container read in the
-  // engine whose result is persisted twice — to sync-state.json AND to the OS keyring. Iterate the
-  // snapshot's BACKEND LIST and read by id, which is Q11's settled fix for the sibling read in
-  // `reconcileBackendSecrets`, rather than iterating the attacker's map. `state.snapshot` is the
-  // RAW remote blob, so `secrets` is server-authored: a well-formed
-  // `{"backends":{"list":[],"secrets":{…350 000 junk ids…}}}` sits inside SYNC_MAX_BODY and raises
-  // NO SecurityChange (`securityChanges` iterates `backends.list`, which is empty), so it applies
-  // on the unattended startup/focus pull. Every one of those ids would land in
-  // `snapshotSecretIds`, be written to sync-state.json and re-parsed at EVERY launch, and be
-  // stashed as hundreds of 1000-unit keyring chunk accounts, each a serialized wallet write and
-  // each read back at every launch. A stash that size is the failure the id-list bound below
-  // prevents.
-  //
-  // Bounding by the list is the bound that matters (a secret for a backend the snapshot does not
-  // list can never be composed — `composeBlob` builds `secrets` from the local backend list, so
-  // legitimate keys are always a subset), and MAX_SYNCED_ENTRIES caps it by construction since the
-  // raw list is itself server-authored.
+  // Iterate the snapshot's BACKEND LIST and read by id (as `reconcileBackendSecrets` does), never
+  // the server-authored `secrets` map itself: these ids are persisted twice — to sync-state.json
+  // AND as keyring chunk accounts read back at every launch. A `{"list":[],"secrets":{…350 000
+  // junk ids…}}` fits SYNC_MAX_BODY and raises no SecurityChange (`securityChanges` iterates the
+  // empty list), so it would apply unattended; `Object.keys` on a STRING `secrets` likewise yields
+  // one id per code unit. The list is the bound that matters — `composeBlob` builds `secrets` from
+  // the backend list, so legitimate keys are always a subset — and MAX_SYNCED_ENTRIES caps it.
   //
   // `inboundSecret` carries the container's shape check (plain object, own property), so a
   // non-object `secrets` reads undefined for every id and records none.
@@ -2885,14 +2756,11 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
   // still runs), and a file written in between would pair the new ids with the old keyring
   // bundle. Each run clears the slot only while it is still its own, and the slot never rejects.
   while (stashing) await stashing;
-  // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
-  // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
-  // `backends` is a server-supplied STRING, so the guarded `ids` path above is silently skipped
-  // and the unguarded spread below expands it to one key per code unit. A 4 MiB `backends` string
-  // becomes a ~57 MB sync-state.json, which `initSync` re-parses into the 3-way merge base at
-  // every launch — so `catEqual`/`stableStringify` then sort 4M keys on every merge and the next
-  // `persistState` re-spreads the exploded object. One pull otherwise degrades the install
-  // permanently, long after the blob that caused it is gone.
+  // `isPlainObject` on BOTH containers, on the half that PERSISTS: a server-supplied STRING
+  // `backends` would be spread to one key per code unit. A 4 MiB string becomes a ~57 MB
+  // sync-state.json that `initSync` re-parses into the 3-way merge base at every launch (every
+  // merge then sorts 4M keys) and every later `persistState` re-spreads, degrading the install
+  // long after the blob that caused it is gone.
   const snapshot = isPlainObject(state.snapshot) ? (state.snapshot as SyncBlob) : undefined;
   const onDisk: SyncState = {
     ...state,
@@ -2931,8 +2799,6 @@ async function ensureStateFor(backendId: string): Promise<void> {
     device: null,
   });
 }
-
-// ── pull / push ─────────────────────────────────────────────────────────────
 
 /** Compose this device as it is NOW (live store, gates, sub-settings, keyring). Every raiser and
  *  every consent re-judge goes through this one call: a re-judge is only sound if it composes
@@ -3164,12 +3030,10 @@ async function pullCore(manual: boolean): Promise<void> {
       return;
     }
     setRuntime({ syncUnsupported: false });
-    // The server chooses `version`, Rust parses it as i64, and it arrives here as a JS double —
-    // so anything above 2^53 has already lost precision, and i64::MAX round-trips back out as
-    // i64::MAX + 1. Every later `sync_push` then fails to deserialize `base_version: i64` before
-    // any Rust code runs, and because the bad value is PERSISTED to sync-state.json the device
-    // can never push again, across restarts, with the status stuck on "syncing" and no error.
-    // Treat an unrepresentable version as a transport failure instead of adopting it.
+    // Defence in depth behind Rust's `accept()`, which already refuses a version past 2^53: as a
+    // JS double it would lose precision, be PERSISTED as the base, and make every later
+    // `sync_push` fail to deserialize `base_version: i64` — the device could never push again,
+    // across restarts. A transport failure, not an adoption.
     const remote = res.state;
     if (!Number.isSafeInteger(remote.version)) {
       handleTransportFailure(0, "The server sent a settings version this app cannot represent.");
@@ -3406,16 +3270,12 @@ export async function pushNow(manual = false): Promise<void> {
         // attempt's merge), so an edit made while the request was on the wire is in neither it
         // nor the merge — and applying the merge would hydrate over that edit, push the old value
         // and adopt it as the base, while the edit's own push then found nothing to send.
-        // No base (first contact, or the re-created document's just forgotten): the remote is the
-        // pass-through. The pre-PUT compose filled its pass-through slots (categories and fields this device does not sync, the other-OS rules, a degraded
-        // backends list WITH its keys) from the dead snapshot or from nothing, and a
-        // first-contact merge counts either as local edits — pushing the deleted document's
-        // values back, or erasing the remote's gated-off ones. pullNow's reconcile composes
-        // the same way, and so does every retry here (no base is adopted between attempts).
+        // No base (first contact, or the re-created document's just forgotten) or a fresh category:
+        // the remote is the pass-through (see `composeLive`), as in reconcileRemote — the pre-PUT
+        // compose filled those slots from the dead snapshot or from nothing.
         // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
         // guarded, and a locked keyring now passes the REMOTE's backends through (marked
         // degraded), which the arms below hold out of the apply and withhold as a base.
-        // A fresh category (`freshCats`) composes its pass-through from the remote the same way.
         blob = await composeLive(
           syncCats(),
           state.snapshot === undefined || freshCats.size > 0 ? passThroughFor(remoteBlob) : undefined,
@@ -3592,13 +3452,11 @@ function handleTransportFailure(status: number, error?: string): void {
   }
 }
 
-// ── security review of a pulled blob (driven by the Sync tab dialog) ────────
-
 /** One pulled change worth stopping for. Everything a sync server can change is applied
- *  silently EXCEPT these two: where the microphone audio goes, and which credential travels
- *  with it. A sync server is remote and may be hostile or intercepted, and the pull runs
- *  unattended at startup and on every window focus — so these get the same explicit consent
- *  the file-import path already asks for. */
+ *  silently EXCEPT these: where the microphone audio goes, which credential travels with it,
+ *  what the app types, and what this device keeps, deletes or reports. A sync server is remote
+ *  and may be hostile or intercepted, and the pull runs unattended at startup and on every window
+ *  focus — so these get the same explicit consent the file-import path already asks for. */
 export interface SecurityChange {
   kind:
     | "new-backend"
@@ -3610,9 +3468,9 @@ export interface SecurityChange {
     | "dictation-history"
     | "report-target-app"
     | "typed-text";
-  /** The backend a `backends`-category change applies to; the recording kinds have no backend and
-   *  set this to an empty string (the dialog omits it). A `typed-text` change names the backend
-   *  or profile whose decode defaults carry the text. */
+  /** The backend a `backends`-category change applies to; the recording and retention kinds have
+   *  no backend and set this to an empty string (the dialog omits it). A `typed-text` change names
+   *  the backend or profile whose decode defaults carry the text. */
   backend: string;
   /** `typed-text` only: the category that holds it — a profile's overrides or a backend's
    *  defaults — so exactly that category waits for the approval. */
@@ -3670,9 +3528,6 @@ function heldBack(
   return out;
 }
 
-/** Compare what a pull would apply against what this device holds, and report only the
- *  security-relevant differences. `local` is the freshly composed local blob, so its
- *  `backends.secrets` already reflects the keyring — no extra wallet read here. */
 /** The local side for `securityChanges`, with a truthful `backends` container: composeBlob
  *  deliberately omits the category when the keyring read degraded, and a MISSING container
  *  read as "this device has no backends" — so every server backend, including ones this
@@ -3764,6 +3619,9 @@ const TYPED_TEXT_DETAIL_MAX = Math.max(
 export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
   kind === "typed-text" ? TYPED_TEXT_DETAIL_MAX : 200;
 
+/** Report only the security-relevant differences between what a pull would apply and what this
+ *  device holds. `local` is the freshly composed local blob, so its `backends.secrets` already
+ *  reflects the keyring — no extra wallet read here. */
 export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
@@ -3775,11 +3633,9 @@ export function securityChanges(
   // recordings; dictation sessions incl. audio; file transcripts incl. their
   // audio copies). Only a change that starts deleting, or deletes sooner, needs
   // consent — lengthening the window (or turning retention off) destroys
-  // nothing. The recording and dictation clocks ride the `recording` category and
-  // are judged as the ONE effective dictation clock both sweeps use (below); the
-  // file clock rides its own category. Typed reads: the merged blob reaches here
-  // before applyBlob's typedLike pass, so a string `"3"` would otherwise raise
-  // a review (and park the whole category) for a change that never applies.
+  // nothing. Typed reads: the merged blob reaches here before applyBlob's
+  // typedLike pass, so a string `"3"` would otherwise raise a review (and park
+  // the whole category) for a change that never applies.
   //
   // `norm` mirrors what the apply does to an incoming value: the u32 key drops anything that
   // is not a whole non-negative number (typedLike's U32_KEYS), the two transcription-settings
@@ -3802,7 +3658,6 @@ export function securityChanges(
   };
   const asU32 = (v: number) => (Number.isInteger(v) && v >= 0 && v <= 0xff_ff_ff_ff ? v : undefined);
   const clamp3650 = (v: number) => Math.max(0, Math.min(3650, Math.round(v)));
-  // Only a change that starts deleting, or deletes sooner, needs consent.
   const pushIfSooner = (hereDays: number, nextDays: number, what: string, kind: SecurityChange["kind"]) => {
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
       out.push({
@@ -3815,10 +3670,11 @@ export function securityChanges(
       });
     }
   };
-  // The `recording` category looks like styling but carries two settings with real consequences:
-  // the retention window drives a sweep that DELETES saved recordings and their transcripts, and
-  // `saveRecordings` turns on a permanent plaintext archive of everything dictated. Both applied
-  // silently on an unattended pull. They get the same confirmation as a repointed server.
+  // The `recording` category looks like styling but carries settings with real consequences:
+  // retention windows drive sweeps that DELETE saved recordings and their transcripts,
+  // `saveRecordings` turns on a permanent plaintext archive of everything dictated, and the
+  // history and report-target-app switches below delete or send data. They get the same
+  // confirmation as a repointed server.
   if (cats.recording && incoming.recording) {
     if (incoming.recording.saveRecordings === true && local.recording?.saveRecordings !== true) {
       out.push({
@@ -3827,8 +3683,6 @@ export function securityChanges(
         detail: "every dictation would be saved to this device as audio and text",
       });
     }
-    // Strictly more destructive than the retention clock beside it: Rust's retention sweep
-    // wipes EVERY dictation record the moment this reads false, on the next config save.
     // Incoming `false` wins silently (a peer's opt-OUT tightens privacy and applies at once);
     // an incoming `true` would start sending the app id of every dictation to the server
     // from this device, so it is held for review like `saveRecordings`.
@@ -3839,6 +3693,8 @@ export function securityChanges(
         detail: "the name of the app you dictate into would be reported to the server with every dictation",
       });
     }
+    // Strictly more destructive than the retention clock beside it: Rust's retention sweep
+    // wipes EVERY dictation record the moment this reads false, on the next config save.
     if (
       incoming.recording.keepDictationHistory === false &&
       local.recording?.keepDictationHistory !== false
@@ -3855,8 +3711,6 @@ export function securityChanges(
   // non-zero of the two (Rust's `effective_dictation_days`, Settings' `dictDays`). Judging
   // each key alone asked consent for "saved recordings ... currently kept forever" when the
   // effective window only lengthened (audio 0 + record 7 → 30/30). So compare that one value.
-  // An absent or non-numeric incoming key is "no change" (the apply keeps the local value),
-  // so it reads as the local value here.
   if (cats.recording && isPlainObject(incoming.recording)) {
     const effDays = (a: number, r: number) => (a === 0 ? r : r === 0 ? a : Math.min(a, r));
     const localA = days(local.recording, "recordingsRetentionDays", 0);
@@ -3891,11 +3745,9 @@ export function securityChanges(
   // the apply re-pins a KNOWN backend's values, so a peer's text cannot land there. A backend new
   // to this device has nothing local to re-pin and keeps its inbound overrides (like its
   // serverUrl below), so its text is still held for review.
-  // One sanitized list for the whole backends gate. `sanitizeBackends` also floors the shape —
-  // a non-array container, a non-string id/serverUrl — so the gate survives anything the server
-  // sends; the raw-list walk this replaced threw on `"list": 5` and on a non-string serverUrl
-  // (`normalizeUrl` calls `.trim()`), escaping into `void pullNow()` with syncStatus stuck on
-  // "syncing" and no error shown.
+  // One sanitized list for the whole backends gate: `sanitizeBackends` also floors the shape (a
+  // non-array container, a non-string id/serverUrl), so the gate cannot throw on anything the
+  // server sends — a throw escaped `void pullNow()` with syncStatus stuck on "syncing".
   if (!cats.backends || !incoming.backends) return out;
   const inBackends = sanitizeBackends(incoming.backends.list);
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
@@ -3907,12 +3759,11 @@ export function securityChanges(
     ),
   );
   const localSecrets = local.backends?.secrets ?? {};
-  // Walk the entries `applyBlob` INSTALLS (`sanitizeBackends`: reserved ids out, a duplicate id's
-  // later copy out, the entry cap, a cleaned or blanked serverUrl), not the raw list. A reserved,
-  // duplicate or over-cap entry raised new-backend/server-url/api-key rows that parked the
-  // category for an approval that changed nothing — and re-raised on every pull — and a blanked
-  // scheme was shown as the raw address the transport never receives. Fail-closed still holds:
-  // the apply stores exactly this list and `reconcileBackendSecrets` writes keys only for its ids.
+  // Walk the entries `applyBlob` INSTALLS, not the raw list: a reserved, duplicate or over-cap
+  // entry raised rows that parked the category for an approval that changed nothing (and
+  // re-raised on every pull), and a blanked scheme showed an address the transport never
+  // receives. Fail-closed still holds: the apply stores exactly this list and
+  // `reconcileBackendSecrets` writes keys only for its ids.
   for (const b of inBackends) {
     const cur = here.get(b.id);
     const name = entryLabel(cur ?? b, "backends");
@@ -4340,8 +4191,6 @@ export function rejectPendingReview(): void {
   else setRuntime({ syncStatus: "idle", syncError: null });
 }
 
-// ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
-
 /** Test seam: raise a minimal conflict so the id contract is pinnable without
  *  a transport (mirrors resetWarmDebounceForTests in preload.ts). The default version is one
  *  past the current base, as a real conflict's is — one at or below it is moot (resolveLocked). */
@@ -4420,7 +4269,7 @@ function raiseConflict(c: PendingConflict): void {
   conflictStatus();
 }
 
-/** The status a pending conflict shows (raiseConflict, and `idleStatus` restoring it). */
+/** The status a pending conflict shows. */
 function conflictStatus(): void {
   setRuntime({
     syncStatus: "error",
@@ -4595,8 +4444,6 @@ export function dismissSyncConflict(): void {
   else setRuntime({ syncStatus: "idle", syncError: null });
 }
 
-// ── triggers ────────────────────────────────────────────────────────────────
-
 function schedulePush(delayMs = 3000): void {
   if (!canSync()) return;
   clearTimeout(pushTimer);
@@ -4765,8 +4612,7 @@ export async function initSync(): Promise<void> {
     // already syncs, is reconciled with the server before anything is pushed (`freshCats`,
     // `freshGates`): the same value merges, a different one asks. Keyed on the gates, not the raw
     // `sync.categories` map: that has had no writer since the manifest list replaced the category
-    // rows, so comparing it was permanently false and a re-enabled setting pushed this device's
-    // value over the peer's.
+    // rows.
     if (fresh) {
       // A dialog that still asks about a category, or a setting, turned off again is re-raised
       // without it (or dropped) by a fresh reconcile.
@@ -4835,8 +4681,7 @@ export async function initSync(): Promise<void> {
   } else launchEnded();
 }
 
-/** Plain-language failure line for "Delete server copy" — the one server call on
- *  the Sync tab whose result used to be discarded. Server text is peer/attacker
+/** Plain-language failure line for "Delete server copy". Server text is peer/attacker
  *  authored, so it is defanged like the warnings channel. */
 export function deleteFailureMessage(r: { ok: boolean; status: number; error?: string | null }): string {
   const detail = safeDisplayText(r.error ?? "", 200);
