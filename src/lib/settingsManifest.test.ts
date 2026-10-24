@@ -95,7 +95,7 @@ describe("manifest integrity", () => {
 
   it("every Transcribe setting with a Sync switch is in a list that actually travels", () => {
     // A manifest row promises its fields sync; for settings.transcribe that only holds when the
-    // key is in one of the field lists compose/apply allowlist (five export / link-video keys
+    // key is in one of the field lists that compose/apply allowlist (five export / link-video keys
     // once showed a switch and never moved).
     const travels = new Set<string>([
       ...TRANSCRIPTION_FIELDS, ...FILE_TRANSCRIPTION_FIELDS, ...DICTATION_HISTORY_FIELDS, ...TRANSCRIPTION_PICK_FIELDS,
