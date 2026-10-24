@@ -67,8 +67,6 @@ export function QuickLaunchEditor({
               {safeDisplayText(e.kind, 24)}
             </span>
             <div className="ml-auto flex items-center gap-1">
-              {/* ReorderControls keeps keyboard focus on the arrow across the re-keyed move and at
-                  the top/bottom, where a native `disabled` dropped it to <body>. */}
               <ReorderControls
                 canUp={!disabled && i > 0}
                 canDown={!disabled && i < items.length - 1}
