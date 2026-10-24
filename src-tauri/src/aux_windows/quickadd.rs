@@ -366,8 +366,8 @@ pub(crate) mod win_seed {
         }
     }
 
-    /// Off Windows there is no format probe: ContentNotAvailable means empty/non-text (the
-    /// snapshot's only non-Windows use; the grab itself is Windows-only).
+    /// Non-Windows twin, kept only so the module type-checks (`grab` never runs there):
+    /// ContentNotAvailable reads as empty/non-text.
     #[cfg(not(windows))]
     fn text_announced() -> bool {
         false
@@ -463,8 +463,7 @@ pub(crate) mod win_seed {
     /// the 8-bit scan field low-level consumers read), or wScan=0 when the map fails —
     /// works locally, dies remotely. And a forwarded 0x52 WITHOUT the extended bit is
     /// numpad-0/Ins on the remote: NumLock on turns the "copy" into Ctrl+0 (reset zoom
-    /// in browsers). Hardcoded scans are layout-proof; one batch keeps a concurrent user
-    /// keystroke from interleaving mid-chord.
+    /// in browsers). Hardcoded scans are layout-proof.
     #[cfg(windows)]
     fn send_copy_chord() -> bool {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -813,12 +812,9 @@ pub(crate) mod win_seed {
         // Read while focus is still on the source (the last pre-injection moment): a
         // remote-desktop client gets the longer network deadline AND keeps our window
         // unshown until the copy lands / the forwarding grace passes — see the consts.
-        // BOTH `inject::rdp_client` detectors, as the paste path uses them: the window class
-        // (mstsc, and the RDP control hosted by RDCMan & co.) OR the focused app id (VirtualBox,
-        // VMware, Citrix, AnyDesk… — clients whose window class says nothing). The LIVE
-        // foreground's id, like the class check: the copy goes to whatever holds focus now,
-        // never `focused_app_now`'s fallback to the app before a shell surface. A per-app
-        // "Remote desktop" rule wins over both, as on the paste path.
+        // Same detectors + per-app rule as the paste path. The LIVE foreground's id, like the
+        // class check: the copy goes to whatever holds focus now, never `focused_app_now`'s
+        // fallback to the app before a shell surface.
         let remote = crate::inject::rdp_client::focus_is_remote_desktop(|| {
             crate::focus::focused_app_id_live(app.state::<crate::focus::AtspiGuard>().inner())
         });
@@ -850,7 +846,6 @@ pub(crate) mod win_seed {
         // outlasts that cap (the release gate plus an RDP-stalled `get_text`). Scoped to the
         // quick-add label on purpose: a selection in the MAIN window (a word picked in History)
         // must still seed, so no own-window check.
-        // Nothing has been injected yet, so there is nothing to restore; `ready` signals on drop.
         if app
             .get_webview_window("quickadd")
             .and_then(|w| w.is_focused().ok())
@@ -1006,8 +1001,8 @@ pub(crate) mod win_seed {
                             // Says nothing about the formats (another process holds the
                             // clipboard open) — keep the current absence streak as it is.
                             arboard::Error::ClipboardOccupied => {}
-                            // Text IS announced (a failed delayed render, or another read
-                            // error) — not a non-text copy.
+                            // A failed delayed render of announced text, or another read
+                            // error — no evidence of a non-text copy.
                             _ => text_absent_since = None,
                         }
                         let no_text = text_absent_since.is_some_and(|t| {
@@ -1019,8 +1014,6 @@ pub(crate) mod win_seed {
                         // Superseded mid-retry: the copy DID land (we're past the bump), so
                         // restore the user's clipboard exactly like the deadline path.
                         if no_text || Instant::now() >= deadline || superseded() {
-                            // Copied content is non-text (or never came) — restore; with no
-                            // prior text, clear the same residue as above.
                             put_back(&mut cb, prev.as_deref());
                             return None;
                         }
@@ -1056,12 +1049,9 @@ pub(crate) mod win_seed {
     }
 }
 
-/// KDE-Wayland keep-above for the quick-add window via a KWin window rule — the focus-ALLOWED
-/// cousin of the chip's rule in `overlay.rs mod kwin`. On native Wayland a client can't force
-/// "keep above", so we write a reversible rule (matched on our unique title) that KWin applies
-/// compositor-side. Unlike the chip's rule it forces only `above` + `skiptaskbar`; it deliberately
-/// does NOT touch focus, since the user types into this window. Merged into the user's
-/// `kwinrulesrc` without clobbering their other rules.
+/// KDE-Wayland keep-above for the quick-add window (see the module docs). Unlike the chip's
+/// rule it forces only `above` + `skiptaskbar` and deliberately does NOT touch focus, since the
+/// user types into this window.
 #[cfg(target_os = "linux")]
 mod kwin {
     use std::sync::atomic::AtomicBool;
