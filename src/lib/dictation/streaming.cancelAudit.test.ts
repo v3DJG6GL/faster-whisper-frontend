@@ -83,8 +83,7 @@ function mask(src: string): string {
 /** The body of the block that opens at the first `{` at/after `anchor`. */
 function bodyAfter(src: string, anchor: string): string {
   const masked = mask(src);
-  const at = src.indexOf(anchor);
-  expect(at, `anchor not found: ${anchor}`).toBeGreaterThanOrEqual(0);
+  const at = found(src, anchor, `anchor not found: ${anchor}`);
   const open = masked.indexOf("{", at + anchor.length);
   expect(open, `no block after: ${anchor}`).toBeGreaterThanOrEqual(0);
   let depth = 0;
@@ -95,11 +94,16 @@ function bodyAfter(src: string, anchor: string): string {
   throw new Error(`unbalanced braces after: ${anchor}`);
 }
 
+/** Where `needle` sits in `src`, failing with `msg` when it is missing. */
+function found(src: string, needle: string, msg: string): number {
+  const at = src.indexOf(needle);
+  expect(at, msg).toBeGreaterThanOrEqual(0);
+  return at;
+}
+
 /** Where `anchor` sits in `src`, failing with a pointer back here when the code moved. */
 function anchorAt(src: string, anchor: string, what: string): number {
-  const at = src.indexOf(anchor);
-  expect(at, `${what} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
-  return at;
+  return found(src, anchor, `${what} moved — update streaming.cancelAudit.test.ts`);
 }
 
 /** The per-paste snapshot gate (masked: the string literal is blanked), shared by the phrase
@@ -256,8 +260,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
 
   it("the separator task stands down while a carry is pending", () => {
     const task = bodyAfter(boundaryBody, "enqueueInject(async () =>");
-    const skip = task.indexOf("if (carryText) return");
-    expect(skip, "separator task must skip while a carry is pending").toBeGreaterThanOrEqual(0);
+    const skip = found(task, "if (carryText) return", "separator task must skip while a carry is pending");
     expect(task.indexOf("holdCoerced(")).toBeGreaterThanOrEqual(0);
     expect(skip).toBeGreaterThan(task.indexOf("holdCoerced("));
     expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
@@ -265,8 +268,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
 
   it("the per-phrase Enter stands down while a carry is pending", () => {
     const task = mask(fns.enqueueAutoEnter);
-    const skip = task.indexOf("if (carryText) return");
-    expect(skip, "auto-Enter task must skip while a carry is pending").toBeGreaterThanOrEqual(0);
+    const skip = found(task, "if (carryText) return", "auto-Enter task must skip while a carry is pending");
     expect(skip).toBeGreaterThan(task.indexOf("holdCoerced("));
     expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
   });
@@ -276,8 +278,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // pressed Enter after the previous phrase while the stopped utterance was still decoding, and
     // the drain's text then went into an empty field with a second Enter from the closed tail.
     const stop = mask(fns.stopLive);
-    const clear = stop.indexOf("clearPhraseEndTimer(");
-    expect(clear, "stopLive must cancel the phrase-end quiet timer").toBeGreaterThanOrEqual(0);
+    const clear = found(stop, "clearPhraseEndTimer(", "stopLive must cancel the phrase-end quiet timer");
     expect(clear, "…before it awaits the stop").toBeLessThan(stop.indexOf("await "));
     // The closed tail owns the last phrase's Enter (phraseDirty) and the clipboard restore.
     expect(stop.slice(0, stop.indexOf("try {"))).not.toMatch(/clearPhraseEnd\(|phraseDirty =|clipDirty =/);
@@ -300,14 +301,12 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // stop-mode insert, and cancelling would discard the draining transcript unsaved.
     expect(mask(fns.reclassifyLive)).toContain("!capturing");
     const restart = mask(fns.restartLiveAs);
-    const gate = restart.indexOf("!capturing");
-    expect(gate, "restartLiveAs must not cancel a draining session").toBeGreaterThanOrEqual(0);
+    const gate = found(restart, "!capturing", "restartLiveAs must not cancel a draining session");
     expect(gate).toBeLessThan(restart.indexOf("cancelLive("));
     // dictate()'s reclassify arm for that window also drops the root's queued re-press: the
     // engine has handed the hold off, so a hold session started from it on settle never stops.
     const src = mask(dictationSrc);
-    const arm = src.indexOf("else if (!isCapturing() && !isStarting())");
-    expect(arm, "finalizing no-op arm in dictate()").toBeGreaterThanOrEqual(0);
+    const arm = found(src, "else if (!isCapturing() && !isStarting())", "finalizing no-op arm in dictate()");
     const next = src.indexOf("} else if (handsFree", arm);
     expect(next, "handsFree arm after the finalizing arm").toBeGreaterThan(arm);
     expect(src.slice(arm, next)).toContain("voidPendingHoldStart()");
@@ -317,8 +316,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // During the start invoke's await status is already "listening" but startingSession is still
     // true, so reclassifyLive queues — only startLive's finally runs after that, so it must drain.
     const body = mask(fns.startLive);
-    const reset = body.indexOf("startingSession = false");
-    expect(reset, "startLive's finally resets startingSession").toBeGreaterThanOrEqual(0);
+    const reset = found(body, "startingSession = false", "startLive's finally resets startingSession");
     const tail = body.slice(reset);
     expect(tail).toContain("pendingReclassify = null");
     // Routed through reclassifyLive so the post-start gate has one copy; the reset must come
@@ -342,14 +340,12 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // message / lands in the window that took focus.
     expect(diverted).toContain("lastPhraseDiverted = true;");
     const enter = mask(fns.enqueueAutoEnter);
-    const skip = enter.indexOf("if (lastPhraseDiverted) return;");
-    expect(skip, "auto-Enter task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
+    const skip = found(enter, "if (lastPhraseDiverted) return;", "auto-Enter task must stand down after a diverted phrase");
     expect(skip).toBeLessThan(enter.indexOf("pressReturn("));
     // The boundary task stands down before BOTH its Enter and its separator (a newline
     // separator presses a real Return too).
     const boundary = separatorTask;
-    const bskip = boundary.indexOf("if (lastPhraseDiverted) return;");
-    expect(bskip, "boundary task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
+    const bskip = found(boundary, "if (lastPhraseDiverted) return;", "boundary task must stand down after a diverted phrase");
     expect(bskip).toBeLessThan(boundary.indexOf("if (t.autoEnter)"));
     expect(bskip).toBeLessThan(boundary.indexOf("if (!sep) return;"));
     // A later phrase that really typed re-arms it; a session reset starts clean.
@@ -370,8 +366,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // Focus that moved on between the typed phrase and its Enter got the Return: it submitted the
     // user's own draft in that window, and the dictated message never got its Enter.
     const enter = mask(fns.enqueueAutoEnter);
-    const owed = enter.indexOf("if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;");
-    expect(owed, "auto-Enter task must stand down in an app that owes no Return").toBeGreaterThanOrEqual(0);
+    const owed = found(enter, "if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;", "auto-Enter task must stand down in an app that owes no Return");
     expect(owed).toBeLessThan(enter.indexOf("pressReturn("));
     const boundary = separatorTask;
     expect(boundary).toMatch(/if \(dirtyAtBreak && t\.appId === lastTypedApp && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
@@ -418,8 +413,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(final).not.toMatch(/injectedText\.length > 0[^;]*PHRASE_GAP/);
     // Owed by a phrase typed into the field — not by one diverted to the clipboard.
     const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
-    const typed = delivered.indexOf("sessionTyped = true;");
-    expect(typed, "the typed branch of the delivered block").toBeGreaterThanOrEqual(0);
+    const typed = found(delivered, "sessionTyped = true;", "the typed branch of the delivered block");
     expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwedApps\.add\(t\.appId\);/);
     expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwedApps");
     // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
@@ -491,8 +485,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // without the block just diverted to the clipboard), a "typed" pulse, and a snapshot plus a
     // restore debt that put the user's old clipboard back over that diverted block.
     const final = mask(finalBody);
-    const exit = final.indexOf("if (!opensBlock) {");
-    expect(exit, "the empty block must leave the task before its insert").toBeGreaterThanOrEqual(0);
+    const exit = found(final, "if (!opensBlock) {", "the empty block must leave the task before its insert");
     expect(exit).toBeGreaterThan(final.indexOf(": phrase.text;"));
     expect(exit).toBeLessThan(final.indexOf("await beginInjection()"));
     expect(exit).toBeLessThan(final.indexOf("injectText({ text: typeOut,"));
@@ -842,8 +835,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(body).not.toMatch(/void cancelLive\(/);
     // A recovery cancel: the draining stream keeps its recording (the transcript is lost).
     expect(body).toContain("cancelLive({ keepRecording: true })");
-    const wait = body.indexOf("await cancelled");
-    expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
+    const wait = found(body, "await cancelled", "recovery must await the cancel");
     expect(body.indexOf("recoverUnguarded(")).toBeGreaterThan(wait);
   });
 
@@ -852,8 +844,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // copy runs, and Statistics shows Nothing for text the chip says is on the clipboard. The
     // watchdog claims the outcome before the cancel and settles it with the copy's answer.
     const body = mask(fns.armStuckWatchdog);
-    const claim = body.indexOf("const settleOutcome = pending ? deferSessionOutcome() : null;");
-    expect(claim, "the watchdog claims the outcome").toBeGreaterThanOrEqual(0);
+    const claim = found(body, "const settleOutcome = pending ? deferSessionOutcome() : null;", "the watchdog claims the outcome");
     expect(claim, "…before cancelLive reports it").toBeLessThan(body.indexOf("cancelLive("));
     // mask() blanks the delivery literals; bookFailedEnd makes a failed copy abandoned.
     const settle = body.search(/\bbookFailedEnd\(settleOutcome, onClipboard \?\s+:\s+\)/);
@@ -871,8 +862,7 @@ describe("work that must wait for the queue or the cancel", () => {
   ] as const) {
     it(`${name} books its usage outcome — the copy's answer, or what already landed`, () => {
       const body = get();
-      const claim = body.indexOf("const settleOutcome = deferSessionOutcome();");
-      expect(claim, `${name} claims the outcome`).toBeGreaterThanOrEqual(0);
+      const claim = found(body, "const settleOutcome = deferSessionOutcome();", `${name} claims the outcome`);
       // Claimed before the teardown, so a cancel during the error linger can't book first.
       expect(claim).toBeLessThan(body.indexOf("insertCfg = null"));
       expect(claim).toBeLessThan(body.indexOf("flashError("));
@@ -892,8 +882,7 @@ describe("work that must wait for the queue or the cancel", () => {
 
   it("teardownAfterFatalInject books what landed before the failed phrase", () => {
     const body = mask(fns.teardownAfterFatalInject);
-    const report = body.indexOf("bookFailedEnd(deferSessionOutcome());");
-    expect(report, "teardownAfterFatalInject books the outcome").toBeGreaterThanOrEqual(0);
+    const report = found(body, "bookFailedEnd(deferSessionOutcome());", "teardownAfterFatalInject books the outcome");
     expect(report).toBeLessThan(body.indexOf("insertCfg = null"));
   });
 
@@ -910,10 +899,8 @@ describe("work that must wait for the queue or the cancel", () => {
     // that `closed` see a live status, cancel + settleIdle the session, and then the late flash
     // can stamp a newly started session "error".
     const body = mask(bodyAfter(streamingSrc, 'reg<string>("stream://error"'));
-    const flash = body.indexOf("flashError(");
-    expect(flash, "stream-error handler must flash").toBeGreaterThanOrEqual(0);
-    const copy = body.indexOf("recoverUnguarded(");
-    expect(copy, "stream-error recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
+    const flash = found(body, "flashError(", "stream-error handler must flash");
+    const copy = found(body, "recoverUnguarded(", "stream-error recovery must use recoverUnguarded");
     expect(flash).toBeLessThan(copy);
     // The post-await upgrade must not re-flash (that would stamp a superseding session).
     expect(body.indexOf("flashError(", copy)).toBe(-1);
@@ -1003,10 +990,8 @@ describe("work that must wait for the queue or the cancel", () => {
     // The chip sits on "transcribing" until the flash; a flash deferred behind the copy lets a
     // cancel + fresh press land in between, and the late flash then stamps the new session "error".
     const body = mask(fns.stopLive);
-    const flash = body.indexOf("flashError(");
-    expect(flash, "stop-reject path must flash").toBeGreaterThanOrEqual(0);
-    const copy = body.indexOf("recoverUnguarded(");
-    expect(copy, "stop-reject recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
+    const flash = found(body, "flashError(", "stop-reject path must flash");
+    const copy = found(body, "recoverUnguarded(", "stop-reject recovery must use recoverUnguarded");
     expect(flash).toBeLessThan(copy);
     expect(body.indexOf("flashError(", copy)).toBe(-1);
   });
@@ -1016,8 +1001,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // writes nothing then, so the whole transcript would be lost behind a false "not on the clipboard".
     const block = mask(bodyAfter(streamingSrc, "} else if (!t.isSelf && !landed)"));
     expect(block).not.toContain("recoverToClipboard(");
-    const copy = block.indexOf("recoverUnguarded(");
-    expect(copy, "sink-skip recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
+    const copy = found(block, "recoverUnguarded(", "sink-skip recovery must use recoverUnguarded");
     expect(block.indexOf("insertCfg !== cfg", copy)).toBeGreaterThan(copy);
   });
 
@@ -1154,12 +1138,10 @@ describe("work that must wait for the queue or the cancel", () => {
     const body = mask(fns.armStuckWatchdog);
     const recovery = body.slice(body.indexOf("await cancelled"));
     expect(recovery.length).toBeLessThan(body.length);
-    const guard = recovery.indexOf("insertCfg !== null");
-    expect(guard, "recovery must check for a superseding session").toBeGreaterThanOrEqual(0);
+    const guard = found(recovery, "insertCfg !== null", "recovery must check for a superseding session");
     expect(recovery.indexOf("flashError(")).toBeGreaterThan(guard);
     // …and for an open translation-target picker (startLive only runs after the pick).
-    const picker = recovery.indexOf("routePending ==="); // string literals are masked
-    expect(picker, "recovery must treat an open target picker as superseding").toBeGreaterThanOrEqual(0);
+    const picker = found(recovery, "routePending ===", "recovery must treat an open target picker as superseding"); // string literals are masked
     expect(recovery.indexOf("flashError(")).toBeGreaterThan(picker);
   });
 
@@ -1184,8 +1166,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(timer.split("clipBooked = null").length).toBe(2);
     expect(timer.split("flushClipByLang(").length).toBe(2);
     expect(timer).not.toContain("enqueueRestoreSnapshot(");
-    const base = timer.indexOf("clipBaseline = committedDoc");
-    expect(base, "the clipboard baseline must still advance synchronously").toBeGreaterThanOrEqual(0);
+    const base = found(timer, "clipBaseline = committedDoc", "the clipboard baseline must still advance synchronously");
     expect(base).toBeLessThan(timer.indexOf("injectChain = injectChain.then("));
   });
 
@@ -1197,8 +1178,7 @@ describe("work that must wait for the queue or the cancel", () => {
     const timer = mask(fns.bumpPhraseEnd);
     // The timer keeps the window it closes, from the baseline BEFORE it moves, and only when the
     // session has seen ordinals (an old server's finals all look like releases).
-    const keep = timer.indexOf("clipClosed = closing");
-    expect(keep, "the timer must record the window it closes").toBeGreaterThanOrEqual(0);
+    const keep = found(timer, "clipClosed = closing", "the timer must record the window it closes");
     expect(timer.indexOf("baseline: clipBaseline")).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
     expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, booked: null, byLang: undefined, landed: false \}/);
     expect(keep).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
@@ -1213,8 +1193,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // Its translation REPLACES the closed window's booking and per-language tracks, then closes
     // the window again with the new booking recorded for a further release.
     const booking = mask(bodyAfter(finalBody, "if (translated && !t.isSelf && landed) "));
-    const restore = booking.indexOf("clipBooked = live.booked;");
-    expect(restore, "a reopening release must restore the closed window's booking").toBeGreaterThanOrEqual(0);
+    const restore = found(booking, "clipBooked = live.booked;", "a reopening release must restore the closed window's booking");
     expect(restore).toBeLessThan(booking.indexOf("clipBooked ??="));
     expect(booking).toContain("if (byLang) unbookClipByLang(live.byLang);");
     const reclose = booking.indexOf("live.booked = clipBooked;");
@@ -1340,8 +1319,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(tryAt, "the separator's injectText must sit inside a try").toBeGreaterThanOrEqual(0);
     expect(task.slice(tryAt, call), "nothing but the call between the try and the separator inject").not.toContain("}");
     const catchBody = bodyAfter(task.slice(call), "} catch (e)");
-    const guard = catchBody.indexOf("if (insertCfg !== cfg) return false;");
-    expect(guard, "the catch must check the session token").toBeGreaterThanOrEqual(0);
+    const guard = found(catchBody, "if (insertCfg !== cfg) return false;", "the catch must check the session token");
     const restore = catchBody.indexOf("giveClipboardBack(");
     expect(restore, "the catch must restore after the session-token check").toBeGreaterThan(guard);
     // Only from a snapshot: the restore's own condition asks for one.
@@ -1430,8 +1408,7 @@ describe("a stop or cancel during the start invoke", () => {
 
   it("stopLive defers to the post-invoke stop before touching anything", () => {
     const body = mask(fns.stopLive);
-    const gate = body.indexOf("if (startInvokeInFlight)");
-    expect(gate, "stopLive must open with the start-invoke deferral").toBeGreaterThanOrEqual(0);
+    const gate = found(body, "if (startInvokeInFlight)", "stopLive must open with the start-invoke deferral");
     const deferral = bodyAfter(body, "if (startInvokeInFlight)");
     expect(deferral).toContain("stopRequestedDuringStart = true");
     expect(deferral).toContain("return");
@@ -1442,21 +1419,18 @@ describe("a stop or cancel during the start invoke", () => {
 
   it("cancelLive leaves the Rust cancel to startLiveInner while the invoke is in flight", () => {
     const body = mask(fns.cancelLive);
-    const owed = body.indexOf("const owedToStart = startInvokeInFlight");
-    expect(owed, "cancelLive must read the start invoke at entry").toBeGreaterThanOrEqual(0);
+    const owed = found(body, "const owedToStart = startInvokeInFlight", "cancelLive must read the start invoke at entry");
     // Read before the teardown below resets `capturing`.
     expect(owed).toBeLessThan(body.indexOf("capturing = false"));
     expect(body).toContain("if (owedToStart) cancelDuringStartInvoke = {");
-    const skip = body.indexOf("if (owedToStart) {");
-    expect(skip, "the Rust cancel must be skipped for a starting session").toBeGreaterThanOrEqual(0);
+    const skip = found(body, "if (owedToStart) {", "the Rust cancel must be skipped for a starting session");
     expect(skip).toBeLessThan(body.indexOf("cancelRecord("));
     expect(skip).toBeLessThan(body.indexOf("cancelStream("));
   });
 
   it("startLiveInner brackets the invoke and cancels the session a mid-invoke Cancel owed", () => {
     const body = mask(fns.startLiveInner);
-    const begin = body.indexOf("startInvokeInFlight = true");
-    expect(begin, "the flag must be raised before the invoke").toBeGreaterThanOrEqual(0);
+    const begin = found(body, "startInvokeInFlight = true", "the flag must be raised before the invoke");
     const invoke = body.indexOf("await startStream(");
     expect(begin).toBeLessThan(body.indexOf("await startRecord("));
     expect(begin).toBeLessThan(invoke);
@@ -1476,8 +1450,7 @@ describe("a stop or cancel during the start invoke", () => {
     // The reject path drops the flag too, and a cancelled start never flashes its error.
     const reject = bodyAfter(body.slice(body.indexOf("void stopLive()")), "} catch (e)");
     expect(reject).toContain("startInvokeInFlight = false");
-    const quiet = reject.indexOf("if (cancelDuringStartInvoke)");
-    expect(quiet, "a cancelled start must skip flashError").toBeGreaterThanOrEqual(0);
+    const quiet = found(reject, "if (cancelDuringStartInvoke)", "a cancelled start must skip flashError");
     expect(quiet).toBeLessThan(reject.indexOf("flashError("));
   });
 });
@@ -1489,16 +1462,12 @@ describe("a translating session re-caps its targets once the server's limit is k
   // return, or a session already proven warm would never be re-capped.
   it("startLiveInner's refreshCaps answer re-applies sendableTargets before the warm check", () => {
     const fn = topLevelFunctions(streamingSrc).startLiveInner;
-    const probe = fn.indexOf("refreshCaps(backend, { force: true })");
-    expect(probe, "startLiveInner must probe the caps").toBeGreaterThanOrEqual(0);
+    const probe = found(fn, "refreshCaps(backend, { force: true })", "startLiveInner must probe the caps");
     const then = mask(bodyAfter(fn.slice(probe), ".then(() =>"));
-    const recap = then.indexOf("shrinkToServerCap(tr)");
-    expect(recap, "the probe's answer must re-cap tr.targets").toBeGreaterThanOrEqual(0);
-    const guard = then.indexOf("if (sessionTranslation !== tr) return");
-    expect(guard, "the caps answer is identity-checked").toBeGreaterThanOrEqual(0);
+    const recap = found(then, "shrinkToServerCap(tr)", "the probe's answer must re-cap tr.targets");
+    const guard = found(then, "if (sessionTranslation !== tr) return", "the caps answer is identity-checked");
     expect(recap).toBeGreaterThan(guard);
-    const warm = then.indexOf("if (tr.warm === true) return");
-    expect(warm, "the warm check stays in the probe's answer").toBeGreaterThanOrEqual(0);
+    const warm = found(then, "if (tr.warm === true) return", "the warm check stays in the probe's answer");
     expect(recap).toBeLessThan(warm);
     const shrink = topLevelFunctions(streamingSrc).shrinkToServerCap;
     expect(shrink).toContain("sendableTargets(tr.targets, tr.backendId)");
@@ -1509,8 +1478,7 @@ describe("a translating session re-caps its targets once the server's limit is k
   // may still shrink the dead session's list, but must not republish its route onto the idle chip.
   it("the re-cap republishes only while the session's route is published", () => {
     const shrink = mask(topLevelFunctions(streamingSrc).shrinkToServerCap);
-    const guard = shrink.indexOf("if (useApp.getState().sessionTargets !== null)");
-    expect(guard, "republish guarded on a live route").toBeGreaterThanOrEqual(0);
+    const guard = found(shrink, "if (useApp.getState().sessionTargets !== null)", "republish guarded on a live route");
     expect(guard).toBeLessThan(shrink.indexOf("setDictation({ sessionTargets: capped })"));
   });
 });
@@ -1587,8 +1555,7 @@ describe("a translate a cancel abandoned stays out of the next session", () => {
   // CRLF-normalized: a Windows checkout has no "\n}\n".
   const src = streamingSrc.replace(/\r\n/g, "\n");
   const whole = (name: string) => {
-    const at = src.indexOf(`async function ${name}(`);
-    expect(at, `${name} not found`).toBeGreaterThanOrEqual(0);
+    const at = found(src, `async function ${name}(`, `${name} not found`);
     return src.slice(at, src.indexOf("\n}\n", at) + 2);
   };
   const fns = { translatePhrase: whole("translatePhrase"), maybeTranslate: whole("maybeTranslate") };
@@ -1604,8 +1571,7 @@ describe("a translate a cancel abandoned stays out of the next session", () => {
     // Read after the captureIds wait, `sessionMeta` may already be the NEXT session's.
     const body = mask(fns.maybeTranslate);
     const firstAwait = body.indexOf("await ");
-    const decl = body.indexOf("const clientJob = sessionMeta?.clientJob ?? null;");
-    expect(decl, "clientJob is read synchronously").toBeGreaterThanOrEqual(0);
+    const decl = found(body, "const clientJob = sessionMeta?.clientJob ?? null;", "clientJob is read synchronously");
     expect(decl).toBeLessThan(firstAwait);
     expect(body.slice(firstAwait)).not.toContain("sessionMeta");
     expect(body).toMatch(/\bclientJob,/);
