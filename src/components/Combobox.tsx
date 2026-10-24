@@ -1,6 +1,5 @@
 // A small, on-theme ARIA combobox: a Signal TextInput with a type-ahead listbox
-// of suggestions. Built for the Dictionary's spoken-symbol (callback:map) KEY
-// field — pick from recently-transcribed words instead of typing.
+// of suggestions (recent words, server models, …).
 //
 // Two structural choices matter:
 //  1. Focus-loss safety — the <input> is rendered ONCE here (never wrapped in a
@@ -9,8 +8,8 @@
 //     whole time; the highlighted option is tracked via `aria-activedescendant`
 //     (the WAI-ARIA combobox pattern), not by moving focus.
 //  2. No clipping — the popover is PORTALED to <body> and fixed-positioned at
-//     the input (popoverBox, shared with ListPicker), so the RuleCard's
-//     `overflow-hidden` can't crop it; it opens upward when the room below is short.
+//     the input (popoverBox), so an ancestor's `overflow-hidden` can't crop it;
+//     it opens upward when the room below is short.
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -114,14 +113,12 @@ export function Combobox({
   const candidates = disabled ? [] : rank(suggestions, query);
   const showPopover = open && candidates.length > 0;
 
-  // Position the portaled popover at the input; track scroll/resize while open.
   const rect = useAnchoredRect(inputRef, showPopover);
-  // Below the input, or above it when the room below is short — the list shrinks to fit either way
-  // (32 px of the room is the footer; never under 96 px, never over the old 14rem).
+  // The list shrinks to fit the room on either side: 32 px of it is the footer; never under 96 px,
+  // never over 14rem.
   const box = rect ? popoverBox(rect, { minWidth: rect.width, minRoom: 260 }) : null;
   const listMax = box ? Math.max(96, Math.min(224, box.room - 32)) : 224;
 
-  // Keep `active` in range, and scroll the highlighted option into view.
   useEffect(() => {
     if (active >= candidates.length) setActive(candidates.length - 1);
   }, [candidates.length, active]);
@@ -162,8 +159,7 @@ export function Combobox({
         e.preventDefault();
         if (!open) setOpen(true);
         // No candidates yet (still loading) → remember the intent; the effect above
-        // lands on the first option once they arrive. Otherwise move down — from no
-        // selection (-1) the first press lands on index 0.
+        // lands on the first option once they arrive.
         if (candidates.length === 0) wantFirstRef.current = true;
         else setActive((a) => (a < 0 ? 0 : Math.min(a + 1, candidates.length - 1)));
         break;
@@ -211,9 +207,7 @@ export function Combobox({
         onChange={(e) => { wantFirstRef.current = false; onChange(e.target.value); setTyped(true); setOpen(true); setActive(-1); }}
         onFocus={() => { if (!disabled && openOnFocus) { if (!value) setTyped(false); setOpen(true); } }}
         // A click in an already-focused field (e.g. after Esc closed the popover)
-        // doesn't refire onFocus — reopen explicitly so the user can get it back.
-        // Preserve the typed filter: clearing it here would discard a half-typed
-        // query when the user clicks the field after Escape.
+        // doesn't refire onFocus — reopen explicitly, keeping a half-typed filter.
         onClick={() => { if (!disabled) setOpen(true); }}
         onBlur={(e) => {
           // A press on the listbox blurs only for the scrollbar drag, and the release refocuses.
@@ -249,8 +243,8 @@ export function Combobox({
                 { once: true, capture: true },
               );
             }}
-            // At least the input's width, growing for a long suggestion as before, but never past the
-            // viewport's right edge (popoverBox's own width would truncate every wider row).
+            // At least the input's width, growing for a long suggestion, but never past the viewport's
+            // right edge (popoverBox's own width would truncate every wider row).
             style={{
               ...box.style,
               width: "max-content",
