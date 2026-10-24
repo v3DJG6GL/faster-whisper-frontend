@@ -131,6 +131,8 @@ export interface SiteSubsView {
 }
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
+/** How many site tracks one run downloads at most. */
+const MAX_SITE_FETCH = 8;
 /** The site track an ex:/cand: badge key names, else null. */
 const keyTrack = (key: string | undefined): string | null => (key ? /^(?:ex|cand):(.+)$/.exec(key)?.[1] ?? null : null);
 
@@ -346,7 +348,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const asked = new Set(avail.filter((t) => t.code === sp || tmap[t.code] === true).map((t) => t.id));
   const kept = new Set(uniq([
     ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => asked.has(id)), ...ids,
-  ]).slice(0, 8));
+  ]).slice(0, MAX_SITE_FETCH));
   const fetch = ids.filter((id) => kept.has(id));
   // A lit badge over the cap would claim a track the run never downloads: it greys out. A
   // language you translate into that it leaves without a source gets machine translation (as in
@@ -366,7 +368,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const preCap: Record<string, boolean> = {};
   const capOff = (b: SiteBadge, fills: boolean) => {
     b.state = "idle";
-    b.title = `Over the 8-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
+    b.title = `Over the ${MAX_SITE_FETCH}-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
     preCap[b.key!] = snap[b.key!];
     snap[b.key!] = false;
   };
@@ -505,8 +507,8 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
   // already fetch (through its twin) — the same O(1) test, not a flip (two model passes) per
   // badge, which a link listing ~100 auto tracks would pay on every render.
   const run = m.view.run;
-  if (run && run.fetch.length >= 8) {
-    const title = "At the 8-subtitle download limit — switch another subtitle off first";
+  if (run && run.fetch.length >= MAX_SITE_FETCH) {
+    const title = `At the ${MAX_SITE_FETCH}-subtitle download limit — switch another subtitle off first`;
     for (const r of m.view.rows) {
       for (const b of r.badges) {
         const tid = keyTrack(b.key);
@@ -617,7 +619,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // fetched stays allowed) caps one: itself, greyed again, or a fetched track the cap ranks
   // below it, whose language silently falls back to machine translation. Refuse it; free a slot first.
   const run = m.view.run;
-  if (tid && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(tid)) {
+  if (tid && next[key] && run && run.fetch.length >= MAX_SITE_FETCH && !run.fetch.includes(tid)) {
     return { state: st, targets: [...input.targets] };
   }
   // Below a full download, ask the cap with the change (and the twin) in place.
