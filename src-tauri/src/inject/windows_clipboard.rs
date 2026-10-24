@@ -143,7 +143,6 @@ impl Requester {
 /// What the owner should do (or log) after rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderVerdict {
-    /// Nothing special.
     Plain,
     /// Someone other than the target rendered: the data now sits on the clipboard, so every LATER
     /// fetch (including the target's) is invisible to us for this offer.
@@ -947,8 +946,9 @@ mod imp {
         );
         unsafe { SetTimer(hwnd, T_NOFETCH, NOFETCH_MS, None) };
         // The target fetched before the chord: in enforce, drop the remote's cache as a
-        // post-chord fetch would, so the paste fetches live from us. The caller's wait ends on
-        // that render, not here (see `ChordReport::ends_wait`).
+        // post-chord fetch would, so the paste fetches live from us; the caller's wait then ends
+        // on that render, not here. Only diag publishes the prior fetch at chord time (see
+        // `ChordReport::ends_wait`).
         if let Some(v) = r.prior_fetch {
             let reannounce = v == RenderVerdict::Reannounce;
             tracing::info!(
