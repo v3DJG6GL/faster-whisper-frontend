@@ -252,7 +252,6 @@ mod imp {
                 ),
             );
         }
-        // The quick-add window shortcut (not a Profile) — matched alongside the chords.
         match codes_to_keys(quick_add_hotkey) {
             Some(keys) if !keys.is_empty() => {
                 let keys: Vec<u16> = keys.iter().map(|k| k.code()).collect();
