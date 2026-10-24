@@ -1,9 +1,7 @@
-// The quick-add chord capture, shared by the Dictionary screen (its home) and
-// the onboarding quick-add step. Self-contained: it reads/writes the store,
-// resolves the low-level-backend gate itself (evdev permitted + enabled on
-// Linux; the hook backend is always on on Windows), and runs the same
-// conflict check against the Profile chords as the Profiles editor — the two
-// rebind surfaces must compute the gate identically (see Profiles.tsx).
+// The quick-add chord capture, shared by the Dictionary screen and the onboarding
+// quick-add step. The low-level-backend gate (evdev permitted + enabled on Linux,
+// always on on Windows) must match the Profiles editor's, so both rebind surfaces
+// accept the same chords (see Profiles.tsx).
 
 import { useEffect, useState } from "react";
 import { evdevStatus } from "@/lib/api";
