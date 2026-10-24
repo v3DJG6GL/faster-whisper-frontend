@@ -1,6 +1,6 @@
-//! Server queries outside a run: connection test, capabilities, presets, decode
-//! defaults, pipeline rules, recent words and usage stats (plus the on-disk
-//! usage-outcome queue).
+//! Server queries outside a run: connection test, capabilities, override profiles,
+//! model preload, decode defaults, pipeline rules, recent words and usage stats (plus
+//! the on-disk usage-outcome queue).
 
 use super::{resolve_key_async, store_io};
 use crate::transport;
