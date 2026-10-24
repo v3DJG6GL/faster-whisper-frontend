@@ -158,6 +158,9 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
   );
 }
 
+/** Cap on a backend or profile name quoted in a preview notice, so one entry reads the same in every line. */
+const NOTICE_NAME_CAP = 60;
+
 /** The API-key half of the import / restore disclosure (`backendKeyFates`): keys the apply
  *  stores, keys nobody supplies, and a key this device keeps that now goes to another server. */
 function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKeyFates>; source: "file" | "backup" }) {
@@ -169,7 +172,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
       )}
       {fates.missing.length > 0 && (
         <Notice tone="warn">
-          {fates.missing.map((b) => `“${backendDisplayName(b.name, 60)}”`).join(", ")} need
+          {fates.missing.map((b) => `“${backendDisplayName(b.name, NOTICE_NAME_CAP)}”`).join(", ")} need
           {fates.missing.length === 1 ? "s" : ""} an API key re-entered after{" "}
           {source === "file" ? "importing (not included in the file)" : "restoring (not in the server copy)"}.
         </Notice>
@@ -181,7 +184,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
         if (!to) {
           return (
             <Notice key={`moved-${b.id}`} tone="warn">
-              &ldquo;{backendDisplayName(b.name, 60)}&rdquo; is left without a usable server address — its
+              &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo; is left without a usable server address — its
               API key stays on this device and nothing is sent until you set one.
             </Notice>
           );
@@ -192,7 +195,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
         const auth = authorityOf(to);
         return (
           <Notice key={`moved-${b.id}`} tone="warn">
-            &ldquo;{backendDisplayName(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+            &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
             <span className="font-mono font-semibold">
               {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
             </span>
@@ -584,7 +587,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           if (url.trim() === "") {
             return (
               <li key={`${b.id}-${i}`} className="font-mono text-[12px]">
-                {backendDisplayName(b.name, 60)} →{" "}
+                {backendDisplayName(b.name, NOTICE_NAME_CAP)} →{" "}
                 <span className="text-dim">no usable address — nothing is sent until one is set</span>
               </li>
             );
@@ -593,7 +596,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           const warn = insecureUrlWarning(url);
           return (
             <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
-              {backendDisplayName(b.name, 60)} →{" "}
+              {backendDisplayName(b.name, NOTICE_NAME_CAP)} →{" "}
               {/* The host through the IDENTITY helper, which marks a truncation: `serverUrl` has no
                   length cap on the sync/import path, and the plain filter's markerless 80-code-point
                   cut would show a padded hostname (`sync.internal.corp.example.com.<padding>.evil.tld`)
@@ -665,7 +668,7 @@ export function predictChordFix(
 
 const MAX_SHOWN_SWITCHED_OFF = 3;
 export function ChordFixNotices({ fix, source }: { fix: ReturnType<typeof predictChordFix>; source: "file" | "backup" }) {
-  const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${profileDisplayName(n, 60)}”`);
+  const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${profileDisplayName(n, NOTICE_NAME_CAP)}”`);
   const more = fix.switchedOff.length - names.length;
   if (more > 0) names.push(`${more} more`);
   return (
