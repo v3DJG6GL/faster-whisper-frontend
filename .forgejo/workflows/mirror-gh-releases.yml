@@ -15,7 +15,8 @@
 # delivered and picks them up next slot. It also backfills the whole
 # historical release list, not just the newest one.
 #
-# Primary trigger is the release event; the crons are the reconcile
+# Primary triggers are release.yml's explicit dispatch and the release
+# event (manual publishes only — see `on:`); the crons are the reconcile
 # backstop. NOTE: if an event run fires before the push mirror has
 # delivered the tag, that release is skipped until the next slot —
 # enable "sync on commit" on the GitHub push mirror to make event runs
