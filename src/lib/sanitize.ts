@@ -43,6 +43,11 @@ function isCc(code: number): boolean {
   return code < 0x20 || (code >= 0x7f && code <= 0x9f);
 }
 
+/** What the display filter deletes — `safeIdentityText` and `trimLeadingInvisible` delete the same. */
+function isDisplayDropped(code: number): boolean {
+  return isCc(code) || isDeceptiveFormatChar(code);
+}
+
 /** A server- or peer-authored string on its way into the UI: control characters and the
  *  deceptive-format set removed, length bounded.
  *
@@ -56,10 +61,9 @@ export function safeDisplayText(s: unknown, max = 200): string {
   const out: string[] = [];
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
-    if (isCc(code)) continue;
-    // isDeceptiveFormatChar also drops U+2028/U+2029: UAX#14 mandatory breaks no CSS collapses,
+    // The deceptive-format set also holds U+2028/U+2029: UAX#14 mandatory breaks no CSS collapses,
     // so a 60-code-point label could carry 60 forced breaks and push the buttons off screen.
-    if (isDeceptiveFormatChar(code)) continue;
+    if (isDisplayDropped(code)) continue;
     out.push(ch);
     if (out.length >= max) break;
   }
@@ -186,7 +190,7 @@ export function safeIdentityText(s: unknown, max = 80): string {
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
       if (/\s/.test(ch) || isInvisibleKeyChar(code)) return " ";
-      if (isCc(code) || isDeceptiveFormatChar(code)) return "";
+      if (isDisplayDropped(code)) return "";
       return ch;
     })
     .join("");
@@ -219,7 +223,7 @@ export function trimLeadingInvisible(s: string): string {
     const code = ch.codePointAt(0) ?? 0;
     // A leading ZWNJ/ZWJ joins nothing, so it is dropped here; interior ones (emoji sequences) stay.
     const joiner = code === 0x200c || code === 0x200d;
-    if (!(/\s/.test(ch) || isInvisibleKeyChar(code) || isCc(code) || isDeceptiveFormatChar(code) || joiner)) break;
+    if (!(/\s/.test(ch) || isInvisibleKeyChar(code) || isDisplayDropped(code) || joiner)) break;
     off += ch.length;
   }
   return s.slice(off);
