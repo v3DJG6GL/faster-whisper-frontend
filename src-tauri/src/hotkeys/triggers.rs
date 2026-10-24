@@ -48,17 +48,13 @@ pub fn trigger_modifiers_still_held(held: &crate::hotkeys::held_keys::HeldKeys) 
 /// `chord_mods` are evdev keycodes — the `held_keys` namespace, which BOTH backends share
 /// (`windows::commit` translates VKs through `vk_to_evdev_mod` before `held_keys.set`).
 ///
-/// This is the ONLY writer of [`TRIGGER_MODS`]. It used to live inline in `emit_trigger`, which
-/// meant the CLI and global-shortcut-plugin registrars were the only ones that ever wrote it —
-/// while `HeldKeys` is populated ONLY by the evdev and Windows backends. The two facts composed
-/// into a dead control: on exactly the backends where the gate can engage, the snapshot was empty,
-/// and `trigger_modifiers_still_held` fails OPEN on an empty set by construction. So L3's
-/// "the dictation chord is still held → divert to clipboard" never fired on the primary
-/// native-hotkey paths.
+/// This is the ONLY writer of [`TRIGGER_MODS`]. The evdev and Windows backends — the only ones
+/// that feed `HeldKeys` — must call it on every fire: `trigger_modifiers_still_held` fails OPEN
+/// on an empty snapshot, so without it the "chord still held → divert to clipboard" gate is dead
+/// on exactly the paths where it can engage.
 ///
-/// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down. That is
-/// strictly more precise than what the CLI path did before, and it is what keeps an unrelated
-/// held Ctrl (scroll-zoom) or Shift from diverting an ordinary phrase to the clipboard.
+/// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down, so an
+/// unrelated held Ctrl (scroll-zoom) or Shift does not divert an ordinary phrase to the clipboard.
 /// An empty slice produces an empty snapshot — a chord with no observable modifiers.
 /// Teardown-emitted stops pass `None` to the backends, which skip this call entirely
 /// so the existing snapshot survives for the clipboard gate.
@@ -81,17 +77,14 @@ static PLUGIN_RELEASED_AT: Mutex<Option<Instant>> = Mutex::new(None);
 /// fresh edge for the chord-lost latch: a CLI/DE-shortcut invocation passes `Some(now)`, a plugin
 /// press its last observed release, a teardown stop `None`.
 fn emit_trigger(app: &AppHandle, profile_id: String, action: &str, released_at: Option<Instant>) {
-    // Defanged before it reaches the log, the same way `session.rs`'s stream-error line and every
-    // transport log line already are, and for the reason that line states: this file is what users
-    // are asked to send for support, so an embedded newline forges records. `profile_id` is
-    // untrusted from two directions — `handle_cli_args` parses `--profile <value>` straight out of
-    // argv (the documented DE-shortcut path, ~32k of it available and no validation anywhere on
-    // the way), and the sync blob's profile ids are only type-checked, never length- or
-    // character-clamped.
+    // Defanged: the log is what users send for support, so an embedded newline would forge
+    // records. `profile_id` is untrusted from two directions — `handle_cli_args` takes
+    // `--profile <value>` straight out of argv, unvalidated, and the sync blob's profile ids are
+    // only type-checked, never length- or character-clamped.
     let profile_id_log = crate::transport::bounded_server_text(&profile_id, 120);
     tracing::info!("[trigger] {profile_id_log}/{action}");
-    // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
-    // original behaviour: every shortcut modifier currently down.
+    // The CLI/DE-shortcut and plugin paths have no evdev-coded chord in hand, so snapshot every
+    // shortcut modifier currently down.
     snapshot_trigger_mods(app, &crate::hotkeys::held_keys::SHORTCUT_MOD_CODES);
     // A CLI/DE-shortcut invocation, or a plugin press after a release the plugin saw, is a fresh
     // rising edge — the twin of the evdev/windows `Fire::Start`/`Toggle` clears — so a chord-lost
@@ -212,15 +205,14 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     }
 }
 
-// ── In-app global hotkeys via the global-shortcut plugin (Linux-X11) ─────────
-// Native Wayland can't register here, and modifier-only chords like "Ctrl+Shift"
-// aren't registerable as plugin accelerators — those rely on the evdev backend or
-// the CLI path (a DE shortcut → `app --toggle`). On Windows the plugin is never
-// the registrar: the `windows` hook backend owns all chords (apply_bindings).
-// The GlobalShortcuts portal is M7.
+// In-app global hotkeys via the global-shortcut plugin (Linux-X11). Native Wayland can't
+// register here, and modifier-only chords like "Ctrl+Shift" aren't registerable as plugin
+// accelerators — those rely on the evdev backend or the CLI path (a DE shortcut →
+// `app --toggle`). On Windows the plugin is never the registrar: the `windows` hook backend
+// owns all chords (apply_bindings).
 
 #[derive(Clone)]
-#[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
+#[cfg_attr(windows, allow(dead_code))] // on Windows the plugin is never the registrar
 enum ShortcutTarget {
     Dictate {
         profile_id: String,
@@ -341,9 +333,9 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
     }
 }
 
-/// Unregister all currently-registered global shortcuts. Used while the user is
-/// capturing a new binding, so pressing a key only rebinds and doesn't also fire
-/// dictation (which previously could start a stuck push-to-talk session).
+/// Unregister all currently-registered global shortcuts and stop any plugin PTT session held
+/// across it. Also used while the user is capturing a new binding, so pressing a key only
+/// rebinds and doesn't also fire dictation (and start a stuck push-to-talk session).
 pub fn unregister_all(app: &AppHandle) {
     let gs = app.global_shortcut();
     for sc in take_registrations(app).keys() {
@@ -378,11 +370,10 @@ fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
 
 /// (Re)register global shortcuts for the enabled Profiles. Unregisterable hotkeys
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
-#[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
+#[cfg_attr(windows, allow(dead_code))] // on Windows the plugin is never the registrar
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
-    // Flush any held PTT chord's "stop" as part of tearing down the old registrations (a rebind
-    // mid-hold would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's
-    // stop_held_sessions.
+    // Tears down the old registrations and flushes any held PTT chord's "stop" (a rebind mid-hold
+    // would otherwise lose the release-stop and wedge "listening").
     unregister_all(app);
     let gs = app.global_shortcut();
 
@@ -407,11 +398,9 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                 continue;
             }
         };
-        // `accel` is as untrusted as the `p.id` beside it, and was left raw on every line that
-        // prints it — including the one whose id this run defanged. `de_hotkey` only sorts and
-        // dedups, `codes_to_accelerator` passes an unrecognized code straight through
-        // `code_to_token`'s `code.to_string()` fallthrough, so a synced profile's hotkey carries
-        // arbitrary text and length into the accelerator. Same log file, same forged-record harm.
+        // `accel` is as untrusted as `p.id`: `codes_to_accelerator` passes an unrecognized code
+        // straight through `code_to_token`'s `code.to_string()` fallthrough, so a synced profile's
+        // hotkey carries arbitrary text into the accelerator — defang it for the log too.
         let accel_log = crate::transport::bounded_server_text(&accel, 120);
         let shortcut = match Shortcut::from_str(&accel) {
             Ok(s) => s,
@@ -453,7 +442,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
             Some(accel) => {
                 let safe_accel = crate::transport::bounded_server_text(&accel, 120);
                 match Shortcut::from_str(&accel) {
-                    // A profile registered first keeps the chord (it used to be silently replaced).
+                    // A profile registered first keeps the chord.
                     Ok(shortcut) if map.contains_key(&shortcut) => tracing::warn!(
                         "[hotkey] quick-add '{safe_accel}' has the same chord as a profile; ignoring it"
                     ),
