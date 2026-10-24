@@ -109,7 +109,7 @@ describe("backendOptions", () => {
   it("a joiner hiding the separator still forges no suffix", () => {
     for (const fake of ["Work \u00b7\u200d good.tld", "Work\u200d \u00b7 good.tld"]) {
       const opts = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", fake, "http://evil.tld")]);
-      // The joiner touches whitespace, so the identity fold drops it and the forgery renders bare.
+      // The joiner touches whitespace, so the identity fold drops it; the separator left behind forces the real host suffix.
       expect(opts.map((o) => o.label)).toEqual(["Work", "Work \u00b7 good.tld \u00b7 evil.tld"]);
     }
   });
