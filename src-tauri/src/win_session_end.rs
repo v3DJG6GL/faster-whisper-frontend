@@ -38,7 +38,7 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{WM_ENDSESSION, WM_QUERYENDSESSION};
 
-/// Arbitrary, process-unique subclass id ("fwf" + "SE").
+/// Arbitrary, process-unique subclass id (ASCII "fwfS").
 const SUBCLASS_ID: usize = 0x6677_6653;
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
