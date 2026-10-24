@@ -256,7 +256,7 @@ export async function runDictationTranslate(
   const stallMs = translateStallMs(req.warm, submittedChars, ceilingMs);
   const clock = deps.now ?? (() => Date.now());
   const pollMs = deps.pollMs ?? 1_000;
-  // Every failure's cause, set at the catch; only timeout/cancelled (a race WE abandoned) owe a cancel.
+  // Every failure's cause, set at the catch.
   let lost: TranslateFailure | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let watchdog: ReturnType<typeof setInterval> | undefined;
