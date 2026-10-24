@@ -25,8 +25,7 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // flight is the other "keep prior snapshot" cause: it leaves the user's SELECTION on the
     // clipboard until it puts their text back, so the read takes the clipboard-job lock
     // (`inject::CLIP_JOB`) try-only — never waiting, so the dictation chain is not held up — and
-    // skips when another clipboard job (the grab or a paste) holds it. The guard lives inside the
-    // closure: taken and dropped on the blocking thread that does the read. Windows only: no other
+    // skips when another clipboard job (the grab or a paste) holds it. Windows only: no other
     // platform has the grab, and a Linux read stuck past its cap would otherwise hold up the next
     // paste for nothing.
     // Set when the read was skipped for the lock, so the None arm logs that one cause instead of
