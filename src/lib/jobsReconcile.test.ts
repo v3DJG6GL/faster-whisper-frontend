@@ -262,7 +262,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a per-row error (an HTTP status, an unreadable body) does not hold back the server's other rows", async () => {
-    // Two Backend entries at one URL: the older row's key was revoked (401), the newer one's works.
+    // The server answered (a revoked key at a shared URL, a body Rust can't parse): only the erroring row waits.
     await seed(row(JOB_A, T0), row(JOB_B, T0 + 1), row(JOB_C, T0 + 2));
     getJob.mockImplementation(async ({ jobId }) =>
       jobId === JOB_A
