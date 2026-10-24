@@ -94,8 +94,7 @@ export function Waveform({
   levelRef.current = level;
   activeRef.current = active;
   processingRef.current = processing;
-  // Re-arms the draw loop after it has parked itself (idle + settled). Set by the
-  // setup effect; called from the [active, processing] and [tone] effects below.
+  // Re-arms the draw loop after it has parked itself (idle + settled); set by the setup effect.
   const kickRef = useRef<() => void>(() => {});
   // Recompute the resolved CSS color on the next frame (set when `tone` or the theme changes),
   // instead of polling getComputedStyle on a timer for the whole session.
@@ -236,9 +235,6 @@ export function Waveform({
         if (Math.abs(delta) > maxStep) maxStep = Math.abs(delta);
         const x = (i + 0.5) * slot;
         const baseAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
-        // Build the bar shape, then fill it with the normal colour and (cross-faded by
-        // prideMix) the vertical flag gradient — the same stripes behind every bar, so a
-        // taller bar reveals more of the flag.
         if (variant === "dots") {
           const r = bw / 2 + heights[i] * (h * 0.16);
           ctx.beginPath();
