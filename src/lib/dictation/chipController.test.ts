@@ -461,8 +461,8 @@ describe("initOverlayController — the hide linger outlasts the chip's session 
   afterEach(() => {
     vi.useRealTimers();
   });
-  // Dock off: the chip shows only for the session, then lingers. A note ("incomplete") or a
-  // translate failure lands on the idle write and the chip holds it for 2600 ms.
+  // Dock off: the chip shows only for the session, then lingers. A session note or an
+  // untranslated typed outcome lands on the idle write and the chip holds it (sessionNoteHoldMs).
   const settle = async (extra: Partial<ReturnType<typeof useApp.getState>>) => {
     const s = useApp.getState().settings;
     useApp.setState({
