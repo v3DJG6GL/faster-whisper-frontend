@@ -1,12 +1,8 @@
-// Pill chips for choosing which backend a view is scoped to (e.g. whose usage
-// statistics to show). With a single backend it renders one static name label — no
-// pointless toggle; with several, an interactive selector (amber = active). Always
-// shows the backend NAME, never the URL. Labels come from `backendLabels` over the FULL
-// configured list (`labelsFrom`), the same resolver every other backend picker uses:
-// identity-safe text (invisible and bidi code points removed, not just width-truncated)
-// plus a collision suffix, so two backends whose names draw identically are still told
-// apart here too — even when only one of them is among the chips (the other has no
-// statistics), the chip carries the same suffix the pickers show.
+// Pill chips for choosing which backend a view is scoped to (e.g. whose usage statistics to
+// show); a single backend gets a static label, not a pointless toggle. Always the backend NAME,
+// never the URL. Labels come from `backendLabels` over the FULL configured list (`labelsFrom`),
+// as in every other backend picker, so a chip carries the same collision suffix the pickers
+// show even when its look-alike twin is not among the chips (no statistics).
 
 import { backendLabels } from "@/lib/backends";
 import { cn } from "@/lib/cn";
@@ -19,7 +15,6 @@ export function BackendChips({
   onSelect,
   className,
 }: {
-  /** The chips to render. */
   backends: Backend[];
   /** The list the labels are resolved over — the store's whole backend list when `backends`
    *  is a subset of it. Defaults to `backends`. */
