@@ -374,9 +374,9 @@ interface InsertCfg {
    *  so a config mid-migration still reads as it did. */
   timing: "off" | "stop" | "live";
   method: "paste" | "direct" | "clipboard";
-  /** The Profile's insertion overrides, frozen for the session — the one layer that CAN'T
-   *  be re-read live (see resolveTarget). The app-rule layer above it stays live per phrase:
-   *  rules follow window switches, the profile does not change mid-session.
+  /** The Profile's insertion overrides, held on the session token — the one layer that is NOT
+   *  re-read live (see resolveTarget); only the in-place hands-free upgrade (applyReclassify)
+   *  re-points it. The app-rule layer above it stays live per phrase: rules follow window switches.
    *  `autoEnter`/`restoreClipboard` are deliberately NOT frozen here: they come off
    *  `resolveTarget`'s result at each site, like `method`, so an app rule can govern them. */
   profileInsertion?: InsertionOverrides;
@@ -701,9 +701,8 @@ const PHRASE_GAP = "\n\n\n";
 // A cold llama.cpp server spends tens of seconds downloading/loading the GGUF before the
 // first token, and "translating…" alone reads as a hang, so the stop-timing one-shot (the
 // only path that waits that long) shows a phase label from the server's progress entry —
-// the retro-translate card's stages: downloading → fraction, loading → indeterminate,
-// translating → fraction. runDictationTranslate's stall-detector poll hands every reading
-// here; the early-out below keeps a live phrase's polls invisible.
+// the retro-translate card's stages. runDictationTranslate's stall-detector poll hands every
+// reading here; the early-out below keeps a live phrase's polls invisible.
 // An unknown stage (the request hasn't registered the id yet) keeps what we show — read
 // through ownProp, so a stage named like an inherited key ("constructor") is unknown too.
 const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
@@ -1317,8 +1316,8 @@ function bumpPhraseEnd(deferred = false): void {
   }, PHRASE_END_QUIET_MS);
 }
 
-/** Clear just the per-phrase quiet timer (NOT the dirty flags) — the boundary/closed handlers
- *  cancel the pending Enter/restore but deliberately keep phraseDirty/clipDirty for the tail. */
+/** Clear just the per-phrase quiet timer (NOT the dirty flags) — the boundary/closed handlers and
+ *  stopLive cancel the pending Enter/restore but deliberately keep phraseDirty/clipDirty for the tail. */
 function clearPhraseEndTimer(): void {
   if (phraseEndTimer) {
     clearTimeout(phraseEndTimer);
@@ -2024,7 +2023,7 @@ async function ensureListeners(): Promise<void> {
   try {
   await reg<number>("stream://level", (e) => {
     latestLevel = e.payload;
-    // Mic warm-up gate (see startLive): while gating, detect the mic going live. Real
+    // Mic warm-up gate (see startLiveInner): while gating, detect the mic going live. Real
     // audio sits above the digital-silence floor for a couple of consecutive frames; a
     // warming mic delivers zeros and a lone open-click is a single frame. Going live
     // cancels the pending "warming up…" (a warm mic never flashes it) and clears it if
@@ -2301,8 +2300,6 @@ async function ensureListeners(): Promise<void> {
               teardownAfterFatalInject();
               return;
             }
-            // A cancel / fresh session that landed during the awaited inject nulled or replaced
-            // insertCfg — don't stamp this discarded phrase's bookkeeping onto the idle/next session.
             if (insertCfg !== cfg) return;
             // `landed` is the sink's answer; `!t.isSelf` was resolved one IPC hop earlier. If our own window
             // took focus during the await, Rust wrote nothing and returned `landed: false`, and booking the
@@ -2969,10 +2966,10 @@ async function ensureListeners(): Promise<void> {
       // at "listening" with the mic already closed. startLiveInner sets "listening" before connecting,
       // so a legit ready always passes.
       if (useApp.getState().status !== "listening") return;
-      // NOTE: do NOT clear `warming` here. "ready" is just the WS/model handshake and
+      // Do NOT clear `warming` here. "ready" is just the WS/model handshake and
       // usually arrives BEFORE a cold (Bluetooth) mic finishes warming up — clearing it
-      // here would flip the chip to "listening" while the mic is still silent. Warming is
-      // cleared only by real audio (the level handler) or the safety timeout.
+      // here would flip the chip to "listening" while the mic is still silent. Mid-session,
+      // warming is cleared only by real audio (the level handler) or the safety timeout.
       setDictation({ status: "listening", dictationError: null });
     } else if (e.payload === "loading") {
       // Keepalive while the server cold-loads its model (every ~3s): alive,
@@ -3480,7 +3477,7 @@ function flashError(message: string): void {
 // + system-mute guard, since stream and record are independent Rust states.
 let startingSession = false;
 // A stop/cancel trigger that arrives DURING the start prologue (before startLiveInner flips status
-// to "listening") finds status still "idle", so dictate()'s stopOrCancel no-ops it. For HOLD/PTT a
+// to "listening") finds status still "idle", so dictate()'s stopOrCancel has no session to stop. For HOLD/PTT a
 // fast tap releases the chord inside that window — the emitted "stop" would be dropped and the
 // session left wedged "listening" forever (the chord is already released, nothing re-triggers a
 // stop). This records that a stop is owed; startLiveInner honors it the moment the session is up.
@@ -3493,9 +3490,10 @@ let stopRequestedDuringStart = false;
 let startInvokeInFlight = false;
 let cancelDuringStartInvoke: { keepRecording: boolean } | null = null;
 
-/** Called by dictate()'s stopOrCancel when status is idle/error: if a session is mid-start (status
- *  not yet "listening"), remember a stop was requested so the starting session is torn down as soon
- *  as it goes live (a short tap-dictation) instead of wedging. Returns whether a start was in flight. */
+/** Called by every stop, toggle-off or system-resume path that finds status idle/error: if a session
+ *  is mid-start (status not yet "listening"), remember a stop was requested so the starting session is
+ *  torn down as soon as it goes live (a short tap-dictation) instead of wedging. Returns whether a
+ *  start was in flight. */
 export function requestStopIfStarting(): boolean {
   if (!startingSession) return false;
   stopRequestedDuringStart = true;
