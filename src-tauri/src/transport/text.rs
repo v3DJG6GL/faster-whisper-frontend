@@ -7,21 +7,16 @@ use anyhow::bail;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
-/// Client-side ceilings — the server has its own (4 MiB JSON body, 200k chars
-/// total); these just keep an accidental monster request from leaving the app.
+/// Client-side ceiling — the server has its own (4 MiB JSON body, 200k chars
+/// total); this just keeps an accidental monster request from leaving the app.
 const MAX_TEXTS: usize = 512;
 use super::MAX_TARGETS;
 
-/// Generous per-request ceiling for translation runs — same failure mode as
-/// batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a 400-segment chunk against a slow /
-/// CPU-only MT backend (or one that first has to download the model) can
-/// legitimately work for many minutes — far longer than the shared client's
-/// 120 s default, which is sized for dictation clips and status polls. Without
-/// this, a long retro-translate failed with a spurious "Timed out" while the
-/// server was still translating, losing the chunk. Still bounded so a
-/// black-holed server can't hang the run forever. (The latency-critical
-/// dictation path races the call against its own much shorter budget in JS,
-/// so it is unaffected by this ceiling.)
+/// Generous per-request ceiling, like batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a
+/// 400-segment chunk against a slow / CPU-only MT backend (or one that first has to
+/// download the model) can legitimately work far longer than the shared client's 120 s
+/// default. Still bounded so a black-holed server can't hang the run forever. Dictation
+/// races the call against its own much shorter budget in JS, so it is unaffected.
 const TEXT_TRANSLATE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 #[derive(serde::Serialize)]
@@ -115,10 +110,8 @@ pub struct TextTranslationResult {
 /// batch form uses ("no glossary", overriding whatever would otherwise be inherited).
 /// `source` rides through the same way for wire fidelity only: the server collapses `""`
 /// and absent to the same auto-detect (`source_lang=(source or None)`), so do NOT build
-/// another explicit-empty override on it. Emptiness filters here collapsed both onto "absent", so a
-/// glossary the user had explicitly cleared came back from the server's own config on
-/// every dictation settle, retro-translate and subtitle run — the one path the batch
-/// form's fix did not cover.
+/// another explicit-empty override on it. An emptiness filter here would bring a glossary
+/// the user explicitly cleared back from the server's own config.
 ///
 /// `translation_model` / `translation_mode` keep their truthiness prune: their controls
 /// offer a real "Inherit" row, so `""` there is the absence of a choice, not a choice.
@@ -286,8 +279,8 @@ pub async fn translate_texts(
     .send()
     .await
     .map_err(|e| {
-        // The viewer historically swallowed this error into a generic
-        // toast — make sure the log carries the classified cause.
+        // Log the classified cause: a caller (the viewer) may surface only a
+        // generic toast.
         let msg = friendly_err(&e);
         tracing::warn!("[text] translate request failed: {msg}");
         anyhow::anyhow!(msg)
@@ -366,8 +359,7 @@ mod request_body_tests {
 
     #[test]
     fn an_explicitly_cleared_glossary_is_sent_and_an_absent_one_is_omitted() {
-        // The distinction the whole change exists for: "" = no glossary (overrides the
-        // server's own), absent = inherit it.
+        // "" = no glossary (overrides the server's own), absent = inherit it.
         assert_eq!(body(None, Some(""))["translation_glossary"], "");
         assert!(body(None, None).get("translation_glossary").is_none());
         assert_eq!(body(None, Some("a = b"))["translation_glossary"], "a = b");
@@ -375,7 +367,7 @@ mod request_body_tests {
 
     #[test]
     fn a_whitespace_only_glossary_is_still_a_present_value() {
-        // It used to be trimmed away into "absent", which re-inherited. The server owns
+        // Trimming it to "absent" would re-inherit the server's glossary. The server owns
         // the decision about what an all-blank glossary means; the client just says it.
         assert_eq!(body(None, Some("   "))["translation_glossary"], "   ");
     }
