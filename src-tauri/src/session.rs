@@ -6,12 +6,12 @@
 //! emitted as `stream://level`; transcripts as `stream://partial`/`final`;
 //! state as `stream://status`. Dropping a [`StreamSession`] stops everything.
 
-use crate::audio::capture::{CaptureHandle, Meter};
+use crate::audio::capture::{build_mono_input, rms, CaptureHandle, Meter};
 use crate::audio::resample::{Resampler16k, TARGET_RATE};
 use crate::transport::batch;
 use crate::transport::stream::{self, StreamEvent, StreamParams};
-use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{Device, FromSample, Sample, SampleFormat, StreamConfig};
+use cpal::traits::StreamTrait;
+use cpal::{Device, SampleFormat, StreamConfig};
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -708,44 +708,6 @@ fn err_cb_with_lost(
     })
 }
 
-fn downmix<T: Copy>(data: &[T], channels: usize) -> Vec<f32>
-where
-    f32: FromSample<T>,
-{
-    let mut out = Vec::new();
-    downmix_into(data, channels, &mut out);
-    out
-}
-
-/// Downmix to mono into a caller-owned scratch buffer (cleared first), so a per-buffer capture
-/// callback can reuse one `Vec` instead of allocating every ~10-20 ms. Mirrors `capture::analyze`.
-fn downmix_into<T: Copy>(data: &[T], channels: usize, out: &mut Vec<f32>)
-where
-    f32: FromSample<T>,
-{
-    out.clear();
-    if channels <= 1 {
-        out.extend(data.iter().map(|&s| f32::from_sample(s)));
-        return;
-    }
-    out.reserve(data.len() / channels + 1);
-    for frame in data.chunks(channels) {
-        let mut acc = 0.0;
-        for &s in frame {
-            acc += f32::from_sample(s);
-        }
-        out.push(acc / frame.len() as f32);
-    }
-}
-
-fn rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum: f32 = samples.iter().map(|s| s * s).sum();
-    (sum / samples.len() as f32).sqrt()
-}
-
 /// RAW-audio floor above which a chunk counts as the mic actually delivering signal. A live mic's
 /// noise floor always clears this (measured ~2.4e-5 RMS on the QUIETEST resting chunk of a laptop
 /// mic at low gain) while a still-warming device delivers exact digital zeros — so the gap is wide
@@ -832,77 +794,24 @@ fn run_capture(
     level: Arc<AtomicU32>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    // Raw-audio go-live detector (→ one-shot `stream://mic-live`), shared between the format arms'
-    // callbacks and the publish loop below. See MIC_LIVE_RMS for why it is raw-RMS, not the meter.
+    // Raw-audio go-live detector (→ one-shot `stream://mic-live`), shared between the capture
+    // callback and the publish loop below. See MIC_LIVE_RMS for why it is raw-RMS, not the meter.
     let live = Arc::new(AtomicBool::new(false));
-    let stream = match format {
-        SampleFormat::F32 => {
-            let tx = pcm_tx.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[f32], _| {
-                    let mono = downmix(data, channels);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let _ = tx.send(mono);
-                },
-                err_cb_with_stop(stop.clone()),
-                None,
-            )
-        }
-        SampleFormat::I16 => {
-            let tx = pcm_tx.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[i16], _| {
-                    let mono = downmix(data, channels);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let _ = tx.send(mono);
-                },
-                err_cb_with_stop(stop.clone()),
-                None,
-            )
-        }
-        SampleFormat::U16 => {
-            let tx = pcm_tx.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[u16], _| {
-                    let mono = downmix(data, channels);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let _ = tx.send(mono);
-                },
-                err_cb_with_stop(stop.clone()),
-                None,
-            )
-        }
-        SampleFormat::I32 => {
-            let tx = pcm_tx.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[i32], _| {
-                    let mono = downmix(data, channels);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let _ = tx.send(mono);
-                },
-                err_cb_with_stop(stop.clone()),
-                None,
-            )
-        }
-        other => return Err(format!("unsupported sample format: {other:?}")),
-    }
-    .map_err(|e| e.to_string())?;
+    let tx = pcm_tx.clone();
+    let mut meter = Meter::new(level.clone());
+    let mut ld = LiveDetect::new(live.clone());
+    let stream = build_mono_input(
+        &device,
+        config,
+        format,
+        channels,
+        move |mono| {
+            meter.push(rms(mono));
+            ld.feed(mono);
+            let _ = tx.send(mono.to_vec());
+        },
+        err_cb_with_stop(stop.clone()),
+    )?;
 
     stream.play().map_err(|e| e.to_string())?;
 
@@ -1626,110 +1535,31 @@ fn run_record_capture(
     let live = Arc::new(AtomicBool::new(false));
     // Latched on the first append the recording cap cuts, so the warning is logged once per session.
     let capped = Arc::new(AtomicBool::new(false));
-    let stream = match format {
-        SampleFormat::F32 => {
-            let buf = buffer.clone();
-            let capped = capped.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut mono: Vec<f32> = Vec::new();
-            let resampler = resampler.clone();
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[f32], _| {
-                    downmix_into(data, channels, &mut mono);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let bytes = resampler
-                        .lock()
-                        .map(|mut r| r.push(&mono))
-                        .unwrap_or_default();
-                    if !bytes.is_empty() {
-                        push_recording(&buf, &bytes, &capped);
-                    }
-                },
-                err_cb_with_lost(stop.clone(), device_lost.clone()),
-                None,
-            )
-        }
-        SampleFormat::I16 => {
-            let buf = buffer.clone();
-            let capped = capped.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut mono: Vec<f32> = Vec::new();
-            let resampler = resampler.clone();
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[i16], _| {
-                    downmix_into(data, channels, &mut mono);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let bytes = resampler
-                        .lock()
-                        .map(|mut r| r.push(&mono))
-                        .unwrap_or_default();
-                    if !bytes.is_empty() {
-                        push_recording(&buf, &bytes, &capped);
-                    }
-                },
-                err_cb_with_lost(stop.clone(), device_lost.clone()),
-                None,
-            )
-        }
-        SampleFormat::U16 => {
-            let buf = buffer.clone();
-            let capped = capped.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut mono: Vec<f32> = Vec::new();
-            let resampler = resampler.clone();
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[u16], _| {
-                    downmix_into(data, channels, &mut mono);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let bytes = resampler
-                        .lock()
-                        .map(|mut r| r.push(&mono))
-                        .unwrap_or_default();
-                    if !bytes.is_empty() {
-                        push_recording(&buf, &bytes, &capped);
-                    }
-                },
-                err_cb_with_lost(stop.clone(), device_lost.clone()),
-                None,
-            )
-        }
-        SampleFormat::I32 => {
-            let buf = buffer.clone();
-            let capped = capped.clone();
-            let mut meter = Meter::new(level.clone());
-            let mut mono: Vec<f32> = Vec::new();
-            let resampler = resampler.clone();
-            let mut ld = LiveDetect::new(live.clone());
-            device.build_input_stream(
-                config,
-                move |data: &[i32], _| {
-                    downmix_into(data, channels, &mut mono);
-                    meter.push(rms(&mono));
-                    ld.feed(&mono);
-                    let bytes = resampler
-                        .lock()
-                        .map(|mut r| r.push(&mono))
-                        .unwrap_or_default();
-                    if !bytes.is_empty() {
-                        push_recording(&buf, &bytes, &capped);
-                    }
-                },
-                err_cb_with_lost(stop.clone(), device_lost.clone()),
-                None,
-            )
-        }
-        other => return Err(format!("unsupported sample format: {other:?}")),
-    }
-    .map_err(|e| e.to_string())?;
+    let stream = {
+        let buf = buffer.clone();
+        let capped = capped.clone();
+        let mut meter = Meter::new(level.clone());
+        let resampler = resampler.clone();
+        let mut ld = LiveDetect::new(live.clone());
+        build_mono_input(
+            &device,
+            config,
+            format,
+            channels,
+            move |mono| {
+                meter.push(rms(mono));
+                ld.feed(mono);
+                let bytes = resampler
+                    .lock()
+                    .map(|mut r| r.push(mono))
+                    .unwrap_or_default();
+                if !bytes.is_empty() {
+                    push_recording(&buf, &bytes, &capped);
+                }
+            },
+            err_cb_with_lost(stop.clone(), device_lost.clone()),
+        )?
+    };
 
     stream.play().map_err(|e| e.to_string())?;
     crate::audio::publish_levels_with_live(app, "stream://level", &level, &stop, Some(&live));

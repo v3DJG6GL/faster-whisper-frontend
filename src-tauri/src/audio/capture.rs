@@ -11,7 +11,7 @@
 //! denied or failing mic comes back as an error the mic test can end on, not a silent meter.
 
 use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{FromSample, Sample, SampleFormat, StreamConfig};
+use cpal::{Device, FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -93,32 +93,74 @@ impl Recorder {
     }
 }
 
-/// One pass over an interleaved block: down-mix each frame to mono (appended to
-/// `mono`, which is cleared first) and return the block RMS for the level meter.
-fn analyze<T: Copy>(data: &[T], channels: usize, mono: &mut Vec<f32>) -> f32
+/// Downmix to mono into a caller-owned scratch buffer (cleared first), so a per-buffer capture
+/// callback can reuse one `Vec` instead of allocating every ~10-20 ms.
+pub(crate) fn downmix_into<T: Copy>(data: &[T], channels: usize, out: &mut Vec<f32>)
 where
     f32: FromSample<T>,
 {
-    mono.clear();
-    if data.is_empty() || channels == 0 {
-        return 0.0;
+    out.clear();
+    if channels <= 1 {
+        out.extend(data.iter().map(|&s| f32::from_sample(s)));
+        return;
     }
-    let mut sum = 0.0f32;
+    out.reserve(data.len() / channels + 1);
     for frame in data.chunks(channels) {
         let mut acc = 0.0;
         for &s in frame {
             acc += f32::from_sample(s);
         }
-        let m = acc / frame.len() as f32;
-        mono.push(m);
-        sum += m * m;
+        out.push(acc / frame.len() as f32);
     }
-    let frames = mono.len();
-    if frames == 0 {
-        0.0
-    } else {
-        (sum / frames as f32).sqrt()
+}
+
+pub(crate) fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
     }
+    let sum: f32 = samples.iter().map(|s| s * s).sum();
+    (sum / samples.len() as f32).sqrt()
+}
+
+/// Open an input stream in any of the four sample formats the capture loops convert, handing
+/// `on_mono` each callback's block down-mixed to mono f32 (in one scratch buffer, reused).
+pub(crate) fn build_mono_input(
+    device: &Device,
+    config: StreamConfig,
+    format: SampleFormat,
+    channels: usize,
+    on_mono: impl FnMut(&[f32]) + Send + 'static,
+    err_cb: impl FnMut(cpal::Error) + Send + 'static,
+) -> Result<cpal::Stream, String> {
+    fn build<T: SizedSample>(
+        device: &Device,
+        config: StreamConfig,
+        channels: usize,
+        mut on_mono: impl FnMut(&[f32]) + Send + 'static,
+        err_cb: impl FnMut(cpal::Error) + Send + 'static,
+    ) -> Result<cpal::Stream, cpal::Error>
+    where
+        f32: FromSample<T>,
+    {
+        let mut mono: Vec<f32> = Vec::new();
+        device.build_input_stream(
+            config,
+            move |data: &[T], _| {
+                downmix_into(data, channels, &mut mono);
+                on_mono(&mono);
+            },
+            err_cb,
+            None,
+        )
+    }
+    match format {
+        SampleFormat::F32 => build::<f32>(device, config, channels, on_mono, err_cb),
+        SampleFormat::I16 => build::<i16>(device, config, channels, on_mono, err_cb),
+        SampleFormat::U16 => build::<u16>(device, config, channels, on_mono, err_cb),
+        SampleFormat::I32 => build::<i32>(device, config, channels, on_mono, err_cb),
+        other => return Err(format!("unsupported sample format: {other:?}")),
+    }
+    .map_err(|e| e.to_string())
 }
 
 /// Start capturing on the given device (or the default), emitting `audio://level`
@@ -222,78 +264,22 @@ fn run(
         }
     };
 
-    let stream = match sample_format {
-        SampleFormat::F32 => {
-            let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder {
-                clip: clip.clone(),
-                cap,
-            };
-            let mut mono: Vec<f32> = Vec::new();
-            device.build_input_stream(
-                config,
-                move |data: &[f32], _| {
-                    meter.push(analyze(data, channels, &mut mono));
-                    rec.push(&mono);
-                },
-                super::stream_errors::error_callback("audio", on_terminal()),
-                None,
-            )
-        }
-        SampleFormat::I16 => {
-            let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder {
-                clip: clip.clone(),
-                cap,
-            };
-            let mut mono: Vec<f32> = Vec::new();
-            device.build_input_stream(
-                config,
-                move |data: &[i16], _| {
-                    meter.push(analyze(data, channels, &mut mono));
-                    rec.push(&mono);
-                },
-                super::stream_errors::error_callback("audio", on_terminal()),
-                None,
-            )
-        }
-        SampleFormat::U16 => {
-            let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder {
-                clip: clip.clone(),
-                cap,
-            };
-            let mut mono: Vec<f32> = Vec::new();
-            device.build_input_stream(
-                config,
-                move |data: &[u16], _| {
-                    meter.push(analyze(data, channels, &mut mono));
-                    rec.push(&mono);
-                },
-                super::stream_errors::error_callback("audio", on_terminal()),
-                None,
-            )
-        }
-        SampleFormat::I32 => {
-            let mut meter = Meter::new(level_bits.clone());
-            let rec = Recorder {
-                clip: clip.clone(),
-                cap,
-            };
-            let mut mono: Vec<f32> = Vec::new();
-            device.build_input_stream(
-                config,
-                move |data: &[i32], _| {
-                    meter.push(analyze(data, channels, &mut mono));
-                    rec.push(&mono);
-                },
-                super::stream_errors::error_callback("audio", on_terminal()),
-                None,
-            )
-        }
-        other => return Err(format!("unsupported sample format: {other:?}")),
-    }
-    .map_err(|e| e.to_string())?;
+    let mut meter = Meter::new(level_bits.clone());
+    let rec = Recorder {
+        clip: clip.clone(),
+        cap,
+    };
+    let stream = build_mono_input(
+        &device,
+        config,
+        sample_format,
+        channels,
+        move |mono| {
+            meter.push(rms(mono));
+            rec.push(mono);
+        },
+        super::stream_errors::error_callback("audio", on_terminal()),
+    )?;
 
     stream.play().map_err(|e| e.to_string())?;
     // Lost while opening or in play()'s first moments: fail the start instead of reporting a test
