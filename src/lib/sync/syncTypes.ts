@@ -78,7 +78,8 @@ export type ChipField = (typeof CHIP_FIELDS)[number];
 /** The `chip` category: the chip subset of RecordingSettings. */
 export type SyncChip = Pick<RecordingSettings, ChipField>;
 
-/** The `recording` category: RecordingSettings minus the chip fields.
+/** The `recording` category: RecordingSettings minus the chip fields, plus the
+ *  dictation-history flags (DICTATION_HISTORY_FIELDS).
  *  `audioBaseDir` (and the legacy `recordingsDir`) are machine-specific paths: present
  *  only when the writing device's "Audio folder" switch (manifest id `audioFolder`,
  *  default off) is on, else passed through from the snapshot so an opted-out device
