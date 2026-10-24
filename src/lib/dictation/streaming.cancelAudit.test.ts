@@ -113,6 +113,12 @@ function topLevelFunctions(src: string): Record<string, string> {
   return out;
 }
 
+/** The two handler bodies most guards slice into, sliced once (bodyAfter masks the whole module per call). */
+const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
+/** The hard break's queued separator task (masked). */
+const separatorTask = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+
 describe("dictation teardowns cancel the in-flight translate", () => {
   // A translate started for a phrase that will never be injected keeps the
   // server generating tokens; each of these paths abandons that phrase.
@@ -203,8 +209,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
   // outlives its session types session A's leftovers into session B's window, and an ungated
   // one types a stop-timing session's text twice.
   const fns = topLevelFunctions(streamingSrc);
-  const finalBody = bodyAfter(streamingSrc, '"stream://final"');
-  const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
   const clears = (body: string) => /\bcarryText =\s+;/.test(mask(body)) && /\bcarrySep =\s+;/.test(mask(body));
 
   it("cancelLive and startLiveInner clear the carry", () => {
@@ -336,7 +340,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(skip).toBeLessThan(enter.indexOf("pressReturn("));
     // The boundary task stands down before BOTH its Enter and its separator (a newline
     // separator presses a real Return too).
-    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     const bskip = boundary.indexOf("if (lastPhraseDiverted) return;");
     expect(bskip, "boundary task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
     expect(bskip).toBeLessThan(boundary.indexOf("if (t.autoEnter)"));
@@ -362,14 +366,14 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const owed = enter.indexOf("if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;");
     expect(owed, "auto-Enter task must stand down in an app that owes no Return").toBeGreaterThanOrEqual(0);
     expect(owed).toBeLessThan(enter.indexOf("pressReturn("));
-    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     expect(boundary).toMatch(/if \(dirtyAtBreak && t\.appId === lastTypedApp && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
   });
 
   it("the hard-break separator goes only into the app the phrase was typed into", () => {
     // With Enter off, the separator took the window focused at the hard break: a " " landed in
     // the user's own draft there, and a newline separator's Return submitted it.
-    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     const autoEnter = boundary.indexOf("if (t.autoEnter)");
     const owed = boundary.indexOf("if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;", autoEnter);
     expect(owed, "separator must stand down in an app that owes no gap").toBeGreaterThan(autoEnter);
@@ -392,7 +396,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(mask(fns.clearPhraseEnd)).toMatch(/gapOwedApps\.clear\(\);\s+lastTypedApp = undefined;/);
     // All three Return/separator producers test it.
     expect(mask(fns.enqueueAutoEnter)).toContain("t.appId !== lastTypedApp");
-    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     expect(boundary.match(/lastTypedApp/g) ?? []).toHaveLength(2);
   });
 
@@ -420,7 +424,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(press.match(new RegExp(settled.source, "g")) ?? []).toHaveLength(1);
     expect(press.search(settled)).toBeGreaterThan(press.indexOf("injectText("));
     expect(mask(fns.enqueueAutoEnter)).toContain("pressReturn(t, cfg)");
-    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     expect(boundary.match(/pressReturn\(t, cfg\)/g) ?? []).toHaveLength(2);
     expect(boundary).not.toContain("autoEnter: true");
     // Never before a session's first phrase: every start and abandon resets it.
@@ -771,7 +775,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     await run(null, "", "B.", 0, 6, 1, true, "A. B. B.", "", copied.clipLastCopy, commonPrefixLen, t, calls);
     expect(calls).toEqual(["translate B.", "copy B.", "pulse clipboard"]);
     // A hard break and every start and abandon forget the copy with its window.
-    const boundaryLink = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>"));
+    const boundaryLink = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>"));
     expect(boundaryLink).toContain("clipLastCopy = null;");
     expect(mask(fns.clearPhraseEnd)).toContain("clipLastCopy = null;");
   });
@@ -792,7 +796,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
 
 describe("insertion gates the re-derivations must keep", () => {
   const fns = topLevelFunctions(streamingSrc);
-  const finalBody = bodyAfter(streamingSrc, '"stream://final"');
 
   it("applyReclassify keeps startLiveInner's insertTiming-off term on its live recompute", () => {
     // The closed handler's off-drop only runs when `live` is false, so an "off" session that a
@@ -1067,7 +1070,6 @@ describe("work that must wait for the queue or the cancel", () => {
     // typeOut would paste opening with three blank lines. The FIELD keeps its gap, so the live
     // insert hands Rust the bare block as its clipboard form (`clipboardText`) and every divert /
     // recovery arm writes that instead.
-    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     const final = mask(finalBody);
     expect(final).toMatch(/const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
     // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
@@ -1105,7 +1107,7 @@ describe("work that must wait for the queue or the cancel", () => {
       expect(bodyAfter(after, "else")).toContain("oweUtterance(uttRec, uttFrom)");
     }
     // A hard break hands them to the carry (or drops them), and the carry's drop drops them too.
-    const link = bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>");
+    const link = bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>");
     expect(link).toContain('{ kind: "break", carried: !!rest.trim() }');
     expect(topLevelFunctions(streamingSrc).noteDroppedCarry).toContain('{ kind: "drop" }');
   });
@@ -1134,16 +1136,16 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(at, "recordUtteranceFinal moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(mask(bodyAfter(streamingSrc.slice(at), "delta: string }"))).toContain("utteranceByOrdinal.set(ordinal, lastUtterance)");
     // Only the session's end forgets an utterance whose clip is still on its way.
-    expect(mask(bodyAfter(streamingSrc, '"stream://boundary"'))).not.toContain("utteranceByOrdinal");
+    expect(mask(boundaryBody)).not.toContain("utteranceByOrdinal");
     expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("utteranceByOrdinal.clear()");
   });
 
   it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
     // An inline arrow in the final handler shares the dropped task's closure scope (target,
     // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.
-    const finalBody = mask(bodyAfter(streamingSrc, '"stream://final"'));
-    expect(finalBody).toMatch(/!queued && uttRec\?\.id && uttRec\.delta\.trim\(\)\) oweDroppedInsert\(/);
-    expect(finalBody).not.toMatch(/injectChain = injectChain\.then\([^;]*oweUtterance\(/);
+    const final = mask(finalBody);
+    expect(final).toMatch(/!queued && uttRec\?\.id && uttRec\.delta\.trim\(\)\) oweDroppedInsert\(/);
+    expect(final).not.toMatch(/injectChain = injectChain\.then\([^;]*oweUtterance\(/);
     expect(mask(topLevelFunctions(streamingSrc).oweDroppedInsert)).toContain("insertCfg === cfg");
   });
 
@@ -1195,8 +1197,6 @@ describe("work that must wait for the queue or the cancel", () => {
     // break, its 5 s idle release or a stop — long after the quiet timer moved the baseline and
     // closed the window. The release then replaced "Das ist das" on the clipboard with "neue."
     // alone, and booked its translation as a window of its own.
-    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
-    const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
     const timer = mask(fns.bumpPhraseEnd);
     // The timer keeps the window it closes, from the baseline BEFORE it moves, and only when the
     // session has seen ordinals (an old server's finals all look like releases).
@@ -1242,7 +1242,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // releases only between utterances, so new speech always lands that final first.
     expect(mask(bodyAfter(streamingSrc, '"stream://partial"'))).not.toContain("clipClosed");
     expect(mask(bodyAfter(streamingSrc, '"stream://utterance"'))).not.toContain("clipClosed");
-    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    const final = mask(finalBody);
     expect(final.match(/clipClosed = null;/g)).toEqual(["clipClosed = null;"]);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
   });
@@ -1251,14 +1251,13 @@ describe("work that must wait for the queue or the cancel", () => {
     // A typed window (paste/direct) closed by the pause, then focus on a clipboard-routed app
     // before the release: reopening copied the already-typed phrase again and re-booked its
     // translation on top of the typed path's booking — History and every track held it twice.
-    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     // The pause's link records whether a copy landed in the window it closes, and resets the flag
     // with the window — as does a hard break's link and every start and abandon.
     expect(streamingSrc).toMatch(/type ClosedClipWindow = \{[^}]*landed: boolean;[^}]*\};/);
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
     expect(link).toContain("closing.landed = clipLanded;");
     expect(link.indexOf("clipLanded = false;")).toBeGreaterThan(link.indexOf("closing.landed = clipLanded;"));
-    const boundaryLink = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>"));
+    const boundaryLink = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>"));
     expect(boundaryLink).toMatch(/clipBooked = null;\s+clipLanded = false;/);
     expect(mask(fns.clearPhraseEnd)).toContain("clipLanded = false;");
     // Only a landed clipboard copy outside a release marks the window.
@@ -1279,22 +1278,21 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("a hard break closes the clipboard window in its chained link, not synchronously", () => {
-    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
-    const link = mask(bodyAfter(boundary, "injectChain = injectChain.then(() =>"));
+    const link = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>"));
     expect(link).toContain("clipBooked = null");
     expect(link).toContain("flushClipByLang(");
-    expect(mask(boundary).split("clipBooked = null").length, "only the link may close the window").toBe(2);
+    expect(mask(boundaryBody).split("clipBooked = null").length, "only the link may close the window").toBe(2);
   });
 
   it("a hard break decides its restore backstop in the queue, not synchronously", () => {
     // Same race as the phrase-end timer: a phrase task still awaiting its translate sets
     // clipDirty after the break, so a synchronous read misses the debt and a synchronous
     // clear wipes it.
-    const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
-    const link = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(async () =>"));
+    const boundary = mask(boundaryBody);
+    const link = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(async () =>"));
     expect(link).toContain("giveClipboardBack(");
     // The separator task is queued too (enqueueInject): its own restore may clear the debt it paid.
-    const sepTask = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
+    const sepTask = separatorTask;
     for (const step of ["clipDirty && beganInjection", "clipDirty = false"]) {
       expect(link, `${step} must run inside the queued link`).toContain(step);
       const queued = link.split(step).length + sepTask.split(step).length - 1;
@@ -1303,8 +1301,7 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("the separator task restores through the shared helper", () => {
-    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
-    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const task = separatorTask;
     const at = task.indexOf("&& landed && beganInjection)");
     expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(bodyAfter(task, "&& landed && beganInjection)")).toContain("giveClipboardBack(");
@@ -1313,8 +1310,7 @@ describe("work that must wait for the queue or the cancel", () => {
   it("the separator withholds itself instead of diverting to the clipboard", () => {
     // A Rust divert (chord still held, focus moved) would make a lone " " the clipboard's
     // persistent owner over the user's copy; a separator has nothing to recover, so it opts out.
-    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
-    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const task = separatorTask;
     const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(task.slice(call, task.indexOf("});", call))).toContain("withholdOnDivert: true");
@@ -1328,7 +1324,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // back to the bare "\n" or " ": a divert made it the clipboard's owner over the user's copy
     // (or the block diverted just before it), and a failed insert's recovery copied it with an
     // "it's on the clipboard" flash. A word-less "?" is not whitespace and keeps both.
-    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    const final = mask(finalBody);
     const call = final.indexOf("injectText({ text: typeOut, clipboardText,");
     expect(call, "the live phrase insert moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(final.slice(0, call)).toMatch(/const spacingOnly = !typeOut\.trim\(\);/);
@@ -1344,8 +1340,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // The separator passes restoreClipboard: false, so Rust's failed-paste restore has nothing to
     // put back and the call rejects: without a catch the `landed` gate never ran and a lone " "
     // sat on the clipboard over the user's copy.
-    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
-    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const task = separatorTask;
     const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const tryAt = task.lastIndexOf("try {", call);
@@ -1367,8 +1362,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // Reusing the snapshot taken before the LAST phrase would, once the quiet timer gave the
     // clipboard back, replace a copy the user made before the hard break with that older
     // content — on a landed separator and from the catch alike.
-    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
-    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const task = separatorTask;
     const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const begin = task.lastIndexOf("beginInjection(", call);
@@ -1385,7 +1379,7 @@ describe("work that must wait for the queue or the cancel", () => {
   it("the phrase task takes its snapshot through the same gate", () => {
     // A JS "the clipboard holds our text" flag cannot see a copy the user made since: only a
     // paste still owed a restore (clipDirty) skips the read; Rust's is_own_injected decides the rest.
-    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    const final = mask(finalBody);
     const begin = final.indexOf("await beginInjection()");
     expect(begin, "the phrase task's snapshot moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(final.slice(final.lastIndexOf("if (", begin), begin)).toMatch(SNAPSHOT_GATE);
@@ -1404,7 +1398,7 @@ describe("work that must wait for the queue or the cancel", () => {
   it("a multi-line separator presses a Return per line break and sends the text between", () => {
     // "\n\n" (a blank line) needs two Returns and ".\n" keeps its ".": the carry and the Live
     // dictation preview have the separator exactly as written.
-    const boundary = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
+    const boundary = separatorTask;
     const loop = boundary.indexOf("for (let i = 0; i < parts.length; i++)");
     expect(loop, "the separator loop moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     // A CRLF or lone CR is one break (as Rust's sanitize_injected and the carry have it), not a
@@ -1423,7 +1417,7 @@ describe("work that must wait for the queue or the cancel", () => {
   it("a landed separator's restore pays the debt, so the backstop does not restore it again", () => {
     // The quiet timer's restore was dropped by the boundary, so clipDirty was still set: the
     // separator restored after its paste and then the backstop link restored the same snapshot.
-    const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
+    const boundary = mask(boundaryBody);
     expect(boundary).toMatch(
       /&& landed && beganInjection\) \{\s+await giveClipboardBack\(\);\s+if \(insertCfg === cfg\) clipDirty = false;\s+\}/,
     );
