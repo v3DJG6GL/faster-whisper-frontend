@@ -137,13 +137,14 @@ export function Combobox({
     }
   }, [candidates.length, open]);
 
+  /** End the popover session: close, clear the highlight, and drop an ArrowDown armed before the list loaded. */
+  const dismiss = () => { wantFirstRef.current = false; setOpen(false); setActive(-1); };
+
   function choose(word: string | undefined) {
     // A keyboard pick reads candidates[active]; guard against a stale active index that
     // momentarily exceeds a just-shrunk candidate list (would pass undefined to onSelect).
     if (word == null) return;
-    wantFirstRef.current = false;
-    setOpen(false);
-    setActive(-1);
+    dismiss();
     // The value is now a committed pick, not a typed query — a reopen (ArrowDown or click)
     // must show the whole pool, not filter by what was just chosen.
     setTyped(false);
@@ -173,15 +174,13 @@ export function Combobox({
         break;
       case "Escape":
         // Closes the (possibly undrawn) list either way; only a drawn one keeps the Esc from the window.
-        wantFirstRef.current = false;
         if (listOwnsKey(e.key, showPopover)) e.stopPropagation();
-        setOpen(false);
-        setActive(-1);
+        dismiss();
         break;
       case "Tab":
         // Accept a highlighted option on Tab (fast entry); else just close.
         if (showPopover && active >= 0) { e.preventDefault(); choose(candidates[active]); }
-        else { wantFirstRef.current = false; setOpen(false); setActive(-1); }
+        else dismiss();
         break;
     }
   }
@@ -217,7 +216,7 @@ export function Combobox({
             e.stopPropagation();
             return;
           }
-          wantFirstRef.current = false; setOpen(false); setActive(-1); setTyped(false);
+          dismiss(); setTyped(false);
         }}
         onKeyDown={onKeyDown}
       />
