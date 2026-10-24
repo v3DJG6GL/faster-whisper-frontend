@@ -308,10 +308,10 @@ pub fn repair_topmost(app: &AppHandle) {
     });
 }
 
-/// Make the (display-only) chip click-through so the big mostly-transparent window
-/// never swallows clicks meant for the app beneath. MUST be called only AFTER
-/// `show()` — on GTK/KDE-Wayland calling it on a still-hidden (unrealized) window
-/// unwraps a `None` in tao and aborts the whole app.
+/// Make the whole chip window click-through so the big mostly-transparent window
+/// never swallows clicks meant for the app beneath (the hit region re-enables the chip
+/// itself). MUST be called only AFTER `show()` — on GTK/KDE-Wayland calling it on a
+/// still-hidden (unrealized) window unwraps a `None` in tao and aborts the whole app.
 fn ignore_cursor(win: &WebviewWindow) {
     let _ = win.set_ignore_cursor_events(true);
 }
@@ -337,14 +337,14 @@ pub fn hide_overlay(app: AppHandle) {
 /// Shape the chip window's *input* region to a single rectangle = the visible chip
 /// bounds (reported by the webview in CSS px). Only that rectangle captures the cursor;
 /// the rest of the big transparent strip stays click-through. This is what lets the chip
-/// be *hovered* (to reveal the active Profile's language/mode) without the window
+/// be hovered (detail reveal) and its quick-launch buttons clicked without the window
 /// swallowing clicks meant for apps beneath it.
 ///
 /// Linux applies it as a GDK input shape; Windows has no input-shape API, so the
 /// rect instead feeds the `win_hover` poller, which flips whole-window cursor
 /// pass-through at the rect's boundary. On any failure — or other platforms — nothing
 /// changes: the window stays fully click-through from show time, so the tag still shows
-/// and only hover-reveal is unavailable. Never panics.
+/// and only hover-reveal and the buttons are unavailable. Never panics.
 #[tauri::command]
 pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persist: bool) {
     let Some(win) = app.get_webview_window("overlay") else {
