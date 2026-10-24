@@ -378,8 +378,8 @@ fn under(dir: &std::path::Path, path: &std::path::Path) -> bool {
     }
 }
 
-/// Whether the export `dest` would land inside storage this app manages (the audio base's
-/// own subfolders and heal stamp, or the app data dir): an export must never land there.
+/// Whether the export `dest` would land inside storage this app manages (what counts:
+/// `inside_managed_storage`): an export must never land there.
 /// `dest`'s parent must exist (the callers check it first).
 fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, dest: &Path) -> bool {
     let base = resolve_audio_base(app, audio_base);
