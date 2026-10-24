@@ -147,7 +147,7 @@ fn linux_server_inventory(snap: &super::pulse::Snapshot, include_paths: bool) ->
     }
 }
 
-/// No sound server: one microphone per ALSA card, opened through its shared path.
+/// No sound server: one microphone per ALSA card, opened through its best-ranked path (shared first).
 #[cfg(target_os = "linux")]
 fn linux_alsa_inventory(include_paths: bool) -> MicInventory {
     let mics = alsa_cards()
@@ -456,7 +456,7 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
         if !legacy_alsa_fallback(persist, served, super::pulse::held()) {
             return None;
         }
-        // The card's shared ALSA path.
+        // The card's best-ranked ALSA path (shared `sysdefault:` when the card has one).
         let card = alsa_paths::card_label(name);
         alsa_cards_of(inputs.get_or_insert_with(host::native_inputs))
             .into_iter()
