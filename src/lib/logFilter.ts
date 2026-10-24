@@ -120,8 +120,9 @@ export function foldLines(lines: readonly LogLine[]): FoldedLine[] {
 
 /** The top row's key and the run it was given to. A row is keyed by its `firstSeq`, but at
  *  buffer cap the oldest lines are trimmed from the front, and the top run's `firstSeq` moves
- *  with every evicting batch — the row remounted (focus lost from its ×N button), its measured
- *  height reset and an expansion snapped shut. Only the top row can lose its head that way. */
+ *  with every evicting batch — keyed by it, the row would remount (focus lost from its ×N
+ *  button), reset its measured height and snap an expansion shut. Only the top row can lose
+ *  its head that way. */
 export interface HeadKey {
   key: number;
   firstSeq: number;
@@ -194,13 +195,10 @@ export interface BugReportHeader {
   backend: string | null;
   model: string | null;
   profile: string | null;
-  /** What the reported run actually DID.
-   *
-   *  The header used to name only a backend and a model, and it read them
-   *  from the Transcribe screen's settings — so a dictation bug report named
-   *  a model that never ran. These come from the last session instead, and
-   *  they name the stages, because "the French came out wrong" is
-   *  unactionable without the targets and the translation model. */
+  /** What the reported run actually DID, read from the last recorded run (not the
+   *  Transcribe screen's settings, which name a model a dictation never ran). The
+   *  stages are named because "the French came out wrong" is unactionable without
+   *  the targets and the fact that translation ran at all. */
   route?: string | null;
   stages?: string | null;
   source?: string | null;
