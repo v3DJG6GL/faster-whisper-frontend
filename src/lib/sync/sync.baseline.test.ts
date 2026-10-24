@@ -1907,6 +1907,13 @@ describe("sanitizers trim overrideProfile", () => {
   });
 });
 
+/** End a fresh-engine launch case: free the parked launch read, then turn sync off (cancels the
+ *  startup pull's scheduled push). */
+function endLaunch(io: { release: (v: Record<string, string>) => void }, store: typeof useApp): void {
+  io.release({});
+  store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+}
+
 // initSync holds the engine lock across the launch work (the keyring restore parks up to 10 s on a
 // locked wallet), and a manual Push / Pull clicked then must not drop at the gate without a word —
 // the startup pull that follows is an automatic one, so the forced push would never happen. A fresh
@@ -2003,9 +2010,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       expect(io.pushes[0].afterRelease).toBe(true);
       expect(io.pushes[0].blob.backends?.secrets).toEqual({ b1: "sk-1" });
     } finally {
-      io.release({});
-      // Sync off: cancels the startup pull's scheduled push.
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2042,8 +2047,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       await click;
       expect(io.pushes).toEqual([]);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2061,8 +2065,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       expect(io.pushes.length).toBeGreaterThan(0); // the click ran
       expect(io.pushes.every((p) => p.afterRelease)).toBe(true);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2076,8 +2079,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       await Promise.all(clicks);
       expect(io.pushes.length).toBe(1);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2093,8 +2095,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       await Promise.all([before, after]);
       expect(io.pushes.length).toBe(1);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2110,8 +2111,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       expect(io.pulls).toBe(2); // the startup pull and the click
       expect(io.pushes.length).toBeGreaterThan(0); // the Push click (a forced pull may add one)
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2133,8 +2133,7 @@ describe("a manual Push / Pull clicked during launch", () => {
       expect(io.pushes.length).toBe(1);
     } finally {
       endDelete();
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 });
@@ -2261,8 +2260,7 @@ describe("a sync edit made during the launch work", () => {
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2290,8 +2288,7 @@ describe("a sync edit made during the launch work", () => {
       expect(io.pushes).toBe(0);
       expect(store.getState().settings.logging?.logLevel).toBe("warn"); // nothing decided for the user
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2310,8 +2307,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2329,8 +2325,7 @@ describe("a sync edit made during the launch work", () => {
       await engine.pushNow(true); // the dialog waits: no push goes up meanwhile
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2354,8 +2349,7 @@ describe("a sync edit made during the launch work", () => {
       expect(io.pushes).toBe(1);
       expect(store.getState().settings.logging?.logLevel).toBe("warn");
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2377,8 +2371,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2393,8 +2386,7 @@ describe("a sync edit made during the launch work", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2430,8 +2422,7 @@ describe("a sync edit made during the launch work", () => {
       expect(io.saved?.freshGates).toEqual(["logRetention"]);
       expect(io.saved?.freshCats).toBeUndefined();
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2449,8 +2440,7 @@ describe("a sync edit made during the launch work", () => {
       expect(io.pushed?.logging).toMatchObject({ showInSidebar: false, keepDays: 30, logLevel: "debug" });
       expect(io.saved?.freshGates).toBeUndefined();
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2468,8 +2458,7 @@ describe("a sync edit made during the launch work", () => {
       expect(store.getState().settings.logging).toMatchObject({ keepDays: 30, showInSidebar: false });
       expect(io.pushed?.logging).toMatchObject({ keepDays: 30, showInSidebar: false });
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2492,8 +2481,7 @@ describe("a sync edit made during the launch work", () => {
       expect(store.getState().settings.logging).toMatchObject({ keepDays: 90, logLevel: "debug" });
       expect(io.pushed?.logging).toMatchObject({ keepDays: 90, logLevel: "debug" });
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2512,8 +2500,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(io.pushed?.logging).toMatchObject({ logLevel: "warn", keepDays: 30 }));
       expect(store.getState().settings.logging?.keepDays).toBe(90);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2530,8 +2517,7 @@ describe("a sync edit made during the launch work", () => {
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushed?.logging).toMatchObject({ logDir: "/var/log/me" });
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2551,8 +2537,7 @@ describe("a sync edit made during the launch work", () => {
       expect(store.getState().settings.logging).toMatchObject({ logLevel: "info", logDir: "/var/log/me" });
       expect(io.pushed?.logging).toMatchObject({ logLevel: "info", logDir: "/var/log/me" });
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2572,8 +2557,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(store.getState().backends.map((b) => b.name)).toEqual(["local", "three!"]));
       expect(engine.getPendingConflict()).toBeNull();
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2591,8 +2575,7 @@ describe("a sync edit made during the launch work", () => {
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2607,8 +2590,7 @@ describe("a sync edit made during the launch work", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2623,8 +2605,7 @@ describe("a sync edit made during the launch work", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2648,8 +2629,7 @@ describe("a sync edit made during the launch work", () => {
       expect(io.pulls).toBe(pullsBefore + 2);
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2675,8 +2655,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(engine.getPendingConflict()).toBeNull());
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2695,8 +2674,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       expect(io.deletes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2721,8 +2699,7 @@ describe("a sync edit made during the launch work", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2743,8 +2720,7 @@ describe("a sync edit made during the launch work", () => {
       await new Promise((r) => setTimeout(r, 30));
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2759,8 +2735,7 @@ describe("a sync edit made during the launch work", () => {
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
       expect(io.pushes).toBe(0);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2775,8 +2750,7 @@ describe("a sync edit made during the launch work", () => {
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushes).toBe(0); // the automatic push is still 3 s out
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 
@@ -2797,8 +2771,7 @@ describe("a sync edit made during the launch work", () => {
       expect(store.getState().syncError).toMatch(/keyring/);
       expect(store.getState().backends[0].hasApiKey).toBe(true);
     } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      endLaunch(io, store);
     }
   });
 });
