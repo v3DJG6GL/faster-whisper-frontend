@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { type VideoProgress } from "@/lib/types";
 import { videoTerminal } from "@/lib/transcribeRun";
 import { aboutLeft, fmtElapsed, STAGE_COLORS } from "@/components/transcribe/railTheme";
-import { RailChip } from "@/components/transcribe/RailChip";
+import { RailChip, RailSuffix } from "@/components/transcribe/RailChip";
 
 /** The Video row: the kept copy's own download, hanging off the Audio
  *  stage by a dashed connector — its own status word, its own clock, a
@@ -70,9 +70,7 @@ export function VideoBranchRow({
         <div className="flex items-baseline justify-between gap-3">
           <span className="text-[13px] font-medium text-dim">
             Video
-            {v.state === "failed" && v.error ? (
-              <span className="font-normal text-faint"> — {safeDisplayText(v.error, 120)}</span>
-            ) : null}
+            {v.state === "failed" && v.error ? <RailSuffix>{safeDisplayText(v.error, 120)}</RailSuffix> : null}
           </span>
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
             <span className={tone}>{word}</span>

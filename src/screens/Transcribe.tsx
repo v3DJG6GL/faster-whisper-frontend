@@ -64,7 +64,7 @@ import {
 import { OtherTranslateRuns } from "@/components/transcribe/OtherTranslateRuns";
 import { RungPicker } from "@/components/transcribe/RungPicker";
 import { StageSwitch } from "@/components/transcribe/StageSwitch";
-import { RailChip } from "@/components/transcribe/RailChip";
+import { RailChip, RailSuffix } from "@/components/transcribe/RailChip";
 import { VideoBranchRow } from "@/components/transcribe/VideoBranchRow";
 import {
   aboutLeft, AXIS_NAMES, fmtElapsed, RAIL_DESCRIPTIONS, RAIL_NAMES, STAGE_COLORS, UNIT_LABELS, UNIT_NOUN,
@@ -2555,24 +2555,12 @@ export default function Transcribe() {
                           )}
                         >
                           {RAIL_NAMES[st]}
-                          {waiting && (
-                            <span className="font-normal text-faint"> — waiting for a server slot…</span>
-                          )}
-                          {analyzing && (
-                            <span className="font-normal text-faint">
-                              {" "}— {vadOn ? "skipping silence…" : "analyzing audio…"}
-                            </span>
-                          )}
-                          {resolving && (
-                            <span className="font-normal text-faint"> — resolving link…</span>
-                          )}
-                          {preparing && (
-                            <span className="font-normal text-faint"> — preparing audio…</span>
-                          )}
+                          {waiting && <RailSuffix>waiting for a server slot…</RailSuffix>}
+                          {analyzing && <RailSuffix>{vadOn ? "skipping silence…" : "analyzing audio…"}</RailSuffix>}
+                          {resolving && <RailSuffix>resolving link…</RailSuffix>}
+                          {preparing && <RailSuffix>preparing audio…</RailSuffix>}
                           {fetchingModel && (
-                            <span className="font-normal text-faint">
-                              {" "}— {planStage?.phase === "loading" ? "loading the model…" : "fetching the model…"}
-                            </span>
+                            <RailSuffix>{planStage?.phase === "loading" ? "loading the model…" : "fetching the model…"}</RailSuffix>
                           )}
                         </span>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">

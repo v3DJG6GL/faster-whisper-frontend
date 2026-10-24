@@ -9,3 +9,8 @@ export function RailChip({ value, children }: { value?: ReactNode; children?: Re
     </span>
   );
 }
+
+/** A rail row name's quiet " — phase" suffix ("Transcribe — analyzing audio…"). */
+export function RailSuffix({ children }: { children: ReactNode }) {
+  return <span className="font-normal text-faint"> — {children}</span>;
+}
