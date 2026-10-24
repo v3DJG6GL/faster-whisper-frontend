@@ -153,7 +153,6 @@ mod tests {
         let mut r = Resampler16k::new(48_000).unwrap();
         // Fewer than one input block → buffered, nothing emitted yet.
         assert!(r.push(&vec![0.3f32; 100]).is_empty());
-        // Flush pads + resamples that tail.
         assert!(!r.flush().is_empty());
     }
 }
