@@ -58,6 +58,24 @@ pub struct InjectOutcome {
     pub diverted: bool,
 }
 
+impl InjectOutcome {
+    /// Typed or pasted: the text reached the target.
+    const LANDED: Self = Self {
+        landed: true,
+        diverted: false,
+    };
+    /// Nothing went out and nothing was delivered: a re-send is safe (see `landed`).
+    const NOT_LANDED: Self = Self {
+        landed: false,
+        diverted: false,
+    };
+    /// Delivered by leaving the transcript on the clipboard instead.
+    const DIVERTED: Self = Self {
+        landed: true,
+        diverted: true,
+    };
+}
+
 /// `set_clipboard_persistent` off the async runtime. It blocks on its serving thread's answer —
 /// on Windows for up to `CLIP_IDLE_WAIT` + 250ms while another program holds the clipboard — and
 /// `inject_text` is async, so calling it inline parks a runtime worker for that long. Still
@@ -158,10 +176,7 @@ pub(crate) async fn inject_text(
     // unlike detecting other apps' focused fields. The transcript still shows in the chip.
     if own_window_focused(&app) {
         tracing::info!("[inject] skipped: our own window holds focus");
-        return Ok(InjectOutcome {
-            landed: false,
-            diverted: false,
-        });
+        return Ok(InjectOutcome::NOT_LANDED);
     }
     // Clipboard-only types no keystrokes, so it needs no modifier gate (the own-window guard
     // above already ran).
@@ -174,10 +189,7 @@ pub(crate) async fn inject_text(
         let discarded = move || crate::inject::cancel_discards(epoch, withhold_on_divert);
         if discarded() {
             tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
-            return Ok(InjectOutcome {
-                landed: true,
-                diverted: false,
-            });
+            return Ok(InjectOutcome::LANDED);
         }
         if !text.is_empty() {
             // `landed: false` on a failed write is safe: no keystroke is ever synthesized on this
@@ -187,17 +199,9 @@ pub(crate) async fn inject_text(
             match persist_off_runtime_unless(clip_text.clone(), discarded).await {
                 Err(e) => {
                     tracing::warn!("[inject] clipboard-only insert failed: {e}");
-                    return Ok(InjectOutcome {
-                        landed: false,
-                        diverted: false,
-                    });
+                    return Ok(InjectOutcome::NOT_LANDED);
                 }
-                Ok(false) => {
-                    return Ok(InjectOutcome {
-                        landed: true,
-                        diverted: false,
-                    })
-                }
+                Ok(false) => return Ok(InjectOutcome::LANDED),
                 Ok(true) => {}
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
@@ -209,10 +213,7 @@ pub(crate) async fn inject_text(
                 crate::inject::note_recovery_on_clipboard();
             }
         }
-        return Ok(InjectOutcome {
-            landed: true,
-            diverted: false,
-        });
+        return Ok(InjectOutcome::LANDED);
     }
     // Nothing to type and no Enter to send → bail before the keystroke paths. Without this, the
     // Wayland PASTE branch below would set_clipboard("") — clobbering the user's clipboard with an
@@ -220,10 +221,7 @@ pub(crate) async fn inject_text(
     // emitted only control chars). Mirrors the X11 inject::inject guard. (empty + auto_enter still
     // falls through below to send the bare Enter.)
     if text.is_empty() && !auto_enter {
-        return Ok(InjectOutcome {
-            landed: true,
-            diverted: false,
-        });
+        return Ok(InjectOutcome::LANDED);
     }
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
@@ -293,10 +291,7 @@ pub(crate) async fn inject_text(
     // next insert.
     if own_window_focused(&app) {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
-        return Ok(InjectOutcome {
-            landed: false,
-            diverted: false,
-        });
+        return Ok(InjectOutcome::NOT_LANDED);
     }
     // Consumed UNCONDITIONALLY (no `!modifiers_stuck &&` short-circuit): a latch left armed by a
     // true positive would divert the NEXT, legitimate injection too. Guarded on `!text.is_empty()`
@@ -365,10 +360,7 @@ pub(crate) async fn inject_text(
         let discarded = move || crate::inject::cancel_discards(epoch, withhold_on_divert);
         if discarded() {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
-            return Ok(InjectOutcome {
-                landed: true,
-                diverted: false,
-            });
+            return Ok(InjectOutcome::LANDED);
         }
         // A divert the caller opted out of: nothing written, so nothing for the session-end restore
         // to step around, and `landed: false` tells the caller the text never went out. Keyed on
@@ -376,10 +368,7 @@ pub(crate) async fn inject_text(
         // still a transcript and keeps its divert. The empty bare Enter keeps its own arm.
         if withhold_on_divert && !text.is_empty() {
             tracing::info!("[inject] diverted separator withheld");
-            return Ok(InjectOutcome {
-                landed: false,
-                diverted: false,
-            });
+            return Ok(InjectOutcome::NOT_LANDED);
         }
         if !text.is_empty() {
             // `landed: false` on a failed write: on `true` the caller advances its baseline and
@@ -389,17 +378,9 @@ pub(crate) async fn inject_text(
             match persist_off_runtime_unless(clip_text.clone(), discarded).await {
                 Err(e) => {
                     tracing::warn!("[inject] divert to clipboard failed: {e}");
-                    return Ok(InjectOutcome {
-                        landed: false,
-                        diverted: false,
-                    });
+                    return Ok(InjectOutcome::NOT_LANDED);
                 }
-                Ok(false) => {
-                    return Ok(InjectOutcome {
-                        landed: true,
-                        diverted: false,
-                    })
-                }
+                Ok(false) => return Ok(InjectOutcome::LANDED),
                 Ok(true) => {}
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
@@ -599,10 +580,7 @@ pub(crate) async fn inject_text(
             );
             if gate == SinkGate::Cancelled {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
-                return Ok(InjectOutcome {
-                    landed: true,
-                    diverted: false,
-                });
+                return Ok(InjectOutcome::LANDED);
             }
             if gate == SinkGate::OwnWindow {
                 tracing::info!(
@@ -627,25 +605,16 @@ pub(crate) async fn inject_text(
                         tracing::warn!(
                             "[inject] recovery to clipboard failed at the write guard: {e}"
                         );
-                        return Ok(InjectOutcome {
-                            landed: false,
-                            diverted: false,
-                        });
+                        return Ok(InjectOutcome::NOT_LANDED);
                     }
                     // The session-restore guard is armed here, not by the recovery block at the
                     // end of this function: this early `return` skips it. (The error teardown
                     // refocusing our own window is what makes this arm fire.)
                     crate::inject::note_recovery_on_clipboard();
                     crate::inject::note_delivered_unless_user_cancelled(epoch);
-                    return Ok(InjectOutcome {
-                        landed: true,
-                        diverted: true,
-                    });
+                    return Ok(InjectOutcome::DIVERTED);
                 }
-                return Ok(InjectOutcome {
-                    landed: false,
-                    diverted: false,
-                });
+                return Ok(InjectOutcome::NOT_LANDED);
             }
             // Both arms write through the live owner (`set_clipboard` is `persist_transcript`): a
             // plain write would be dropped when it returns (no data-control — GNOME through
@@ -732,10 +701,7 @@ pub(crate) async fn inject_text(
                         "[inject] separator not pasted (our own window took focus) — withheld"
                     );
                     crate::inject::restore_clipboard_later(prev);
-                    return Ok(InjectOutcome {
-                        landed: true,
-                        diverted: false,
-                    });
+                    return Ok(InjectOutcome::LANDED);
                 }
                 tracing::info!(
                     "[inject] our own window took focus before the paste chord — left on the clipboard"
@@ -756,10 +722,7 @@ pub(crate) async fn inject_text(
                 // Delivered — and after this paste's `note_paste_target` above, which cleared the
                 // flag: the session-end restore must not serve the snapshot over it.
                 crate::inject::note_delivered_unless_user_cancelled(epoch);
-                return Ok(InjectOutcome {
-                    landed: true,
-                    diverted: true,
-                });
+                return Ok(InjectOutcome::DIVERTED);
             }
             // Restore the user's prior clipboard only if the paste landed; a failed one leaves the
             // transcript on the clipboard to paste manually.
@@ -877,25 +840,13 @@ pub(crate) fn settle_outcome(
     epoch: u64,
 ) -> Result<InjectOutcome, String> {
     let outcome = res.map(|landed| match landed {
-        crate::inject::Landed::Yes => InjectOutcome {
-            landed: true,
-            diverted: false,
-        },
+        crate::inject::Landed::Yes => InjectOutcome::LANDED,
         // Recovered by `inject_text`'s error-abort block: the text IS somewhere the user can reach,
         // and "nothing written" would make the caller re-issue an insert landing in the same
         // place. The Wayland own-window arm answers the same.
-        crate::inject::Landed::NothingWritten if recovered => InjectOutcome {
-            landed: true,
-            diverted: true,
-        },
-        crate::inject::Landed::NothingWritten => InjectOutcome {
-            landed: false,
-            diverted: false,
-        },
-        crate::inject::Landed::OnClipboard => InjectOutcome {
-            landed: true,
-            diverted: true,
-        },
+        crate::inject::Landed::NothingWritten if recovered => InjectOutcome::DIVERTED,
+        crate::inject::Landed::NothingWritten => InjectOutcome::NOT_LANDED,
+        crate::inject::Landed::OnClipboard => InjectOutcome::DIVERTED,
     });
     if outcome.as_ref().is_ok_and(|o| o.diverted) {
         crate::inject::note_delivered_unless_user_cancelled(epoch);
