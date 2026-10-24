@@ -912,6 +912,11 @@ function isReservedBackendId(id: unknown): boolean {
 /** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
 const CONTEXT_SEGMENTS_MAX = 10;
 
+/** A finite number rounded and clamped to [lo, hi]; anything else is `undefined` (= drop, keep local). */
+function roundedIn(v: unknown, lo: number, hi: number): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : undefined;
+}
+
 /** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
  *  opaque JSON and forwards `contextSegments` into an `Option<u32>` IPC field on every dictation
  *  translation, so a fractional or negative value would fail that call — it is an integer 0–10
@@ -920,14 +925,12 @@ const CONTEXT_SEGMENTS_MAX = 10;
  *  later `save_config`, and truncates an emoji-heavy glossary the server keeps whole. */
 export function clampTranslationOverrides(v: unknown): TranslationOverrides | undefined {
   if (!isPlainObject(v)) return undefined;
-  const cs = v.contextSegments;
   const out: TranslationOverrides = {
     translateTo: Array.isArray(v.translateTo)
       ? v.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, TRANSLATION_MAX_TARGETS)
       : undefined,
     model: typeof v.model === "string" ? capCodePoints(v.model, 200) : undefined,
-    contextSegments:
-      typeof cs === "number" && Number.isFinite(cs) ? Math.min(CONTEXT_SEGMENTS_MAX, Math.max(0, Math.round(cs))) : undefined,
+    contextSegments: roundedIn(v.contextSegments, 0, CONTEXT_SEGMENTS_MAX),
     glossary: typeof v.glossary === "string" ? capCodePoints(v.glossary, 4000) : undefined,
     mode: v.mode === "fluent" || v.mode === "faithful" ? v.mode : undefined,
     includeOriginal: v.includeOriginal == null ? undefined : v.includeOriginal === true,
@@ -1227,29 +1230,20 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
     const b = ownProp(v, k);
     if (typeof b === "boolean") out[k] = b;
   }
-  const days = (k: string, max: number) => {
-    const n = ownProp(v, k);
-    if (typeof n === "number" && Number.isFinite(n)) {
-      out[k] = Math.max(0, Math.min(max, Math.round(n)));
-    }
+  const int = (k: string, lo: number, hi: number) => {
+    const n = roundedIn(ownProp(v, k), lo, hi);
+    if (n !== undefined) out[k] = n;
   };
-  days("historyRetentionDays", 3650);
-  days("dictationRetentionDays", 3650);
-  const spk = ownProp(v, "numSpeakers");
-  if (typeof spk === "number" && Number.isFinite(spk)) {
-    out.numSpeakers = Math.max(0, Math.min(32, Math.round(spk)));
-  }
+  int("historyRetentionDays", 0, 3650);
+  int("dictationRetentionDays", 0, 3650);
+  int("numSpeakers", 0, 32);
   const mode = ownProp(v, "speakerMode");
   if (mode === "auto" || mode === "count" || mode === "range") out.speakerMode = mode;
   // Listed under the manifest's Translation row, so the sync switch promises it travels.
   const trMode = ownProp(v, "translationMode");
   if (trMode === "fluent" || trMode === "faithful") out.translationMode = trMode;
-  for (const k of ["minSpeakers", "maxSpeakers"] as const) {
-    const n = ownProp(v, k);
-    if (typeof n === "number" && Number.isFinite(n)) {
-      out[k] = Math.max(1, Math.min(32, Math.round(n)));
-    }
-  }
+  int("minSpeakers", 1, 32);
+  int("maxSpeakers", 1, 32);
   const fmt = ownProp(v, "exportFormat");
   if (fmt === "srt" || fmt === "vtt" || fmt === "txt" || fmt === "lrc" || fmt === "json") {
     out.exportFormat = fmt;
@@ -1270,11 +1264,8 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   if (box === "mkv" || box === "mp4") out.exportContainer = box;
   const subs = ownProp(v, "exportSubtitleMode");
   if (subs === "embedded" || subs === "sidecar" || subs === "both") out.exportSubtitleMode = subs;
-  const height = ownProp(v, "urlVideoMaxHeight");
-  if (height === null) out.urlVideoMaxHeight = null;
-  else if (typeof height === "number" && Number.isFinite(height)) {
-    out.urlVideoMaxHeight = Math.max(144, Math.min(4320, Math.round(height)));
-  }
+  if (ownProp(v, "urlVideoMaxHeight") === null) out.urlVideoMaxHeight = null;
+  else int("urlVideoMaxHeight", 144, 4320);
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
   // reference — the Transcribe screen ignores ids that don't resolve.
   for (const k of TRANSCRIPTION_PICK_FIELDS) {
@@ -3638,7 +3629,7 @@ export function securityChanges(
     return norm ? (norm(v) ?? fallback) : v;
   };
   const asU32 = (v: number) => (Number.isInteger(v) && v >= 0 && v <= 0xff_ff_ff_ff ? v : undefined);
-  const clamp3650 = (v: number) => Math.max(0, Math.min(3650, Math.round(v)));
+  const clamp3650 = (v: number) => roundedIn(v, 0, 3650);
   const pushIfSooner = (hereDays: number, nextDays: number, what: string, kind: SecurityChange["kind"]) => {
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
       out.push({
