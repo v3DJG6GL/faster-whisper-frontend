@@ -39,8 +39,7 @@ function isBusy(): boolean {
 //   • not `hard` (a HOLD chord release): do NOTHING. A release lands here only in the
 //     fast re-press flow — its matching press was swallowed by the busy gate (and
 //     queued, see dictate) — so it pairs with NO session; cancelling would discard the
-//     previous dictation's still-draining transcript (the "re-press eats my last
-//     sentence" bug found in on-Windows testing over a slow VPN link).
+//     previous dictation's still-draining transcript.
 function stopOrCancel(hard: boolean): void {
   const s = useApp.getState().status;
   // "listening" OR a processing status with the mic still open (a per-phrase translate) —
@@ -48,19 +47,15 @@ function stopOrCancel(hard: boolean): void {
   if (isGracefulStop(s, isCapturing())) void stopLive();
   else if (isProcessing(s)) {
     if (hard) void cancelLive();
-    // A non-hard release during processing is the documented fast re-press flow:
-    // the previous session is still draining. Void any queued hold start here too —
-    // on a staggered modifier-chord release the chord is already broken as far as
-    // Rust is concerned, but `shortcutModsHeld` would still answer true and
+    // Void any queued hold start too: on a staggered modifier-chord release Rust already
+    // considers the chord broken, but `shortcutModsHeld` would still answer true and
     // `consumePendingHoldStart` would start a hold session with nothing left to release.
     voidPendingHoldStart();
   }
-  // idle/error but a session may be mid-START (its status not yet "listening", e.g. a fast PTT tap
-  // whose chord-release "stop" landed during the start prologue) → mark it to tear down on go-live,
-  // else it would wedge "listening" with the chord already released. No-op when nothing is starting.
-  // The release also voids any queued fast re-press start — including one whose
-  // held-check IPC is mid-flight, which would otherwise resume a hold session
-  // for a chord that is already up (nothing left to release = stuck listening).
+  // idle/error but a session may be mid-START (e.g. a fast PTT tap whose release landed during the
+  // start prologue) → mark it to tear down on go-live, else it would wedge "listening" with the chord
+  // already released. Also void any queued fast re-press start, including one whose held-check IPC
+  // is mid-flight: it would resume a hold session for a chord already up (stuck listening).
   else {
     requestStopIfStarting();
     voidPendingHoldStart();
@@ -137,9 +132,7 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // the in-flight session's activeProfile — mislabeling its chip identity + usage attribution — and
   // then silently no-op on startLive's startingSession guard. The toggle entry-points already guard
   // the prologue via requestStopIfStarting; this is the START path's equivalent.
-  // A picker being open counts as busy: the await that precedes startLive sits IN FRONT
-  // of `startingSession`, so without this a second chord press would open a second picker
-  // and then start a second session behind it.
+  // An open picker counts as busy too (see `pickerOpen`).
   if (isBusy() || isStarting() || pickerOpen) {
     // Key chatter: a re-press of the SAME chord during its own start prologue supersedes the
     // phantom release recorded milliseconds earlier — the chord is still physically held, so
@@ -169,9 +162,8 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // translate), because a prompt during a held chord would swallow the keystrokes.
   //
   // Every start path begins with the settle picker DISARMED: only the hold+ask arming below
-  // may set it, and only for the session it starts. (Before this, the hands-free return
-  // skipped the arming call and a previous push-to-talk session's picker stayed armed —
-  // its wrongly-seeded prompt then popped at the NEXT session's one-shot translate.)
+  // may set it, and only for the session it starts — else a previous push-to-talk session's
+  // picker stays armed and its wrongly-seeded prompt pops at the NEXT session's one-shot translate.
   // The route hint likewise: only an explicit hands-free "0" sets it (startWithPickedTargets).
   setSettleTargetPicker(null);
   setRouteHint(null);
@@ -241,8 +233,8 @@ async function startWithPickedTargets(
       ...(useApp.getState().status === "error" ? { status: "idle" as const, dictationError: null } : {}),
     });
     // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an
-    // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
-    // caller and silently drop the whole start; null = no known target, the session still runs.
+    // AT-SPI/IPC reject would otherwise escape the bare `void` caller unhandled and silently
+    // drop the whole start; null = no known target, the session still runs.
     const targetApp = await getFocusedApp().catch(() => null);
     const pick = await askTranslationTargets(targetPickerSeed(profile, backend, "before"));
     if (pick.kind === "aborted") {
