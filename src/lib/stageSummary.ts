@@ -5,8 +5,8 @@
 import { plural } from "./format";
 import { shortModelName } from "./inherit";
 
-/** A stage model as the summary names it: the run's pick, else the server's default
- *  ("Default · speaker-diarization-community-1"). Both already short. */
+/** A stage model as the summary names it: the run's pick, shortened, else the server's default
+ *  ("Default · speaker-diarization-community-1"), which arrives already short. */
 export function stageModelText(picked: string | undefined, defaultName: string): string {
   return shortModelName(picked) ?? `Default · ${defaultName}`;
 }
