@@ -71,9 +71,8 @@ mod imp {
     }
 
     /// Pins `LABELS` to `web` (sorted) the first time exactly four web processes exist, and
-    /// forgets pids that are gone, so the map stays bounded. `pinned` keeps it the first time
-    /// only: the map empties again once every pinned pid is gone (all four relaunched), and
-    /// re-pinning then would name windows by relaunch order.
+    /// forgets pids that are gone, so the map stays bounded. `pinned` makes it once per run
+    /// (see `LABELS`): the map empties again once all four have relaunched.
     /// A sample with no web process at all is a failed /proc read (the main webview lives as long
     /// as the app): it forgets nothing, so the same pids keep their labels on the next sample.
     fn pin_labels(labels: &mut HashMap<u32, &'static str>, pinned: &mut bool, web: &[u32]) {
