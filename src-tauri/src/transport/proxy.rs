@@ -1,10 +1,9 @@
 //! The live-dictation WebSocket's proxy route.
 //!
-//! tungstenite dials the server directly, so before this the socket ignored every proxy the HTTP
-//! routes honour — a dictation behind a corporate proxy failed while Test connection and batch
-//! runs passed. The decision here is reqwest's own (hyper-util's `Matcher`: the
-//! HTTP(S)_PROXY / ALL_PROXY / NO_PROXY env vars, then the Windows / macOS proxy settings), so
-//! both halves of the transport go the same way; the socket then tunnels with HTTP CONNECT.
+//! tungstenite dials the server directly and honours no proxy, so the route is decided here with
+//! reqwest's own matcher (hyper-util's `Matcher`: the HTTP(S)_PROXY / ALL_PROXY / NO_PROXY env
+//! vars, then the Windows / macOS proxy settings) — both halves of the transport go the same way —
+//! and the socket tunnels with HTTP CONNECT.
 //! A loopback server is always dialled directly by both halves, as WinINet and CFNetwork do,
 //! because hyper-util's system matcher has no such bypass and a proxy cannot reach our loopback;
 //! so are the OS bypass entries that matcher drops ([`BypassRules`]).
@@ -64,8 +63,9 @@ pub(super) fn is_loopback_host(host: &str) -> bool {
 /// the loopback bypass. hyper-util already turns the Windows ProxyOverride into its NO_PROXY list
 /// (`;` → `,`, `*.corp` → `corp`, `10.*` → `10.0.0.0/8`) but keeps `<local>` there as a literal
 /// domain no host can match, and on macOS it reads only the HTTP / HTTPS proxy, never the
-/// ExceptionsList or ExcludeSimpleHostnames. So a dotless intranet server (`http://gpu-server:8000`)
-/// or a listed exception went to the proxy, which typically cannot resolve it.
+/// ExceptionsList or ExcludeSimpleHostnames. Without these rules a dotless intranet server
+/// (`http://gpu-server:8000`) or a listed exception goes to the proxy, which typically cannot
+/// resolve it.
 ///
 /// Read only when hyper-util reads the OS list itself: an OS proxy switched on, and NO_PROXY /
 /// no_proxy unset or empty (a set one replaces the OS list in hyper-util, so it does here too).
@@ -321,9 +321,9 @@ fn os_bypass() -> BypassRules {
 /// implicit system one off, so this is the client's whole proxy decision.
 ///
 /// `Matcher::from_system()` is read per decision, not once: the client lives as long as the app,
-/// so a Windows / macOS proxy switched on, off or changed while it runs reached dictation (see
-/// [`system_route`]) but not the HTTP routes until a restart. A read is a few env lookups plus
-/// one registry key (Windows) or one SCDynamicStore copy (macOS), noise next to a request.
+/// and a Windows / macOS proxy switched on, off or changed while it runs must reach the HTTP routes
+/// as it reaches dictation ([`system_route`]). A read is a few env lookups plus one registry key
+/// (Windows) or one SCDynamicStore copy (macOS), noise next to a request.
 ///
 /// A pooled keep-alive connection still keeps the route it was opened on: hyper-util pools by the
 /// server's scheme + host + port, not by the proxy, so the new setting applies to the next new
@@ -388,7 +388,7 @@ pub(super) fn system_route(ws_url: &str) -> Option<Proxy> {
 /// Only a plain http:// proxy is dialled. An https:// proxy (TLS to the proxy itself) or a SOCKS one
 /// would need a second TLS layer or a SOCKS handshake this route does not have — and reqwest here
 /// has no `socks` feature either — so such a proxy is skipped with a warning and the socket
-/// connects directly, which is what it did for every proxy before.
+/// connects directly.
 fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> {
     let url = reqwest::Url::parse(ws_url).ok()?;
     let scheme = match url.scheme() {
@@ -434,9 +434,9 @@ fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> 
 /// names the proxy (never its login) when the proxy is what failed.
 ///
 /// A proxy that answers the CONNECT with a refusal other than 407 gets one direct attempt: a
-/// stock Squid (`deny CONNECT !SSL_ports`) refuses a tunnel to any port but 443, so a ws:// server
-/// on 8000 failed here while the HTTP routes, forwarded rather than tunnelled, passed. A 407 (a
-/// login to fix) and a proxy that cannot be reached or answers garbage still fail as they did.
+/// stock Squid (`deny CONNECT !SSL_ports`) refuses a tunnel to any port but 443 while it forwards
+/// (not tunnels) the HTTP routes to the same server. A 407 (a login to fix) and a proxy that
+/// cannot be reached or answers garbage fail outright.
 pub(super) async fn connect(
     request: Request,
     config: WebSocketConfig,
@@ -1013,7 +1013,7 @@ mod tests {
     }
 
     /// WinINet's `<local>`: a name without a dot goes direct; a dotted name or an IP literal does
-    /// not. hyper-util keeps the entry as a literal domain, so nothing matched it before.
+    /// not.
     #[test]
     fn windows_local_bypasses_dotless_names_only() {
         // What hyper-util makes of `*.corp;<local>`: `corp,<local>`, and `<local>` matches nothing.
