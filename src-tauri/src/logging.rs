@@ -337,7 +337,6 @@ pub fn prune_legacy_dir(dir: &Path) {
 /// cannot be correlated with a later one in the file users attach to bug reports.
 const TS_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
 
-/// `tracing_subscriber` timer matching `format_line`: local time, `TS_FORMAT`.
 struct LocalTimer;
 
 impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
