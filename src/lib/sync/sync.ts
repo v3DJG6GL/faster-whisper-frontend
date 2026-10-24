@@ -2325,9 +2325,7 @@ function supersede(): void {
   endLaunch?.();
   clearTimeout(pushTimer);
   pushOwed = false; // the new target starts with a pull, which pushes what it needs
-  setPendingConflict(null); // a conflict against the old server is unresolvable now
-  setPendingReview(null); // ditto for a held-back pull from the old server
-  pullParked = false; // ditto a re-pull parked for the old server
+  dropAllPrompts(); // a conflict / held-back pull / parked re-pull for the old server is moot now
 }
 
 /** A conflict awaiting the user's per-category picks in the Sync tab's conflict dialog. */
@@ -2389,6 +2387,14 @@ function setPendingReview(r: PendingReview | null): void {
 }
 function promptsChanged(): void {
   setRuntime({ syncPromptSeq: useApp.getState().syncPromptSeq + 1 });
+}
+
+/** Drop both prompts and the parked re-pull: the server document they describe is gone (deleted,
+ *  re-created, or another server's). */
+function dropAllPrompts(): void {
+  setPendingReview(null);
+  setPendingConflict(null);
+  pullParked = false;
 }
 
 const setRuntime = (p: Parameters<ReturnType<typeof useApp.getState>["setSyncRuntime"]>[0]) =>
@@ -3016,9 +3022,7 @@ async function pullCore(manual: boolean): Promise<void> {
       } else {
         // No base to forget, but any review / conflict / parked apply still describes a server
         // document that no longer exists.
-        setPendingReview(null);
-        setPendingConflict(null);
-        pullParked = false;
+        dropAllPrompts();
       }
       // An empty server has nothing to reconcile them with: the push seeds it.
       freshCats.clear();
@@ -3926,9 +3930,7 @@ async function forgetDeadDocument(myGen: number): Promise<boolean> {
     snapshotSecretChunks: undefined,
   });
   if (myGen !== gen) return false;
-  setPendingReview(null);
-  setPendingConflict(null);
-  pullParked = false;
+  dropAllPrompts();
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
   return true;
 }
