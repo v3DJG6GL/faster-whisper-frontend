@@ -250,12 +250,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // and/or quick-add chord over the current ones): `applyBlob` never leaves a conflicting set — it
   // switches the later colliding profile off, or keeps this device's quick-add chord over an
   // incoming one that collides with local profiles — so `predictChordFix` runs its own
-  // `disableConflictingProfiles` (same L/R collapse off-Windows). It walks the SANITIZED profiles:
-  // this consent dialog renders before `applyBlob` sanitizes, with no error boundary, and `arr()`
-  // coerces only the container, so a raw element (a profile missing `hotkey`, a numeric code)
-  // would throw and unmount the very dialog that lets the user reject the blob. The sanitizer also
-  // bounds chord length (`isCodeList`), which keeps `isStrictSubset`'s O(k·m) scan from freezing
-  // the webview on a hand-authored file.
+  // `disableConflictingProfiles` (same L/R side-collapse rule: off-Windows unless evdev is live).
+  // It walks the SANITIZED profiles: this consent dialog renders before `applyBlob` sanitizes, with
+  // no error boundary, and `arr()` coerces only the container, so a raw element (a profile missing
+  // `hotkey`, a numeric code) would throw and unmount the very dialog that lets the user reject the
+  // blob. The sanitizer also bounds chord length (`isCodeList`), which keeps `isStrictSubset`'s
+  // O(k·m) scan from freezing the webview on a hand-authored file.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category (see `predictChordFix` for how an
@@ -542,7 +542,7 @@ export function RestoreFromServer({
   );
 }
 
-/** Maximum category rows shown in the SecurityReviewDialog change list. */
+/** Maximum change rows shown in the SecurityReviewDialog. */
 const MAX_REVIEW_ROWS = 50;
 /** Alias for `safeDisplayText` — every string this screen renders through it came from an untrusted blob or file. */
 const safeText = safeDisplayText;
@@ -937,7 +937,7 @@ export function SyncTab() {
 
   const doExport = async () => {
     try {
-      // Local date: toISOString() is UTC, so near midnight it named yesterday's or tomorrow's file.
+      // Local date: toISOString() is UTC, so near midnight it would name yesterday's or tomorrow's file.
       const d = new Date();
       const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       const path = await pickSavePath(`faster-whisper-settings-${stamp}.json`);
