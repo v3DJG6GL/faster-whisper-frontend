@@ -171,7 +171,6 @@ export function Waveform({
         colorDirtyRef.current = false;
       }
 
-      // Pride flag-mix: only while the meter is GREEN (see the component note).
       const prideEligible = prideOnRef.current && toneRef.current === "live";
       // Becoming active while already hovering should still play the flicker from the top.
       if (prideEligible && !prevEligible && hoverRef.current) hoverStartRef.current = performance.now();
