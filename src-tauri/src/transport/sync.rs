@@ -9,7 +9,7 @@
 //! category shapes are typed on the TS side.
 //!
 //! The path was renamed from `/v1/client-settings`; a server from before the rename is reached
-//! through [`super::with_legacy_path`] (new path first, the old one on a 404).
+//! through [`super::with_legacy_path`].
 
 use super::{
     base_url, body_capped_to, client, detail_from, friendly_err, with_auth, with_legacy_path,
