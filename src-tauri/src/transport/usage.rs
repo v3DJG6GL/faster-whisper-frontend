@@ -6,7 +6,8 @@
 //! its own.
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, with_auth, MAX_META_BODY,
+    base_url, body_capped_to, client, detail_from, friendly_err, is_progress_id, with_auth,
+    MAX_META_BODY,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -64,10 +65,6 @@ impl UsageOutcomePost {
     }
 }
 
-fn job_id_ok(id: &str) -> bool {
-    (8..=64).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 pub async fn post_usage_outcomes(
     server_url: &str,
     api_key: Option<&str>,
@@ -77,7 +74,7 @@ pub async fn post_usage_outcomes(
     // reported as a 422 WITHOUT a round trip, so the queue drops it instead of retrying
     // a request the server will refuse every time.
     let bad = outcomes.iter().any(|o| {
-        !job_id_ok(&o.job_id)
+        !is_progress_id(&o.job_id)
             || o.app_id
                 .as_deref()
                 .is_some_and(|a| a.is_empty() || a.chars().count() > 64)
