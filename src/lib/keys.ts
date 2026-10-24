@@ -138,7 +138,7 @@ const MOD_LABELS: Record<string, string> = {
 export function codeToLabel(code: string): string {
   const mod = ownProp(MOD_LABELS, code);
   if (mod) return mod;
-  if (/^Key[A-Z]$/.test(code)) return keycapLabel(code) ?? code.slice(3); // KeyH → H
+  if (/^Key[A-Z]$/.test(code)) return keycapLabel(code) ?? code.slice(3);
   if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 → 1
   return prettyToken(code); // Numpad0 → Num 0, ArrowUp → ↑, Backspace → ⌫, F1 …
 }
@@ -156,10 +156,10 @@ const SIDE_COLLAPSE: Record<string, string> = {
   ControlRight: "ControlLeft",
   ShiftRight: "ShiftLeft",
   MetaRight: "MetaLeft",
-  // AltRight (AltGr) is deliberately NOT collapsed: the plugin's accelerator parser REJECTS it outright
-  // (codes_to_accelerator returns None — "AltGr — evdev-only"), it does NOT fold it to Alt. Collapsing it
-  // would make AltGr+X read as a duplicate of Alt+X and FREEZE saving, when really AltGr+X just can't
-  // register under the plugin — a non-blocking condition already surfaced by the "needs evdev" hint.
+  // AltRight (AltGr) is deliberately NOT collapsed: the plugin's parser rejects it outright
+  // (codes_to_accelerator → None), it does not fold it to Alt. Collapsing it would make AltGr+X a
+  // duplicate of Alt+X and freeze saving, when AltGr+X merely can't register under the plugin — a
+  // non-blocking condition the capture warning already surfaces.
 };
 
 /** Collapse right-side modifiers to their left equivalent, as the global-shortcut PLUGIN's
