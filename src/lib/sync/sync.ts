@@ -854,7 +854,9 @@ export function mergeBlobs(
       // defineProperty, not `[]=`: the remote blob is parsed server JSON, so an own
       // `__proto__` key arrives here and a plain assignment would invoke the setter —
       // replacing `merged`'s prototype and silently DROPPING the key (the one thing this
-      // block promises never to do). composeBlob's twin is immune via `k in blob`.
+      // block promises never to do). composeBlob's twin never reaches its assignment for
+      // `__proto__` (`k in blob` is true via the prototype), so it skips the key rather
+      // than swapping the prototype.
       if (!known.has(k) && v !== undefined) {
         Object.defineProperty(merged, k, { value: v, writable: true, enumerable: true, configurable: true });
       }
@@ -1912,7 +1914,6 @@ export async function applyBlob(
         inboundBackends = repinElementFields(inboundBackends, st.backends, BACKEND_DEFAULTS_FIELDS, true);
       const reconciled = await reconcileBackendSecrets(
         inboundBackends,
-        // API-keys gate off: inbound secrets never touch this device's keyring.
         gates.apiKeys ? blob.backends.secrets : undefined,
         () => gen !== myGen,
       );
@@ -1986,8 +1987,7 @@ export async function applyBlob(
           : { ...p, insertionOverrides: { ...p.insertionOverrides, autoEnter: mine } };
       });
       // String-or-null only: a falsy non-string would skip the truthiness-gated scrub below
-      // and wedge Rust's `Option<String>` (same as `quickAddList`). "Home profile" gate off:
-      // keep this device's pick regardless of the blob.
+      // and wedge Rust's `Option<String>` (same as `quickAddList`).
       nextSettings = {
         ...nextSettings,
         homeProfileId: !gates.homeProfile
@@ -3155,8 +3155,7 @@ export async function pushNow(manual = false): Promise<void> {
     if (myGen !== gen) return;
     const cats = syncCats();
     let blob = await composeLive(cats);
-    // The keyring read in composeBlob can park up to 10 s — superseded meanwhile (sync turned
-    // off, server copy deleted): never send. inFlight was already reset by supersede().
+    // The keyring read in composeBlob can park up to 10 s — superseded meanwhile: never send.
     if (myGen !== gen) return;
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
@@ -3611,19 +3610,17 @@ export function securityChanges(
   gates?: Partial<Pick<Gates, "modelDecodeDefaults" | "serverAddresses" | "apiKeys">>,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
-  // The retention windows drive sweeps that DELETE stored data (saved
-  // recordings; dictation sessions incl. audio; file transcripts incl. their
-  // audio copies). Only a change that starts deleting, or deletes sooner, needs
-  // consent — lengthening the window (or turning retention off) destroys
-  // nothing. Typed reads: the merged blob reaches here before applyBlob's
-  // typedLike pass, so a string `"3"` would otherwise raise a review (and park
-  // the whole category) for a change that never applies.
+  // The retention windows drive sweeps that DELETE stored data (saved recordings; dictation
+  // sessions incl. audio; file transcripts incl. their audio copies). Only a change that starts
+  // deleting, or deletes sooner, needs consent — lengthening the window (or turning retention
+  // off) destroys nothing.
   //
-  // `norm` mirrors what the apply does to an incoming value: the u32 key drops anything that
-  // is not a whole non-negative number (typedLike's U32_KEYS), the two transcription-settings
-  // keys round and clamp to 0..3650 (sanitizeTranscription) — so a deletion window the apply
-  // can never land (-1, 0.3, 2.5) raises no review. `undefined` from `norm` is "dropped": the
-  // apply keeps the local days, so it reads as no change.
+  // Typed reads, because the merged blob reaches here before applyBlob's typedLike pass. `norm`
+  // mirrors what the apply does to an incoming value: the u32 key drops anything that is not a
+  // whole non-negative number (typedLike's U32_KEYS), the two transcription-settings keys round
+  // and clamp to 0..3650 (sanitizeTranscription). So a window the apply can never land (`"3"`,
+  // -1, 0.3, 2.5) raises no review and parks no category. `undefined` from `norm` is "dropped":
+  // the apply keeps the local days, so it reads as no change.
   const days = (
     container: unknown,
     key: string,
@@ -3878,7 +3875,7 @@ function raiseReview(r: PendingReview): void {
   reviewStatus();
 }
 
-/** The status a pending review shows (raiseReview, and `idleStatus` restoring it). */
+/** The status a pending review shows, at the raise and wherever another notice clears while the review still waits. */
 function reviewStatus(): void {
   setRuntime({
     syncStatus: "error",
