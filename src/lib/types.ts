@@ -235,9 +235,9 @@ export interface InsertionOverrides {
   restoreClipboard?: boolean;
 }
 /** @deprecated Retired in favour of the per-Profile `typeAsISpeak`; see `migrateInsertTiming`.
- *  The field is still declared, still written (as the conservative "stop"), and still clamped
- *  on the sync path — deleting it would make an older build reading a new config fall back to
- *  its own "live" default, turning live typing ON for someone who had it off. */
+ *  The field is still declared, still written (the migration leaves the conservative "stop"),
+ *  and still clamped on the sync path — deleting it would make an older build reading a new
+ *  config fall back to its own "live" default, turning live typing ON for someone who had it off. */
 export type InsertTiming = "off" | "stop" | "live";
 export type IndicatorPosition = "top" | "bottom" | "off";
 /** "auto" follows the OS scheme (prefers-color-scheme); see lib/theme.ts. */
@@ -778,8 +778,9 @@ export interface DecodeDefaults {
 }
 
 // Pipeline ("Dictionary") rules: LIVE server state, not persisted. Fetched per-Backend
-// from GET /v1/pipeline-rules, edited, PATCHed back. Wire shape is snake_case (passes
-// through Rust as opaque JSON, typed only here).
+// from GET /v1/pipeline-rules, edited, PATCHed back. Wire shape is snake_case; the rules
+// pass through Rust as opaque JSON, but the envelope is a typed Rust mirror
+// (transport::pipeline::PipelineRulesState) that drops any top-level key it lacks.
 
 export type RuleType =
   | "regex-list"
@@ -1230,8 +1231,8 @@ export interface BatchProgress {
    *  it is (0..1 within that language). */
   target?: string | null;
   targetProgress?: number | null;
-  /** The server-owned run plan (core/run_plan.py) behind this run, the
-   *  overall 0..1 fraction it derives (held monotone) and the ETA in
+  /** The server-owned run plan (backend transcription/run_plan.py) behind this
+   *  run, the overall 0..1 fraction it derives (held monotone) and the ETA in
    *  seconds. All null on a server without a plan. */
   plan?: PlanStage[] | null;
   overall?: number | null;
