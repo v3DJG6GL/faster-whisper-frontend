@@ -900,7 +900,7 @@ mod tests {
 
     /// A teardown drain racing a reader's start: the drain blocks while the start is being
     /// emitted, so its manufactured "stop" always follows the "start" it ends — never
-    /// `[stop, start]`, which left a push-to-talk session nothing would ever stop.
+    /// `[stop, start]`, which leaves a push-to-talk session nothing will ever stop.
     #[test]
     fn a_teardown_drain_never_stops_a_hold_before_its_start_went_out() {
         use std::sync::{Arc, Barrier, Mutex};
