@@ -2,7 +2,7 @@
 // targets as removable pills in output order, plus a "+ language" picker over the
 // remaining candidates), the per-run options fields, and the Backend/Profile
 // "Translation defaults" editor. The chips are reused by the Processing card, the
-// defaults editors, and retro-translate popovers.
+// defaults editors, and the viewer's retro-translate panel.
 import type { ReactNode } from "react";
 import { OverrideHeader, OverrideText } from "./OverrideField";
 import { OVERRIDE_CONTROL_W } from "./styles";
