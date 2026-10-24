@@ -521,7 +521,7 @@ describe("a stale API-key flag the keyring reports absent", () => {
     }
   });
 
-  // The review's store signature judged the keyring by the old rule: a stale flag whose key the
+  // The review's store signature judged the keyring unlike the compose: a stale flag whose key the
   // store reports absent read as an unread keyring, so every approval whose re-merge conflicted on
   // backends asked "unclear key rotation" — and taking the peer's side again re-raised the same
   // review, so the peer's change could never be accepted.
