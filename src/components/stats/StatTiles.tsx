@@ -21,7 +21,7 @@ function Sparkline({ vals, color }: { vals: number[]; color: string }) {
 }
 
 // "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
-// Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
+// Signal colour like the chip's readout. Kind series keep --c-chart-* (kindFill).
 const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
 
 // The split legend counts sessions per kind, so it takes a counted noun ("1 file", "2 links"),
@@ -33,7 +33,7 @@ const KIND_NOUN: Record<UsageKind, string> = { dictation: "dictation", file: "fi
 const figureSize = (v: string) => (v.length > 8 ? "text-[18px]" : "text-[22px]");
 
 /** A stat tile. With `onPick` it is a button that sets the page's measure; the active one
- *  wears the accent border and says "shown" (D35 A). */
+ *  wears the accent border and says "shown". */
 export function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spark: boolean; active?: boolean; onPick?: () => void }) {
   const Icon = tile.icon;
   const body = (
@@ -43,9 +43,8 @@ export function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spar
         <span className="truncate">{tile.label}</span>
         {active && <span className="ml-auto shrink-0 text-[9.5px] text-accent">shown</span>}
       </div>
-      {/* The ledger (D53 C): label / value rows at one size, right-aligned so the figures
-          line up across tiles; per day is the quiet third row. The sparkline is pinned to
-          the bottom so a tile with a legend does not push its neighbours' lines around. */}
+      {/* Right-aligned so the figures line up across tiles. The sparkline is pinned to the
+          bottom so a tile with a legend does not push its neighbours' lines around. */}
       <div className="mt-3 grid grid-cols-[auto_1fr] items-baseline gap-x-3.5 gap-y-1.5">
         <span className="font-mono text-[10px] uppercase tracking-label text-faint">today</span>
         <span className={cn("truncate text-right font-num font-semibold leading-none", figureSize(tile.today), TONE[tile.tone])}>{tile.today}</span>
