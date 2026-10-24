@@ -224,10 +224,7 @@ pub(crate) fn record_media_paths(app: &AppHandle, id: &str) -> Vec<PathBuf> {
         return Vec::new();
     };
     let path = dir.join(format!("{id}.json"));
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Some(v) = read_json_value(&path) else {
         return Vec::new();
     };
     MEDIA_KEYS
@@ -245,8 +242,7 @@ pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
         return None;
     }
     let path = transcripts_dir(app).ok()?.join(format!("{id}.json"));
-    let text = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let v = read_json_value(&path)?;
     v.get("kind")?.as_str().map(str::to_owned)
 }
 
@@ -554,6 +550,11 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
 /// is skipped (the record keeps playing from the original while it exists).
 pub(crate) const MAX_MEDIA_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+/// A record file parsed as JSON; `None` when it cannot be read or does not parse.
+fn read_json_value(path: &Path) -> Option<serde_json::Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
 /// Record ids are frontend-generated UUIDs — hex + dashes only, so an id can
 /// never traverse out of the transcripts directory.
 pub(crate) fn valid_id(id: &str) -> bool {
@@ -779,10 +780,7 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(),
         {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(v) = read_json_value(&path) {
             out.push(v);
         }
     }
@@ -812,10 +810,7 @@ pub async fn delete_transcript_record(
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
         let source_of = |p: &Path| -> Option<String> {
-            std::fs::read_to_string(p)
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
+            read_json_value(p).and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
         };
         // Held across both branches' record read + unlink — see `RECORD_IO`: a media-path
         // rewrite that read this record before the unlink would otherwise rename its copy back
