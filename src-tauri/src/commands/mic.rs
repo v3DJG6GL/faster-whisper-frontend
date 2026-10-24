@@ -99,7 +99,6 @@ pub fn play_mic_test(
 ) -> Result<(), String> {
     let (samples, sample_rate) = {
         let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
-        // Collect the ring into a contiguous Vec for playback (one alloc, off the capture path).
         (
             c.samples.iter().copied().collect::<Vec<f32>>(),
             c.sample_rate,
@@ -117,9 +116,9 @@ pub fn play_mic_test(
         if let Err(e) = audio::playback::play_mono(samples, sample_rate, superseded) {
             tracing::warn!("[audio] mic-test replay failed: {e}");
         }
-        // Finished draining, OR no output device was available — either way nothing of ours is
-        // sounding now, so signal "ended" if we're still current (on a device-acquire failure too,
-        // or the button sits on "Stop" until the frontend's duration fallback fires).
+        // Drained or failed (e.g. no output device): nothing of ours is sounding, so signal "ended" if
+        // still current — on a failure too, or the button sits on "Stop" until the frontend's
+        // duration fallback fires.
         if counter.load(Ordering::SeqCst) == generation {
             let _ = app.emit("audio://test-play-ended", ());
         }
