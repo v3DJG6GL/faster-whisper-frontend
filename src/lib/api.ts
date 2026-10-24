@@ -1079,13 +1079,11 @@ export async function stopRecord(): Promise<void> {
 }
 
 /** Hard-abort the record session WITHOUT transcribing (no wasted server POST; releases the system
- *  mute), except for a recovery cancel (`userInitiated` true, `discardRecording` false), which
- *  finishes a live session when its recording is kept (see below). Used by cancelLive
- *  (`userInitiated: true`), and as the closed-handler's idempotent release of a parked session,
- *  which calls with the defaults (`userInitiated` false, `discardRecording` true — unlike
- *  `cancelStream`, whose `discardRecording` default follows `userInitiated`): a parked live
- *  session is discarded, which is safe because a device-loss salvage has already written its
- *  .wav/.txt before the `closed` that triggers the release.
+ *  mute). Used by cancelLive (`userInitiated: true`), and as the closed-handler's idempotent
+ *  release of a parked session, which calls with the defaults (`userInitiated` false,
+ *  `discardRecording` true — unlike `cancelStream`, whose `discardRecording` default follows
+ *  `userInitiated`): a parked live session is discarded, which is safe because a device-loss
+ *  salvage has already written its .wav/.txt before the `closed` that triggers the release.
  *  `discardRecording`: a cancel during "transcribing…" disowns the detached transcription and
  *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session
  *  is finished, not discarded (`cancelStream`'s rule), when "Keep recordings" is on: its clip is
@@ -1199,9 +1197,9 @@ export interface InjectOutcome {
    *  invariant is the contract. The causes (one of our own windows holding focus, a clipboard
    *  write that was busy or failed before any keystroke, a bare auto-Enter the divert withheld)
    *  are spelled out on the Rust `InjectOutcome.landed` (inject/text.rs). The exception to
-   *  re-sending: an insert marked `withholdOnDivert` (the hard-break separator) that would
-   *  otherwise have been diverted, or recovered after a sink that wrote nothing, comes back
-   *  `false` with nothing written, and that caller drops it. A cancel (user or error abort)
+   *  re-sending: an insert marked `withholdOnDivert` (the hard-break separator, a whitespace-only
+   *  live phrase) that would otherwise have been diverted, or recovered after a sink that wrote
+   *  nothing, comes back `false` with nothing written, and that caller drops it. A cancel (user or error abort)
    *  before the write is not a `false` cause: it stops the insert with `landed: true` and nothing
    *  written, like any cancelled insert. */
   landed: boolean;
