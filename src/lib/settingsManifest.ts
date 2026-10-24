@@ -110,7 +110,7 @@ export interface SettingDef {
   /** Rendered in Settings for its label, but NEVER synced: the apply arm drops the field
    *  on every inbound path (the `autoEnter` strip — a peer must not arm a post-paste
    *  Return), so a sync switch would advertise a choice the user does not have. No sync
-   *  row, no gate, no wire field. */
+   *  row and no wire field; its gate is always off and nothing reads it. */
   localOnly?: true;
   custom?: CustomArm;
 }
