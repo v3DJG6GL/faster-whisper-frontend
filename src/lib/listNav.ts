@@ -1,5 +1,6 @@
-// Keyboard movement through a flat option list (the pickers). Focus stays in the search field;
-// these keys only move the highlighted row, and the field carries the combobox ARIA that points at it.
+// Keyboard movement through a flat option list (the pickers, the SplitButton menu). In a searchable
+// picker focus stays in the search field; these keys only move the highlighted row, and the field
+// carries the combobox ARIA that points at it.
 
 /** Rows PageUp/PageDown jump. */
 export const PAGE_ROWS = 8;
