@@ -289,9 +289,8 @@ export interface ChunkedTranslateArgs {
    *  `indexes` earlier chunks already answered (merged or not). */
   onChunkStart?: (chunkIdxs: number[], done: number) => void;
   /** A chunk answered: per-segment-index translation maps (empty results are
-   *  dropped) + accumulated provenance. `firstChunk` = first merge of the run
-   *  (registers provenance / makes the track chips appear). `kept` mirrors
-   *  the patch: per merged segment index, the target codes whose entry kept
+   *  dropped) + accumulated provenance. `firstChunk` = first merge of the run.
+   *  `kept` mirrors the patch: per merged segment index, the target codes whose entry kept
    *  the SOURCE text (server quality guard) — [] on a clean segment, so a
    *  successful re-translate REPLACES (clears) an earlier mark. `sent` mirrors it too: the text
    *  each merged segment was sent as (textOf at send time), so the merge can tell a line
