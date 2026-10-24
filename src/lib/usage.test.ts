@@ -43,6 +43,12 @@ const setHidden = (h: boolean) => {
 const settle = async () => {
   for (let i = 0; i < 20; i++) await Promise.resolve();
 };
+/** Back to the suite's one backend with none picked, and let the pass that arms run. */
+async function restoreSingleBackend() {
+  useApp.setState({ backends: [B1], usageViewBackendId: null });
+  await vi.advanceTimersByTimeAsync(30_000);
+  await settle();
+}
 /** The fixed per-backend trend document's call, as opposed to the page's own view / year. */
 const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
 /** Calls since the last reset, split into the fixed per-backend document and the page's. */
@@ -536,12 +542,7 @@ describe("usage poll gates", () => {
       getUsageStats.mockImplementation(ok);
       close();
     }
-    useApp.setState({
-      backends: [B1],
-      usageViewBackendId: null,
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
+    await restoreSingleBackend();
   });
   it("a hide and show before the page step of the pass a show started makes that step refetch the page", async () => {
     useApp.setState({
@@ -583,12 +584,7 @@ describe("usage poll gates", () => {
       setHidden(false);
       close();
     }
-    useApp.setState({
-      backends: [B1],
-      usageViewBackendId: null,
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
+    await restoreSingleBackend();
   });
   it("a show while a hidden pass is running hands it the direct fetch: its page step does not refetch", async () => {
     // skipped 0: the show only fetches the page (no pass of its own); 2: it also folds a rerun,
@@ -633,12 +629,7 @@ describe("usage poll gates", () => {
         setHidden(false);
         close();
       }
-      useApp.setState({
-        backends: [B1],
-        usageViewBackendId: null,
-      });
-      await vi.advanceTimersByTimeAsync(30_000);
-      await settle();
+      await restoreSingleBackend();
     }
   });
   it("the catch-up pass fetches the picked backend's page when its trend fetch brings it back during the pass", async () => {
@@ -674,12 +665,7 @@ describe("usage poll gates", () => {
       getUsageStats.mockImplementation(ok);
       close();
     }
-    useApp.setState({
-      backends: [B1],
-      usageViewBackendId: null,
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
+    await restoreSingleBackend();
   });
   it("the catch-up pass refetches the page when a range change's fetch missed after the show's direct fetch landed", async () => {
     useApp.setState({
@@ -722,12 +708,7 @@ describe("usage poll gates", () => {
       close();
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
     }
-    useApp.setState({
-      backends: [B1],
-      usageViewBackendId: null,
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
+    await restoreSingleBackend();
   });
   it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
     const ok = getUsageStats.getMockImplementation()!;
