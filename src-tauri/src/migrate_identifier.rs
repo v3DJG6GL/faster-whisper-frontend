@@ -244,9 +244,9 @@ fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
     }
     // The fix-ups still run when another root failed: the roots that moved now carry the
     // marker and are never looked at again, so it is now or never for them — unless an
-    // earlier launch's config write failed and left REPOINT_PENDING, which retries it. A
-    // re-point that fails stops this launch like a failed move, so no session runs on the
-    // vacated folder before that retry.
+    // earlier launch's failed re-point left REPOINT_PENDING, which retries it. A failed
+    // re-point stops the launch like a failed move (see `repoint_fault_stops`), so no session
+    // runs on the vacated folder before that retry.
     let repoint_pending = roots
         .iter()
         .any(|r| r.base.join(NEW_ID).join(REPOINT_PENDING).exists());
@@ -433,13 +433,12 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// Fix what still points INTO the old folder after a move. (Settings that name a folder
-/// inside it are re-pointed once all roots moved, in `run`.)
+/// inside it are re-pointed after the per-root loop, in `rewrite_moved_paths`.)
 fn after_move(new: &Path) {
-    // Transcript records store absolute media paths. Removing the heal stamp makes
-    // `commands::ensure_audio_layout` (queued from setup, `queue_audio_layout`) run `store::transcripts::heal_media_paths`, which
-    // re-finds every no-longer-existing path by file name under the audio base — the same
-    // repair an audio-folder move uses. A custom audio folder elsewhere never moved, so its
-    // paths are still valid and heal leaves them alone.
+    // Transcript records store absolute media paths. Without the heal stamp, setup's
+    // `queue_audio_layout` runs `heal_media_paths`, which re-finds every vanished path by file
+    // name under the audio base — the same repair an audio-folder move uses. A custom audio
+    // folder elsewhere never moved, so heal leaves its still-valid paths alone.
     let _ = std::fs::remove_file(new.join("audio").join(crate::commands::HEAL_STAMP));
 }
 
@@ -462,7 +461,8 @@ pub(crate) fn migrated_counterpart(path: &Path) -> Option<PathBuf> {
 }
 
 /// A custom audio/log folder the user placed INSIDE an old app folder moved with it; point
-/// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
+/// the setting at where it is now. `moved` holds every (old, new) pair that has moved, on this
+/// launch or an earlier one.
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when the file could not be read, or
@@ -476,17 +476,13 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
         Ok(Some(bytes)) => bytes,
         Ok(None) => return Ok(audio_bases),
         Err(e) => {
-            // Still unreadable after those retries: a lock that outlasted them or a permission
-            // fault (a root-owned file left by a sudo run), with nothing known to name the old
-            // folder. The first launch to see it stops, like a failed write: a lock released a
-            // moment later (an AV scan or sync client right after the move) lets the loader read
-            // the file cleanly, settings and all, still naming the vacated folder, and the session
-            // would record into it, re-created, where the next launch's re-point cannot follow.
-            // A launch whose marker says an earlier one could not read it either goes on (see
-            // `repoint_fault_stops`), so a lasting fault costs each launch one bounded re-read;
-            // the marker clears itself once the file reads again, whether it still names the old
-            // folder or the loader replaced it with defaults.
-            // Stopped only with the retry armed: without the marker no later launch comes back.
+            // Still unreadable after those retries (a lock that outlasted them, a root-owned
+            // file from a sudo run). The first launch to see it stops: a lock released a moment
+            // later lets the loader start on settings still naming the vacated folder, and the
+            // session would record into it where the next launch's re-point cannot follow. A
+            // lasting fault stops only once (`repoint_fault_stops`); the marker clears once the
+            // file reads again. Stopped only with the retry armed: without the marker no later
+            // launch comes back.
             if repoint_fault_stops(config, REPOINT_READ) && pending_fault_is(config, REPOINT_READ) {
                 tracing::warn!(
                     "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
@@ -579,9 +575,10 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
             .map_err(std::io::Error::other)
             .and_then(|out| crate::config::write_private_atomic(config, &out));
         // A failed write (a full disk, an AV or sync client holding config.json) leaves the
-        // settings naming the vacated folders: say so, stop the launch, and leave the pending
-        // marker so the next launch tries again. Either way no base is returned, so the caller
-        // keeps their heal stamps rather than trusting a re-point that never landed.
+        // settings naming the vacated folders: say so and leave the pending marker so the next
+        // launch tries again (stopping this one unless the same fault already did). Either way
+        // no base is returned, so the caller keeps their heal stamps rather than trusting a
+        // re-point that never landed.
         if let Err(e) = written {
             tracing::warn!(
                 "[migrate] could not write the re-pointed folders to {} ({e}); its settings still name the old folder",
