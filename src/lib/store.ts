@@ -851,8 +851,7 @@ export const useApp = create<AppState>((set) => ({
       // `usage` reference stable, or every poll re-emits the overlay payload and re-renders the
       // UsageStats chart. The fixed 30-day document is small, so stringify-compare is cheap;
       // JSON.stringify(null) === "null" covers the null path.
-      // hasOwn, not `in`: an id like `constructor` is inherited-present, and skipping the write
-      // for it would leave the prototype member in place for every reader.
+      // hasOwn, not `in`: an id like `constructor` is inherited-present via the prototype.
       if (hasOwn(s.usage, backendId) && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
       return { usage: { ...s.usage, [backendId]: stats } };
     }),
