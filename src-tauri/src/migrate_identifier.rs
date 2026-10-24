@@ -771,16 +771,7 @@ mod tests {
             "recording": { "audioBaseDir": data_old.join("audio-x") },
         }});
         std::fs::write(cfg_new.join("config.json"), cfg.to_string()).unwrap();
-        let roots = [
-            Root {
-                base: cfg_root,
-                disposable: false,
-            },
-            Root {
-                base: data_root,
-                disposable: false,
-            },
-        ];
+        let roots = [root(&cfg_root), root(&data_root)];
         rewrite_moved_paths(&roots, vec![(cfg_old, cfg_new.clone())]);
         let out: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
