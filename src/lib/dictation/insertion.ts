@@ -10,7 +10,7 @@ export const METHOD_OPTIONS: { value: InsertMethod; label: string }[] = [
   { value: "clipboard", label: "Clipboard only" },
 ];
 
-/** Does this layer override anything? Drives the "· set" / "· inherit" disclosure suffix. */
+/** Does this layer override anything? An empty layer is stored as absent ("inherit everything"). */
 export function hasInsertionOverrides(v: InsertionOverrides | undefined): boolean {
   return insertionSetCount(v) > 0;
 }
