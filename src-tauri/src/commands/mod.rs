@@ -47,6 +47,14 @@ async fn store_io<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let _turn = turn.lock().await;
+    blocking(f).await
+}
+
+/// Run a command body on the blocking pool; a panicked or cancelled task becomes the command's
+/// String error.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| e.to_string())?

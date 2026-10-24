@@ -607,13 +607,12 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
 /// sit on a slow or stalled mount (network share, sleeping disk) — as `open_audio_dir`.
 #[tauri::command]
 pub async fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    crate::commands::blocking(move || -> Result<(), String> {
         let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
         crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
         crate::open_external(&app, &dir.to_string_lossy())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

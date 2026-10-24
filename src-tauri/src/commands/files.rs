@@ -25,7 +25,7 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
 /// slow or stalled mount (network share, sleeping disk).
 #[tauri::command]
 pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    super::blocking(move || -> Result<(), String> {
         let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
         crate::audio::create_dir_private(&dir)
             .map_err(|e| format!("could not create the folder: {e}"))?;
@@ -37,7 +37,6 @@ pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<()
         crate::open_external(&app, &dir.to_string_lossy())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Move one file across a possible filesystem boundary: rename, else
@@ -389,7 +388,7 @@ pub async fn move_audio_base(
     if to.starts_with(&from) {
         return Err("the new folder can't be inside the current one".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         // Not under a launch layout migration still moving files into these same subfolders.
         wait_audio_layout();
         crate::audio::create_dir_private(&to)
@@ -441,7 +440,6 @@ pub async fn move_audio_base(
         res
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// The exact refusal text the viewer matches on to fall back to the decode path.
@@ -458,15 +456,14 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     const MAX_MEDIA_BYTES: u64 = 192 * 1024 * 1024;
     // The size check too runs on the blocking pool: a stat of media on a stalled mount (a
     // sleeping disk, an offline share) must not park a runtime worker any more than the read.
-    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+    let bytes = super::blocking(move || -> Result<Vec<u8>, String> {
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
         if meta.len() > MAX_MEDIA_BYTES {
             return Err(MEDIA_TOO_LARGE.into());
         }
         std::fs::read(&path).map_err(|e| e.to_string())
     })
-    .await
-    .map_err(|e| e.to_string())??;
+    .await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -511,12 +508,11 @@ fn reveal_target(path: &str) -> Result<PathBuf, String> {
 /// share) must not park a runtime worker.
 #[tauri::command]
 pub async fn reveal_in_folder(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         let target = reveal_target(&path)?;
         tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Decode a media file in-process (symphonia) — the playback fallback for
@@ -526,14 +522,13 @@ pub async fn reveal_in_folder(path: String) -> Result<(), String> {
 /// returning the bytes over IPC froze the web process on ~240 MB blobs.
 #[tauri::command]
 pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    super::blocking(move || {
         crate::audio::decode::decode_to_cached_wav(&app, &path).map_err(|e| {
             tracing::warn!("[playback] decode failed for {path}: {e}");
             e
         })
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Write a plain text file (transcript exports) atomically (`write_text_atomic`) to the path
@@ -543,9 +538,7 @@ pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, S
 /// user-picked sink (USB stick, network share).
 #[tauri::command]
 pub async fn save_text_file(path: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_text_atomic(&PathBuf::from(path), &contents))
-        .await
-        .map_err(|e| e.to_string())?
+    super::blocking(move || write_text_atomic(&PathBuf::from(path), &contents)).await
 }
 
 /// The body of `save_text_file`. On Linux the predictable `<path>.tmp` is opened without
@@ -586,7 +579,7 @@ fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), Strin
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String, String> {
     const MAX_TEXT_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
-    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+    super::blocking(move || -> Result<String, String> {
         let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
         if !meta.is_file() {
             return Err("not a file".into());
@@ -598,7 +591,6 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
         Ok(decode_text_source(&bytes))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Windows-1252 code points for bytes 0x80–0x9F; the five undefined slots are U+FFFD.

@@ -258,21 +258,13 @@ static KEYRING_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_ne
 #[tauri::command]
 pub async fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
     let _guard = KEYRING_WRITE_LOCK.lock().await;
-    tauri::async_runtime::spawn_blocking(move || {
-        config::keys::set(&backend_id, &key).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    super::blocking(move || config::keys::set(&backend_id, &key).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
 pub async fn delete_backend_key(backend_id: String) -> Result<(), String> {
     let _guard = KEYRING_WRITE_LOCK.lock().await;
-    tauri::async_runtime::spawn_blocking(move || {
-        config::keys::delete(&backend_id).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    super::blocking(move || config::keys::delete(&backend_id).map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]

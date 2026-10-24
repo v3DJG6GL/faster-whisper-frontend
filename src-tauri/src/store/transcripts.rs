@@ -752,14 +752,13 @@ pub fn save_transcript_record(
 pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
     let transcripts = transcripts_dir(&app)?;
     let dictations = dictations_dir(&app)?;
-    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
+    crate::commands::blocking(move || -> Result<Vec<serde_json::Value>, String> {
         let mut out = Vec::new();
         read_records_into(&transcripts, &mut out)?;
         read_records_into(&dictations, &mut out)?;
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(), String> {
@@ -806,7 +805,7 @@ pub async fn delete_transcript_record(
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+    crate::commands::blocking(move || -> Result<(), String> {
         // Media only after a successful unlink: a failed one (Windows briefly locking the file)
         // keeps the History entry, which must keep its playable media too. The record unlink
         // never waits for the migration, or a quit during the wait would bring the record back.
@@ -858,7 +857,6 @@ pub async fn delete_transcript_record(
         res
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Run [`delete_record_media`] on a detached thread, so `delete_transcript_record` settles
@@ -964,7 +962,7 @@ pub async fn save_transcript_media(
         return Err("malformed record id".into());
     }
     let dir = files_media_dir(&app, audio_base)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::commands::blocking(move || {
         let src = PathBuf::from(&source_path);
         let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
         if !meta.is_file() {
@@ -994,7 +992,6 @@ pub async fn save_transcript_media(
         Ok(Some(dest.to_string_lossy().to_string()))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Storage readout for the Recording & history tab: per-type counts and
@@ -1008,7 +1005,7 @@ pub async fn transcript_store_stats(
     app: AppHandle,
     audio_base: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+    crate::commands::blocking(move || -> Result<serde_json::Value, String> {
         fn count_json(dir: &Path) -> u32 {
             std::fs::read_dir(dir)
                 .map(|e| {
@@ -1041,7 +1038,6 @@ pub async fn transcript_store_stats(
         }))
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// "Delete all dictations": every stored session record AND every app-owned
@@ -1055,7 +1051,7 @@ pub async fn delete_all_dictations(
     app: AppHandle,
     audio_base: Option<String>,
 ) -> Result<u32, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+    crate::commands::blocking(move || -> Result<u32, String> {
         // Waits out this launch's audio-layout migration FIRST: a file it moves in after the
         // wipe listed the recordings folder would be left behind. The record wipe waits with it,
         // not ahead of it: this command emits no `transcripts://swept`, so the webview reloads
@@ -1078,7 +1074,6 @@ pub async fn delete_all_dictations(
         Ok(removed)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Delete every app-owned file in the recordings folder; returns how many of them were audio.
@@ -1104,7 +1099,7 @@ pub async fn clear_file_transcriptions(
     app: AppHandle,
     audio_base: Option<String>,
 ) -> Result<u32, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+    crate::commands::blocking(move || -> Result<u32, String> {
         // As delete_all_dictations: the wait comes first, since the orphan sweep must see the
         // migrated layout, and the record wipe waits with it so it lands together with the IPC
         // settle that reloads the History mirror (no `transcripts://swept` here).
@@ -1114,7 +1109,6 @@ pub async fn clear_file_transcriptions(
         Ok(removed)
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// "Delete audio from file/link transcriptions": empties one media subfolder
@@ -1126,7 +1120,7 @@ pub async fn remove_transcript_media(
     kind: Option<String>,
     audio_base: Option<String>,
 ) -> Result<u32, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+    crate::commands::blocking(move || -> Result<u32, String> {
         // As delete_all_dictations: a file the layout migration moves in after the listing stays.
         crate::commands::wait_audio_layout();
         let mut dirs: Vec<PathBuf> = Vec::new();
@@ -1162,7 +1156,6 @@ pub async fn remove_transcript_media(
         }
     })
     .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Remove every media file named after `id` (any extension).
