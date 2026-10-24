@@ -68,6 +68,11 @@ export function safeTotals(t: Partial<UsageKindTotals> | null | undefined): Usag
   };
 }
 
+/** A wire value as a finite count or duration: non-numbers, NaN and ±Infinity read as 0, negatives clamp to 0. */
+export function nonNeg(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0;
+}
+
 export function safeKinds(k: Partial<UsageKinds> | null | undefined): UsageKinds {
   return {
     all: safeTotals(k?.all),
@@ -113,8 +118,7 @@ export function parseMetric(v: string | null | undefined): ChartMetric {
 }
 
 export function metricValue(t: UsageKindTotals, m: ChartMetric): number {
-  const v = t[m];
-  return typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0;
+  return nonNeg(t[m]);
 }
 
 /** Densify the sparse per-kind series into one point per calendar day across the last
@@ -677,15 +681,14 @@ export interface RhythmSource {
 /** A slot's per-kind totals: words sit flat on the slot (the original shape), the other
  *  five measures are nested per-kind splits the backend added for its own busy-hours card. */
 function slotKinds(h: UsageHourCell): UsageKinds {
-  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0);
   const out = zeroKinds();
   for (const k of ["all", ...KINDS] as const) {
-    out[k].words = num(h[k]);
-    out[k].audio_s = num(h.audio_s?.[k]);
-    out[k].processing_s = num(h.processing_s?.[k]);
-    out[k].sessions = num(h.sessions?.[k]);
-    out[k].requests = num(h.requests?.[k]);
-    out[k].errors = num(h.errors?.[k]);
+    out[k].words = nonNeg(h[k]);
+    out[k].audio_s = nonNeg(h.audio_s?.[k]);
+    out[k].processing_s = nonNeg(h.processing_s?.[k]);
+    out[k].sessions = nonNeg(h.sessions?.[k]);
+    out[k].requests = nonNeg(h.requests?.[k]);
+    out[k].errors = nonNeg(h.errors?.[k]);
   }
   return out;
 }
@@ -921,8 +924,7 @@ export const DOW_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as co
 
 export function streakFor(streaks: Partial<UsageStreaks> | null | undefined, scope: UsageScope): UsageStreak {
   const s = streaks?.[scope];
-  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
-  return { current: n(s?.current), best: n(s?.best) };
+  return { current: Math.floor(nonNeg(s?.current)), best: Math.floor(nonNeg(s?.best)) };
 }
 
 export interface StageRowMeta {
@@ -1028,7 +1030,7 @@ export function facetRows(
   scaleTo: "all" | "lit" = "all",
 ): FacetRow[] {
   const clean = rows
-    .map((r) => ({ ...r, value: typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, r.value) : 0 }))
+    .map((r) => ({ ...r, value: nonNeg(r.value) }))
     .filter((r) => !dropZero || r.value > 0);
   let max = clean.reduce((m, r) => (scaleTo === "lit" && r.dim ? m : Math.max(m, r.value)), 0);
   // Otherwise "Not asked: 87" beside a zero-width bar reads as "no data" when there IS data.

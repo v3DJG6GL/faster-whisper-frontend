@@ -49,6 +49,7 @@ import {
   fmtTimeSaved,
   isDay,
   isFiltered,
+  nonNeg,
   orderedStageRows,
   pct,
   type Rhythm,
@@ -345,7 +346,7 @@ export function HomeUsageStrip() {
   const last30 = dense.slice(-30);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
   // The server's window-clamped figure — the same one the Statistics tile shows for 30 days.
-  const saved = Number.isFinite(stats.time_saved_s) ? Math.max(0, stats.time_saved_s) : 0;
+  const saved = nonNeg(stats.time_saved_s);
   return (
     <section className="mt-8">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
