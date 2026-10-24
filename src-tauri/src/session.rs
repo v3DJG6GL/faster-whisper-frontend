@@ -1531,19 +1531,25 @@ fn mute_other_streams() -> Option<Vec<u32>> {
     // LC_ALL=C: pactl localizes the labels we parse ("Sink Input #", "Mute:", "yes"/"no"), so on a
     // non-English desktop the parse would find nothing → Some(vec![]) → no whole-sink fallback →
     // muting silently does nothing. Force the C locale so the parse is language-independent.
-    let out = std::process::Command::new("pactl")
-        .args(["list", "sink-inputs"])
-        .env("LC_ALL", "C")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let ids = streams_to_mute(&String::from_utf8_lossy(&out.stdout), std::process::id());
+    let text = c_locale_stdout("pactl", &["list", "sink-inputs"])?;
+    let ids = streams_to_mute(&text, std::process::id());
     for &id in &ids {
         set_sink_input_mute(id, true);
     }
     Some(ids)
+}
+
+/// stdout of `prog args` run in the C locale, or None when it can't be spawned or exits non-zero.
+#[cfg(unix)]
+fn c_locale_stdout(prog: &str, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new(prog)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 #[cfg(unix)]
@@ -1563,28 +1569,11 @@ fn set_sink_input_mute(id: u32, mute: bool) {
 /// None → the guard records "unmuted" and then wrongly UN-mutes a user who began muted on drop.
 #[cfg(unix)]
 fn get_system_mute() -> Option<bool> {
-    if let Ok(out) = std::process::Command::new("wpctl")
-        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
-        .env("LC_ALL", "C")
-        .output()
-    {
-        if out.status.success() {
-            return Some(String::from_utf8_lossy(&out.stdout).contains("[MUTED]"));
-        }
+    if let Some(text) = c_locale_stdout("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]) {
+        return Some(text.contains("[MUTED]"));
     }
-    let out = std::process::Command::new("pactl")
-        .args(["get-sink-mute", "@DEFAULT_SINK@"])
-        .env("LC_ALL", "C")
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(
-        String::from_utf8_lossy(&out.stdout)
-            .to_lowercase()
-            .contains("yes"),
-    )
+    let text = c_locale_stdout("pactl", &["get-sink-mute", "@DEFAULT_SINK@"])?;
+    Some(text.to_lowercase().contains("yes"))
 }
 
 #[cfg(unix)]
