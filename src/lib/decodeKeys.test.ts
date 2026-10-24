@@ -37,8 +37,7 @@ import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
 import type { Backend, DecodeOverrides, Profile } from "./types";
 
 /** The `settings` keys of GET /v1/request-default-settings, recorded from the frozen settings
- *  batch contract (2026-10-05): the server lists every client key its registry has. This list
- *  replaces the old Rust "a renamed key fails a test" guard — the Rust mirror is a map now. */
+ *  batch contract (2026-10-05): the server lists every client key its registry has. */
 const SERVER_CLIENT_KEYS = [
   "beam_size", "best_of", "vad_filter", "vad_min_silence_duration_ms", "vad_speech_pad_ms",
   "vad_threshold", "condition_on_previous_text", "no_speech_threshold", "log_prob_threshold",
@@ -227,8 +226,6 @@ it("the table is keyed by the DecodeOverrides keys (compile-time check, mirrored
   const key: DecodeKey = "streaming_hard_break_separator";
   expect(DECODE_KEYS[key].multiline).toBe(true);
 });
-
-// ── settings sync: every key survives push/pull and export/import ───────────
 
 const CATS_ALL = categorySelection(true);
 
