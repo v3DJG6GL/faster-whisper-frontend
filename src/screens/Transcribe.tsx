@@ -110,7 +110,7 @@ function recentMeta(rec: TranscriptRecord): string {
   return parts.join(" · ");
 }
 
-/** Human label for a server progress stage (absent/unknown ⇒ generic). */
+/** Human label for a server progress stage (absent/unknown ⇒ the step the run starts on). */
 function stageLabel(
   p: BatchProgress | null,
   kind: ReturnType<typeof itemSourceKind> | null = null,
@@ -344,7 +344,6 @@ export default function Transcribe() {
   const urlPreviewSeq = useRef(0);
   // Prevents a double-click from opening two native file dialogs.
   const picking = useRef(false);
-  // OS drag-and-drop is over the window (Tauri intercepts HTML5 drops).
   const [dragOver, setDragOver] = useState(false);
   // Window width drives the stacked/studio arrangement (Tauri desktop window;
   // there is no breakpoint system, and the sidebar is a fixed 228px).
@@ -357,7 +356,9 @@ export default function Transcribe() {
 
   // OS drag-and-drop: Tauri's native interception owns the events (HTML5
   // drop never fires), so listen on the webview. Accepted files join the
-  // queue exactly like picked ones; anything else is ignored quietly.
+  // list like picked ones, except that a drop mid-run is ignored instead of
+  // staged (the busy drop zone shows no highlight); anything else is ignored
+  // quietly.
   useEffect(() => {
     if (!isTauri) return;
     let stale = false;
@@ -885,7 +886,7 @@ export default function Transcribe() {
   // saved one was deleted and the screen fell back to backends[0] without rewriting the stored
   // picks), the other backend-scoped picks are CLEARED with it — saving the id alone would revive a
   // deleted backend's model, language and translation model on the next mount, past the
-  // savedBackend gate, and copying the screen's untouched seeds would pin them. Cleared, an
+  // savedBackendOf gate, and copying the screen's untouched seeds would pin them. Cleared, an
   // untouched language keeps following the Backend's; a patch that names a field still wins.
   const persistScoped = (patch: Parameters<typeof patchTranscribe>[0]) =>
     persistOptions(
@@ -1152,8 +1153,7 @@ export default function Transcribe() {
   };
 
   // Opening a transcript (a history pick, or a run that just finished) lands
-  // the viewer below the Recent strip in the stacked column — bring it into
-  // view so the user isn't left staring at the unchanged elements above it.
+  // the viewer below the Recent strip in the stacked column, so scroll to it.
   // Studio needs nothing: the right pane always shows the viewer. Eased by
   // hand — WebKitGTK ignores scrollTo({behavior:"smooth"}).
   const openedKey = selected?.result
@@ -1421,9 +1421,7 @@ export default function Transcribe() {
 
       {urlAvailable && (
         <div className="mt-6">
-          {/* One queue, two ways in: the link row sits under the files +
-              backend block behind a quiet divider — files and links mix in
-              one run. */}
+          {/* One queue, two ways in: files and links mix in one run. */}
           <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-label text-faint">
             <span aria-hidden className="h-px flex-1 bg-line" />
             or paste a link
@@ -1548,8 +1546,6 @@ export default function Transcribe() {
                       linkVideoHeight !== undefined
                         ? linkVideoHeight
                         : settings.transcribe?.urlVideoMaxHeight ?? null;
-                    // An explicit pick names the rung; otherwise the Settings
-                    // height cap decides, best available by default.
                     const chosen = pickRung(ladder, height, linkVideoFormat ?? null);
                     return (
                       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -1970,12 +1966,9 @@ export default function Transcribe() {
                       ariaLabel="Translation"
                       onChange={(v) => {
                         if (v) {
-                          // Seed: Backend Translation defaults → the caller's
-                          // server-side default → English; never the source the
-                          // picker excludes (en→en would be a no-op stage; while
-                          // the panel holds the chips, the link's spoken language
-                          // would be a hidden target), and within the server's
-                          // target cap, as the picker is.
+                          // Never seed the source the picker excludes: while the
+                          // panel holds the chips, the link's spoken language would
+                          // be a hidden target.
                           const next = seedTargets({
                             backendTargets: backend?.translationOverrides?.translateTo,
                             serverDefault: caps?.translate_to_default,
@@ -2506,7 +2499,8 @@ export default function Transcribe() {
                 const dlEst =
                   st === "downloading" && !dlTotal ? panelUrlMeta?.estimatedBytes ?? null : null;
                 // Done-row receipt: final bytes captured while the download
-                // reported them, and the average rate over the stage.
+                // reported them, and the average rate over that same
+                // transfer window.
                 const dlBytes =
                   st === "downloading" && state === "done" ? meta?.bytes ?? null : null;
                 const dlAvg =
@@ -2678,10 +2672,11 @@ export default function Transcribe() {
                           />
                         </div>
                       ) : null}
-                      {/* Language ledger: one line per target while the
-                          translate stage runs — status word, its own bar,
-                          elapsed and what is left — in the rail's own
-                          vocabulary. Instant = same-language verbatim copy. */}
+                      {/* Unit ledger: one line per unit (target language, or
+                          diarization sub-step) while the stage runs — status
+                          word, its own bar, elapsed and what is left — in the
+                          rail's own vocabulary. Instant = same-language
+                          verbatim copy. */}
                       {state === "active" && units && units.length > 0 && (
                         <div className="mt-2 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums">
                           {units.map((u) => {
