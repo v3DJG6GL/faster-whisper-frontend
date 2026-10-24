@@ -278,9 +278,7 @@ mod imp {
         // thread) can't interleave: otherwise both spawn reader-task sets that briefly read the same
         // devices in parallel — double-firing every chord — before one store aborts the other. Inline
         // the stop (set *g = None, dropping the old Running → aborting its readers) instead of calling
-        // super::stop(): std::sync::Mutex is non-reentrant, so re-locking here would deadlock. No
-        // .await runs under the guard (spawn just schedules; enumerate is a sync scan), so this can't
-        // hold the lock across a suspension point.
+        // super::stop(): std::sync::Mutex is non-reentrant, so re-locking here would deadlock.
         let mut g = match state.0.lock() {
             Ok(g) => g,
             Err(_) => return,
@@ -351,11 +349,11 @@ mod imp {
             crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
-        // session causality is otherwise invisible in the log — see windows::emit.
+        // session causality is otherwise invisible in the log.
         // `profile_id` is blob- and import-authored (`sanitizeProfiles` type-checks `id` as a
         // string and never clamps it), so it is defanged for the log exactly as the CLI twin in
-        // `triggers.rs` is: an embedded newline forges records in the Windows support log users
-        // are asked to send, and an unbounded id turns every chord press into a large disk write.
+        // `triggers.rs` is: an embedded newline forges records in the support log users are
+        // asked to send, and an unbounded id turns every chord press into a large disk write.
         let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
         tracing::info!("[trigger] {profile_id_log}/{action} (evdev)");
         let _ = app.emit(
