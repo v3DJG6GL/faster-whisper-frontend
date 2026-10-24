@@ -463,7 +463,7 @@ describe("parseLadderInput", () => {
   });
 
   it("refuses a ladder longer than the sanitizer keeps", () => {
-    expect(parseLadderInput(Array(17).fill("0").join(","), false)).toBeNull(); // 17 rungs
+    expect(parseLadderInput(Array(17).fill("0").join(","), false)).toBeNull();
     expect(parseLadderInput(Array(16).fill("0").join(","), false)).toBe(Array(16).fill("0").join(","));
     const long = Array(11).fill("0.125").join(","); // 11 rungs, 65 characters
     expect(long.length).toBe(65);
@@ -474,7 +474,7 @@ describe("parseLadderInput", () => {
     const long = Array(12).fill("0.125").join(","); // 71 characters, stored by an earlier build
     expect(parseLadderInput(long.slice(0, -1), false, long)).toBe(long.slice(0, -1));
     expect(parseLadderInput(long + "5", false, long)).toBeNull();
-    const rungs = Array(18).fill("0").join(","); // 18 rungs
+    const rungs = Array(18).fill("0").join(",");
     expect(parseLadderInput(rungs.slice(0, -1), false, rungs)).toBe(rungs.slice(0, -1)); // still 18 parts
     expect(parseLadderInput(rungs + ",0", false, rungs)).toBeNull();
   });
