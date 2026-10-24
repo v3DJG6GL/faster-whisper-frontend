@@ -49,6 +49,24 @@ async function restoreSingleBackend() {
   await vi.advanceTimersByTimeAsync(30_000);
   await settle();
 }
+/** b1 + b2 (b1 picked), the page open, a hidden pass that skipped it; then b2's trend fetch
+ *  hangs until `b2.release` runs. `ok` is the implementation it replaced. */
+async function hiddenPageWithStuckB2() {
+  useApp.setState({ backends: [B1, B2], usageViewBackendId: "b1" });
+  await vi.advanceTimersByTimeAsync(30_000);
+  await settle();
+  const close = openStatisticsPage();
+  await settle();
+  setHidden(true);
+  await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+  await settle();
+  const ok = getUsageStats.getMockImplementation()!;
+  const b2: { release?: (v: null) => void } = {};
+  getUsageStats.mockImplementation((a) =>
+    (a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (new Promise((r) => (b2.release = r)) as never) : ok(a),
+  );
+  return { close, ok, b2 };
+}
 /** The fixed per-backend trend document's call, as opposed to the page's own view / year. */
 const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
 /** Calls since the last reset, split into the fixed per-backend document and the page's. */
@@ -505,25 +523,8 @@ describe("usage poll gates", () => {
     await settle();
   });
   it("the show catch-up fetches the page documents at once, not behind a pass stuck on another backend", async () => {
-    useApp.setState({
-      backends: [B1, B2],
-      usageViewBackendId: "b1",
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
-    await settle();
     // b2 stops answering its trend document; two more ticks are passed over.
-    const ok = getUsageStats.getMockImplementation()!;
-    let releaseB2!: (v: null) => void;
-    getUsageStats.mockImplementation((a) =>
-      (a as { backendId?: string }).backendId === "b2" && isTrend(a)
-        ? (new Promise((r) => (releaseB2 = r)) as never)
-        : ok(a),
-    );
+    const { close, ok, b2 } = await hiddenPageWithStuckB2();
     try {
       await vi.advanceTimersByTimeAsync(2 * 30_000);
       await settle();
@@ -533,11 +534,11 @@ describe("usage poll gates", () => {
       expect(calls()).toEqual({ fixed: 2, page: 2 }); // b1 + the pending b2, and the page's view + year
       expect(useApp.getState().usageView?.failed).toBeFalsy();
       getUsageStats.mockClear();
-      releaseB2(null);
+      b2.release!(null);
       await settle();
       expect(calls().page).toBe(0); // the show already fetched the page and no outcome was delivered since
     } finally {
-      releaseB2?.(null); // never leave the pass stuck for the later cases
+      b2.release?.(null); // never leave the pass stuck for the later cases
       await settle();
       getUsageStats.mockImplementation(ok);
       close();
@@ -545,24 +546,7 @@ describe("usage poll gates", () => {
     await restoreSingleBackend();
   });
   it("a hide and show before the page step of the pass a show started makes that step refetch the page", async () => {
-    useApp.setState({
-      backends: [B1, B2],
-      usageViewBackendId: "b1",
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
-    await settle();
-    const ok = getUsageStats.getMockImplementation()!;
-    let releaseB2!: (v: null) => void;
-    getUsageStats.mockImplementation((a) =>
-      (a as { backendId?: string }).backendId === "b2" && isTrend(a)
-        ? (new Promise((r) => (releaseB2 = r)) as never)
-        : ok(a),
-    );
+    const { close, ok, b2 } = await hiddenPageWithStuckB2();
     try {
       await vi.advanceTimersByTimeAsync(2 * 30_000); // two ticks passed over: the show starts a pass
       await settle();
@@ -573,12 +557,12 @@ describe("usage poll gates", () => {
       setHidden(false); // nothing passed over and no page missed, so no fetch of its own
       await settle();
       getUsageStats.mockClear();
-      releaseB2(null);
+      b2.release!(null);
       await settle();
       await settle();
       expect(calls().page).toBe(2); // the pass's page step refetches the view + year
     } finally {
-      releaseB2?.(null); // never leave the pass stuck for the later cases
+      b2.release?.(null); // never leave the pass stuck for the later cases
       await settle();
       getUsageStats.mockImplementation(ok);
       setHidden(false);
@@ -590,22 +574,7 @@ describe("usage poll gates", () => {
     // skipped 0: the show only fetches the page (no pass of its own); 2: it also folds a rerun,
     // which fetches the page as usual.
     for (const skipped of [0, 2]) {
-      useApp.setState({
-        backends: [B1, B2],
-        usageViewBackendId: "b1",
-      });
-      await vi.advanceTimersByTimeAsync(30_000);
-      await settle();
-      const close = openStatisticsPage();
-      await settle();
-      setHidden(true);
-      await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
-      await settle();
-      const ok = getUsageStats.getMockImplementation()!;
-      let releaseB2!: (v: null) => void;
-      getUsageStats.mockImplementation((a) =>
-        (a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (new Promise((r) => (releaseB2 = r)) as never) : ok(a),
-      );
+      const { close, ok, b2 } = await hiddenPageWithStuckB2();
       try {
         await vi.advanceTimersByTimeAsync(10 * 30_000); // the next hidden pass hangs on b2's trend fetch
         await settle();
@@ -617,13 +586,13 @@ describe("usage poll gates", () => {
         await settle();
         expect(calls().page).toBe(2); // the show's direct view + year
         getUsageStats.mockClear();
-        releaseB2(null);
+        b2.release!(null);
         await settle();
         await settle();
         // The held pass's page step takes the confirmed direct fetch; only a folded rerun refetches.
         expect(calls().page).toBe(skipped ? 2 : 0);
       } finally {
-        releaseB2?.(null);
+        b2.release?.(null);
         await settle();
         getUsageStats.mockImplementation(ok);
         setHidden(false);
@@ -668,22 +637,7 @@ describe("usage poll gates", () => {
     await restoreSingleBackend();
   });
   it("the catch-up pass refetches the page when a range change's fetch missed after the show's direct fetch landed", async () => {
-    useApp.setState({
-      backends: [B1, B2],
-      usageViewBackendId: "b1",
-    });
-    await vi.advanceTimersByTimeAsync(30_000);
-    await settle();
-    const close = openStatisticsPage();
-    await settle();
-    setHidden(true);
-    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
-    await settle();
-    const ok = getUsageStats.getMockImplementation()!;
-    let releaseB2!: (v: null) => void;
-    getUsageStats.mockImplementation((a) =>
-      (a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (new Promise((r) => (releaseB2 = r)) as never) : ok(a),
-    );
+    const { close, ok, b2 } = await hiddenPageWithStuckB2();
     try {
       await vi.advanceTimersByTimeAsync(2 * 30_000);
       await settle();
@@ -696,13 +650,13 @@ describe("usage poll gates", () => {
       expect(useApp.getState().usageView?.failed).toBe(true);
       getUsageStats.mockImplementation(ok);
       getUsageStats.mockClear();
-      releaseB2(null);
+      b2.release!(null);
       await settle();
       await settle();
       expect(calls().page).toBe(2); // the pass refetches the view + year instead of trusting the show's answer
       expect(useApp.getState().usageView?.failed).toBeFalsy();
     } finally {
-      releaseB2?.(null);
+      b2.release?.(null);
       await settle();
       getUsageStats.mockImplementation(ok);
       close();
