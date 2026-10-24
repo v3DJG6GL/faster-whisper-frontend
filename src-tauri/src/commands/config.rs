@@ -1,5 +1,5 @@
 //! Config load/save, the secret-store keys and the side effects a save applies
-//! (recordings retention, autostart).
+//! (live switches, retention sweeps, log settings, autostart).
 
 use super::{audio_base_pref, config_dir, resolve_recordings_dir};
 use crate::config::{self, Config};
@@ -83,15 +83,12 @@ pub(crate) fn set_live_switches(
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
-    // The in-memory process switches (clipboard privacy, Remote desktop rules, log level) mirror
-    // the webview's live settings (the paste path already acts on them unsaved), not the disk,
-    // so they apply BEFORE the write — and the webview applies them itself on a save it holds
-    // back (shortcut conflict): on every held or refused save (BACKUP_FAILED session,
-    // full/read-only disk) push-to-talk, Quick-Add and clipboard writes still follow the paste
-    // path, and the log records at the level Settings shows, instead of lagging until restart. The
-    // Quick-Add window's own paste reads the rules from disk, so after a held or refused save its
-    // grab (here) and its paste can disagree until the next good save — the lesser split: before,
-    // the main window's paste and push-to-talk disagreed instead.
+    // The live switches apply BEFORE the write (see `apply_live_switches`): on a refused save
+    // (BACKUP_FAILED session, full/read-only disk) push-to-talk, Quick-Add, clipboard writes and
+    // the log level still follow the paste path instead of lagging until restart. The Quick-Add
+    // window's own paste reads the rules from disk, so after a held or refused save its grab
+    // (here) and its paste can disagree until the next good save — the lesser split (else the
+    // main window's paste and push-to-talk would disagree).
     set_live_switches(
         &config.app_rules,
         config.settings.general.exclude_from_clipboard_history,
