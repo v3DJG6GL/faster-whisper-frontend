@@ -214,8 +214,8 @@ function RecordingPlayer({ path }: { path: string }) {
       >
         {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
       </button>
-      {/* A clock beside a seek bar: fmtDuration rounds to whole minutes above 60 s and
-          read AHEAD of the audio ("4m" at 3:31); the workbench transport's format instead. */}
+      {/* A clock beside a seek bar uses the workbench transport's format: fmtDuration rounds to
+          whole minutes above 60 s, so it reads ahead of the audio ("4m" at 3:31). */}
       <span className="font-mono text-[11px] text-dim">{fmtTimestamp(cur)}</span>
       <div
         role="slider"
