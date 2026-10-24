@@ -229,8 +229,8 @@ export function TranscriptViewer({
   }, [focus]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // The <audio>'s ref: keeps audioRef (playhead loop, watchdog, seek) and
-  // empties the element when React lets go of it — the key change (blob →
-  // WAV → path), audioBroken and unmount all detach it, and a detached
+  // empties the element when React lets go of it — the key change (path →
+  // blob → WAV, or a record switch), audioBroken and unmount all detach it, and a detached
   // element otherwise keeps its decoded source alive. It also clears the
   // play state: the pause a detached element fires never reaches React's
   // root listeners, so onPause would leave Pause showing and the playhead
@@ -305,8 +305,8 @@ export function TranscriptViewer({
   // the watchdog must not re-enter onAudioError while a buffer read is in flight.
   const bufferPendingRef = useRef(false);
   // Generation counter for the audio fallback chain: bumped on every record switch
-  // (path/mediaPath change) so an in-flight readMediaFile/decodeMediaFile from the
-  // OLD record does not land its result on the NEW record's player.
+  // (path/mediaPath change) and on unmount, so an in-flight readMediaFile/decodeMediaFile
+  // from the OLD record never lands on the NEW record's player (or after unmount).
   const audioGenRef = useRef(0);
   // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
   // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off early.
@@ -1274,13 +1274,6 @@ export function TranscriptViewer({
     if (audioRef.current) audioRef.current.playbackRate = next;
   };
 
-  // Sticky toolbar over a nested scroller: once the page scrolls past the card
-  // top, the pinned toolbar overlaps the box's top edge, and a box cannot scroll
-  // "above its own content" — the rows under the overlap would be unreachable.
-  // So the box SHRINKS in step: translateY moves its top edge to the toolbar's
-  // bottom, the height gives up the same amount and margin-bottom takes it over
-  // (the flow below never shifts, so the page scroll can't feedback-loop). The
-  // box and its scrollbar then span exactly what is visible.
   // The sticky toolbar's height as `--viewer-bar` on the card: the export panel's sticky
   // Summary column sits below it instead of under it. 0 where the toolbar isn't sticky.
   const barSticky = !(fill || focus);
@@ -1288,6 +1281,13 @@ export function TranscriptViewer({
   useEffect(() => {
     if (!barSticky) toolbarRef.current?.parentElement?.style.removeProperty("--viewer-bar");
   }, [barSticky]);
+  // Sticky toolbar over a nested scroller: once the page scrolls past the card
+  // top, the pinned toolbar overlaps the box's top edge, and a box cannot scroll
+  // "above its own content" — the rows under the overlap would be unreachable.
+  // So the box SHRINKS in step: translateY moves its top edge to the toolbar's
+  // bottom, the height gives up the same amount and margin-bottom takes it over
+  // (the flow below never shifts, so the page scroll can't feedback-loop). The
+  // box and its scrollbar then span exactly what is visible.
   const stickyShiftRef = useRef(0); // current translateY, read by follow
   useEffect(() => {
     if (fill || focus) return; // toolbar isn't sticky there — no overlap
@@ -1637,7 +1637,6 @@ export function TranscriptViewer({
     copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
-  // Clear a still-pending confirmation timer if the viewer unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
   // Row callbacks are stable so SegmentRow's memo holds.
