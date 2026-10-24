@@ -2268,17 +2268,19 @@ describe("a sync edit made during the launch work", () => {
   // base, this device's different value read as "changed here only" and was pushed over the peer's.
   const offSub = { ...DEFAULT_SETTINGS.sync!.sub, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false } as SyncSubSettings;
   const serverCopy = REMOTE.state.blob as SyncBlob;
+  /** One edit that sets this device's log level AND turns the "Log level" gate on. */
+  const relevelAndTurnOn = (logLevel: NonNullable<AppSettings["logging"]>["logLevel"]) => (st: { settings: AppSettings }) => ({
+    settings: {
+      ...st.settings,
+      logging: { ...st.settings.logging!, logLevel },
+      sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+    },
+  });
 
   it("a category turned ON with a value different from the server's asks instead of pushing over it", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "warn" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("warn"));
       await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       await new Promise((r) => setTimeout(r, 30)); // a push the reconcile queued would land now
@@ -2293,13 +2295,7 @@ describe("a sync edit made during the launch work", () => {
   it("a category turned ON with the server's own value merges without asking", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "debug" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("debug"));
       await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
@@ -2328,13 +2324,7 @@ describe("a sync edit made during the launch work", () => {
   it("resolving a re-enabled category's conflict lands the pick and adopts a base: the dialog does not come back", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "warn" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("warn"));
       await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await engine.resolveSyncConflicts({ logging: "local" }, engine.getPendingConflict()!.id);
@@ -2354,13 +2344,7 @@ describe("a sync edit made during the launch work", () => {
     const older = { logging: { ...(serverCopy.logging as object), keepDays: 7 } } as SyncBlob;
     const { engine, store, init } = await launchEngine({ sub: offSub }, older);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "debug" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("debug"));
       await finishLaunch(io, init);
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
@@ -2618,13 +2602,7 @@ describe("a sync edit made during the launch work", () => {
   it("an automatic pull while a re-enabled category's dialog waits keeps its notice, and turning the setting off drops the dialog", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "warn" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("warn"));
       await finishLaunch(io, init);
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
@@ -2643,13 +2621,7 @@ describe("a sync edit made during the launch work", () => {
   it("recording a re-enabled category with the keyring locked leaves the stashed keys alone", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "warn" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("warn"));
       io.release({}); // the keyring is locked: the snapshot's keys are not restored
       await init;
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
@@ -2686,13 +2658,7 @@ describe("a sync edit made during the launch work", () => {
   it("a gate turned ON during the launch work while sync is off asks once sync comes on", async () => {
     const { engine, store, init } = await launchEngine({ enabled: false, sub: offSub }, serverCopy);
     try {
-      store.setState((st) => ({
-        settings: {
-          ...st.settings,
-          logging: { ...st.settings.logging!, logLevel: "warn" },
-          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
-        },
-      }));
+      store.setState(relevelAndTurnOn("warn"));
       await finishLaunch(io, init);
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
