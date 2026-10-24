@@ -106,8 +106,8 @@ pub fn forget_detached_batch() {
 /// Publish a device-loss salvage's epoch (the salvage arm in `start_record`). A salvage firing
 /// inside `finish()`'s capture join runs after `stop_record`'s claim and outside the lock, so a
 /// session N+1 may already have claimed the slot; epochs only grow, so `fetch_max` never moves the
-/// slot backwards (see `RecordSession::finish`), and after a forget (0) it still publishes the
-/// salvage.
+/// slot backwards (see `RecordSession::claim_detached`), and after a forget (0) it still publishes
+/// the salvage.
 fn publish_salvaged_batch(epoch: u64) {
     DETACHED_BATCH_EPOCH.fetch_max(epoch, Ordering::SeqCst);
 }
@@ -1097,8 +1097,6 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
         let stop = capture_stop.clone();
         let device_lost = device_lost.clone();
         let discard = discard.clone();
-        // Cloned for the device-loss salvage arm below (transcribe what was captured). `p` itself is
-        // moved into the RecordSession; `buffer` is cloned into the call so the arm keeps its own Arc.
         let params = p.clone();
         std::thread::Builder::new()
             .name("record-capture".into())
@@ -1199,9 +1197,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     }
     // Save FIRST, regardless of length, as the streaming save path does: whether a too-short
     // recording is worth keeping is the BACKEND's call (CAPTURES_RECORDING_MIN_DURATION_S), so
-    // "Keep recordings" produces the same files on a streaming and a batch backend. "Trim silence"
-    // affects ONLY the saved file (the full clip is still transcribed); an all-silence clip can
-    // trim to nothing, which save_recording skips.
+    // "Keep recordings" produces the same files on a streaming and a batch backend. An
+    // all-silence clip can trim to nothing, which save_recording skips.
     // On the blocking pool, like the streaming drain's save: trim + write + fsync of a long clip
     // on a sleeping disk or an offline share must not park a runtime worker.
     // The clip moves in and comes back out, so it is never copied.
