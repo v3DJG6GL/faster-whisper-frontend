@@ -323,7 +323,8 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         }
     }
     // Every scalar wire category — keep in step with `SCALAR_CATS` in src/lib/sync/syncGates.ts. A
-    // category missing here passed validation and then vanished silently at apply time.
+    // category missing here skips this shape check, and a malformed one then vanishes silently at
+    // apply time.
     for key in [
         "general",
         "recording",
