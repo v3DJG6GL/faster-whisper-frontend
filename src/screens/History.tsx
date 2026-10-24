@@ -352,9 +352,7 @@ export default function History() {
     };
   }, []);
 
-  // Search haystacks are built lazily on the first search and cached per
-  // record for this mount — no keystroke re-derives a record's full text (up
-  // to 20 000 chars), and browsing without searching builds none at all.
+  // Per-mount haystack cache, filled lazily: browsing without searching builds none.
   const [haystackCache] = useState(() => new WeakMap<TranscriptRecord, Haystack>());
 
   // Search first (global — both kinds, names AND text), THEN the segment/app
@@ -771,7 +769,7 @@ export default function History() {
               profile <span className="text-dim">{profileShown}{rec.activation ? ` · ${rec.activation}` : ""}</span>
             </span>
           )}
-          {/* The picker's label can run past a 40-codepoint name (name + host suffix): bounded
+          {/* The picker's label (an up-to-80-codepoint name plus a host suffix) is bounded
               here, whole on hover. */}
           {backendShown && (
             <span className="font-mono text-[11px] text-faint">
