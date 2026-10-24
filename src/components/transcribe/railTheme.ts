@@ -41,8 +41,8 @@ export const UNIT_NOUN: Partial<Record<RailStage, string>> = {
   translating: "languages",
   diarizing: "steps",
 };
-/** Timeline-strip identity: a muted hue and a compact lowercase axis name
- *  per stage. Identity is carried by position + name — hue is redundant
+/** Timeline-strip identity: a muted hue and an axis name per stage.
+ *  Identity is carried by position + name — hue is redundant
  *  reinforcement, never the only channel. */
 export const STAGE_COLORS: Record<RailStage, string> = {
   downloading: "var(--c-download)",
