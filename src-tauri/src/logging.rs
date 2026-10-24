@@ -836,9 +836,7 @@ mod tests {
         std::fs::write(dir.join("fwf.prev.log"), "x").unwrap();
         // Age the old file's mtime beyond the window.
         let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
-        let f = std::fs::File::options().write(true).open(&old).unwrap();
-        f.set_modified(past).unwrap();
-        drop(f);
+        crate::config::set_test_mtime(&old, past);
 
         prune_log_files(&dir, 7, None);
         assert!(!old.exists(), "old session file pruned");
@@ -849,12 +847,7 @@ mod tests {
 
         // keep_days = 0 → forever (only legacy files go), however old the file is.
         std::fs::write(&old, "x").unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&old)
-            .unwrap()
-            .set_modified(past)
-            .unwrap();
+        crate::config::set_test_mtime(&old, past);
         prune_log_files(&dir, 0, None);
         assert!(old.exists());
         let _ = std::fs::remove_dir_all(&dir);
@@ -870,12 +863,7 @@ mod tests {
         let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
         for p in [&live, &stale] {
             std::fs::write(p, "x").unwrap();
-            std::fs::File::options()
-                .write(true)
-                .open(p)
-                .unwrap()
-                .set_modified(past)
-                .unwrap();
+            crate::config::set_test_mtime(p, past);
         }
 
         prune_log_files(&dir, 7, Some(&live));

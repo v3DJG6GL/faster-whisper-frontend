@@ -1609,9 +1609,7 @@ mod tests {
         let rec = dir.join("aaaa1111.json");
         std::fs::write(&rec, b"{}").unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
-        let f = std::fs::File::options().append(true).open(&rec).unwrap();
-        f.set_modified(old).unwrap();
-        drop(f);
+        crate::config::set_test_mtime(&rec, old);
         let mtime = std::fs::metadata(&rec).and_then(|m| m.modified()).ok();
         assert!(rewrite_record_keep_mtime(&rec, "{\"a\":1}", mtime));
         assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{\"a\":1}");
@@ -1626,9 +1624,7 @@ mod tests {
         let rec = dir.join("aaaa1111.json");
         std::fs::write(&rec, b"{}").unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
-        let f = std::fs::File::options().append(true).open(&rec).unwrap();
-        f.set_modified(old).unwrap();
-        drop(f);
+        crate::config::set_test_mtime(&rec, old);
         write_record_keeping_mtime(&rec, "{\"edited\":true}").unwrap();
         assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{\"edited\":true}");
         assert_eq!(std::fs::metadata(&rec).unwrap().modified().unwrap(), old);
@@ -1653,9 +1649,7 @@ mod tests {
         let keep = dir.join("notes.txt");
         std::fs::write(&keep, b"x").unwrap();
         let mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
-        let f = std::fs::File::options().append(true).open(&old).unwrap();
-        f.set_modified(mtime).unwrap();
-        drop(f);
+        crate::config::set_test_mtime(&old, mtime);
         assert_eq!(prune_transcripts(&dir, 0), 0); // keep forever
         assert_eq!(prune_transcripts(&dir, 1), 1);
         assert!(!old.exists());

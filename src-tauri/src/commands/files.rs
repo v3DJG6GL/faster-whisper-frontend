@@ -732,12 +732,7 @@ mod tests {
         let (src, dest) = (dir.join("dictation-a.wav"), dir.join("moved.wav"));
         std::fs::write(&src, b"RIFF").unwrap();
         let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
-        std::fs::File::options()
-            .write(true)
-            .open(&src)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
+        crate::config::set_test_mtime(&src, old);
         super::copy_keeping_mtime(&src, &dest).unwrap();
         let mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
         assert_eq!(mtime, old);

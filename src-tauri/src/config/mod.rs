@@ -1418,6 +1418,17 @@ pub(crate) fn fresh_test_dir(tag: &str) -> PathBuf {
     dir
 }
 
+/// Sets an existing test file's mtime.
+#[cfg(test)]
+pub(crate) fn set_test_mtime(path: &Path, when: std::time::SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
