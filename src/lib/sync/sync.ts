@@ -146,16 +146,16 @@ function settingGates(): Gates {
 }
 
 /** The engine's category toggles, DERIVED from the per-setting gates. The persisted
- *  `sync.categories` map has had no UI writer since the manifest list replaced the
- *  category rows: reading it froze an upgraded user's OFF category forever (no control
- *  could turn it back on) and left the list-level switches — "Server list", "Profile
+ *  `sync.categories` map has no UI writer since the manifest list replaced the category
+ *  rows: reading it would freeze an upgraded user's OFF category for good (no control
+ *  could turn it back on) and leave the list-level switches — "Server list", "Profile
  *  list & settings", "Rules for this OS" — inert. */
 function syncCats(): Record<SyncCategory, boolean> {
   return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
 }
 
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
- *  will actually apply: comparing ungated blobs raised the consent dialog (and held a
+ *  will actually apply: comparing ungated blobs would raise the consent dialog (and hold a
  *  whole category back) for a peer edit to a setting this device opted out of. Both
  *  sides are stripped, or `securityChanges`' local-value fallbacks would fire spuriously. */
 function gateScalars(b: SyncBlob, gates: Gates): SyncBlob {
@@ -276,7 +276,7 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
       if (Object.keys(dictPart).length) {
         // Create the category when absent, like the file half below: the keys were already
         // stripped from `transcription`, so an old-shape blob with no `recording` payload
-        // lost them from the merge base, the pull and an imported file.
+        // would lose them from the merge base, the pull and an imported file.
         out.recording = {
           ...dictPart,
           ...(isPlainObject(out.recording) ? (out.recording as object) : {}),
@@ -336,7 +336,7 @@ function extractGeneral(settings: AppSettings): SyncGeneral {
     deepFieldDetection: g.deepFieldDetection,
     openAtLogin: g.openAtLogin,
     // evdevEnabled is machine-local: deliberately absent.
-    // quickAddHotkey lives in the `dictionary` category now.
+    // quickAddHotkey lives in the `dictionary` category.
   };
 }
 
@@ -797,8 +797,6 @@ export async function composeBlob(
   return blob;
 }
 
-// ── merge: category-level 3-way ─────────────────────────────────────────────
-
 interface MergeResult {
   merged: SyncBlob;
   /** Categories BOTH sides changed to different values — the user must pick. */
@@ -886,8 +884,6 @@ function mergeAppRules(
   }
   return out;
 }
-
-// ── apply: blob → running app ───────────────────────────────────────────────
 
 /** Keep an inbound paste chord within the presets the editor actually offers.
  *  The chord is synthesized as a real keypress into whatever window has focus, and nothing on
@@ -1074,10 +1070,11 @@ const MAX_CHORD_CODES = 16;
  *  number, but not the same measure: this counts UTF-16 code units and Rust counts UTF-8 bytes, so
  *  the two disagree on non-ASCII input (Rust is the stricter of the pair). Every real code is
  *  ASCII, where the measures coincide, and both bound the field regardless. The count cap
- *  above bounds how many codes a chord has, never how long one is — 16 codes of ~1.2 MB each fit
- *  inside `SYNC_MAX_BODY` and reach `chordConflicts`' O(k·m) subset scan, a `config.json` rewritten
- *  on every autosave, and `codeToLabel`'s raw fall-through render. Every real `KeyboardEvent.code`
- *  token is well under 32. A chord failing this is rejected whole, as an over-long one already is. */
+ *  above bounds how many codes a chord has, never how long one is — 16 codes of ~250 KB each fit
+ *  inside `SYNC_MAX_BODY` (4 MB) and reach `conflicts()`' O(k·m) subset scan, a `config.json`
+ *  rewritten on every autosave, and `codeToLabel`'s raw fall-through render. Every real
+ *  `KeyboardEvent.code` token is well under 32. A chord failing this is rejected whole, as an
+ *  over-long one already is. */
 const MAX_CHORD_CODE_LEN = 64;
 
 /** Turn OFF the later member of every chord collision in an inbound binding set, including a
@@ -1309,9 +1306,7 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
     // ordinary own keys, while `in` and a bare index consult the prototype chain and would
     // compare them against `Object.prototype`'s members instead of against "absent".
     const ref = ownProp(local as Record<string, unknown>, k);
-    // A key this version does not know: pass it through untouched, `null` included. Rust ignores
-    // unrecognised fields, so it cannot wedge the parse, and swallowing it would erase a newer
-    // peer's data on this device's next push.
+    // A key this version does not know passes through untouched, `null` included (see the docblock).
     if (!hasOwn(local as Record<string, unknown>, k)) {
       out[k] = v;
       continue;
@@ -1321,7 +1316,7 @@ function typedLike<T extends object>(incoming: T, local: T): Partial<T> {
     // `{"general":{"soundEffects":null}}` rejects the whole `Config`. Keep this device's value
     // instead, as `oneOf` does for an unknown variant.
     if (v == null) {
-      if (ref == null) out[k] = v; // genuinely nullable here too
+      if (ref == null) out[k] = v;
       continue;
     }
     if (ref == null) {
@@ -1457,7 +1452,8 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
       // synthesized Return is sent AFTER the paste, outside the bracketed-paste region, so
       // it SUBMITS whatever the server-authored transcript put in the buffer. A peer must
       // not be able to arm that. Clamping the type would still let `true` through, so this
-      // drops the field entirely and lets the local value stand (see repin below).
+      // drops the field entirely and lets the local value stand (applyBlob re-pins it via
+      // `APP_RULE_LOCAL_ONLY_FIELDS`).
       autoEnter: undefined,
     }))
     // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
@@ -1711,7 +1707,7 @@ export async function applyBlob(
       const {
         evdevEnabled: _evdev,
         autoEnter: _autoEnter,
-        // The chord belongs to the `dictionary` category now — migrateBlob moves it there on
+        // The chord belongs to the `dictionary` category — migrateBlob moves it there on
         // every inbound path, and stripping it here too means a hand-crafted blob can't apply
         // it past the dictionary toggle by leaving it in `general` (same defense-in-depth as
         // the evdev strip above; the local field itself still lives in settings.general).
@@ -1795,8 +1791,8 @@ export async function applyBlob(
           // The folder is a machine path: applied only when this device's sub-toggle opts in
           // AND a well-typed value arrived; otherwise keep this device's folder no matter what.
           // `null` is a LEGITIMATE value ("use the default location", Rust Option<String>) and
-          // must apply — treating it as "keep local" made a peer's next push resurrect the old
-          // path and silently revert a reset-to-default after one round trip.
+          // must apply — treating it as "keep local" would let a peer's next push resurrect the
+          // old path and silently revert a reset-to-default after one round trip.
           recordingsDir:
             gates.audioFolder && (typeof rec.recordingsDir === "string" || rec.recordingsDir === null)
               ? rec.recordingsDir
@@ -1856,10 +1852,8 @@ export async function applyBlob(
         };
       }
     }
-    // The `logging` category — merge-over-current with per-field validation
-    // (closed level vocabulary; retention clamped to a sane day count; the
-    // machine-path logDir applies only when this device's gate opts in AND a
-    // well-typed value arrived, null meaning "use the default location").
+    // The `logging` category, merged over current. logDir is a machine path (gated like the
+    // recording folders); null is a legitimate "use the default location".
     if (cats.logging && isPlainObject(blob.logging)) {
       const lg = blob.logging as Record<string, unknown>;
       const cur = settings.logging ?? { logLevel: "info" as const, keepDays: 30, showInSidebar: true, logDir: null };
@@ -1880,8 +1874,8 @@ export async function applyBlob(
         },
       };
     }
-    // The chip half of the old "Recording & Chip" group — same merge-over-current rule, and
-    // the mirror-image field filter (only chip-classified keys may apply here).
+    // The `chip` category — same merge-over-current rule as `recording`, and the mirror-image
+    // field filter (only chip-classified keys may apply here).
     if (cats.chip && isPlainObject(blob.chip)) {
       const chip = pickFields(blob.chip as Record<string, unknown>, CHIP_FIELD_SET);
       nextSettings = {
@@ -2152,7 +2146,7 @@ export async function applyBlob(
     if (useApp.getState().status !== "idle") return false;
     return applyBlob(blob, cats, retries - 1, opts);
   }
-  // Retries exhausted: the apply was dropped stale, so report "not applied" —
+  // Dropped stale with no retry left (retries exhausted, or superseded): report "not applied" —
   // the caller must leave the base alone and let the next pull re-offer it.
   if (staleAbort) return false;
   return true;
@@ -2362,8 +2356,7 @@ function supersede(): void {
   pullParked = false; // ditto a re-pull parked for the old server
 }
 
-/** A conflict awaiting the user's per-category picks (drives the Sync tab's
- *  conflict dialog via store.syncStatus/"conflict" plumbing). */
+/** A conflict awaiting the user's per-category picks in the Sync tab's conflict dialog. */
 interface PendingConflict {
   categories: SyncCategory[];
   merged: SyncBlob;
@@ -2406,9 +2399,10 @@ export function getPendingConflict(): {
 }
 
 /** Every write to the two pending prompts goes through these. The dialogs read them through the
- *  non-reactive getters above, so each change bumps `syncPromptSeq` for them to re-render on — the
- *  status line could not carry it: closing one prompt while its sibling waits writes the sibling's
- *  notice, unchanged, so no selector moved and the closed dialog stayed up doing nothing. */
+ *  non-reactive getters (`getPendingConflict`, `getPendingReview`), so each change bumps
+ *  `syncPromptSeq` for them to re-render on — the status line could not carry it: closing one
+ *  prompt while its sibling waits writes the sibling's notice, unchanged, so no selector moved and
+ *  the closed dialog stayed up doing nothing. */
 function setPendingConflict(c: PendingConflict | null): void {
   if (pendingConflict === c) return;
   pendingConflict = c;
@@ -2451,7 +2445,7 @@ function canSync(): boolean {
  *  in-flight PUT would still go to the ABANDONED host, with that backend's bearer key and, on the
  *  `cats.backends` path, EVERY backend's plaintext key in the body.
  *
- *  The `gen` epoch does not cover this: both `myGen` checks run only after the request was sent. */
+ *  The `gen` epoch does not cover this: an address edit on the same backend never calls supersede(). */
 function liveSyncTarget(captured: Backend): string | null {
   const live = syncBackend();
   if (!live || live.id !== captured.id || live.serverUrl !== captured.serverUrl) return null;
@@ -2693,8 +2687,7 @@ async function stashSnapshot(prevChunks: number): Promise<void> {
     if (ids.length >= MAX_SYNCED_ENTRIES) break;
     const id: unknown = (b as { id?: unknown } | null)?.id;
     if (typeof id !== "string" || seen.has(id)) continue;
-    // Only a key the apply would write: `restoreSnapshotSecrets` drops an empty one, so recording
-    // its id latched `snapshotSecretsUnavailable` on every launch.
+    // Only a key the apply would write (`restoreSnapshotSecrets` drops an empty one).
     const key = inboundSecret(secrets, id);
     if (key === undefined) continue;
     seen.add(id);
@@ -2713,10 +2706,10 @@ async function stashSnapshot(prevChunks: number): Promise<void> {
     await stashSnapshotSecrets(chunks, prevChunks);
   } else if (hadStash) {
     // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
-    // secrets (locked wallet, or a remote snapshot with no backends category) the old bundle was
-    // left in the keyring with nothing left to point at it: `restoreSnapshotSecrets` returns
-    // early on an empty id list, and the two `clearSnapshotSecrets` callers only fire on a server
-    // switch or a manual reset. A plaintext bundle of every key stayed there indefinitely.
+    // secrets (locked wallet, or a remote snapshot with no backends category) nothing points at
+    // the old bundle any more: `restoreSnapshotSecrets` returns early on an empty id list, and the
+    // other `clearSnapshotSecrets` callers only fire on a server switch, a dead server document or
+    // a reset — a plaintext bundle of every key would stay in the keyring indefinitely.
     state.snapshotSecretChunks = undefined;
     await clearSnapshotSecrets(prevChunks);
   }
@@ -2739,8 +2732,8 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
     state.freshGates = undefined;
   }
   // A bookkeeping-only write (`persistFresh`) leaves the keyring stash alone: re-deriving it from
-  // a snapshot whose keys a locked keyring never restored deleted the stash and dropped its ids,
-  // which also lifted the refusal of a keyless backends push.
+  // a snapshot whose keys a locked keyring never restored would delete the stash and drop its ids,
+  // which also lifts the refusal of a keyless backends push.
   if (opts.stash !== false) {
     const run = stashSnapshot(prevChunks);
     const mine = run.catch(() => {});
@@ -2805,14 +2798,15 @@ async function ensureStateFor(backendId: string): Promise<void> {
  *  exactly as the raisers do. `passThrough` fills what this device does not sync (OFF
  *  categories, gated-off fields, the other OS's rules, a degraded backends list): the base by
  *  default. A compose merged against a remote with NO base (first contact, or a re-created
- *  document's forgotten one) passes `state.snapshot ?? remote` instead — with nothing to pass
- *  through, the gates delete those fields, the first-contact merge counts every one the remote
- *  carries as a local edit, and "Keep mine" pushed them erased (the API keys among them).
+ *  document's forgotten one) or with a category turned on since passes `passThroughFor(remote)`
+ *  instead — with nothing to pass through, the gates delete those fields, the first-contact merge
+ *  counts every one the remote carries as a local edit, and "Keep mine" would push them erased
+ *  (the API keys among them).
  *  The store is read BEFORE the keyring wait (up to 10 s behind a wallet prompt), and applyBlob's
- *  stale guard only sees edits made during its own wait: an edit made during this one was in
- *  neither the compose nor the merge, the apply hydrated over it, the retry pushed the old value
- *  as the base, and the edit's own push found nothing to send. So compose again while the store
- *  moved underneath (bounded: a store that never settles goes up as last read). */
+ *  stale guard only sees edits made during its own wait: an edit made during this one is in
+ *  neither the compose nor the merge, so the apply hydrates over it and the retry pushes the old
+ *  value as the base, leaving the edit's own push nothing to send. So compose again while the
+ *  store moved underneath (bounded: a store that never settles goes up as last read). */
 async function composeLive(
   cats: Record<SyncCategory, boolean>,
   passThrough: SyncBlob | undefined = state.snapshot,
@@ -2872,8 +2866,8 @@ async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<Sync
     );
     // An id the store reports ABSENT holds no key (a stale `hasApiKey`), which is what the store
     // holds — only a timeout, or a failed id of a backend that claims a key, leaves a rotation
-    // unknowable. Counting the absent one as unread asked on every backends conflict of every
-    // approval; counting a keyless backend's failed id asked whenever the wallet was locked.
+    // unknowable. Counting the absent one as unread would ask on every backends conflict of every
+    // approval; counting a keyless backend's failed id would ask whenever the wallet is locked.
     const failed =
       read === null ||
       !isPlainObject(read.keys) ||
@@ -2917,8 +2911,8 @@ function gatesSignature(): Record<SyncCategory, string> {
 
 /** Take the engine's `inFlight` lock for a user-driven apply (review approval, conflict
  *  resolution), WAITING for a running pull/push instead of dropping the click. Those applies
- *  park in the keyring for seconds; a focus pull racing them re-raised the review/conflict over
- *  an approval that had already landed. False when a supersede happened while waiting. */
+ *  park in the keyring for seconds; a focus pull racing them would re-raise the review/conflict
+ *  over an approval that had already landed. False when a supersede happened while waiting. */
 async function takeSyncLock(myGen: number): Promise<boolean> {
   while (inFlight) {
     await new Promise((r) => setTimeout(r, 50));
@@ -2954,7 +2948,7 @@ let parkedPushGen: number | null = null;
  *  can still hold it (its keyring delete queues behind launch's keyring read), and two clicks
  *  parked on one launch wake together, the first taking it. False when a supersede (sync
  *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
- *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
+ *  the lock one await hop later, so it loops on `inFlight`. */
 async function waitForLaunch(myGen: number): Promise<boolean> {
   if (launchDone) await launchDone;
   while (inFlight) {
@@ -3100,11 +3094,7 @@ const HELD_PUSH_ERROR =
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
-  // A click made during launch runs once launch is over and the lock is free; further clicks of
-  // the same kind meanwhile fold into it (the buttons stay enabled during the launch work, and
-  // each forced run would be one more server write / re-apply). The re-check of `inFlight` after
-  // each wait has no await before the take below: a twin parked on the same launch may have
-  // taken the lock in the hop since waitForLaunch saw it free.
+  // The launch park and click folding, as in pullNow (the reasons are there).
   if (manual && launchDone) {
     const clickGen = gen;
     if (parkedPushGen === clickGen) return;
@@ -3506,8 +3496,8 @@ function catOf({ kind, category }: SecurityChange): SyncCategory {
 /** What a raise's held-back apply (`applyNow`, under `applyCats`) actually landed, for
  *  `PendingReview.applied` — only when that apply answered "applied": one refused while dictating
  *  (or dropped stale) landed nothing, and the raisers record `categorySelection(false)` instead.
- *  Claiming it landed let an approval keep a later live edit over a peer value the store never
- *  received, adopt the base and push the edit over the peer's change.
+ *  Claiming it landed would let an approval keep a later live edit over a peer value the store
+ *  never received, adopt the base and push the edit over the peer's change.
  *  The dictionary's pin applies only together with the backends list (applyBlob's `cats.backends`
  *  check), so holding backends back also withholds the peer's pin: the dictionary then did NOT
  *  fully land, and an edit to it while the review waits must ask. */
@@ -3530,10 +3520,10 @@ function heldBack(
 
 /** The local side for `securityChanges`, with a truthful `backends` container: composeBlob
  *  deliberately omits the category when the keyring read degraded, and a MISSING container
- *  read as "this device has no backends" — so every server backend, including ones this
- *  device already holds byte-identically, was reported as "new" and parked sync on a
- *  review. `secrets: {}` keeps the api-key comparison fail-closed (an incoming key still
- *  raises a review); only the bogus new-backend rows go. */
+ *  would read as "this device has no backends" — every server backend, even ones this device
+ *  already holds byte-identically, would be reported as "new" and park sync on a review.
+ *  `secrets: {}` keeps the api-key comparison fail-closed (an incoming key still raises a
+ *  review). */
 function localForReview(local: SyncBlob): SyncBlob {
   if (local.backends) return local;
   return { ...local, backends: { list: useApp.getState().backends, secrets: {} } };
@@ -3561,9 +3551,9 @@ const shownName = (n: unknown): string => (typeof n === "string" && safeIdentity
 
 /** A consent row's profile/backend label, from the entry's LOCAL copy when this device holds one
  *  (`local ?? incoming` at the call sites): every row of one entry then reads the same in one
- *  dialog — a peer's rename labelled the typed-text row with the new name while the server-url
- *  and api-key rows kept the local one — and a known entry with a blank name is labelled by its
- *  own address, not by a name or address the other device chose. */
+ *  dialog — not the typed-text row under a peer's new name beside server-url and api-key rows
+ *  under the local one — and a known entry with a blank name is labelled by its own address,
+ *  not by a name or address the other device chose. */
 const entryLabel = (e: { name?: unknown; serverUrl?: unknown }, category: "profiles" | "backends"): string =>
   shownName(e.name) ||
   (category === "profiles" ? "Untitled profile" : (typeof e.serverUrl === "string" && e.serverUrl) || "Untitled backend");
@@ -3614,8 +3604,8 @@ const TYPED_TEXT_DETAIL_MAX = Math.max(
 
 /** How many code points of a consent row's `detail` the review dialog shows. A typed-text row is
  *  the user's only view of what would be typed into the focused window after every dictation, so
- *  it is never cut: at the 200 every other row uses, a peer's 512-character suffix put a harmless
- *  head in front and the escaped newline plus command behind the "…". */
+ *  it is never cut: at the 200 every other row uses, a peer's 512-character suffix could put a
+ *  harmless head in front and the escaped newline plus command behind the "…". */
 export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
   kind === "typed-text" ? TYPED_TEXT_DETAIL_MAX : 200;
 
@@ -3639,9 +3629,9 @@ export function securityChanges(
   //
   // `norm` mirrors what the apply does to an incoming value: the u32 key drops anything that
   // is not a whole non-negative number (typedLike's U32_KEYS), the two transcription-settings
-  // keys round and clamp to 0..3650 (sanitizeTranscription). Judging the raw value raised a
-  // consent review for a deletion window (-1, 0.3, 2.5) that could never be applied. `undefined`
-  // from `norm` is "dropped": the apply keeps the local days, so it reads as no change.
+  // keys round and clamp to 0..3650 (sanitizeTranscription) — so a deletion window the apply
+  // can never land (-1, 0.3, 2.5) raises no review. `undefined` from `norm` is "dropped": the
+  // apply keeps the local days, so it reads as no change.
   const days = (
     container: unknown,
     key: string,
@@ -3650,7 +3640,7 @@ export function securityChanges(
   ): number => {
     // An ABSENT key is "no change" on the apply side (the arms merge over current), so it must
     // not be read as the app default — a peer with this row's sync switch off omits it, and the
-    // default raised a consent dialog for a deletion that can't happen. A non-numeric value
+    // default would raise a consent dialog for a deletion that can't happen. A non-numeric value
     // (null, a string) is dropped by the apply side too, which keeps the local days.
     const v = isPlainObject(container) ? ownProp(container, key) : undefined;
     if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
@@ -3736,8 +3726,8 @@ export function securityChanges(
   }
   // Judge the lists the apply KEEPS: `applyBlob` installs `sanitizeProfiles`/`sanitizeBackends`
   // output, which drops a malformed entry, a reserved id, a duplicate id's later copy and
-  // everything past the entry cap. Text on an entry the apply discards raised a typed-text row
-  // and parked the whole category for an approval that changed nothing.
+  // everything past the entry cap. Text on an entry the apply discards would otherwise raise a
+  // typed-text row and park the whole category for an approval that changes nothing.
   if (cats.profiles && incoming.profiles) {
     out.push(...typedTextChanges(sanitizeProfiles(incoming.profiles.list), local.profiles?.list, "profiles"));
   }
@@ -3747,7 +3737,7 @@ export function securityChanges(
   // serverUrl below), so its text is still held for review.
   // One sanitized list for the whole backends gate: `sanitizeBackends` also floors the shape (a
   // non-array container, a non-string id/serverUrl), so the gate cannot throw on anything the
-  // server sends — a throw escaped `void pullNow()` with syncStatus stuck on "syncing".
+  // server sends — a throw would escape `void pullNow()` and leave syncStatus stuck on "syncing".
   if (!cats.backends || !incoming.backends) return out;
   const inBackends = sanitizeBackends(incoming.backends.list);
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
@@ -3760,8 +3750,8 @@ export function securityChanges(
   );
   const localSecrets = local.backends?.secrets ?? {};
   // Walk the entries `applyBlob` INSTALLS, not the raw list: a reserved, duplicate or over-cap
-  // entry raised rows that parked the category for an approval that changed nothing (and
-  // re-raised on every pull), and a blanked scheme showed an address the transport never
+  // entry would raise rows that park the category for an approval that changes nothing (and
+  // re-raise on every pull), and a blanked scheme would show an address the transport never
   // receives. Fail-closed still holds: the apply stores exactly this list and
   // `reconcileBackendSecrets` writes keys only for its ids.
   for (const b of inBackends) {
@@ -3770,8 +3760,8 @@ export function securityChanges(
     // A backend new to this device keeps its inbound address even with "Server addresses" off
     // (there is nothing local to re-pin), so `new-backend` is raised regardless of the gates.
     // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
-    // applyBlob re-pins serverUrl / drops inbound secrets — so raising them made approval a no-op
-    // and a rejection re-raise on every pull.
+    // applyBlob re-pins serverUrl / drops inbound secrets — so raising them would make approval a
+    // no-op and a rejection re-raise on every pull.
     // An empty `serverUrl` is `sanitizeBackends` blanking an unsupported scheme: say so rather
     // than render a blank target. `url` stays empty so the repoint footer stays off.
     if (!cur) {
@@ -3792,7 +3782,8 @@ export function securityChanges(
     // comparison must FAIL CLOSED — `localSecrets` is `{}` whenever the keyring read degraded
     // (locked wallet: composeBlob's read is a 10s withTimeout that falls back to `{}`), and it is
     // legitimately empty for a backend that has no key yet. Requiring a known local value there
-    // let an incoming key be written with no review in exactly the cases we can least verify.
+    // would let an incoming key be written with no review in exactly the cases we can least
+    // verify.
     // Own-property reads: an inbound id is whatever the blob chose, and `isReservedBackendId`
     // rejects only the `__…__` namespace — so `toString`/`constructor` otherwise make both maps
     // return the same inherited function (comparison false, no prompt) or mislabel the detail line
@@ -3830,11 +3821,11 @@ interface PendingReview {
   gatesSig: Record<SyncCategory, string>;
   /** The categories the raise's apply landed (`appliedAt` over `heldBack(cats, changes)` THEN);
    *  `categorySelection(false)` when that apply did not land (refused while dictating, or its
-   *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count a category that was held back at
-   *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
-   *  value the store never received. Kept (with `gatesSig`) across a re-raise of the same server
-   *  version whose apply was refused too: that apply changed nothing, so the earlier landed one
-   *  still holds. */
+   *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count
+   *  a category that was held back at the raise, and whose rows no longer show, as applied — and
+   *  keep a live edit over a peer value the store never received. Kept (with `gatesSig`) across
+   *  a re-raise of the same server version whose apply was refused too: that apply changed
+   *  nothing, so the earlier landed one still holds. */
   applied: Record<SyncCategory, boolean>;
   version: number;
   updatedAt: number | null;
@@ -3872,11 +3863,11 @@ export function getPendingReview(): {
 function raiseReview(r: PendingReview): void {
   // A review adopts no base, so every push / focus pull re-raises it: keep the "the list changed
   // since you read it" notice while it is still the same list, or the next re-raise (a debounced
-  // push 409s right back into the review) wiped it seconds after it appeared.
+  // push 409s right back into the review) would wipe it seconds after it appeared.
   if (pendingReview?.relisted && !r.relisted && sameReview(pendingReview, r)) r = { ...r, relisted: true };
   // A re-raise whose apply was refused (dictating) changed nothing in the store: the earlier
-  // raise's landed apply, and the gates it ran under, still describe it — or the dialog said
-  // nothing was applied yet and the approval re-asked over categories that already landed.
+  // raise's landed apply, and the gates it ran under, still describe it — or the dialog would say
+  // nothing was applied yet and the approval would re-ask over categories that already landed.
   // The new `storeSig` stays (same as a relist): it is the store as it is now. Same server
   // version and writer, whatever the rows: an edit or a gate turned on since changes the list,
   // not what the earlier apply landed (a relist keeps `applied` across a new list too), and
@@ -3907,8 +3898,9 @@ function reviewStatus(): void {
 
 /** A base at `version` was just adopted (a clean pull, or a push the server accepted): a review
  *  or conflict raised against that version or an older one describes a server state that is
- *  gone — another device took the change back, or this one now agrees. Left up, the dialog sat
- *  next to "Synced" and its Apply re-landed the withdrawn change and moved the base backwards. */
+ *  gone — another device took the change back, or this one now agrees. Left up, the dialog would
+ *  sit next to "Synced" and its Apply would re-land the withdrawn change and move the base
+ *  backwards. */
 function dropSupersededPending(version: number): void {
   if (pendingReview && pendingReview.version <= version) setPendingReview(null);
   if (pendingConflict && pendingConflict.remoteVersion <= version) setPendingConflict(null);
@@ -3916,8 +3908,8 @@ function dropSupersededPending(version: number): void {
 
 /** Two server `updated_ts` stamps name the same write. Not `===`: a persisted base's stamp went
  *  through serde_json (no `float_roundtrip`) and the state file, whose best-effort float parse can
- *  bring a 17-digit `time.time()` back one ULP off — strict equality then read the unchanged
- *  server copy as a re-created document after a restart and forgot a live base. A real delete +
+ *  bring a 17-digit `time.time()` back one ULP off — strict equality would then read the unchanged
+ *  server copy as a re-created document after a restart and forget a live base. A real delete +
  *  re-seed is never within a millisecond of the old write. */
 const sameStamp = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-3;
 
@@ -3927,7 +3919,8 @@ const sameStamp = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-3;
  *  re-seed, seen by a device that missed the empty window. A re-seed can also land EXACTLY on the
  *  base's number: the server stamps `updated_ts` on every write and every base persists its own
  *  write's stamp, so the same version with a different stamp is a different document. Missed,
- *  that took the "nothing new" shortcut and the next push at that base overwrote the re-seed. */
+ *  it would take the "nothing new" shortcut, and the next push at that base would overwrite the
+ *  re-seed. */
 function serverRecreated(version: number, updatedTs: number | null | undefined): boolean {
   // Built on `atVersion` (stamped `atTs`), yet the server now holds another document there.
   const restamped = (atVersion: number, atTs: number | null | undefined) =>
@@ -3952,11 +3945,11 @@ function serverRecreated(version: number, updatedTs: number | null | undefined):
 }
 
 /** Forget a base (and every prompt) that describes a server document which no longer exists, and
- *  re-seed from version 0, as resetSyncState does for the deleting device. A kept base made the
- *  next push skip on the hash match or carry a stale baseVersion — at a re-created document's
- *  matching number it overwrote the peer's re-seed blind — and a 3-way merge against the dead
- *  snapshot dropped or conflicted the wrong categories; a kept prompt was never dropped
- *  (numbering restarts at 1) and approving it re-landed the deleted doc's change. False when
+ *  re-seed from version 0, as resetSyncState does for the deleting device. A kept base would make
+ *  the next push skip on the hash match or carry a stale baseVersion — at a re-created document's
+ *  matching number it would overwrite the peer's re-seed blind — and a 3-way merge against the
+ *  dead snapshot would drop or conflict the wrong categories; a kept prompt is never dropped
+ *  (numbering restarts at 1) and approving it would re-land the deleted doc's change. False when
  *  superseded during the keyring or state writes. */
 async function forgetDeadDocument(myGen: number): Promise<boolean> {
   await clearSnapshotSecrets(state.snapshotSecretChunks);
@@ -4048,7 +4041,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     return "done";
   }
   // The categories this device syncs NOW, within the raise's: turning one off does not supersede
-  // the review (only an ON transition re-pulls), so approving under `r.cats` landed e.g. the
+  // the review (only an ON transition re-pulls), so approving under `r.cats` would land e.g. the
   // peer's whole server list on a device that had just opted out of it. The compose, the judge
   // and the apply all run under these; the store signature stays on `r.cats`, like `r.storeSig`.
   const live = syncCats();
@@ -4191,9 +4184,9 @@ export function rejectPendingReview(): void {
   else setRuntime({ syncStatus: "idle", syncError: null });
 }
 
-/** Test seam: raise a minimal conflict so the id contract is pinnable without
- *  a transport (mirrors resetWarmDebounceForTests in preload.ts). The default version is one
- *  past the current base, as a real conflict's is — one at or below it is moot (resolveLocked). */
+/** Test seam: raise a minimal conflict so the id contract is pinnable without a transport. The
+ *  default version is one past the current base, as a real conflict's is — one at or below it is
+ *  moot (resolveLocked). */
 export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void {
   raiseConflict({
     categories: ["general"],
@@ -4373,7 +4366,7 @@ async function resolveLocked(
   // Judged under applyCats, as approveLocked does: a degraded keyring holds backends out of both
   // the judge and the apply.
   // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
-  // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
+  // the re-merge, which already contains every NON-conflicting category auto-resolved in the
   // server's favour — so a peer that also touches some category the user happened to edit
   // locally forces the pull down this branch and rides its backend repoint / key swap in
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
