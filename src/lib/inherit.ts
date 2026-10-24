@@ -185,7 +185,7 @@ export function serverInherited(
   }
   const ignored: DecodeKey[] = [];
   // Known keys only, as above: the local config is never clamped, so a downgrade or hand edit
-  // can leave a key this build has no spec for, and keySpec() on it threw during render.
+  // can leave a key this build has no spec for, and reading its keySpec() would throw in render.
   for (const key of Object.keys(below ?? {}).filter(isDecodeKey)) {
     const v = below![key];
     if (v === undefined) continue;
@@ -194,7 +194,7 @@ export function serverInherited(
       continue;
     }
     // A backend's explicit "" on a single-line text key reads as that key's "none", exactly as
-    // the server's own "" does in shownValue — copied verbatim, the field showed a bare
+    // the server's own "" does in shownValue — copied verbatim, the field would show a bare
     // "Inherit" (value unknown) under a "Backend default" tooltip. A multiline "" is a value.
     const spec = keySpec(key);
     values[key] = v === "" && spec.kind === "text" && !spec.multiline ? (NULL_TEXT[key] ?? "none") : v;
