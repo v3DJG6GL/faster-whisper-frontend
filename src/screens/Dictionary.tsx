@@ -716,7 +716,7 @@ export default function Dictionary() {
     return backendName ? `${backendName} · ${listName}` : listName;
   }, [quickAddList, backends, selectedId, rules]);
 
-  // editable_fields is also forwarded as an opaque server value — coerce to a plain object,
+  // editable_fields is forwarded as an opaque server value — coerce to a plain object,
   // and to an array per type, so a malformed shape can't make `.includes`/`.filter` throw.
   const efRaw = fetchRes?.state?.editable_fields as unknown;
   const editableFields: Record<string, string[]> =
@@ -812,9 +812,8 @@ export default function Dictionary() {
           setRecentMax(rw.max ?? undefined);
         })
         .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
-      // Keep whichever rule cards are open across a save-triggered or manual reload — both go
-      // through load(). A rule that vanished server-side drops out.
-      // Switching Backend resets expansion separately (the load-on-change effect below).
+      // Keep open rule cards across a save-triggered or manual reload; a backend switch resets
+      // expansion in the load-on-change effect below instead.
       setExpanded((prev) => new Set([...prev].filter((name) => list.some((r) => r.name === name))));
       setLoading(false);
       return serverUrl;
