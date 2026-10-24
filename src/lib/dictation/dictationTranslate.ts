@@ -1,23 +1,12 @@
-// The dictation translate call, extracted from streaming.ts so it can be
-// TESTED. The transport reaches this module as injected parameters, so its
-// tests need no Tauri mock — the same idiom runChunkedTranslate uses.
+// The dictation translate call. The transport arrives as injected parameters,
+// so its tests need no Tauri mock — the same idiom runChunkedTranslate uses.
 //
-// Three bugs live here, and all three are why the seam exists:
-//   • The budget was derived from the TEXT LENGTH alone, so a 73-character
-//     sentence got 3.3 s while a cold llama.cpp server needed 13 s (12.3 s of
-//     it a GGUF load). Every first phrase of a session lost that race and
-//     "translation timed out" was reported for work that was progressing fine.
-//   • Losing the race cancelled NOTHING: no progressId was ever sent, so the
-//     request kept running against Rust's 3600 s TEXT_TRANSLATE_TIMEOUT and the
-//     GPU finished a translation nobody would read.
-//   • The length formula itself was priced for the wrong job. The request
-//     submits `[...context, phrase]` and the server translates ALL of it for
-//     EVERY target — a live phrase with 3 context segments and 2 targets is
-//     six passes — while the budget paid for one pass over the phrase alone.
-//     The shorter the phrase the worse the underpricing, so a 4-word phrase
-//     ("Ich weiss es nicht") was given 1.95 s for 2.4 s of work and lost the
-//     race EVERY time, deterministically. Elapsed time is now a ceiling only;
-//     the real signal is whether the server's progress entry is still moving.
+// Elapsed time is a ceiling only; the real signal is whether the server's
+// progress entry is still moving. A length-derived budget cannot work: a cold
+// llama.cpp server spends ~12 s loading the GGUF, and the server translates
+// every submitted context segment for EVERY target. Losing the race must cancel
+// by progressId, or the request runs on against Rust's 3600 s
+// TEXT_TRANSLATE_TIMEOUT and the GPU finishes a translation nobody reads.
 import type { TextTranslationResult } from "../api";
 import type { BatchProgress } from "../types";
 import { newProgressId } from "../ids";
@@ -65,15 +54,12 @@ export interface TranslateDeps {
   cancel: (args: { serverUrl: string; backendId: string; progressId: string }) => unknown;
   /** The server's progress entry for `progressId`. This is what makes the
    *  stall detector possible — without it there is nothing to distinguish a
-   *  wedged server from a slow one, and only the ceiling applies. Absent under
-   *  vitest (outside Tauri) and on a backend with no progress endpoint. */
+   *  wedged server from a slow one, and only the ceiling applies. */
   pollProgress?: (args: {
     serverUrl: string;
     backendId: string;
     progressId: string;
   }) => Promise<BatchProgress | null>;
-  /** How often to poll. Kept injectable so the tests don't have to model the
-   *  real cadence. */
   pollMs?: number;
   now?: () => number;
   newId?: () => string;
@@ -146,16 +132,11 @@ export interface DictationTranslateResult {
   cause?: TranslateFailure;
   /** The raw failure, for the doorway's `shortCause`. */
   error?: unknown;
-  /** The same translations, still keyed by language.
-   *
-   *  `text` above is what gets INJECTED, so it must stay a single joined
-   *  string — but the join is lossy: blocks are separated by a blank line
-   *  and a transcript contains its own line breaks, so nothing downstream
-   *  can split it back apart. This function is the only place the
-   *  language→text association ever exists, so anything that wants to show
-   *  the tracks separately (History, the log receipt) has to be handed the
-   *  map from here. Absent on the failure paths, where `text` is the
-   *  untranslated original. */
+  /** The same translations, still keyed by language. The injected `text` join
+   *  is lossy (a transcript has its own line breaks, so the blank-line
+   *  separators can't be split back), and this is the only place the
+   *  language→text association exists — History and the log receipt need it
+   *  from here. Absent on the failure paths. */
   byLang?: Record<string, string>;
 }
 
@@ -191,8 +172,7 @@ export function pricedMs(chars: number, targets: number): number {
  *  all, so take the original and keep the typing current.
  *
  *  `queued >= 1`, not `> 1`: the depth is read BEFORE this phrase's own
- *  increment, so `1` already means one task ahead of us. The old `> 1` made
- *  the whole branch unreachable in live dictation — it never fired once. */
+ *  increment, so `1` already means one task ahead of us. */
 export const CEILING_FLOOR_ONESHOT_MS = 60_000;
 export const CEILING_FLOOR_LIVE_MS = 20_000;
 export const CEILING_MAX_MS = 300_000;
@@ -287,8 +267,6 @@ export async function runDictationTranslate(
       deps.translate({
         serverUrl: req.serverUrl,
         backendId: req.backendId,
-        // Prior phrases ride along as context segments; only the last result
-        // (the current text) is consumed.
         texts: [...context, original],
         targets: req.targets,
         // Only a code reaches the text route (it 422s a word like "english"): the shared rule.
