@@ -1,21 +1,17 @@
-// Word-level timing alignment for edited transcript segments.
-//
-// A text correction used to drop the whole segment's word timings (karaoke and
-// word-level exports lost the line). Instead, the edited text is aligned to the
-// original words: matched words keep their timings untouched, a replaced word
-// inherits the replaced span's start/end, and inserted words split the
-// surrounding gap weighted by character count — the same pragmatic model
-// Descript's "Correct text" and Hyperaudio use. Timings are DERIVED from the
-// stored text edits wherever they're needed, so nothing new is persisted.
+// Word-level timing alignment for edited transcript segments: the edited text is
+// aligned to the original words — matched words keep their timings, a replaced word
+// inherits the replaced span's start/end, and inserted words split the surrounding
+// gap weighted by character count (the model Descript's "Correct text" and
+// Hyperaudio use). Timings are DERIVED from the stored text edits wherever they're
+// needed, so nothing new is persisted.
 
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
 
 /** Word index ranges per segment. One pass: words arrive time-ordered; each
  *  word belongs to the first segment whose window (±0.05 s slack) it falls
  *  into — but never past the NEXT segment's start: adjacent segments share an
- *  exact boundary (seg[i].end === seg[i+1].start), and the slack alone used to
- *  pull the next line's first word into the previous line's range (it then
- *  rendered on the wrong row and vanished from its own). Ranges are
+ *  exact boundary (seg[i].end === seg[i+1].start), and the slack alone would
+ *  pull the next line's first word into the previous line's range. Ranges are
  *  consecutive and non-overlapping by construction. */
 export function segmentWordRanges(
   segments: TranscriptSegment[],
@@ -50,8 +46,7 @@ function tokenize(text: string): string[] {
 }
 
 /** Scripts written without spaces (kept local: cueSplit imports this module). Must list
- *  the same scripts as cueSplit's BREAKS_ANYWHERE: a Thai, Lao, Khmer or Burmese line is
- *  unspaced too, and one changed character used to collapse its timing into one word. */
+ *  the same scripts as cueSplit's BREAKS_ANYWHERE (Thai, Lao, Khmer and Burmese included). */
 const UNSPACED_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 /** CJK punctuation and fullwidth forms, and the kana marks ・ ー (Script=Common, so
@@ -74,7 +69,7 @@ function unspacedEdge(s: string, end: boolean): boolean {
 
 /** Tokens of an edited text that holds an unspaced script (CJK, Thai…), cut where the
  *  original words were: splitting on whitespace yields one token per unspaced run, which
- *  matches no old word, so one changed character used to collapse the whole run's timing
+ *  matches no old word, so one changed character would collapse the whole run's timing
  *  into one word. One code-point LCS of the whole text (whitespace aside) against the old
  *  words' characters tags each new character with the word it came from (or none); a
  *  token ends at whitespace and, inside a run holding an unspaced script, wherever that
@@ -154,9 +149,9 @@ export function alignSegmentWords(
   newText: string,
 ): TranscriptWord[] {
   if (!oldWords.length) return [];
-  // Any unspaced run is cut per old word, also inside a spaced line: a Japanese line with
-  // a spaced " AI", or a Thai line with phrase spaces, used to keep each run as one token
-  // that matched nothing. A line of spaced scripts only stays a plain whitespace split.
+  // Any unspaced run is cut per old word, also inside a spaced line (a Japanese line with
+  // a spaced " AI", a Thai line with phrase spaces): left whole, the run matches nothing.
+  // A line of spaced scripts only stays a plain whitespace split.
   const { toks: newToks, opens } = UNSPACED_RE.test(newText)
     ? charTokens(oldWords, newText)
     : spacedTokens(newText);
