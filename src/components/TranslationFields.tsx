@@ -35,7 +35,7 @@ export function TranslationTargetChips({
 }: {
   value: string[];
   onChange: (next: string[]) => void;
-  /** Compound chips (D86 site subtitles): each language's sources after its code, in fixed
+  /** Compound chips (site subtitles): each language's sources after its code, in fixed
    *  order, each part clickable (`onPart` gets its key). */
   parts?: Record<string, ChipPart[]>;
   onPart?: (key: string) => void;
