@@ -49,7 +49,14 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     settings.quickAddList = pin;
     return { version: CONFIG_VERSION, settings, backends, profiles: [] };
   }
-  const loaded = quickAddTargetOf(cfg({ backendId: "a", slug: "my-words" }));
+  /** Pinned to a/my-words. `serverUrl` re-addresses backend a (then the only backend); `override` is
+   *  this device's address for a. */
+  function pinA({ serverUrl, override }: { serverUrl?: string; override?: string } = {}): Config {
+    const c = cfg({ backendId: "a", slug: "my-words" }, serverUrl === undefined ? undefined : [backend({ id: "a", serverUrl })]);
+    if (override !== undefined) c.settings.sync = { ...c.settings.sync!, urlOverrides: { a: override } };
+    return c;
+  }
+  const loaded = quickAddTargetOf(pinA());
 
   it("resolves the pinned list on its backend's address", () => {
     expect(loaded).toEqual({ serverUrl: "http://a.lan:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
@@ -67,32 +74,28 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
   it("is no move when only this device's address changed, and the summon adopts the new address", () => {
     // Adding this device's address is how the user recovers a save left on "error" by an unreachable
     // address; read as a re-pin, the summon would re-sync over the unsaved mapping it holds.
-    const overridden = cfg({ backendId: "a", slug: "my-words" });
-    overridden.settings.sync = { ...overridden.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const overridden = pinA({ override: "http://100.64.0.5:8000" });
     expect(quickAddTargetMoved(loaded, overridden)).toBe(false);
     expect(quickAddTargetOnSummon(loaded, overridden)).toEqual({
       moved: false,
       target: { serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" },
     });
     // The legacy schemeless form of the same Server URL is the same server too.
-    const legacy = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "a.lan:8000" })]);
+    const legacy = pinA({ serverUrl: "a.lan:8000" });
     expect(quickAddTargetMoved(loaded, legacy)).toBe(false);
   });
 
   it("is a move when the backend's Server URL changed: it may be another server", () => {
     // Retried there, the unsaved rows' whole map would replace that server's list of the same name.
-    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    const readdressed = pinA({ serverUrl: "http://a2.lan:8000" });
     expect(quickAddTargetMoved(loaded, readdressed)).toBe(true);
     expect(quickAddTargetOnSummon(loaded, readdressed)).toEqual({ moved: true, target: loaded });
   });
 
   it("is no move when the Server URL changed but this device's address override still sends the save there", () => {
-    const overrides = { a: "http://100.64.0.5:8000" };
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     const viaOverride = quickAddTargetOf(pinned);
-    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
-    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
+    const edited = pinA({ serverUrl: "http://a2.lan:8000", override: "http://100.64.0.5:8000" });
     expect(quickAddTargetMoved(viaOverride, edited)).toBe(false);
     expect(quickAddTargetOnSummon(viaOverride, edited)).toEqual({
       moved: false,
@@ -104,13 +107,10 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // Two summons, each no move on its own, must not add up to the move one summon is refused: had
     // the first adopted b.lan as where the rows came from, the second would see no Server URL change
     // and the next save would replace b.lan's list of the same name with a.lan's whole map.
-    const overrides = { a: "http://100.64.0.5:8000" };
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     const viaOverride = quickAddTargetOf(pinned);
-    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
-    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    const edited = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.5:8000" });
+    const dropped = pinA({ serverUrl: "http://b.lan:8000" });
 
     const s1 = quickAddTargetOnSummon(viaOverride, edited);
     expect(s1.moved).toBe(false);
@@ -123,13 +123,10 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // A summon with nothing pending reloads the rows from the override (still a.lan's server). Had
     // the load recorded the masked b.lan as where they came from, dropping the override after a
     // failed save would pass as no move and the retry would replace b.lan's list of the same name.
-    const overrides = { a: "http://100.64.0.5:8000" };
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     const viaOverride = quickAddTargetOf(pinned);
-    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
-    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    const edited = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.5:8000" });
+    const dropped = pinA({ serverUrl: "http://b.lan:8000" });
 
     const reloaded = quickAddTargetOnLoad(viaOverride, edited);
     expect(reloaded).toEqual({ serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
@@ -141,12 +138,10 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // (still through the override, so still a.lan's server) recorded b.lan as where the rows came
     // from, then after a failed PATCH to the new override address, dropping the override would pass
     // as no move and the retry would replace b.lan's list of the same name with a.lan's whole map.
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     const viaOverride = quickAddTargetOf(pinned);
-    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
-    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    const edited = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.6:8000" });
+    const dropped = pinA({ serverUrl: "http://b.lan:8000" });
 
     expect(quickAddTargetOnSummon(viaOverride, edited).moved).toBe(true); // nothing pending: reload
     const reloaded = quickAddTargetOnLoad(viaOverride, edited);
@@ -162,9 +157,8 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // a.lan's server) recorded b.lan as where the rows came from, then after a failed PATCH to the
     // VPN address, dropping the override would pass as no move and the retry would replace b.lan's
     // list of the same name with a.lan's whole map.
-    const added = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    added.settings.sync = { ...added.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
-    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    const added = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.6:8000" });
+    const dropped = pinA({ serverUrl: "http://b.lan:8000" });
 
     expect(quickAddTargetOnSummon(loaded, added).moved).toBe(true); // nothing pending: reload
     const reloaded = quickAddTargetOnLoad(loaded, added);
@@ -179,9 +173,8 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // address reaches — maybe b.lan's. Taken as where the rows came from, undoing both edits after
     // a failed save would pass as no move (a.lan against a.lan), and the retry would replace a.lan's
     // list with rows from the other server.
-    const added = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    added.settings.sync = { ...added.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
-    const undone = cfg({ backendId: "a", slug: "my-words" });
+    const added = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.6:8000" });
+    const undone = pinA();
 
     const reloaded = quickAddTargetOnLoad(loaded, added);
     expect(reloaded).toEqual({ serverUrl: "http://100.64.0.6:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words", originUnknown: true });
@@ -189,8 +182,7 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetOnSummon(reloaded, undone)).toEqual({ moved: true, target: reloaded });
 
     // The same with an override re-addressed (not added) alongside the Server URL edit, then both undone.
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     const viaOverride = quickAddTargetOf(pinned);
     const readdressed = quickAddTargetOnLoad(viaOverride, added);
     expect(readdressed?.originUnknown).toBe(true);
@@ -198,9 +190,8 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
   });
 
   it("keeps an unknown origin through later reloads under the override, and only its own address is no move", () => {
-    const added = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    added.settings.sync = { ...added.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
-    const undone = cfg({ backendId: "a", slug: "my-words" });
+    const added = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.6:8000" });
+    const undone = pinA();
     const unknown = quickAddTargetOnLoad(loaded, added);
 
     // A reload with nothing changed still fetches through the override, from that same unknown server.
@@ -208,12 +199,10 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(again).toEqual(unknown);
     expect(quickAddTargetMoved(again, undone)).toBe(true);
     // A new address on this device alone is a move too: nothing says it reaches the rows' server.
-    const vpn7 = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
-    vpn7.settings.sync = { ...vpn7.settings.sync!, urlOverrides: { a: "http://100.64.0.7:8000" } };
+    const vpn7 = pinA({ serverUrl: "http://b.lan:8000", override: "http://100.64.0.7:8000" });
     expect(quickAddTargetOnSummon(unknown, vpn7)).toEqual({ moved: true, target: unknown });
     // The very address the rows came from is no move, whatever the Server URL says, and stays unknown.
-    const c = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://c.lan:8000" })]);
-    c.settings.sync = { ...c.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    const c = pinA({ serverUrl: "http://c.lan:8000", override: "http://100.64.0.6:8000" });
     expect(quickAddTargetOnSummon(unknown, c)).toEqual({ moved: false, target: unknown });
     // A reload without an override fetches from the file's own Server URL: the origin is known again.
     expect(quickAddTargetOnLoad(unknown, undone)).toEqual(loaded);
@@ -221,39 +210,33 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
   });
 
   it("leaves a known origin unmarked: a plain reload, or one that changes only the override, is no move", () => {
-    const same = quickAddTargetOnLoad(loaded, cfg({ backendId: "a", slug: "my-words" }));
+    const same = quickAddTargetOnLoad(loaded, pinA());
     expect(same).not.toHaveProperty("originUnknown");
-    expect(quickAddTargetMoved(same, cfg({ backendId: "a", slug: "my-words" }))).toBe(false);
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
-    const vpn6 = cfg({ backendId: "a", slug: "my-words" });
-    vpn6.settings.sync = { ...vpn6.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    expect(quickAddTargetMoved(same, pinA())).toBe(false);
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
+    const vpn6 = pinA({ override: "http://100.64.0.6:8000" });
     const reloaded = quickAddTargetOnLoad(quickAddTargetOf(pinned), vpn6);
     expect(reloaded).not.toHaveProperty("originUnknown");
     expect(quickAddTargetMoved(reloaded, pinned)).toBe(false);
   });
 
   it("keeps the loaded Server URL when only the override address changes on a reload", () => {
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
-    const moved = cfg({ backendId: "a", slug: "my-words" });
-    moved.settings.sync = { ...moved.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
+    const moved = pinA({ override: "http://100.64.0.6:8000" });
     expect(quickAddTargetOnLoad(quickAddTargetOf(pinned), moved)).toEqual(quickAddTargetOf(moved));
   });
 
   it("adopts the file's Server URL on a reload without an override after it, and keeps the loaded one when an override is added", () => {
     // No override either side: an edited Server URL is where the reload fetched the rows from.
-    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    const readdressed = pinA({ serverUrl: "http://a2.lan:8000" });
     expect(quickAddTargetOnLoad(loaded, readdressed)).toEqual({ serverUrl: "http://a2.lan:8000", backendUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" });
-    expect(quickAddTargetOnLoad(loaded, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
+    expect(quickAddTargetOnLoad(loaded, pinA())).toEqual(loaded);
     // An override added on the reload of an edited Server URL: the rows came through it, so the
     // Server URL it masks is not where they came from, and the loaded one is kept.
-    const added = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
-    added.settings.sync = { ...added.settings.sync!, urlOverrides: { a: "http://100.64.0.6:8000" } };
+    const added = pinA({ serverUrl: "http://a2.lan:8000", override: "http://100.64.0.6:8000" });
     expect(quickAddTargetOnLoad(loaded, added)?.backendUrl).toBe("http://a.lan:8000");
     // The override dropped on the reload: the rows came straight from the file's Server URL.
-    const pinned = cfg({ backendId: "a", slug: "my-words" });
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    const pinned = pinA({ override: "http://100.64.0.5:8000" });
     expect(quickAddTargetOnLoad(quickAddTargetOf(pinned), readdressed)).toEqual(quickAddTargetOf(readdressed));
   });
 
@@ -262,16 +245,14 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     // VPN address. Had the reload (same address, no override) kept old.lan as where the rows came
     // from, then once a save failed, the "Address on this device" that recovers it would read as a
     // move and throw the pending rows away.
-    const pinned = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://old.lan:8000" })]);
-    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://vpn.x:8000" } };
+    const pinned = pinA({ serverUrl: "http://old.lan:8000", override: "http://vpn.x:8000" });
     const viaOverride = quickAddTargetOf(pinned);
     expect(viaOverride).toEqual({ serverUrl: "http://vpn.x:8000", backendUrl: "http://old.lan:8000", backendId: "a", slug: "my-words" });
-    const promoted = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://vpn.x:8000" })]);
+    const promoted = pinA({ serverUrl: "http://vpn.x:8000" });
     const reloaded = quickAddTargetOnLoad(viaOverride, promoted);
     expect(reloaded).toEqual({ serverUrl: "http://vpn.x:8000", backendUrl: "http://vpn.x:8000", backendId: "a", slug: "my-words" });
     // The save to vpn.x fails ("error"); the user adds this device's address lan.y.
-    const recovered = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://vpn.x:8000" })]);
-    recovered.settings.sync = { ...recovered.settings.sync!, urlOverrides: { a: "http://lan.y:8000" } };
+    const recovered = pinA({ serverUrl: "http://vpn.x:8000", override: "http://lan.y:8000" });
     expect(quickAddTargetOnSummon(reloaded, recovered)).toEqual({
       moved: false,
       target: { serverUrl: "http://lan.y:8000", backendUrl: "http://vpn.x:8000", backendId: "a", slug: "my-words" },
@@ -279,8 +260,8 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
   });
 
   it("adopts the file's Server URL on a first load, a new address, or another list", () => {
-    expect(quickAddTargetOnLoad(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
-    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    expect(quickAddTargetOnLoad(null, pinA())).toEqual(loaded);
+    const readdressed = pinA({ serverUrl: "http://a2.lan:8000" });
     expect(quickAddTargetOnLoad(loaded, readdressed)).toEqual(quickAddTargetOf(readdressed));
     expect(quickAddTargetOnLoad(loaded, cfg({ backendId: "b", slug: "my-words" }))?.backendUrl).toBe("http://b.lan:8000");
     expect(quickAddTargetOnLoad(loaded, cfg(null))).toBeNull();
@@ -288,11 +269,11 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
 
   it("keeps the loaded target on a move, and has none before anything was loaded", () => {
     expect(quickAddTargetOnSummon(loaded, cfg({ backendId: "b", slug: "my-words" }))).toEqual({ moved: true, target: loaded });
-    expect(quickAddTargetOnSummon(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual({ moved: false, target: null });
+    expect(quickAddTargetOnSummon(null, pinA())).toEqual({ moved: false, target: null });
   });
 
   it("is no move for the same pin, or before anything was loaded", () => {
-    expect(quickAddTargetMoved(loaded, cfg({ backendId: "a", slug: "my-words" }))).toBe(false);
+    expect(quickAddTargetMoved(loaded, pinA())).toBe(false);
     expect(quickAddTargetMoved(null, cfg({ backendId: "b", slug: "other" }))).toBe(false);
   });
 });
