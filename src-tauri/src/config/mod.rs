@@ -51,7 +51,7 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
 /// Replace `path` atomically: write `<path>.tmp` owner-only (`write_private`), then rename it
 /// into place, so a reader sees the old file or the new one, never half of it. The tmp is
 /// removed when the write OR the rename fails (write_private can fail after creating the file,
-/// e.g. on a full volume). `export_settings_file` writes through here too.
+/// e.g. on a full volume).
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
     if let Err(e) = write_private(&tmp, contents) {
@@ -224,9 +224,8 @@ pub struct Backend {
     /// mode). Opaque to Rust like decode_overrides; skipped when None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translation_overrides: Option<serde_json::Value>,
-    /// Manual full-vs-standard classification. None/Auto ⇒ infer from the
-    /// connection test; Full/Standard override detection. Skipped when None so
-    /// existing configs round-trip byte-stable.
+    /// None behaves as `Auto`. Skipped when None so existing configs round-trip
+    /// byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<BackendKind>,
     /// Name of a server-side override-profile this backend references per request
@@ -415,7 +414,7 @@ pub fn codes_to_accelerator(codes: &[String]) -> Option<String> {
             }
         }
     }
-    let key = key?; // modifier-only → not registerable via the plugin
+    let key = key?;
     let order = ["Ctrl", "Alt", "Shift", "Super"];
     let mut parts: Vec<String> = order
         .iter()
@@ -566,7 +565,6 @@ pub struct RecordingSettings {
     /// `#[serde(default)]` so older configs default to always-shown.
     #[serde(default)]
     pub overlay_stats_on_hover: bool,
-    /// Which usage figure the chip shows.
     #[serde(default = "default_stats_metric")]
     pub overlay_stats_metric: OverlayStatsMetric,
     /// Show the injection target app (→ AppName) on the chip, plus a warn hint when the focused
@@ -601,9 +599,8 @@ pub struct RecordingSettings {
     /// Hover-intent delay (ms) before the chip reveals detail + quick-launch buttons.
     #[serde(default = "default_hover_reveal")]
     pub hover_reveal_ms: u32,
-    /// "Chip size": one factor for the whole chip (0.75–2.0). Rust reads it only to pre-warm
-    /// the KDE placement rule; at runtime the webview passes it to `show_overlay`, which
-    /// clamps it.
+    /// "Chip size": one factor for the whole chip (0.75–2.0). Rust never reads the stored
+    /// value: the webview passes it to `show_overlay`, which clamps it.
     #[serde(default = "default_scale")]
     pub chip_scale: f64,
     /// "Dot size": extra factor (1.0–3.0) for the status dot while the chip is minimized
@@ -700,8 +697,8 @@ pub struct AppSettings {
     pub theme: ThemeName,
     /// The Signal colour (hue in degrees) and its motion — frontend-owned like `sync`
     /// and `transcribe`: Rust stores + round-trips both and never interprets them.
-    /// Every secondary window (quick-add, picker) reads the config THROUGH this struct,
-    /// so a key missing here is silently dropped by serde. An unset value round-trips
+    /// The Quick-Add window reads the config THROUGH this struct (`read_config`), so a
+    /// key missing here is silently dropped by serde. An unset value round-trips
     /// byte-stable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent_hue: Option<f64>,
@@ -988,8 +985,8 @@ fn migrate_legacy(text: &str) -> Option<Config> {
 /// jobs-ledger.json and usage-outcomes.json.
 ///
 /// Decoded lossily: invalid UTF-8 is a permanent CONTENT fault, so it reaches the callers' parse
-/// (unparseable → rebuilt) instead of their unreadable path, which never saves over the file and
-/// so paused sync on every launch for one stray byte.
+/// (unparseable → rebuilt) instead of their unreadable path, which never saves over the file —
+/// one stray byte would pause sync on every launch.
 pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     Ok(read_config_bytes(path)?.map(|bytes| {
         // A leading byte-order mark (an editor's "UTF-8 with BOM") is not JSON to serde,
@@ -1021,7 +1018,7 @@ pub(crate) fn read_config_bytes(path: &Path) -> std::io::Result<Option<Vec<u8>>>
 /// Set when `load_outcome` reset an unreadable/unparseable config to defaults but could NOT
 /// stash the original as `.json.bak` (e.g. a Windows lock without delete/read share). `save`
 /// then refuses for the rest of the session: the frontend's armed auto-save would otherwise
-/// replace the only copy of the user's backends/profiles/hotkeys with the seeded defaults.
+/// replace the only copy of the user's backends/profiles/hotkeys with the defaults.
 static BACKUP_FAILED: AtomicBool = AtomicBool::new(false);
 
 /// Whether this session's load reset an unusable config WITHOUT managing a backup — `save`
@@ -1162,7 +1159,7 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
     // command) loads again after it. Without this, setup's recovery renames config.json → .bak,
     // then the main window's read sees NotFound → `(default, false)`, so the reset banner
     // (surfaced ONLY by the main window's initConfig on `recovered`) never shows and its armed
-    // auto-save silently persists the seeded defaults over the user's backed-up config. (The
+    // auto-save silently persists the defaults over the user's backed-up config. (The
     // Quick-Add window reads through `read_config` → `try_load`, which never recovers.)
     // Held across the whole read+rename so two loads can't interleave the destructive recovery.
     let mut recovered = RECOVERED_THIS_SESSION
@@ -1221,10 +1218,9 @@ pub fn load(dir: &Path) -> Config {
     load_outcome(dir).0
 }
 
-/// Side-effect-free read for mid-session callers (the hotkey readers through
-/// `commands::bindings_config`: re-registration, the evdev rescan, legacy CLI flags, which fall
-/// back to the last good read; and the Quick-Add window's `read_config`). By then a webview
-/// holds the live settings, so an unreadable or unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
+/// Side-effect-free read for mid-session callers (`commands::bindings_config` and the Quick-Add
+/// window's `read_config`). By then a webview holds the live settings, so an unreadable or
+/// unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
 /// re-saved: `None` on a read or parse error (the caller keeps what it has / skips), the
 /// defaults when the file is absent (first run, or this session's reset already moved it —
 /// the defaults are then what is live), and a legacy config migrated in memory only.
@@ -1656,7 +1652,7 @@ mod tests {
         let stale = generation().wrapping_sub(1);
         assert!(!remember(&id, stale, Some("old".into())));
         assert_eq!(cached(&id), None);
-        // No write in between: the read is cached as before.
+        // No write in between: the read is cached.
         assert!(remember(&id, generation(), Some("k".into())));
         assert_eq!(cached(&id), Some(Some("k".into())));
     }
