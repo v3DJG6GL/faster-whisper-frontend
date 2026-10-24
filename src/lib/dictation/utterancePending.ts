@@ -1,9 +1,9 @@
 /**
  * What the SERVER says about the utterance it is holding, and what of that is worth acting on.
  *
- * A streaming session never leaves "listening" on the client, so the stretch between "you
- * stopped talking" and the server's `final` used to read as amber "ready" while the backend was
- * decoding. The server now announces the lifecycle (`stream://utterance`: open → decoding →
+ * A streaming session never leaves "listening" on the client, so without the server's word the
+ * stretch between "you stopped talking" and its `final` would read as amber "ready" while the
+ * backend decodes. The server announces the lifecycle (`stream://utterance`: open → decoding →
  * final | dropped) and guarantees one terminal frame per announced utterance. This module is the
  * client's copy of that state, kept PURE (the clock is passed in) so it can be tested without
  * driving `streaming.ts` — the only caller — through its Tauri transport, the same reason
