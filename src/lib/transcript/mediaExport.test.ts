@@ -162,7 +162,7 @@ describe("embeddedSubtitleTracks", () => {
     expect(now).toEqual(["orig", "fr", "fr-x-site"]);
     expect(sidecarFiles(live, opts, now, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt", "s.YouTube.fr.srt"]);
     expect(embeddedSubtitleTracks(live, opts, now).map((t) => t.srt.includes("Bonjour"))).toEqual([false, true, false]);
-    // Still running at the write: dropped, and the site track keeps the plain name (d84b4932).
+    // Still running at the write: dropped, and the site track keeps the plain name.
     const still = tracksAtWrite(planned, picked, site(), opts);
     expect(still).toEqual(["orig", "fr-x-site"]);
     expect(sidecarFiles(site(), opts, still, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
@@ -317,7 +317,7 @@ describe("exportStem", () => {
     expect(new TextEncoder().encode(long + ".Machine-translation.de.srt.tmp").length).toBeLessThanOrEqual(255);
     expect(long).toBe(exportStem("会議".repeat(39), "/home/u/x.mp4"));
     expect(exportStem(undefined, "/tmp/a:b?.mkv")).toBe("a b");
-    // The link info is ignored for a local file — its names stay as before.
+    // The link info is ignored for a local file.
     expect(exportStem("Talk", "/a.mp4", { createdAt: new Date(2026, 9, 4, 19, 34), extractor: "Youtube" })).toBe("Talk");
   });
 
