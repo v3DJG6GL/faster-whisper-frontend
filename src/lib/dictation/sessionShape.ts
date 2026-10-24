@@ -17,7 +17,7 @@ import type { Backend, Profile } from "../types";
  *  translates nothing (no sendable target and no picker): startLiveInner then sends none of its
  *  fields, so an "Include original" Off, a cleared target list or a leftover glossary there
  *  is the same session. `backend` is the Profile's resolved Backend (dictation.ts
- *  `backendForProfile`); `null` when there is none. Compared as strings. */
+ *  `backendForProfile`); with none the shape is `null`. Compared as strings. */
 export function sessionShape(profile: Profile, backend: Backend | undefined): string | null {
   if (!backend) return null;
   const trOv = { ...backend.translationOverrides, ...profile.translationOverrides };
