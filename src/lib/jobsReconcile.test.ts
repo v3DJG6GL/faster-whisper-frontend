@@ -245,7 +245,7 @@ describe("reconcileJobs", () => {
   });
 
   it("one unreachable server costs one status call per pass, not one per row", async () => {
-    // A second backend: a row is asked at its backend's current address.
+    // A second backend on another host, whose row b1's unreachable host must not hold back.
     useApp.setState({ backends: [...useApp.getState().backends,
       { id: "b2", name: "Other", serverUrl: "http://other:8000" } as never] });
     const other = { ...row(JOB_C, T0 + 2), backendId: "b2", serverUrl: "http://other:8000" };
@@ -254,7 +254,7 @@ describe("reconcileJobs", () => {
       ? { kind: "not_found" } : { kind: "error", message: "timed out" }));
     await reconcileJobs();
     expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A, JOB_C]);
-    // The skipped row is kept and asked on the next pass.
+    // The skipped row is kept for a later pass.
     expect(ledgerRows().map((r) => r.jobId)).toEqual([JOB_A, JOB_B]);
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
