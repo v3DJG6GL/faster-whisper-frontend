@@ -332,10 +332,9 @@ pub fn prune_legacy_dir(dir: &Path) {
     let _ = std::fs::remove_file(dir.join("fwf.prev.log"));
 }
 
-/// One timestamp format for the whole session file: the replayed ring head (`format_line`)
-/// and the live tail (`fmt::layer`) used to write two different clocks into one file — local
-/// time without a date, then UTC RFC-3339 — so correlating a startup line with a later one
-/// meant comparing clocks hours apart in the artifact users attach to bug reports.
+/// One timestamp format (local time, with a date) for the whole session file: the replayed ring
+/// head (`format_line`) and the live tail (`fmt::layer`) must share one clock, or a startup line
+/// cannot be correlated with a later one in the file users attach to bug reports.
 const TS_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
 
 /// `tracing_subscriber` timer matching `format_line`: local time, `TS_FORMAT`.
@@ -434,10 +433,11 @@ static LOGGED_PRUNE_HOLD: AtomicBool = AtomicBool::new(false);
 
 /// Config-save side effect (also run once at launch, after the config load), always called
 /// through `queue_log_settings`: move the session file if the folder changed, and prune old
-/// files unless `held` (the level is a live switch, applied by `commands::set_live_switches`):
-/// a reset nobody has saved over (`config::retention_held`), as the caller computed before any
-/// write — the same hold as the retention sweeps. The defaults' `keep_days` would otherwise delete logs
-/// the user's real (backed-up or unreadable) settings kept — the very logs that explain the reset.
+/// files unless `held` — a reset nobody has saved over (`config::retention_held`, computed by the
+/// caller before any write), the same hold as the retention sweeps. The defaults' `keep_days`
+/// would otherwise delete logs the user's real (backed-up or unreadable) settings kept — the very
+/// logs that explain the reset. The level is not applied here: it is a live switch
+/// (`commands::set_live_switches`).
 pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
     let Some(dir) = log_dir(app, config) else {
         return;
@@ -607,9 +607,8 @@ fn resolve_log_dir(app: &AppHandle, custom: Option<String>) -> Option<std::path:
 
 #[tauri::command]
 pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String, String> {
-    // `custom` is the LIVE preference (null/blank = the default folder): the store's save is
-    // debounced, so the on-disk config lags a change by 400 ms — and it lags a RESET too, so
-    // "None = read the config" showed (and opened) the just-cleared custom folder.
+    // `custom` is the LIVE preference (null/blank = the default folder), not the config file: the
+    // store's save is debounced, so the file lags a change — and a reset — by 400 ms.
     let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
     // Home-relative display, same as audio_dir_path.
     if let Ok(home) = app.path().home_dir() {
@@ -758,7 +757,6 @@ mod tests {
         assert_eq!(t.lines.last().unwrap().seq, (RING_CAP + 5) as u64);
         assert_eq!(t.errors, 1);
         assert!(t.warns >= 1);
-        // since_seq filter
         let recent = ring.tail(t.seq - 3);
         assert_eq!(recent.lines.len(), 3);
     }
