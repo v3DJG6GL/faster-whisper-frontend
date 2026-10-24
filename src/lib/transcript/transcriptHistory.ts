@@ -418,17 +418,12 @@ export function loadHistory(force = false): Promise<void> {
   // back nothing; callers that must not bring a record back drop the parked writes first.
   const flushed = [...pendingWrite.values()];
   void flushRecordWrites();
-  // A session-only mirror is replayed over the snapshot like a change made during the listing;
-  // otherwise the listing replaces it — the mirror may hold records a forced caller just deleted
-  // or rewrote.
   const seed = !force && mirrorSessionOnly;
   touchedSinceListing = new Map(seed ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
   for (const r of flushed) touchedSinceListing.set(r.id, currentRecord(r.id) ?? r);
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
-      // A field of the wrong shape (hand-edited or foreign file) would throw in the History
-      // render; keep the record, repair only the bad fields (repairRecord).
       const byId = new Map(raw.filter(isRecord).map(repairRecord).map((r) => [r.id, r]));
       for (const [id, rec] of touched) {
         if (rec) byId.set(id, rec);
