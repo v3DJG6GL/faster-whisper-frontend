@@ -85,10 +85,10 @@ function Editor({
   initial: Profile;
   others: Profile[];
   /** A low-level backend owns the chords: evdev enabled AND permitted (Linux) or always on
-   *  Windows (the hook backend) — the screen's own probe, passed down so the editor never starts
-   *  on a not-yet-probed `false` (collapsed L/R sides, a capture re-armed when it flips). Same
-   *  gate as the Dictionary screen's QuickAddShortcutField, so both rebind surfaces accept the
-   *  same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then). */
+   *  Windows (the hook backend) — the screen's own probe, passed down so an editor opened after it
+   *  answers doesn't start on a not-yet-probed `false` (collapsed L/R sides, a capture re-armed
+   *  when it flips). Same gate as the Dictionary screen's QuickAddShortcutField, so both rebind
+   *  surfaces accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then). */
   lowLevelActive: boolean;
   /** `takeovers`: bindings whose shortcut this profile took ("Use it here") — cleared on save. */
   onSave: (p: Profile, takeovers: string[]) => void;
