@@ -70,8 +70,7 @@ impl Recorder {
     fn push(&self, mono: &[f32]) {
         if let Ok(mut c) = self.clip.lock() {
             c.samples.extend(mono.iter().copied());
-            // Drop the oldest beyond the cap — O(1) per popped sample on the VecDeque ring, vs the
-            // O(len) front-shift a Vec::drain did on every callback once the cap was reached.
+            // VecDeque ring: O(1) per popped sample, not an O(len) front-shift on every callback.
             while c.samples.len() > self.cap {
                 c.samples.pop_front();
             }
@@ -177,12 +176,9 @@ fn run(
     clip: Arc<Mutex<MicClip>>,
     ready: &SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
-    // Reset the shared clip BEFORE the fallible device open below. Otherwise a failed resolve_input /
-    // input_config / build_input_stream (busy/unplugged/denied mic) leaves the PREVIOUS successful test's samples
-    // in place, and stop_mic_test then reads the stale rate/len and auto-replays that old audio as if
-    // freshly captured on the now-broken device. sample_rate=0 makes stop_mic_test's `sample_rate > 0`
-    // guard false → it returns 0s → the frontend correctly skips the replay. Safe from a torn write:
-    // start_mic_test drops/joins the prior capture handle (`*guard = None`) before spawning this thread.
+    // Reset the clip BEFORE the fallible open: a busy/unplugged/denied mic would otherwise leave
+    // the previous test's audio for stop_mic_test to auto-replay. Rate 0 makes it report 0 s (no
+    // replay). No torn write: start_mic_test joins the prior capture before spawning this thread.
     if let Ok(mut c) = clip.lock() {
         c.samples.clear();
         c.sample_rate = 0;
