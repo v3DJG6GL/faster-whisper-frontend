@@ -670,6 +670,9 @@ export interface DictationCapture {
   includeOriginal?: boolean;
 }
 
+/** A dictation's sourceName when the session named no app (appLabel reads it as "no title"). */
+const DICTATION_NAME = "Dictation";
+
 /** Save a finished dictation session as a history record; returns its id so
  *  the recording path can be attached when it arrives after the fact. */
 export function recordDictation(cap: DictationCapture): string {
@@ -679,7 +682,7 @@ export function recordDictation(cap: DictationCapture): string {
     id: crypto.randomUUID(),
     createdAt: new Date(cap.startedAt).toISOString(),
     sourcePath: cap.recordingPath ?? "",
-    sourceName: cap.appTitle?.trim() || cap.appId?.trim() || "Dictation",
+    sourceName: cap.appTitle?.trim() || cap.appId?.trim() || DICTATION_NAME,
     status: "done",
     tookMs: cap.durationMs,
     backendId: cap.backendId,
@@ -836,9 +839,9 @@ export function recordTracks(
 /** Human app label from a dictation record — the stored window title, else the
  *  app id's last dot-segment, capitalized ("org.mozilla.thunderbird" → "Thunderbird"). */
 export function appLabel(r: TranscriptRecord): string {
-  if (r.sourceName && r.sourceName !== "Dictation") return r.sourceName;
+  if (r.sourceName && r.sourceName !== DICTATION_NAME) return r.sourceName;
   const seg = r.appId?.split(".").pop()?.trim();
-  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : "Dictation";
+  return seg ? seg.charAt(0).toUpperCase() + seg.slice(1) : DICTATION_NAME;
 }
 
 /** Label for the "dictated into" chip. The chip groups by app id, so it must
