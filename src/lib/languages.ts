@@ -371,7 +371,6 @@ export function namedLanguage(value: string | null | undefined): value is string
   return !!value && value !== "auto" && value !== MULTI_LANGUAGE;
 }
 
-/** Display text for a spoken-picker value. */
 export function spokenLabel(value: string): string {
   return value === MULTI_LANGUAGE ? "Multiple languages" : languageLabel(value);
 }
