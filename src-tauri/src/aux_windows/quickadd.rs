@@ -413,7 +413,8 @@ pub(crate) mod win_seed {
 
     /// One synthetic keyboard event shaped like a physical keyboard's (see
     /// `send_copy_chord` for why the scan code is load-bearing). Carries enigo's
-    /// `dwExtraInfo` marker so our own LL hook / raw-input feed ignores it.
+    /// `dwExtraInfo` marker so our own LL hook ignores it (the raw-input feed drops it by
+    /// `hDevice == 0`).
     #[cfg(windows)]
     fn key_event(
         vk: u16,
