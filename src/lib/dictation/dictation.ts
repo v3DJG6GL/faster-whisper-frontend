@@ -136,10 +136,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
   if (isBusy() || isStarting() || pickerOpen) {
     // Key chatter: a re-press of the SAME chord during its own start prologue supersedes the
     // phantom release recorded milliseconds earlier — the chord is still physically held, so
-    // honoring the stale stop would kill the just-started session with 0 audio (the sub-30ms
-    // instant-stop bug). Same-profile only: another profile's press must never erase a real
-    // pending stop (activeProfile is stamped synchronously below before startLive, so during
-    // a prologue it identifies the starting profile).
+    // honoring the stale stop would kill the just-started session with 0 audio. Same-profile
+    // only: another profile's press must never erase a real pending stop (activeProfile is
+    // stamped synchronously below before startLive, so during a prologue it identifies the
+    // starting profile).
     if (action === "start" && isStarting() && s.activeProfile === profileId) {
       cancelStopIfStarting();
       return;
@@ -222,8 +222,8 @@ async function startWithPickedTargets(
   try {
     // Stamp "choosing" in the same tick `pickerOpen` goes up, BEFORE the focus read below (an
     // AT-SPI round trip on Linux): it is pickerOpen's store-visible twin (pickerOffHint), and a
-    // late stamp left the chip and Home offering starts / cycles that bail on pickerOpen. Store
-    // writes take no focus (the chip is non-focusable), so the captured target is unchanged.
+    // late stamp would leave the chip and Home offering starts / cycles that bail on pickerOpen.
+    // Store writes take no focus (the chip is non-focusable), so the captured target is unchanged.
     // The stamp also ends a lingering error: `error` isn't busy, so this start can open inside
     // flashError's linger, whose timer would otherwise null activeProfile mid-pick (wrong chip
     // tag beside the stale error). Its body is guarded by status === "error", so it no-ops.
@@ -282,8 +282,8 @@ export function startHandsFree(backend: Backend, micId: string | null, profile: 
   setRouteHint(null);
   if (profile.askTranslationTargets) {
     // The picker stamps activeProfile itself, together with "choosing" (and the error clear), in
-    // one write: stamping it here first published an in-between state — the plain Profile, maybe
-    // beside a stale error — to the chip for one update. Same split as `dictate()`.
+    // one write: stamping it here first would publish an in-between state — the plain Profile,
+    // maybe beside a stale error — to the chip for one update. Same split as `dictate()`.
     void startWithPickedTargets(profile, backend, micId, "handsfree");
     return;
   }
