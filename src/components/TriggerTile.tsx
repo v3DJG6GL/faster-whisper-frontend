@@ -7,9 +7,8 @@
 // suspend/reregister) lives in useHotkeyCapture, which the parent drives and passes in as `capture`.
 //
 // The tile says in a sentence what the keys do ("Hold Ctrl + Shift while you speak…"), so the
-// activation switch is never read apart from the keys it changes. States of the key strip:
-// bound, recording (live keycaps + "Press the keys · Esc cancels"), taken by another binding
-// ("Use it here" / "Try again"), and empty. Clearing is the × button — Backspace stays a key.
+// activation switch is never read apart from the keys it changes. Clearing is the × button —
+// Backspace stays a key.
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
