@@ -1,6 +1,3 @@
-// Pure-function coverage of the stage rail with the URL flow's new
-// "downloading" stage (railOf folding, ordering, weighting). The store/pump
-// side is exercised through the app; these guard the math.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The only Tauri command these tests care about is the history write: a record the
@@ -1011,9 +1008,8 @@ describe("refreshRowMediaPaths after a storage move", () => {
     expect(row()?.mediaPath).toBe("/new/links/moved-1.m4a");
   });
 
-  // Run #88 F12: a chunk merged around the move kept the mirror on the old path past the
-  // reload, so refreshRowMediaPaths found nothing to re-point. The save Rust re-points now
-  // hands the moved path back, and the row follows it whenever that answer lands.
+  // A chunk merged around the move keeps the mirror on the old path past the reload, so
+  // refreshRowMediaPaths has nothing to re-point: the row follows the moved path the save hands back.
   it("a row follows a save Rust re-pointed after the reload", async () => {
     const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
     const rec: TranscriptRecord = {
@@ -1036,8 +1032,8 @@ describe("refreshRowMediaPaths after a storage move", () => {
   });
 });
 
-// Run #75 F12-2: the links wipe stripped the record's copy but the open transcript's queue row
-// kept the deleted path, and the row's path wins in the viewer and the export.
+// The open transcript's queue row path wins over the record's in the viewer and the export,
+// so stripping the record's copy alone would leave the deleted path playing.
 describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'", () => {
   it("drops the wiped copy from the open link's row; a path the wipe did not delete stays", async () => {
     const rec: TranscriptRecord = {
@@ -1269,7 +1265,7 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     // A full backend keeps it — unless its translation is switched off.
     expect(reconcileRetryOptions(opts, false)).toEqual({ ...opts, standard: undefined });
     expect(reconcileRetryOptions(opts, false, false)).toEqual({ diarize: true, standard: undefined });
-    // Caps not loaded yet (unknown): a full backend keeps the slice, as before caps gated it.
+    // Caps not loaded yet (unknown): a full backend keeps the slice.
     expect(reconcileRetryOptions(opts, false, undefined)).toEqual({ ...opts, standard: undefined });
   });
 
@@ -1871,7 +1867,7 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
       retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
-      // Outside Tauri the request rejects at once — the run used to only log that.
+      // Outside Tauri the request rejects at once; the row must show it, not only the log.
       await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("Video download requires the desktop app.");
     } finally {
@@ -1973,7 +1969,7 @@ describe("an on-demand video that finishes is pulled once", () => {
   });
 
   it("a request still out at the two-hour deadline ends only the poll: its own answer settles the row", async () => {
-    // Failed at the deadline, Try again started a second download beside the live request.
+    // Failing the row at the deadline would let Try again start a second download beside the live request.
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "queued" },
     } as import("./types").BatchProgress));
@@ -2415,7 +2411,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
   });
 
   it("asks the job row at the two-hour deadline and ends the row failed with Try again", async () => {
-    // The poll used to stop with a bare end(): the row stayed "downloading" for good.
     getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: { text: "hi", sourceVideoPending: true } }));
     await poll(1);
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
