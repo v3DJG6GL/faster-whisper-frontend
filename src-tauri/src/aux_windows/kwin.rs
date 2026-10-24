@@ -66,7 +66,7 @@ pub fn set_key(tool: &str, group: &str, key: &str, value: &str) {
         .status();
 }
 
-/// Read one KConfig key (None when empty / unreadable). Internal to this module (merge_general).
+/// Read one KConfig key (None when empty / unreadable).
 fn read_key(tool: &str, group: &str, key: &str) -> Option<String> {
     let out = Command::new(tool)
         .args(["--file", "kwinrulesrc", "--group", group, "--key", key])
@@ -93,11 +93,10 @@ pub fn reconfigure() {
         .status();
 }
 
-/// Serializes the General/rules read-modify-write below. The chip (overlay::kwin, on dictation
-/// start) and the quick-add window (quickadd::kwin, on summon) install on separate detached
-/// threads; without this, a first-install interleave would let both read the same `rules=` list
-/// and the second writer would clobber the first's append — dropping one window's rule. Held only
-/// across synchronous shell-outs (no .await, no nested lock), so it can't deadlock.
+/// Serializes the General/rules read-modify-write below. The chip, quick-add window and language
+/// picker install on separate detached threads; an interleave would let two read the same
+/// `rules=` list and the second writer would clobber the first's append, dropping a window's rule.
+/// Held only across synchronous shell-outs (no .await, no nested lock), so it can't deadlock.
 static RULES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Merge `group` into General/rules, preserving any existing user (and sibling) rules.
