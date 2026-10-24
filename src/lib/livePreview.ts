@@ -140,9 +140,9 @@ export function separatorGlyphs(s: string): string {
   return s.replace(/\n/g, "↵").replace(/\t/g, "⇥");
 }
 
-/** The inner pause stays below the outer one (the server would otherwise wait ~20 s to commit):
- *  moving one pushes the other along by a step, the inner never below `floor`. Returns the pair
- *  to store; only the values that changed need writing. */
+/** The inner pause stays below the outer one (the server would otherwise hold the commit until its
+ *  forced-commit cap, 25 s by default): moving one pushes the other along by a step, the inner
+ *  never below `floor`. Returns the pair to store; only the values that changed need writing. */
 export function keepInnerBelowOuter(
   changed: "inner" | "outer",
   innerMs: number,
