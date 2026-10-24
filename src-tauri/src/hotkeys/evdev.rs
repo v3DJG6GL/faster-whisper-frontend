@@ -347,12 +347,10 @@ mod imp {
         if let Some(mods) = chord_mods {
             crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
-        // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
-        // session causality is otherwise invisible in the log.
-        // `profile_id` is blob- and import-authored (`sanitizeProfiles` type-checks `id` as a
-        // string and never clamps it), so it is defanged for the log exactly as the CLI twin in
-        // `triggers.rs` is: an embedded newline forges records in the support log users are
-        // asked to send, and an unbounded id turns every chord press into a large disk write.
+        // Log every fired trigger, as `triggers::emit_trigger` does: the chord → session causality
+        // is otherwise invisible. `profile_id` is blob- and import-authored and never clamped, so
+        // it is defanged the same way: an embedded newline forges support-log records, and an
+        // unbounded id turns every chord press into a large disk write.
         let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
         tracing::info!("[trigger] {profile_id_log}/{action} (evdev)");
         let _ = app.emit(
@@ -586,10 +584,9 @@ mod imp {
         mut engine: Engine,
         generation: u64,
     ) {
-        // `held_keys` mirrors physical key state into the shared signal `inject_text` reads,
-        // so we never type into a still-held trigger modifier (see crate::hotkeys::held_keys). It is
-        // this start's writer: retired by the next start's clear(), so a post-loop that runs
-        // past the abort point cannot touch its successor's counts.
+        // `held_keys` mirrors physical key state for `inject_text`'s still-held-modifier gate. It is
+        // this start's writer, retired by the next start's clear(), so a post-loop past the abort
+        // point cannot touch its successor's counts (see `start`).
         let mut held: HashSet<u16> = HashSet::new();
         // Chatter filter (per device — bounce is per physical switch): key-ups for
         // held keys are deferred RELEASE_DEBOUNCE and erased if the key comes back
@@ -688,13 +685,11 @@ mod imp {
         // hold-to-talk dictation started here would stay stuck running. Hands-free/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
-            // CLAIM the hold before manufacturing its stop (as the `windows` twin does).
-            // `stop_held_sessions` drains the same registry right after evdev's abort
-            // (`apply_bindings`, `suspend_shortcuts`), and a reader whose stream errors around that
-            // abort (unplug, dock event, suspend/resume) runs this post-loop past the abort point.
-            // Unclaimed, that is a SECOND stop, delivered onto a session the user re-triggered in
-            // between, and a SECOND `arm_chord_lost` that diverts the next typed phrase to the
-            // clipboard.
+            // CLAIM the hold first (see `take_hold`): `stop_held_sessions` drains the same registry
+            // right after the abort, and a reader whose stream errors around it (unplug, dock,
+            // suspend/resume) runs this post-loop past the abort point. Unclaimed, that is a SECOND
+            // stop onto a session the user re-triggered in between, and a SECOND `arm_chord_lost`
+            // that diverts the next phrase to the clipboard.
             if !take_hold(&pid) {
                 continue;
             }
