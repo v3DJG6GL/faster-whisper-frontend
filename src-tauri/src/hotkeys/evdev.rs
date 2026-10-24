@@ -273,11 +273,10 @@ mod imp {
         profiles: &[Profile],
         quick_add_hotkey: &[String],
     ) {
-        // Hold the EvdevState lock across the ENTIRE stop→enumerate→spawn→store sequence so two
-        // concurrent apply_bindings() calls (the reregister_shortcuts IPC thread + the suspend-watch
-        // thread) can't interleave: otherwise both spawn reader-task sets that briefly read the same
-        // devices in parallel — double-firing every chord — before one store aborts the other. Inline
-        // the stop (set *g = None, dropping the old Running → aborting its readers) instead of calling
+        // Hold the EvdevState lock across the ENTIRE stop→enumerate→spawn→store sequence (callers
+        // also hold APPLY_LOCK; this keeps start atomic against stop on its own, so two reader-task
+        // sets never read the same devices at once and double-fire every chord). Inline the stop
+        // (set *g = None, dropping the old Running → aborting its readers) instead of calling
         // super::stop(): std::sync::Mutex is non-reentrant, so re-locking here would deadlock.
         let mut g = match state.0.lock() {
             Ok(g) => g,
