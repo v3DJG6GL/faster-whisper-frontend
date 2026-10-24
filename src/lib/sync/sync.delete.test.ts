@@ -1122,7 +1122,7 @@ describe("a relisted review", () => {
       const base = await seedBase();
       setServerAddressesGate(false);
       const remote = structuredClone(base);
-      remote.backends = { ...remote.backends!, list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })) };
+      repointToEvil(remote);
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
@@ -1246,6 +1246,11 @@ function setServerAddressesGate(on: boolean): void {
   useApp.setState({ settings });
 }
 
+/** The peer's change: every backend in `remote` repointed to http://evil:9 (in place). */
+function repointToEvil(remote: SyncBlob): void {
+  remote.backends = { ...remote.backends!, list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })) };
+}
+
 // The edit check compared the store without the keyring: the store's backends carry only
 // `hasApiKey`, so a key rotated while a backends review waited read as "not edited". The approval
 // put the raise-time key back, relisted it as an "api-key" row for the user's own backend as if
@@ -1257,10 +1262,7 @@ describe("approving a review after rotating an API key", () => {
       setServerAddressesGate(true);
       const localUrl = useApp.getState().backends[0].serverUrl;
       const remote = structuredClone(base);
-      remote.backends = {
-        ...remote.backends!,
-        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
-      };
+      repointToEvil(remote);
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["server-url"]);
@@ -1292,10 +1294,7 @@ describe("approving a relisted review after an ordinary edit", () => {
       setServerAddressesGate(false);
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       const remote = structuredClone(base);
-      remote.backends = {
-        ...remote.backends!,
-        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
-      };
+      repointToEvil(remote);
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
@@ -1333,10 +1332,7 @@ describe("approving a backends review after a dictionary edit", () => {
       setServerAddressesGate(true);
       const pinBefore = useApp.getState().settings.quickAddList ?? null;
       const remote = structuredClone(base);
-      remote.backends = {
-        ...remote.backends!,
-        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
-      };
+      repointToEvil(remote);
       remote.dictionary = { ...remote.dictionary, quickAddList: { backendId: "b1", slug: "peer-list" } };
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
@@ -1371,10 +1367,7 @@ describe("an edit landing during an approval's keyring wait", () => {
       setServerAddressesGate(false);
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       const remote = structuredClone(base);
-      remote.backends = {
-        ...remote.backends!,
-        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
-      };
+      repointToEvil(remote);
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
@@ -1695,10 +1688,7 @@ describe("a review re-raised by a pull refused while dictating", () => {
       const remote = structuredClone(base);
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-      remote.backends = {
-        ...remote.backends!,
-        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
-      };
+      repointToEvil(remote);
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
