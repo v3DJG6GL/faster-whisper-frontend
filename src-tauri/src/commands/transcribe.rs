@@ -406,7 +406,8 @@ fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &P
     if AUDIO_SUBDIRS.iter().any(|s| under(&base.join(s), parent)) {
         return true;
     }
-    // Case-blind for Windows/macOS; is_dictation_file is ensure_audio_layout's sweep predicate.
+    // The own-name match is case-blind for Windows/macOS; is_dictation_file stays exact, as
+    // it is ensure_audio_layout's sweep predicate.
     let in_root = match (base.canonicalize(), parent.canonicalize()) {
         (Ok(b), Ok(p)) => b == p,
         _ => false,
@@ -518,8 +519,6 @@ pub async fn package_media(
             match (source_media_id, source_path) {
                 (Some(id), None) => {
                     transport::gate_media_id(&id).map_err(|e| e.to_string())?;
-                    // Packaged by id, the server remux streams over `dest` all the same:
-                    // the local copy it stands for must not be the destination either.
                     refuse_local_source_as_dest(local_source.as_deref(), &checks_dest)?;
                     Ok(Ok((Some(id), None)))
                 }
