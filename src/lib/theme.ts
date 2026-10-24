@@ -170,7 +170,8 @@ export const MOTION_MAX_PERIOD = 604800;
 export const DEFAULT_ARC_HUE = 350;
 
 /** Is this a motion the engine will actually run? Period 0 is Still; anything else must
- *  be a finite number of seconds inside the slider's span, the range one of the two. */
+ *  be a finite number of seconds inside the slider's span, the range one of the two, and
+ *  each arc hue absent or within 0–360. */
 export function isValidAccentMotion(m: unknown): m is AccentMotion {
   if (!m || typeof m !== "object") return false;
   const { period, range, arcHue, arcFrom } = m as Record<string, unknown>;
