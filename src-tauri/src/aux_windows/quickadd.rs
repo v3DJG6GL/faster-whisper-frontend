@@ -245,9 +245,8 @@ fn show_now(app: &AppHandle) {
         };
         crate::aux_windows::position::center_on_monitor(&win, QA_W, QA_H);
         let _ = win.set_always_on_top(true);
-        // KDE-Wayland ignores client keep-above; install a KWin window rule instead (matched on a
-        // unique title), the focus-allowed cousin of the chip's rule. The title must be set before
-        // the window maps so the rule matches; the config write can block, so it runs off-thread.
+        // KDE-Wayland ignores client keep-above: KWin rule on QA_TITLE (see the module docs). The
+        // config write can block, so it runs off-thread.
         #[cfg(target_os = "linux")]
         if kwin::is_kde_wayland() {
             let _ = win.set_title(QA_TITLE);
@@ -267,9 +266,6 @@ fn show_now(app: &AppHandle) {
 /// Hide the quick-add window. It stays alive (prewarmed) for the next summon —
 /// the close-to-hide guard in `lib.rs` keeps it from being destroyed.
 pub fn hide(app: &AppHandle) {
-    // Invalidate the summon's seed generation: a grab still settling after the user
-    // already closed the window must not be readable by any later summon. (Harmless off
-    // Windows, where nothing reads the state.)
     app.state::<SeedRendezvous>().clear();
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
