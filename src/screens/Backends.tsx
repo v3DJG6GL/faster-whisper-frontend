@@ -63,7 +63,7 @@ function Editor({
   // background probe here — the editor's URL may be mid-edit.
   const storedConn = useApp((s) => ownProp(s.connections, initial.id));
   const syncEnabled = useApp((s) => s.settings.sync?.enabled ?? false);
-  // Same guard: an inherited value here would put a FUNCTION into a controlled input's `value`.
+  // Same guard as `effectiveServerUrl`: an inherited value here would put a FUNCTION into a controlled input's `value`.
   const urlOverride = useApp((s) => {
     const raw = s.settings.sync?.urlOverrides?.[initial.id];
     return typeof raw === "string" ? raw : "";
@@ -82,37 +82,27 @@ function Editor({
   // a sync pull that added or removed the key meanwhile read as unsaved work. Display uses the
   // live `keyStored`; doSave derives the saved flag from the field and the live store itself.
   const keyStoredAtOpen = initial.hasApiKey && !initialKey;
-  // The address this editor's requests ACTUALLY go to — the same rule `effectiveServerUrl`
-  // applies, but reactive, so a change to "Address on this device" re-runs the effects below.
-  // `runTest`, `liveTarget`, the list card and every transcription already resolve the override;
-  // the probes driven from here did not, which is what sent the API key to the canonical host.
+  // The address this editor's requests actually go to (the override, else Server URL), reactive so
+  // a change to "Address on this device" re-runs the effects below.
   const effUrl = urlOverride.trim() || b.serverUrl;
-  // Debounce the typed key AND the server URL before they drive the best-effort capability /
-  // override-profile lookups, so typing either field doesn't fire a burst of requests on every
-  // keystroke (the URL drives two lookups — getCapabilities + listOverrideProfiles — per char).
+  // Debounce the typed key and the address before they drive the best-effort capability /
+  // decode-default / override-profile lookups, so typing doesn't fire a burst of requests per keystroke.
   const debouncedKey = useDebounced(key, 400);
-  // Debounced on the EFFECTIVE address. This value feeds `useOverrideContext` / `useDecodeDefaults`,
-  // whose probes (getCapabilities, getDecodeDefaults, listOverrideProfiles) carry the bearer credential — the
-  // typed key, or, when the field is blank, the STORED keyring key Rust resolves for this id. On
-  // the canonical url those requests went to the very host a user had redirected this backend away
-  // from, and the override-profile names the picker offered came from that host while the name
-  // chosen was then sent to the other one. `Profiles.tsx` already resolves the override for
-  // exactly this reason, and Q13/J8 fixed the same divergence on `runTest` and the card's address.
+  // Debounced on the EFFECTIVE address: these probes (getCapabilities, getDecodeDefaults,
+  // listOverrideProfiles) carry the bearer credential — the typed key, or the STORED keyring key
+  // Rust resolves for this id — so on the canonical url they would reach the host this device was
+  // redirected away from, and the picker would offer that host's override-profile names.
   const debouncedUrl = useDebounced(effUrl, 400);
   // What the probes send: a schemeless `host:8000` gets the `http://` it is saved with
   // (storedTypedUrl), or reqwest refuses it — in Server URL and in "Address on this device" alike,
   // as `effectiveServerUrl` resolves the override. One rule for both, so the live and debounced
   // values can never pick different branches mid-debounce.
   const probeUrl = storedTypedUrl(debouncedUrl);
-  // The targets of the tests in flight. Only those targets show the button busy: the fields stay
-  // editable mid-test and the liveTarget guard drops the stale run's verdict, so a single boolean
-  // kept Test disabled for the corrected address until the old request timed out. Every run is
-  // kept, not just the latest: retyping an older, still-running target must show it busy again,
-  // or a click there starts a duplicate run whose verdict and testGen bump land twice. The ref is
-  // the synchronous twin: two clicks in one render must not start two runs. A blank-key run also
-  // carries the stored key's generation, as the list card's does: a sync pull that rotates the key
-  // mid-test frees Test for the new caller at once instead of waiting out a run whose verdict
-  // `resultLive` will hide anyway (a typed key is its own credential: gen 0, never stale).
+  // The targets of the tests in flight; only those show Test busy, since the fields stay editable
+  // mid-test. Every run is kept, not just the latest: retyping an older, still-running target must
+  // show it busy again, or a click starts a duplicate run. The ref is the synchronous twin (two
+  // clicks in one render). A blank-key run carries the stored key's generation, so a sync pull that
+  // rotates the key frees Test at once (a typed key is its own credential: gen 0, never stale).
   const [testingTargets, setTestingTargets] = useState<readonly { url: string; key: string; gen: number }[]>([]);
   const inFlightTests = useRef(new Set<{ url: string; key: string; gen: number }>());
   const curGen = requestCredentialGen(b.id, key);
@@ -141,22 +131,16 @@ function Editor({
     if (resultTarget.current.url === effUrl && resultTarget.current.key === key) return;
     resultTarget.current = { url: effUrl, key, gen: credentialGeneration(initial.id), hadKey: storedHasKey(initial.id) };
     setResult(null);
-    // Keyed on the EFFECTIVE address, not the canonical one. Q13 moved `liveTarget` and
-    // `runTest` onto `effectiveServerUrl` (which prefers `settings.sync.urlOverrides`) precisely
-    // because the canonical url is not what gets tested — but this effect, whose job is to DROP a
-    // committed result once the tested target changes, kept the two terms that fix declared
-    // insufficient. So: run Test, get "Connected · <version> · <username>", then edit "Address on
-    // this device" in the same editor (it applies live, no save) — the store's cached connection
-    // is dropped, but this local `result` survived, so the version and username of the OLD server
-    // stayed on screen next to the NEW address and kept gating the decode-override editor.
+    // Keyed on the EFFECTIVE address: editing "Address on this device" applies live (no save), and
+    // the old server's version, username and decode gate must not stay beside the new address.
   }, [effUrl, key]);
   // Saving the API key to the OS keyring can fail (locked/absent Secret Service). Track it so we
   // keep the editor open with an error instead of persisting a backend whose "key" badge claims a
   // key that was never stored.
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
-  // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
-  // Every disclosure starts closed (a manual draft is prefilled with localhost).
+  // Every disclosure starts closed (a manual draft is prefilled with localhost); its header's
+  // "· n set" says whether it holds anything.
   const [showConnection, setShowConnection] = useState(false);
   const [showDefaults, setShowDefaults] = useState(false);
   const [showDecode, setShowDecode] = useState(false);
@@ -432,9 +416,8 @@ function Editor({
     // the key just saved.
     const genOk =
       !!key || (resultTarget.current.gen === credentialGeneration(cur.id) && resultTarget.current.hadKey === liveHasKey);
-    // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
-    // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
-    // the server (a padded value never matches a real profile), or shown as a blank card.
+    // Normalize on save (mirrors Profiles.save) so stray whitespace isn't persisted, sent to the
+    // server (a padded profile name never matches a real one), or shown as a blank card.
     onSave({
       ...cur,
       // A connect-step key only reaches the keyring on THIS save — if the field
@@ -558,19 +541,12 @@ function Editor({
             </div>
             {insecureUrlWarning(b.serverUrl) && <Notice className="mt-1">{insecureUrlWarning(b.serverUrl)}</Notice>}
           </OverrideHeader>
-          {/* Per-device address override: connects THIS machine somewhere else while
-              the canonical URL above stays shared through settings sync (classic
-              case: localhost on the box running the server, a LAN IP elsewhere).
-              Applied live via the store (it's device state, not part of the Backend
-              being edited); grayed out (never hidden) while sync is off, where the
-              canonical URL is already local-only.
-
-              EXCEPT when one is actually set. The override applies whether or not sync is on and
-              survives turning it off (see the warning note below, and `effectiveServerUrl`), so
-              greying the box on `!syncEnabled` alone locked a value that was still routing every
-              request: a user following the "override in use" badge on the card here to clear a
-              misrouting address found a disabled field, with only "turn sync back on" or "delete
-              the backend" as ways out. Never disable a control that is currently in effect. */}
+          {/* Per-device address override: connects THIS machine somewhere else while the canonical
+              URL above stays shared through settings sync (e.g. localhost on the box running the
+              server, a LAN IP elsewhere). Applied live via the store — device state, not part of the
+              Backend being edited. Greyed out while sync is off, EXCEPT when one is set: it keeps
+              routing every request regardless of sync (`effectiveServerUrl`), and a control that is
+              in effect must stay editable so it can be cleared. */}
           <OverrideHeader
             title="Address on this device"
             env={false}
@@ -592,11 +568,8 @@ function Editor({
                 backend. Clear the field to go back to the address above.
               </Notice>
             )}
-            {/* This field gets only the stored-form `http://` default (`effectiveServerUrl`), no
-                other normalisation, so it needs the warning at least as much as the canonical URL above. NOT gated on
-                syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
-                is on, and turning sync off does not clear it. The warning must track the address
-                actually in use, not the toggle. */}
+            {/* Not gated on syncEnabled: the override routes requests whether or not sync is on, and
+                gets only the stored-form `http://` default, so it needs the warning as much as Server URL. */}
             {urlOverride.trim() && insecureUrlWarning(urlOverride) && (
               <Notice className="mt-1">{insecureUrlWarning(urlOverride)}</Notice>
             )}
@@ -868,13 +841,10 @@ function ConnResult({ info }: { info: ConnectionInfo }) {
   );
 }
 
-// ── Connect-first add flow ──────────────────────────────────────────────────
-// "Add backend" no longer opens the blank editor: a connect step asks only for
-// URL + key, then branches on what the server knows (mirrors first-run
-// onboarding). Synced settings on the account → restore offer; otherwise the
-// editor opens PREFILLED from the test result. Unlike onboarding, nothing is
-// persisted until the editor's Save / the restore applies — cancelling anywhere
-// leaves the config untouched.
+// Connect-first add flow: a connect step asks only for URL + key, then branches on what the
+// server knows (mirrors first-run onboarding). Synced settings on the account → restore offer;
+// otherwise the editor opens PREFILLED from the test result. Unlike onboarding, nothing is
+// persisted until the editor's Save / the restore applies.
 
 type AddFlow =
   | { step: "connect" }
@@ -902,12 +872,11 @@ function ConnectStep({
   const inFlight = useRef(new Set<{ url: string; key: string }>());
   const busy = testing.some((t) => t.url === url && t.key === key);
   const [error, setError] = useState<string | null>(null);
-  // Fields stay editable during a test, so only act on a result whose target
-  // still matches what's typed (mirrors the editor's liveTarget guard) — a slow
-  // test must not decide the branch with a stale server's answer. The buttons are busy only for
-  // a tested target, and Cancel/manual are enabled only while the typed target differs from every
-  // run in flight, so after an unmount this stays frozen at a differing value and each stale run
-  // stops here.
+  // Fields stay editable during a test, so only act on a result whose target still matches what's
+  // typed (mirrors the editor's liveTarget guard) — a slow test must not decide the branch with a
+  // stale server's answer. Cancel/manual are enabled only while the typed target differs from
+  // every run in flight, so after an unmount this stays frozen at a differing value and each
+  // stale run stops here.
   const liveTarget = useRef({ url: "", key: "" });
   liveTarget.current = { url, key };
   const insecure = url.trim() ? insecureUrlWarning(url) : null;
@@ -919,10 +888,9 @@ function ConnectStep({
     // Lenient `http:/host` is canonicalised as the editor does (the warning above already judges it so).
     const serverUrl = typedServerUrl(typedUrl);
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
-      // Say so — a bare return left the flow's first button dead and silent for
-      // `ftp://host` or a lone `http://`. The latter has a supported scheme and no host: name the
-      // missing host, not the scheme. Only a scheme followed by a slash is called one — `host:80o0`,
-      // `host:port` or `host:` is a bad port, and blaming the scheme pointed at the wrong part.
+      // Say what is wrong rather than leaving the button silent. A lone `http://` has a supported
+      // scheme and no host: name the missing host. Only a scheme followed by a slash is called one —
+      // `host:80o0`, `host:port` or `host:` is a bad port, not a bad scheme.
       const typed = stripUrlNoise(typedUrl.trim());
       setError(
         !typed
@@ -1063,9 +1031,8 @@ function RestoreOffer({
       match = draft;
     }
     // The key the user just typed and proved works belongs to whichever backend is bound —
-    // the restored one for this server included. It used to be written only when a NEW
-    // backend was minted, so the common case (the restore brought one for the same server)
-    // ended with sync enabled against a backend this device held no credential for.
+    // the restored one for this server included, or sync ends up enabled against a backend this
+    // device holds no credential for.
     if (keyTyped) {
       // A key written over an EXISTING keyed backend is a rotation upsertBackend can't see
       // (key presence is unchanged), so the old caller's caps/usage/connection would stand.
@@ -1162,8 +1129,8 @@ export default function Backends() {
   const urlOverrides = useApp((s) => s.settings.sync?.urlOverrides);
   /** Where requests for this backend ACTUALLY go — mirrors `effectiveServerUrl`, which the Test
    *  button on the same row already uses. */
-  // Type-check the lookup, same reason as `effectiveServerUrl`: `?.` does not guard a
-  // prototype-inherited value, and this open-coded twin threw identically.
+  // Type-check the lookup, as `effectiveServerUrl` does: `?.` does not guard a
+  // prototype-inherited value.
   const effectiveUrl = (b: Backend) => {
     const raw = urlOverrides?.[b.id];
     return (typeof raw === "string" ? storedTypedUrl(raw) : "") || b.serverUrl;
@@ -1203,8 +1170,9 @@ export default function Backends() {
 
   const handleTest = async (b: Backend) => {
     const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
-    // A key rotated and saved mid-test keeps all three of the guards below; the save emptied this
-    // backend's connection, and the old key's verdict would sit there for the session.
+    // A key rotated and saved mid-test passes the serverUrl / hasApiKey / URL checks below, so the
+    // credential generation catches it; the save emptied this backend's connection, and the old
+    // key's verdict would sit there for the session.
     const gen = credentialGeneration(b.id);
     const run: ListRun = { id: b.id, serverUrl: b.serverUrl, url: testedUrl, hasKey: b.hasApiKey, gen };
     for (const t of inFlight.current) {
@@ -1218,15 +1186,11 @@ export default function Backends() {
         backendId: b.id,
       });
       // Mirror the editor's liveTarget guard (+ upsertBackend's connection invalidation): a slow/
-      // unreachable test can resolve AFTER the user edits this backend's URL/key (which drops the
-      // stale connection) or removes it. Only commit if the backend still exists with the same target,
-      // else we'd re-cache the OLD server's classification under this id (effectiveServerKind / status
-      // dot / decode gate) or re-add a dangling connection for a removed backend.
-      // The invalidation triple is serverUrl / hasApiKey / URL OVERRIDE, and the third term was
-      // missing — while the request itself goes to the EFFECTIVE url, which prefers the override.
-      // So editing "Address on this device" (applied live, no save needed) while a slow test was
-      // in flight installed the old address's verdict under the repointed backend, and nothing
-      // re-tests on its own: the green "connected" dot beside the new host was permanent.
+      // unreachable test can resolve AFTER the user edits this backend's URL, key or live "Address
+      // on this device" override (the request went to the EFFECTIVE url), or removes it. Only commit
+      // if the backend still exists with the same target, else we'd re-cache the OLD server's
+      // classification under this id (effectiveServerKind / status dot / decode gate) or re-add a
+      // dangling connection for a removed backend — and nothing re-tests on its own.
       const cur = useApp.getState().backends.find((x) => x.id === b.id);
       const curUrl = cur ? effectiveServerUrl(cur, useApp.getState().settings) : null;
       if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl && credentialGeneration(b.id) === gen) {
@@ -1302,8 +1266,8 @@ export default function Backends() {
               initialKey={flow.key}
               initialResult={flow.info}
               onCancel={() => setFlow(null)}
-              // Editor.doSave caches the connect step's verdict (its `initialResult`) while it still
-              // describes the saved address AND key — a URL-only check here re-cached it after a key edit.
+              // Editor.doSave caches the connect step's verdict (its `initialResult`) only while it
+              // still describes the saved address AND key, so nothing is cached here.
               onSave={(b) => handleSave(b)}
             />
           )}
@@ -1341,15 +1305,12 @@ export default function Backends() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-[14px] font-semibold text-text" title={backendDisplayName(b.name, 200)}>
-                          {/* Sanitized like the address line below it, and for the same reason: a
-                              rename raises no security change, so a name arrives on this card from
-                              an unattended pull with no prompt — and bidi marks in it can make one
-                              server read as another on the screen used to check where audio goes. */}
                           {/* `safeIdentityText` (via backendDisplayName), like the address line
-                              below: the display filter truncates with no marker and leaves
-                              whitespace runs to CSS, so
-                              `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
-                              card this comment calls the audit surface. */}
+                              below: a rename raises no security change, so a name arrives from an
+                              unattended pull with no prompt, and bidi marks or a whitespace run
+                              (`"Work" + 100 spaces + "Evil"` renders as `Work` under the plain
+                              display filter) could make one server read as another on the card
+                              used to check where audio goes. */}
                           {backendDisplayName(b.name)}
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
@@ -1380,16 +1341,12 @@ export default function Backends() {
                       </div>
                       <div className="mt-1 flex items-center gap-2 font-mono text-[12px] text-dim">
                         {/* The card is the audit surface — non-security sync categories still apply
-                            silently, so this is where a user checks where dictation goes. Two ways
-                            that went wrong. A URL's real authority is whatever follows the last `@`,
-                            and the truncate class hides the tail, so `http://localhost:8000@evil.tld/v1`
-                            read as loopback — hence the parsed host and the badge. And this line
-                            showed the CANONICAL address while every request goes to
-                            `effectiveServerUrl`, which prefers a per-backend URL override: the
-                            override applies whether or not sync is on, survives turning sync off,
-                            and the Test button beside this line already used it. So the row could
-                            name one host while the audio and the bearer key went to another. Show
-                            the address actually used, and say so when it isn't the configured one. */}
+                            silently, so this is where a user checks where dictation goes. A URL's
+                            real authority follows the last `@` and the truncate class hides the
+                            tail (`http://localhost:8000@evil.tld/v1` reads as loopback), hence the
+                            parsed host and the badge. It shows the address requests actually use
+                            (`effectiveServerUrl` prefers a per-backend override, sync on or off),
+                            flagged when it isn't the configured one. */}
                         <span className="truncate" title={safeDisplayText(eff, 200)}>
                           {safeIdentityText(auth?.host, 80) || safeIdentityText(eff, 80)}
                         </span>
