@@ -47,10 +47,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const POLL_MS: u32 = 1000;
 
 /// The foreground HWND the previous fold saw. Compared BEFORE any process work: the 1 s
-/// poll almost always lands on an unchanged foreground, and without this pre-check every
-/// tick opened a handle to the foreground process (OpenProcess, QueryFullProcessImageNameW
-/// and a UTF-16 decode) just to discover nothing changed. Tracker-thread only (the timer and
-/// the WinEvent callback both land there).
+/// poll almost always lands on an unchanged foreground, which then costs no OpenProcess /
+/// QueryFullProcessImageNameW. Tracker-thread only (the timer and the WinEvent callback both
+/// land there).
 static LAST_HWND: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 /// The shared snapshot, reachable from the bare `extern "system"` WinEvent
@@ -124,8 +123,7 @@ fn fold_foreground() {
     let Some(app_id) = (unsafe { foreground_app_id(hwnd) }) else {
         // Shell foreground, or a process not readable YET (a UWP frame whose CoreWindow child
         // is still to come, an OpenProcess that failed mid-start): keep the previous state and
-        // — by not recording the HWND — let the 1 s poll re-resolve it, as it did before the
-        // short-circuit existed.
+        // — by not recording the HWND — let the 1 s poll re-resolve it.
         return;
     };
     LAST_HWND.store(hwnd as isize, Relaxed);
