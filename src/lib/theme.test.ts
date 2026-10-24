@@ -140,7 +140,7 @@ describe("motion arithmetic", () => {
   it("an arc eases in and out: it lingers at both ends", () => {
     const m = { period: 100, range: "arc" as const, arcHue: 185 }; // 65 → 185, +120
     const at = (s: number) => driftHue(65, m, s * 1000) - 65;
-    // The first tenth of the breath moves far less than the middle tenth.
+    // The first 10 s of the outward half moves far less than the 10 s at its middle.
     expect(at(10)).toBeLessThan(at(30) - at(20));
     expect(at(50)).toBeCloseTo(120);
   });
