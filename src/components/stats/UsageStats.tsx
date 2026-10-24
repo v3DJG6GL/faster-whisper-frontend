@@ -280,7 +280,8 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
 /** Resolve which backends have usage stats, the currently-VIEWED one (the user's pick,
  *  defaulting to the home-target backend), the fixed 30-day series, and a
  *  setter. Shared by the Home strip + the Statistics page so they stay in sync. The chip
- *  readout is independent — it always follows the dictation backend (see lib/usage.ts). */
+ *  readout is independent — it follows activeStatsBackend (lib/usage.ts): the dictating
+ *  Profile's backend, else the home target's. */
 function useUsageView() {
   const backends = useApp((s) => s.backends);
   const usage = useApp((s) => s.usage);
@@ -380,7 +381,7 @@ export function HomeUsageStrip() {
   );
 }
 
-/** The range as the panels name it: `30 days` · `1 year` · `since 14 Feb 2025` · a span. */
+/** The range as the panels name it: `30 days` · `1 year` · `since 14. Feb. 2025` · a span. */
 function rangeWord(q: UsagePageQuery, win: { from: number; to: number; days: number }): string {
   if (q.range === "all") return `since ${fmtSpanDate(win.from)}`;
   if (q.range === "custom") return fmtDateRange(win.from, win.to);
