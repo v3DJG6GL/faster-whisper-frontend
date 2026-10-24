@@ -297,7 +297,7 @@ mod tests {
     }
 
     /// An app id with a non-ASCII space or a whitespace run draws as the live id in the audit
-    /// row (`safeIdentityText` folds it) but kept its own key, so the rule never matched.
+    /// row (`safeIdentityText` folds it), so its key must fold too or the rule never matches.
     #[test]
     fn rule_key_folds_whitespace_like_the_audit_row() {
         use super::rule_key;
