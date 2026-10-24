@@ -87,7 +87,9 @@ function withCurrentHeight(h: number | null | undefined) {
   return [...URL_VIDEO_QUALITY_OPTIONS, { value: String(h), label: `Up to ${h}p` }];
 }
 
-const TABS = ["General", "Appearance", "Audio", "Dictation", "Recording & history", "Chip", "Sync", "Permissions"] as const;
+// The audio-store tab: its async results (wipes, moves, open-folder failures) report only while it is open.
+const STORE_TAB = "Recording & history" as const;
+const TABS = ["General", "Appearance", "Audio", "Dictation", STORE_TAB, "Chip", "Sync", "Permissions"] as const;
 
 /** The audio store's per-type identity: subfolder, legend label, and the hue
  *  shared by the split bar, its legend and the subfolder chips. */
@@ -203,7 +205,7 @@ export default function Settings() {
   // a move or wipe would show zero counts until it ended); storeStats stays out of the deps —
   // every read sets a new object, so the effect would loop.
   useEffect(() => {
-    if (tab === "Recording & history" && ((!dirBusy && !storeBusy) || !haveStatsRef.current))
+    if (tab === STORE_TAB && ((!dirBusy && !storeBusy) || !haveStatsRef.current))
       refreshStoreStats();
   }, [tab, refreshStoreStats, dirBusy, storeBusy]);
   // A retention sweep (a config save that turns saved dictations off or shortens their clock)
@@ -211,7 +213,7 @@ export default function Settings() {
   // for it, so the dictation count and the "Delete N dictations" confirm would go stale. The
   // event goes out before the media sweeps, so the audio counts may still lag one sweep.
   useEffect(() => {
-    if (tab !== "Recording & history") return;
+    if (tab !== STORE_TAB) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     subscribe<unknown>("transcripts://swept", () => {
@@ -253,7 +255,7 @@ export default function Settings() {
   // After the reset above, so a move that failed while away survives the trip back to the tab.
   const pendingMoveErr = useSyncExternalStore(subscribeBusy, () => moveError);
   useEffect(() => {
-    if (tab === "Recording & history" && moveError) {
+    if (tab === STORE_TAB && moveError) {
       setStoreMsg({ text: moveError, error: true });
       moveError = null;
     }
@@ -266,7 +268,7 @@ export default function Settings() {
     // Say why instead of dropping it: the running wipe's `done` later clears the armed confirm
     // and reports its own count, which read as if this one had run too.
     if (busy.dir || busy.store) {
-      if (tabRef.current === "Recording & history") {
+      if (tabRef.current === STORE_TAB) {
         setStoreMsg({
           text: busy.dir
             ? "A folder move is still running — try again when it finishes."
@@ -295,14 +297,14 @@ export default function Settings() {
         : null;
     const done = (n: number, [one, many]: [string, string]) => {
       if (preWipe) dropPendingWrites((r) => isDictationRecord(r) && preWipe.has(r.id));
-      if (tabRef.current === "Recording & history") {
+      if (tabRef.current === STORE_TAB) {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
         setConfirming(null);
       }
       void loadHistory(true).catch(() => {});
     };
     const fail = (e: unknown) => {
-      if (tabRef.current === "Recording & history") {
+      if (tabRef.current === STORE_TAB) {
         setConfirming(null);
         setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
       } else console.error("store action failed:", e);
@@ -475,7 +477,7 @@ export default function Settings() {
       .catch((e: unknown) => {
         console.error("open audio dir:", e);
         if (
-          tabRef.current === "Recording & history" &&
+          tabRef.current === STORE_TAB &&
           audioBasePref(useApp.getState().settings.recording) === clicked
         ) {
           setStoreMsg((m) =>
@@ -498,7 +500,7 @@ export default function Settings() {
         // The buttons are disabled during a move or a wipe, but the native picker may have opened
         // before it — say why the picked folder was not used instead of dropping it silently.
         if (busy.dir || busy.store) {
-          if (tabRef.current === "Recording & history") {
+          if (tabRef.current === STORE_TAB) {
             setStoreMsg({
               text: busy.dir
                 ? "Another folder move is still running — pick the folder again when it finishes."
@@ -769,7 +771,7 @@ export default function Settings() {
           </Card>
         )}
 
-        {tab === "Recording & history" && (
+        {tab === STORE_TAB && (
           <>
           <Card className="px-6 pb-2">
             <SectionLabel className="mb-1 mt-4">Audio storage</SectionLabel>
