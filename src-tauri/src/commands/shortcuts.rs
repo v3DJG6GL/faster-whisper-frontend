@@ -202,8 +202,6 @@ fn apply_bindings_unless_capturing(app: &AppHandle) -> bool {
 pub async fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Capture ended (or bindings changed): no longer suspended-for-capture, so a later
-        // resume may re-arm normally again.
         CAPTURE_SUSPENDED.store(false, Ordering::SeqCst);
         apply_bindings_locked(&app);
     })
@@ -268,7 +266,6 @@ pub fn spawn_suspend_watch(app: AppHandle, seed: SuspendWatchSeed) {
                 // next chord both rebind AND fire dictation (for a held evdev PTT chord, wedge
                 // "listening" — exactly what the suspend guards). The capture's reregister
                 // rebuilds fresh held-state on completion, so nothing is lost by skipping.
-                // The node listing is taken BEFORE the apply enumerates (see below).
                 #[cfg(target_os = "linux")]
                 let listing = input_event_nodes();
                 if !apply_bindings_unless_capturing(&app) {
