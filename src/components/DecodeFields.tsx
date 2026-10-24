@@ -69,7 +69,7 @@ export function DecodeFields({
 }) {
   // Every block starts closed; its header says how many fields in it are set.
   const [openSection, setOpenSection] = useState<Partial<Record<KeySection, boolean>>>({});
-  const blocked = canCustomize === false; // capability gate: all params disabled
+  const blocked = canCustomize === false;
   const standard = serverKind === "standard";
   const uid = useId();
   const descId = (k: DecodeKey) => `${uid}-${k}-src`;
@@ -124,7 +124,6 @@ export function DecodeFields({
     const fixedLabel = pin ? `Dictation always · ${pin.value}` : isLocked(k) ? inheritLabel(inh, "Set by server") : undefined;
     if (spec.kind === "bool") {
       const v = fixedLabel ? "inherit" : cur === true ? "on" : cur === false ? "off" : "inherit";
-      // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit · on".
       return (
         <Segmented
           value={v}
@@ -184,7 +183,6 @@ export function DecodeFields({
         />
       );
     }
-    // A locked or pinned number shows the server's value, read-only.
     if (fixedLabel)
       return <TextInput aria-label={spec.env} aria-describedby={described} title={title} disabled value="" placeholder={fixedLabel} />;
     // The app's own −/+ stepper (never the browser's spinner); unset = the inherited value, greyed.
