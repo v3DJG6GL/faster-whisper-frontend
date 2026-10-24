@@ -289,7 +289,8 @@ export function isFiltered(scope: UsageScope, q: UsagePageQuery): boolean {
 }
 
 /** The parts of a usage-view signature (lib/usage.ts viewSignature's `[backendId, target,
- *  query]`), or null for a missing or malformed one. The one parser store.ts and usage.ts share. */
+ *  query]`), or null for a missing or malformed one. The one parser behind viewSigSource and
+ *  viewSigBackend, which store.ts and usage.ts use. */
 export function viewSigParts(sig: string | null | undefined): unknown[] | null {
   if (!sig) return null;
   try {
@@ -317,7 +318,7 @@ export function dowOf(day: number): number {
 }
 /** UTC-midnight Date for a day-since-epoch (the day numbers are local calendar days). */
 export const dayDate = dayToDate;
-/** `YYYY-MM-DD` ↔ day-since-epoch, for the custom-span date inputs. */
+/** Day-since-epoch → `YYYY-MM-DD`, for the custom-span date inputs. */
 export function dayToIso(day: number): string {
   return dayDate(day).toISOString().slice(0, 10);
 }
@@ -1032,9 +1033,7 @@ export function facetRows(
     .map((r) => ({ ...r, value: typeof r.value === "number" && Number.isFinite(r.value) ? Math.max(0, r.value) : 0 }))
     .filter((r) => !dropZero || r.value > 0);
   let max = clean.reduce((m, r) => (scaleTo === "lit" && r.dim ? m : Math.max(m, r.value)), 0);
-  // When every lit row has value 0, fall back to the all-rows max so dim rows
-  // still render their bars — "Not asked: 87" next to a zero-width bar reads
-  // as "no data" when there IS data.
+  // Otherwise "Not asked: 87" beside a zero-width bar reads as "no data" when there IS data.
   if (max === 0 && scaleTo === "lit") max = clean.reduce((m, r) => Math.max(m, r.value), 0);
   return clean.map((r) => ({ ...r, pct: max > 0 ? Math.min(100, Math.round((r.value / max) * 100)) : 0 }));
 }
