@@ -1,14 +1,14 @@
-// Pairing a live phrase with the capture row the server minted for it,
-// extracted from streaming.ts and kept pure so it can be tested without
-// driving streaming.ts's WS event handlers through its Tauri transport.
+// Pairing a live phrase with the capture row the server minted for it, kept
+// pure so it can be tested without driving streaming.ts's WS event handlers
+// through its Tauri transport.
 //
 // The server holds each utterance's log receipt open waiting for our translate
 // call, and the capture id is how it links the two halves into one block. The
 // id rides its OWN frame, because the `final` frame is emitted before the
 // capture row is written and the id does not exist yet at that point.
 //
-// This used to be a single "most recent id" slot, taken by whichever phrase
-// asked first, and that is wrong in both directions:
+// A single "most recent id" slot, taken by whichever phrase asks first, is
+// wrong in both directions:
 //
 //   • The server does not mint a capture for every utterance — it samples, and
 //     caps by count, bytes, duration and free disk. So the Nth id is not the
@@ -63,9 +63,8 @@ export function newCaptureIdBook(
   /** Phrases parked on an id that hasn't arrived, by ordinal. */
   const waiters = new Map<number, Array<(id: string | null) => void>>();
   /** Ordinals that will never yield an id again: one already handed out, or
-   *  one already waited out. An older backend reports EVERY utterance as
-   *  ordinal 0 and sends no `captured` frame at all — without this each phrase
-   *  after the first re-paid the full wait. */
+   *  one already waited out — a repeat take answers at once instead of
+   *  re-paying the full wait. */
   const spent = new Set<number>();
   /** Highest ordinal the server has minted a row for. Rows are written in
    *  utterance order, so an id for a higher ordinal proves the lower ones got
@@ -140,9 +139,9 @@ export function newCaptureIdBook(
       arrived.clear();
       spent.clear();
       highWater = -1;
-      // Unpark before clearing, so a phrase still awaiting an id resolves
-      // (with null) instead of hanging until its own timeout — a session
-      // teardown must not leave the inject queue blocked.
+      // Unpark before clearing, so a previous session's phrase still awaiting
+      // an id resolves (with null) instead of holding the inject queue until
+      // its own timeout.
       for (const list of waiters.values()) for (const cb of list) cb(null);
       waiters.clear();
     },
