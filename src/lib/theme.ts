@@ -211,7 +211,7 @@ export function driftHue(base: number, motion: AccentMotion, nowMs: number): num
 
 /** How often the driver restamps the tokens: once per degree of hue, but never faster
  *  than 250 ms (a 90-second turn is already 4 fps) nor slower than 30 s (so a 7-day turn
- *  still visibly moves within a sitting and a theme flip is never seconds stale). */
+ *  still visibly moves within a sitting). */
 export function driftTickMs(period: number): number {
   return Math.max(250, Math.min(30000, Math.round((period * 1000) / 360)));
 }
