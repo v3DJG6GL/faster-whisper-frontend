@@ -13,8 +13,7 @@
 //!     control keeps its window classes wherever it is hosted, so this also catches RDCMan,
 //!     mRemoteNG and other hosts whose exe name says nothing about RDP.
 //!
-//! [`focus_is_remote_desktop`] composes the two; the paste path keeps them apart because its log
-//! names which one fired and its rule arrives with the insert (below).
+//! [`focus_is_remote_desktop`] composes the two; the paste path keeps them apart (below).
 //!
 //! A per-app rule can override both ("Remote desktop: On / Off"); `inject_text` logs which
 //! detector fired and whether the rule overrode it, so a support log answers "why was this
