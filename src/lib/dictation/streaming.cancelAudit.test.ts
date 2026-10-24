@@ -95,6 +95,13 @@ function bodyAfter(src: string, anchor: string): string {
   throw new Error(`unbalanced braces after: ${anchor}`);
 }
 
+/** Where `anchor` sits in `src`, failing with a pointer back here when the code moved. */
+function anchorAt(src: string, anchor: string, what: string): number {
+  const at = src.indexOf(anchor);
+  expect(at, `${what} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+  return at;
+}
+
 /** The per-paste snapshot gate (masked: the string literal is blanked), shared by the phrase
  *  task and the separator. */
 const SNAPSHOT_GATE = /t\.method ===\s+&& t\.restoreClipboard && !clipDirty && !t\.isSelf/;
@@ -458,8 +465,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
   it("a translated whitespace-only final hands injectText an empty text, gap owed or not", () => {
     // Runs the phrase's seam rule itself (the statements from `block` to `typeOut`, plain JS) on
     // the output_suffix finals, into an app that owes no gap and into one that owes it.
-    const start = finalBody.indexOf("const block = phrase.text.trim();");
-    expect(start, "the phrase's seam rule moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const start = anchorAt(finalBody, "const block = phrase.text.trim();", "the phrase's seam rule");
     const end = finalBody.indexOf(": phrase.text;", start) + ": phrase.text;".length;
     const seam = new Function(
       "phrase", "sessionTranslation", "gapOwedApps", "t", "PHRASE_GAP",
@@ -602,9 +608,8 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // the next phrase, typed once focus left us, went out as "\n Next." — a Return submitting the
     // field it was typed into.
     // Runs the typed branch from its diff to the own-window exit as plain JS.
-    const start = finalBody.indexOf("const toType = target.slice(");
+    const start = anchorAt(finalBody, "const toType = target.slice(", "the typed branch's diff");
     const end = finalBody.indexOf("const body = withCarry(", start);
-    expect(start, "the typed branch's diff moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(end, "the typed branch's own-window exit moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(start);
     const run = new Function(
       "target", "base", "carryText", "t", "uttRec", "uttFrom", "oweUtterance", "commonPrefixLen",
@@ -642,9 +647,8 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // The baseline and the carry still move past it.
     expect(mask(delivered)).toMatch(/^\{\s+injectedText = target;\s+carryText =\s+;\s+carrySep =\s+;/);
     // Run the delivered block's outcome arms as plain JS.
-    const start = delivered.indexOf("if (diverted) {");
+    const start = anchorAt(delivered, "if (diverted) {", "the delivered block's outcome arms");
     const end = delivered.indexOf("bookOwedUtterances(", start);
-    expect(start, "the delivered block's outcome arms moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const run = new Function(
       "diverted", "spacingOnly", "t", "state",
       `const pulses = [];\nconst signalInsert = (k) => pulses.push(k);\nlet { sessionTyped, sessionClipboard, lastPhraseDiverted, gapOwedApps, lastTypedApp } = state;\n${delivered.slice(start, end)}\nreturn { sessionTyped, sessionClipboard, lastPhraseDiverted, gapOwedApps, lastTypedApp, pulses };`,
@@ -674,9 +678,8 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
       ["if (phraseClip.length > 0 && grew) {", "translatePhrase(phraseClip"],
       ["if (toType.length > 0 || carried) {", "translatePhrase(body"],
     ] as const) {
-      const at = final.indexOf(open);
+      const at = anchorAt(final, open, open);
       const call = final.indexOf(translate);
-      expect(at, `${open} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
       expect(call).toBeGreaterThan(at);
       // First thing in the branch: nothing is translated, copied or typed for it, and the
       // baseline and the carry stay put for the next delivered insert to re-send.
@@ -1034,8 +1037,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // settleToIdleAfterInjection runs settleIdle(true) on the "error" status, so without the
     // booking History and the outcome report record "none" for text the chip says is on the clipboard.
     const src = mask(streamingSrc); // same offsets as streamingSrc; literals are masked
-    const copy = streamingSrc.indexOf('recoverToClipboard(outText, t, "failed insert")');
-    expect(copy, "failed-insert recovery moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const copy = anchorAt(streamingSrc, 'recoverToClipboard(outText, t, "failed insert")', "failed-insert recovery");
     const flash = src.indexOf("flashError(", copy);
     expect(flash).toBeGreaterThan(copy);
     expect(src.slice(copy, flash)).toContain("sessionClipboard = true");
@@ -1046,8 +1048,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // teardownAfterFatalInject never settles it: unbooked, History says "not inserted" for a phrase
     // the chip says is on the clipboard.
     const src = mask(streamingSrc); // same offsets as streamingSrc; literals are masked
-    const reason = streamingSrc.indexOf('"failed live insert"');
-    expect(reason, "live failed-insert recovery moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const reason = anchorAt(streamingSrc, '"failed live insert"', "live failed-insert recovery");
     const copy = streamingSrc.lastIndexOf("recoverToClipboard(", reason);
     expect(copy).toBeGreaterThanOrEqual(0);
     const flash = src.indexOf("flashError(", reason);
@@ -1098,8 +1099,7 @@ describe("work that must wait for the queue or the cancel", () => {
       ["if (!t.isSelf && landed)", 'bookOwedUtterances("clipboard", { kind: "window", from: clipFrom })'],
     ] as const) {
       // The code, not the comments that quote it: anchor on the opening brace.
-      const at = streamingSrc.indexOf(`${anchor} {`);
-      expect(at, `${anchor} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+      const at = anchorAt(streamingSrc, `${anchor} {`, anchor);
       const block = bodyAfter(streamingSrc.slice(at), anchor);
       expect(block, `${anchor} must book the owed records it delivered`).toContain(book);
       const after = streamingSrc.slice(at + anchor.length + 1 + block.length).trimStart();
@@ -1117,8 +1117,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // empty delta; booking it re-stamps a clipboard record "typed", owing it re-owes booked text.
     for (const name of ["bookUtteranceInsert", "oweUtterance"]) {
       // Past the signature: its parameter's object type is the first brace topLevelFunctions sees.
-      const at = streamingSrc.indexOf(`function ${name}(`);
-      expect(at, `${name} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+      const at = anchorAt(streamingSrc, `function ${name}(`, name);
       const body = mask(bodyAfter(streamingSrc.slice(at), "): void"));
       expect(body, `${name} must gate on the final's delta`).toContain("rec.delta.trim()");
     }
@@ -1132,8 +1131,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(recording).toContain("routeUtteranceClip(utteranceByOrdinal, ordinal,");
     expect(recording).not.toContain("lastUtterance");
     // Past the signature: its return type is the first brace topLevelFunctions sees.
-    const at = streamingSrc.indexOf("function recordUtteranceFinal(");
-    expect(at, "recordUtteranceFinal moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const at = anchorAt(streamingSrc, "function recordUtteranceFinal(", "recordUtteranceFinal");
     expect(mask(bodyAfter(streamingSrc.slice(at), "delta: string }"))).toContain("utteranceByOrdinal.set(ordinal, lastUtterance)");
     // Only the session's end forgets an utterance whose clip is still on its way.
     expect(mask(boundaryBody)).not.toContain("utteranceByOrdinal");
@@ -1169,8 +1167,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // enqueueInject drops work at MAX_INJECT_DEPTH; the session's last restore must never be dropped.
     const closed = mask(bodyAfter(streamingSrc, 'e.payload === "closed"'));
     expect(closed).not.toContain("enqueueInject(finalClip)");
-    const at = closed.indexOf("const tailCfg = cfg;");
-    expect(at, "the final-clip link moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const at = anchorAt(closed, "const tailCfg = cfg;", "the final-clip link");
     const link = closed.slice(at, closed.indexOf("settleToIdleAfterInjection(", at));
     expect(link, "finalClip must be chained directly").toMatch(/injectChain = injectChain\s*\.then\([^;]*finalClip\(\)/);
   });
@@ -1302,8 +1299,7 @@ describe("work that must wait for the queue or the cancel", () => {
 
   it("the separator task restores through the shared helper", () => {
     const task = separatorTask;
-    const at = task.indexOf("&& landed && beganInjection)");
-    expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    anchorAt(task, "&& landed && beganInjection)", "the separator's restore branch");
     expect(bodyAfter(task, "&& landed && beganInjection)")).toContain("giveClipboardBack(");
   });
 
@@ -1311,8 +1307,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // A Rust divert (chord still held, focus moved) would make a lone " " the clipboard's
     // persistent owner over the user's copy; a separator has nothing to recover, so it opts out.
     const task = separatorTask;
-    const call = task.indexOf("injectText({ text: part,");
-    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const call = anchorAt(task, "injectText({ text: part,", "the separator's injectText");
     expect(task.slice(call, task.indexOf("});", call))).toContain("withholdOnDivert: true");
     // Only the separator and a whitespace-only phrase (next test): the auto-Enter calls (empty
     // text) and every phrase with words keep the divert.
@@ -1325,8 +1320,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // (or the block diverted just before it), and a failed insert's recovery copied it with an
     // "it's on the clipboard" flash. A word-less "?" is not whitespace and keeps both.
     const final = mask(finalBody);
-    const call = final.indexOf("injectText({ text: typeOut, clipboardText,");
-    expect(call, "the live phrase insert moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const call = anchorAt(final, "injectText({ text: typeOut, clipboardText,", "the live phrase insert");
     expect(final.slice(0, call)).toMatch(/const spacingOnly = !typeOut\.trim\(\);/);
     expect(final.slice(call, final.indexOf("}));", call))).toMatch(/, withholdOnDivert: spacingOnly $/);
     // The catch still tears down, but skips the copy (and its flash) for whitespace.
@@ -1341,8 +1335,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // put back and the call rejects: without a catch the `landed` gate never ran and a lone " "
     // sat on the clipboard over the user's copy.
     const task = separatorTask;
-    const call = task.indexOf("injectText({ text: part,");
-    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const call = anchorAt(task, "injectText({ text: part,", "the separator's injectText");
     const tryAt = task.lastIndexOf("try {", call);
     expect(tryAt, "the separator's injectText must sit inside a try").toBeGreaterThanOrEqual(0);
     expect(task.slice(tryAt, call), "nothing but the call between the try and the separator inject").not.toContain("}");
@@ -1363,8 +1356,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // clipboard back, replace a copy the user made before the hard break with that older
     // content — on a landed separator and from the catch alike.
     const task = separatorTask;
-    const call = task.indexOf("injectText({ text: part,");
-    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const call = anchorAt(task, "injectText({ text: part,", "the separator's injectText");
     const begin = task.lastIndexOf("beginInjection(", call);
     expect(begin, "the separator must snapshot the clipboard before its paste").toBeGreaterThanOrEqual(0);
     // The phrase task's gate: never snapshot our own text as the user's original.
@@ -1380,8 +1372,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // A JS "the clipboard holds our text" flag cannot see a copy the user made since: only a
     // paste still owed a restore (clipDirty) skips the read; Rust's is_own_injected decides the rest.
     const final = mask(finalBody);
-    const begin = final.indexOf("await beginInjection()");
-    expect(begin, "the phrase task's snapshot moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const begin = anchorAt(final, "await beginInjection()", "the phrase task's snapshot");
     expect(final.slice(final.lastIndexOf("if (", begin), begin)).toMatch(SNAPSHOT_GATE);
     expect(streamingSrc).not.toContain("clipHoldsOurs");
   });
@@ -1399,8 +1390,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // "\n\n" (a blank line) needs two Returns and ".\n" keeps its ".": the carry and the Live
     // dictation preview have the separator exactly as written.
     const boundary = separatorTask;
-    const loop = boundary.indexOf("for (let i = 0; i < parts.length; i++)");
-    expect(loop, "the separator loop moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const loop = anchorAt(boundary, "for (let i = 0; i < parts.length; i++)", "the separator loop");
     // A CRLF or lone CR is one break (as Rust's sanitize_injected and the carry have it), not a
     // "\r" typed as a line break plus a Return.
     // (mask blanks the regex literal and the strings; the raw source pins the pattern.)
@@ -1623,9 +1613,8 @@ describe("a translate a cancel abandoned stays out of the next session", () => {
 
   it("maybeTranslate sends no request for a session the captureIds wait outlived", () => {
     const body = mask(fns.maybeTranslate);
-    const take = body.indexOf("await captureIds.take(");
+    const take = anchorAt(body, "await captureIds.take(", "the capture wait");
     const send = body.indexOf("await runDictationTranslate(");
-    expect(take, "the capture wait moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(send).toBeGreaterThan(take);
     expect(body.slice(take, send)).toContain("if (insertCfg !== cfg) return {");
   });
