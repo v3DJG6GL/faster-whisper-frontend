@@ -21,7 +21,6 @@ export function useCellTip() {
     at(e.currentTarget, el, e.clientX, e.clientY);
   }, []);
   const onLeave = useCallback(() => setTip(null), []);
-  // Keyboard: the tooltip sits over the focused cell's centre.
   const onFocus = useCallback((e: ReactFocusEvent<HTMLDivElement>) => {
     const el = (e.target as HTMLElement).closest?.("[data-i]") as HTMLElement | null;
     if (!el?.dataset.i) return;
