@@ -71,7 +71,7 @@ fn plan_body(models: Vec<PreloadModel>, override_profile: Option<&str>) -> Optio
     (!models.is_empty()).then_some(PreloadReq {
         models,
         // Server-driven stage-ahead: the backend walks the plan forward on its
-        // own as stages complete, so the client never has to re-POST mid-run.
+        // own as stages complete, so the client re-POSTs only to renew the lease.
         stage_ahead: true,
         override_profile: override_profile
             .map(str::trim)
