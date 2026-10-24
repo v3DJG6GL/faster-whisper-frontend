@@ -232,14 +232,6 @@ pub(crate) async fn inject_text(
             diverted: false,
         });
     }
-    // Pasting into a remote-desktop client (mstsc & co) needs different clipboard handling: the
-    // local clipboard reaches the remote host ASYNCHRONOUSLY, so the paste gets a longer settle
-    // before Ctrl+V (the new content must cross the network before the forwarded keystroke) and
-    // NEVER restores the previous clipboard afterwards (with RDP delayed rendering, the restored
-    // value can be what the remote's paste actually fetches — this is how a 7-minute-old
-    // transcript once landed instead of the fresh one). Direct typing never touches the
-    // clipboard, so it doesn't care.
-    // Resolved at the SINK, below, from the same focus read the per-app re-check uses — see there.
     // Wait briefly for the trigger chord's shortcut modifiers (Ctrl/Alt/Meta) to be
     // physically released before typing — otherwise the injected keys fold into the
     // still-held modifier and fire shortcuts in the focused app (worst with a hands-free
@@ -285,7 +277,7 @@ pub(crate) async fn inject_text(
     //
     // That teardown is not a bystander: it emits a mid-hold stop for a push-to-talk profile, which
     // MANUFACTURES this injection at the exact moment the chord is provably still down. So the wipe
-    // now arms a chord-precise, self-expiring latch, and here we consume it.
+    // arms a chord-precise, self-expiring latch, and here we consume it.
     //
     // Deliberately consumed AFTER the loop, not merged into it: this is a "the chord was down when
     // we lost sight of it" fact, not a live reading, so there is nothing to wait for. Straight to
@@ -353,9 +345,9 @@ pub(crate) async fn inject_text(
     };
     // ONE focus read, used for both decisions below, so `remote_target` is decided at the sink too.
     // Decided earlier, focus leaving a remote-desktop client meanwhile would skip the restore; focus
-    // entering one would give the paste the short local settle AND schedule a restore —
-    // the delayed-rendering failure described above, where the remote's deferred fetch pastes the
-    // RESTORED value.
+    // entering one would give the paste the short local settle AND schedule a restore — the
+    // delayed-rendering failure (see `rdp_client::is_remote_desktop_app`), where the remote's
+    // deferred fetch pastes the RESTORED value.
     let focused_now = crate::focus::focused_app_now(guard.inner());
     let method = match (&expect_app_id, &focused_now) {
         (Some(expected), Some(now)) if !now.app_id.eq_ignore_ascii_case(expected) => {
@@ -438,11 +430,10 @@ pub(crate) async fn inject_text(
         return Ok(divert_outcome(&text));
     }
     // Now that the method is final and focus has been read once, at the sink. Two detectors (see
-    // `inject::rdp_client`): the focused app id against the known clients, and — Windows — the focused
-    // window's class, which also catches the RDP control hosted by RDCMan/mRemoteNG & co. The
-    // per-app rule overrides both when it says On/Off; `None` is "Auto". Both are logged so a
-    // support log shows WHICH detector fired and whether the rule overrode it. A bare auto-Enter
-    // (empty text) touches no clipboard, so there is nothing remote-specific to resolve or log.
+    // `inject::rdp_client`); the per-app rule overrides both when it says On/Off (`None` is "Auto").
+    // Both are logged so a support log shows WHICH detector fired and whether the rule overrode it.
+    // A bare auto-Enter (empty text) touches no clipboard, so there is nothing remote-specific to
+    // resolve or log.
     let remote_target = method != "direct"
         && !text.is_empty()
         && {
