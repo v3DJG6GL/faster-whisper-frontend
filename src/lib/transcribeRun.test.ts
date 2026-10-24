@@ -2836,7 +2836,7 @@ describe("a text source translated in several requests reads as one run", () => 
     const p = chunkedProgress(poll, frame);
     expect(overallOf({ queue, progress: p })).toBeCloseTo(0.6, 5);
     expect(p?.progress).toBeCloseTo(0.6, 5);
-    // Two more chunks' worth of work is not in the server's 20 s.
+    // The third chunk's work is not in the server's 20 s.
     expect(etaSecOf(p)).toBeNull();
     // A language this chunk finished is still running for the file; the chunk's seconds go.
     expect(p?.plan?.[0].estS).toBeNull();
