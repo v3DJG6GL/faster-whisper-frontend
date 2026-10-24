@@ -1,31 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
+import { hooks } from "../plainRender.testkit";
 
 // No DOM in this suite: the Stepper runs as a plain function over a tiny hook store (state and
 // refs survive "re-renders" by call order), and its returned tree is walked for the input.
-const hooks = vi.hoisted(() => ({ slots: [] as unknown[], i: 0 }));
-
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return {
-    ...actual,
-    useState: (init: unknown) => {
-      const i = hooks.i++;
-      if (!(i in hooks.slots)) hooks.slots[i] = typeof init === "function" ? (init as () => unknown)() : init;
-      const set = (v: unknown) => {
-        hooks.slots[i] = typeof v === "function" ? (v as (p: unknown) => unknown)(hooks.slots[i]) : v;
-      };
-      return [hooks.slots[i], set];
-    },
-    useRef: (init: unknown) => {
-      const i = hooks.i++;
-      if (!(i in hooks.slots)) hooks.slots[i] = { current: init };
-      return hooks.slots[i];
-    },
-    useEffect: () => {},
-    useLayoutEffect: () => {},
-  };
-});
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react")>()),
+  ...(await import("../plainRender.testkit")).fakeHooks,
+  useLayoutEffect: () => {},
+}));
 
 import { Stepper } from "./form";
 
