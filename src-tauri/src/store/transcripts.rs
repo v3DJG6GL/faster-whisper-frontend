@@ -239,7 +239,7 @@ pub(crate) fn record_media_paths(app: &AppHandle, id: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The `kind` field of one record ("file" | "url" | "dictation"), if the
+/// The `kind` field of one record ("file" | "url" | "text" | "dictation"), if the
 /// record exists and parses. Used by the layout migration to route media.
 pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
     if !valid_id(id) {
@@ -569,10 +569,9 @@ pub(crate) fn valid_id(id: &str) -> bool {
 /// re-attached / lost-contact run keeps as its record id? Both forms must be lowercase and
 /// carry the UUIDv4 version and variant nibbles: a bare 32-hex stem is the common MD5 file
 /// name, and an uppercase or non-v4 dashed GUID is a foreign (e.g. Windows-minted) name — a
-/// user's file named either way must not read as ours. `valid_id` is the looser PATH-SAFETY
-/// predicate for command inputs; as an OWNERSHIP predicate it accepted any 8+ hex-ish stem,
-/// so a user's own `20260901.mp3` or `12345678.wav` in the media folder read as ours and was
-/// deleted.
+/// user's file named either way must not read as ours. `valid_id` is only the looser PATH-SAFETY
+/// predicate for command inputs: it accepts any 8+ hex-ish stem, so a user's own `20260901.mp3`
+/// or `12345678.wav` would read as ours and be deleted.
 pub(crate) fn is_uuid_id(s: &str) -> bool {
     let b = s.as_bytes();
     let dashless: Vec<u8> = match b.len() {
@@ -769,7 +768,6 @@ pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::V
 }
 
 fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(), String> {
-    // No folder yet = nothing to add.
     let Some(entries) = list_dir(dir, "history")? else {
         return Ok(());
     };
@@ -797,15 +795,13 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(),
     Ok(())
 }
 
-/// Delete one record's file. The user-facing "Delete" — actually removes data.
-/// Tries both stores: ids are UUIDs, so the same id can only exist in one.
-/// The record's audio copy (if any) goes with it, only once the record is gone.
-/// async + spawn_blocking like the other destructive store commands. The command settles as soon
-/// as the record unlink ran: the media unlinks wait out this launch's audio-layout migration,
-/// which may sit on a stalled base (a sleeping disk, an offline share), so they run on a detached
-/// thread ([`spawn_delete_media`]). The webview tracks this IPC in its pending-writes set, and a
-/// `transcripts://swept` reload or a Settings cleanup waits on that set: a hung delete would keep
-/// History listing records a sweep already removed.
+/// Delete one record's file. Tries both stores: ids are UUIDs, so the same id can only exist in
+/// one. The record's audio copy (if any) goes with it, only once the record is gone.
+/// The command settles as soon as the record unlink ran: the media unlinks wait out this launch's
+/// audio-layout migration, which may sit on a stalled base (a sleeping disk, an offline share),
+/// so they run on a detached thread ([`spawn_delete_media`]). The webview tracks this IPC in its
+/// pending-writes set, and a `transcripts://swept` reload or a Settings cleanup waits on that
+/// set: a hung delete would keep History listing records a sweep already removed.
 #[tauri::command]
 pub async fn delete_transcript_record(
     app: AppHandle,
@@ -816,12 +812,9 @@ pub async fn delete_transcript_record(
         return Err("malformed record id".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        // The `files/`/`links/`/video copies go only once the record is gone: a failed unlink
-        // (Windows briefly locking the file) keeps the History entry, and it must keep its
-        // playable media too. They go after the lock is released, like the recordings unlink.
-        // The record unlink never waits for the audio-layout migration: the record lives in app
-        // data, and a delete must not hang behind a stalled audio base (nor leave the record to
-        // come back after a quit while it waits).
+        // Media only after a successful unlink: a failed one (Windows briefly locking the file)
+        // keeps the History entry, which must keep its playable media too. The record unlink
+        // never waits for the migration, or a quit during the wait would bring the record back.
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
         let source_of = |p: &Path| -> Option<String> {
@@ -862,9 +855,8 @@ pub async fn delete_transcript_record(
             spawn_delete_media(app, id, audio_base, None);
             return Ok(());
         }
-        // The audio goes only once the record is gone: a failed unlink (locked file) keeps the
-        // History entry, and it must keep its recording too. A dictation without audio stores
-        // `sourcePath: ""` and has nothing to drop.
+        // Same rule for the recording. A dictation without audio stores `sourcePath: ""` and has
+        // nothing to drop.
         if let (Ok(()), Some(src)) = (&res, src.filter(|s| !s.trim().is_empty())) {
             spawn_delete_media(app, id, audio_base, Some(src));
         }
@@ -876,7 +868,7 @@ pub async fn delete_transcript_record(
 
 /// Run [`delete_record_media`] on a detached thread, so `delete_transcript_record` settles
 /// without waiting for the audio-layout migration; inline when the thread cannot start (the
-/// delete then waits, as it did before, rather than leave the audio behind).
+/// delete then waits rather than leave the audio behind).
 fn spawn_delete_media(
     app: AppHandle,
     id: String,
@@ -1191,9 +1183,8 @@ fn remove_media_for(dir: &Path, id: &str) {
     }
 }
 
-/// Drop media files whose record is gone — covers retention pruning, wipes,
-/// but never an in-progress `.tmp` copy (see the loop). One clock:
-/// a copy lives exactly as long as its transcript.
+/// Drop media files whose record is gone (retention pruning, wipes), so a copy lives exactly
+/// as long as its transcript; never an in-progress `.tmp` copy (see `sweep_orphans_in`).
 fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     let Ok(records) = transcripts_dir(app) else {
         return;
@@ -1288,11 +1279,9 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 /// Enforce both history retention windows. Called on startup and after every
 /// config save, mirroring `apply_recordings_retention`.
 /// - File transcriptions: `historyRetentionDays` (0/absent = keep forever).
-/// - Dictations: the one dictation clock, `effective_dictation_days` (the
-///   stricter non-zero of `recordingsRetentionDays` and `dictationRetentionDays`,
-///   default 7), the same window the recordings sweep uses — and when
-///   `keepDictationHistory` is off, the whole dictation store is wiped (the
-///   setting's copy promises exactly that).
+/// - Dictations: `effective_dictation_days`, the same window the recordings sweep uses — and
+///   when `keepDictationHistory` is off, the whole dictation store is wiped (the setting's copy
+///   promises exactly that).
 ///
 /// When any record went, `transcripts://swept` (payload: `{ removed, dictationsWiped }` — the
 /// record count, and whether this sweep actually emptied the dictation store; read by
@@ -1349,10 +1338,9 @@ pub(crate) fn apply_transcripts_media_retention(app: &AppHandle, config: &crate:
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }
 
-/// List `dir` for a wipe, the History listing or a media-path rewrite/heal (`fix_records_in`):
-/// a missing folder is nothing to read (`None`), but one that exists and cannot be listed is an
-/// error — never a silent "removed 0" (an empty History, a heal marked done) while every file
-/// stays on disk.
+/// List `dir`: a missing folder is nothing to read (`None`), but one that exists and cannot be
+/// listed is an error — never a silent "removed 0" (an empty History, a heal marked done) while
+/// every file stays on disk.
 fn list_dir(dir: &Path, what: &str) -> Result<Option<std::fs::ReadDir>, String> {
     match std::fs::read_dir(dir) {
         Ok(entries) => Ok(Some(entries)),
@@ -1361,7 +1349,7 @@ fn list_dir(dir: &Path, what: &str) -> Result<Option<std::fs::ReadDir>, String> 
     }
 }
 
-/// Remove every record in `dir` regardless of age ("Keep dictation history"
+/// Remove every record in `dir` regardless of age ("Save dictations to History"
 /// turned off, or a "Delete all"). Only touches `.json` files, like the prune.
 fn wipe_records(dir: &Path) -> Result<usize, String> {
     let Some(entries) = list_dir(dir, "history")? else {
@@ -1712,7 +1700,6 @@ mod tests {
         std::fs::write(&old, b"{}").unwrap();
         let keep = dir.join("notes.txt");
         std::fs::write(&keep, b"x").unwrap();
-        // Backdate the record two days.
         let mtime = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
         let f = std::fs::File::options().append(true).open(&old).unwrap();
         f.set_modified(mtime).unwrap();
