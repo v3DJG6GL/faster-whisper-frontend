@@ -35,11 +35,12 @@
 #
 #   Installers are unsigned (no code-signing cert — acceptable for a FOSS tool).
 #
-#   NOTE: on GitHub, pushes made with the actions token never trigger other
-#   workflows. Forgejo is expected to behave the same, but if a duplicate
-#   release run ever appears after the version job's tag push, the
+#   NOTE: Forgejo swallows events pushed with the actions token (see the
+#   publish job's mirror step), so the version job's tag push starts no second
+#   run. If one ever appears (the owner-token tag fallback), the
 #   `concurrency: release` group queues it behind this one and the API steps
-#   are idempotent (find-or-create + delete-then-upload), so it converges.
+#   are idempotent (find-or-create + delete-then-upload), so it converges —
+#   though its re-uploads briefly drop assets from the already-live release.
 name: release
 
 on:
@@ -65,12 +66,10 @@ jobs:
     outputs:
       tag: ${{ steps.bump.outputs.tag }}
     steps:
-      # persist-credentials: false — the fourth and last checkout to get it (the
-      # build job got it earlier; the two manual clones strip the token by hand).
-      # Otherwise the run token sits in .git/config for the whole job while the
-      # two mutable-tag actions below run in this workspace, and in THIS workflow
-      # that token is what creates releases and uploads installers. Both pushes
-      # now carry their credential explicitly instead (see the step below).
+      # persist-credentials: false — otherwise the run token sits in .git/config
+      # for the whole job while the mutable-tag actions below run in this
+      # workspace, and in THIS workflow that token creates releases and uploads
+      # installers. Both pushes carry their credential explicitly (step below).
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -97,9 +96,7 @@ jobs:
           # read-only — its push 403s). Prefer a dedicated RELEASE_TOKEN so the
           # Windows VM runner's checkout token can stay least-privilege.
           PUSH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.CI_TOKEN }}
-          # The run-scoped actions token, previously supplied implicitly by
-          # checkout's persisted header. The tag push still needs it specifically
-          # (see below), so it is now passed explicitly to this one step.
+          # The run-scoped actions token, for the tag push (see below).
           ACTIONS_TOKEN: ${{ github.token }}
         run: |
           current="$(node scripts/version.mjs)"
@@ -117,15 +114,11 @@ jobs:
           git config user.email "forgejo-actions@noreply.localhost"
           git commit -am "release: v$new"
           git tag "v$new"
-          # master is protected (2026-07-13): the run-scoped actions token gets
-          # declined by the pre-receive hook as an anonymous 500 (forgejo#11159),
-          # so the branch push authenticates as the repo owner via PUSH_TOKEN.
+          # master is protected: the run-scoped actions token gets declined by
+          # the pre-receive hook as an anonymous 500 (forgejo#11159), so the
+          # branch push authenticates as the repo owner via PUSH_TOKEN.
           # The tag still goes through the ACTIONS token: its push events are
           # swallowed (IsActions doer), so no duplicate release run fires.
-          # Both URLs carry their credential explicitly now that checkout no
-          # longer persists one — which also means the old
-          # `-c http...extraheader=` overrides are gone: there is no header left
-          # to clear, so neither push can send two credentials.
           # Fallback: if protection ever declines the bot's tag too, retry it as
           # the owner — that spawns a duplicate tag-push run, which the
           # `concurrency: release` group + idempotent API steps absorb. The same
@@ -153,14 +146,11 @@ jobs:
         with:
           # On a bump run, build the tagged commit (not the pre-bump dispatch ref).
           ref: ${{ needs.version.outputs.tag || github.ref }}
-          # Same reasoning as ci.yml's manual token checkout (direct `git fetch` from the
-          # credentialed URL, nothing persisted) and this workflow's windows leg: with the
-          # default, checkout leaves `http.<server>/.extraheader` — the run token, base64'd — in
-          # .git/config for the whole job. THIS job is the one that then runs `pnpm install`,
-          # tauri-action on a mutable tag, and `cargo build` (every dependency's build.rs and
-          # proc-macros) in that same workspace, and it holds release create/upload rights — so
-          # build-time code that read the token could replace the installers users download.
-          # This job never pushes, so it does not need the credential at all.
+          # With the default, checkout leaves the run token (base64'd `http.<server>/.extraheader`)
+          # in .git/config for the whole job, while this job runs `pnpm install`, tauri-action on
+          # a mutable tag and `cargo build` (every dependency's build.rs and proc-macros) and holds
+          # release create/upload rights — build-time code that read the token could replace the
+          # installers. The job never pushes, so it needs no credential.
           persist-credentials: false
 
       # The release tag this run builds for — empty means build-only (artifacts).
@@ -236,9 +226,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
 
       # Draft release + assets via the Forgejo API. Stays a draft until the
-      # publish job flips it live, so a half-uploaded release is never visible.
-      # Idempotent on re-runs: find-or-create the release, replace same-name
-      # assets instead of erroring.
+      # publish job flips it live, so a first run never shows a half-uploaded
+      # release. Idempotent on re-runs: find-or-create the release, replace
+      # same-name assets instead of erroring.
       - name: Create draft release and upload installers
         if: steps.rel.outputs.tag != ''
         env:
@@ -297,13 +287,10 @@ jobs:
           done
           # Each leg writes its OWN sums file: the two build jobs upload into the same draft
           # release concurrently, so a single shared name would race.
-          # `shopt -s nullglob` means a glob that matches NOTHING is a silent no-op, so a
-          # bundle-layout change (a tauri upgrade renaming a bundle dir, a dropped target)
-          # used to leave this step green with zero installers uploaded and no SHA256SUMS
-          # file — and `publish` gates only on job success, so the release went public,
-          # and got mirrored, with nothing in it and no digest to verify. The sibling
-          # build-only path has always asserted this via `if-no-files-found: error`; the
-          # PUBLISHING path was the lenient one.
+          # Under nullglob a glob that matches nothing is a silent no-op, so a bundle-layout
+          # change (a tauri upgrade renaming a bundle dir, a dropped target) would leave this
+          # step green with zero installers — and `publish` gates only on job success, so an
+          # empty release would go public and get mirrored.
           if [ "$uploaded" -eq 0 ]; then
             echo "::error::no installer bundles matched under src-tauri/target/release/bundle — refusing to publish an empty release"
             exit 1
@@ -364,12 +351,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # No rust-cache on this leg — see the fuller comment on ci.yml's step. It
-      # never restored a byte here (every run: "No cache found") and its post
-      # step added ~2min of invisible tail to the job: Forgejo renders no post
-      # steps, so the time showed up as a gap between the last upload and
-      # "Complete job". The VM's CARGO_HOME persists across jobs on its own, so
-      # this build still downloads zero crates.
+      # No rust-cache on this leg (see ci.yml's step): it never restored a byte
+      # here, and its post step added ~2 min that Forgejo doesn't render (no post
+      # steps shown). The VM's CARGO_HOME persists across jobs, so the build
+      # still downloads zero crates.
 
       - run: pnpm install --frozen-lockfile
 
@@ -446,13 +431,10 @@ jobs:
             uploaded=$((uploaded + 1))
             node -e 'const c=require("crypto"),f=require("fs"),p=require("path");const a=process.argv[1];console.log(c.createHash("sha256").update(f.readFileSync(a)).digest("hex")+"  "+p.basename(a))' "$f" >> "$sums"
           done
-          # `shopt -s nullglob` means a glob that matches NOTHING is a silent no-op, so a
-          # bundle-layout change (a tauri upgrade renaming a bundle dir, a dropped target)
-          # used to leave this step green with zero installers uploaded and no SHA256SUMS
-          # file — and `publish` gates only on job success, so the release went public,
-          # and got mirrored, with nothing in it and no digest to verify. The sibling
-          # build-only path has always asserted this via `if-no-files-found: error`; the
-          # PUBLISHING path was the lenient one.
+          # Under nullglob a glob that matches nothing is a silent no-op, so a bundle-layout
+          # change (a tauri upgrade renaming a bundle dir, a dropped target) would leave this
+          # step green with zero installers — and `publish` gates only on job success, so an
+          # empty release would go public and get mirrored.
           if [ "$uploaded" -eq 0 ]; then
             echo "::error::no installer bundles matched under src-tauri/target/release/bundle — refusing to publish an empty release"
             exit 1
