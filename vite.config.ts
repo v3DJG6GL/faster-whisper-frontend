@@ -7,7 +7,6 @@ import { fileURLToPath, URL } from "node:url";
 
 const host = process.env.TAURI_DEV_HOST;
 
-// https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
@@ -30,11 +29,9 @@ export default defineConfig(async () => ({
     exclude: [...configDefaults.exclude, ".claude/**"],
   },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
+  // Don't clear the terminal over the Rust compiler errors `tauri dev` prints.
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // tauri.conf.json's devUrl names this port: fail rather than drift to another one.
   server: {
     port: 1420,
     strictPort: true,
@@ -47,7 +44,7 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
+      // `tauri dev` watches src-tauri itself; .claude holds agent worktrees (see `test`).
       ignored: ["**/src-tauri/**", "**/.claude/**"],
     },
   },
