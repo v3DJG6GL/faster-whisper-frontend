@@ -67,7 +67,6 @@ export function DecodeFields({
    *  ("unknown") = permitted (never gate a knob we can't prove is disabled). */
   canCustomize?: boolean;
 }) {
-  // Every block starts closed; its header says how many fields in it are set.
   const [openSection, setOpenSection] = useState<Partial<Record<KeySection, boolean>>>({});
   const blocked = canCustomize === false;
   const standard = serverKind === "standard";
