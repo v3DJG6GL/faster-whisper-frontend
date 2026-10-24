@@ -4,7 +4,7 @@ import { Segmented } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
 import {
-  CHART_METRICS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPES, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
+  CHART_METRICS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPES, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_COLOR, STAGE_KEYS,
   DEFAULT_RANGE, bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
   type RangePreset, type UsagePageQuery, type UsageScope,
 } from "@/lib/usageDerive";
@@ -12,13 +12,6 @@ import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { UsageStageKey } from "@/lib/types";
 import { BUCKET_WORD, fmtDateRange, fmtSpanDate } from "@/components/stats/chartKit";
 import { Eyebrow, Pill, StageDot } from "@/components/stats/primitives";
-
-const STAGE_DOT: Record<UsageStageKey, string> = {
-  translating: "var(--c-translate)",
-  diarizing: "var(--c-diarize)",
-  separating: "var(--c-separate)",
-  vad: "var(--c-think)",
-};
 
 /** The draft dates live in FilterBar, not here: the popover sits inside the full bar, which
  *  remounts whenever the bar pins or un-pins, and a local draft would reset mid-edit. */
@@ -235,7 +228,7 @@ export function FilterBar({
                   on ? "border-solid border-line-strong bg-surface-2 text-text" : "border-dashed border-line-strong text-dim hover:text-text",
                 )}
               >
-                <StageDot color={STAGE_DOT[k]} />
+                <StageDot color={STAGE_COLOR[k]} />
                 {STAGE_CHIP_LABEL[k]}
               </button>
             );
@@ -296,7 +289,7 @@ export function FilterBar({
         <RailChip label="With" onClick={toggleBar}>
           {query.with.map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
-              <StageDot color={STAGE_DOT[k]} />
+              <StageDot color={STAGE_COLOR[k]} />
               {STAGE_CHIP_LABEL[k]}
             </span>
           ))}

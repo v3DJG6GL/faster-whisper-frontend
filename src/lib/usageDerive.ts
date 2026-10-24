@@ -938,6 +938,14 @@ export interface StageRowMeta {
   emptyCopy: string;
 }
 
+/** The optional stages' hues (filter chip dots, Stages panel rows, translated-language bars). */
+export const STAGE_COLOR: Record<UsageStageKey, string> = {
+  translating: "var(--c-translate)",
+  diarizing: "var(--c-diarize)",
+  separating: "var(--c-separate)",
+  vad: "var(--c-think)",
+};
+
 /** The four optional stages the panel always lists, in display order. Other stages the
  *  server may report (transcribing, downloading) are not "optional processing" and are
  *  not rows. */
@@ -945,25 +953,25 @@ export const STAGE_ROWS: readonly StageRowMeta[] = [
   {
     key: "translating",
     label: "Translation",
-    colorVar: "var(--c-translate)",
+    colorVar: STAGE_COLOR.translating,
     emptyCopy: "Set targets on a Profile, or turn it on per run under Transcribe › Processing.",
   },
   {
     key: "diarizing",
     label: "Speaker diarization",
-    colorVar: "var(--c-diarize)",
+    colorVar: STAGE_COLOR.diarizing,
     emptyCopy: "Turn it on per run under Transcribe › Processing when a file has more than one voice.",
   },
   {
     key: "vad",
     label: "Silence skipping",
-    colorVar: "var(--c-think)",
+    colorVar: STAGE_COLOR.vad,
     emptyCopy: "Turn it on per run under Transcribe › Processing for recordings with long pauses.",
   },
   {
     key: "separating",
     label: "Music separation",
-    colorVar: "var(--c-separate)",
+    colorVar: STAGE_COLOR.separating,
     emptyCopy: "Turn it on per run under Transcribe › Processing when a file has background music.",
   },
 ];
@@ -1059,7 +1067,7 @@ export function translationRows(d: {
         label: code,
         title: `${code} · ${plural(runs, "dictation")}${kept > 0 ? ` · ${fmtFull(kept)} kept the original` : ""}`,
         value: runs,
-        colorVar: "var(--c-translate)",
+        colorVar: STAGE_COLOR.translating,
       };
     });
   const tr = d.translation ?? { kept_original: 0, not_asked: 0, aborted: 0, unreported: 0 };
