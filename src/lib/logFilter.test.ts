@@ -29,6 +29,9 @@ function line(over: Partial<LogLine> = {}): LogLine {
   };
 }
 
+/** A bug-report context with nothing resolved: no backend, model or profile. */
+const BARE_CTX = { appVersion: "1", platform: "linux", backend: null, model: null, profile: null };
+
 describe("formatLine keeps one physical line per LogLine", () => {
   it("folds a multi-line message so the bug report's line count stays honest", () => {
     const out = formatLine(line({ msg: "connect failed\nCaused by: ECONNREFUSED" }));
@@ -225,25 +228,12 @@ describe("formatLine / buildBugReport", () => {
   });
   it("copies only the lines handed in and names the active filters", () => {
     const shown = [line({ seq: 1, level: "warn", msg: "kept" })];
-    const report = buildBugReport(
-      {
-        appVersion: "1",
-        platform: "linux",
-        backend: null,
-        model: null,
-        profile: null,
-        filters: "warn+ · text: portal",
-      },
-      shown,
-    );
+    const report = buildBugReport({ ...BARE_CTX, filters: "warn+ · text: portal" }, shown);
     expect(report).toContain("—— last 1 line —— filtered: warn+ · text: portal");
     expect(report).toContain("kept");
   });
   it("omits absent context fields", () => {
-    const report = buildBugReport(
-      { appVersion: "1", platform: "linux", backend: null, model: null, profile: null },
-      [line()],
-    );
+    const report = buildBugReport(BARE_CTX, [line()]);
     expect(report).not.toContain("backend:");
     expect(report).toContain("—— last 1 line ——");
   });
@@ -352,10 +342,7 @@ describe("bug report: what actually ran", () => {
 
   it("omits the provenance lines entirely when there is nothing to say", () => {
     // A fresh install with no history must not paste a line of empty labels.
-    const out = buildBugReport(
-      { appVersion: "0.1.89", platform: "linux", backend: null, model: null, profile: null },
-      L,
-    );
+    const out = buildBugReport({ ...BARE_CTX, appVersion: "0.1.89" }, L);
     expect(out).not.toContain("route:");
     expect(out).not.toContain("stages:");
     expect(out).not.toContain("source:");
