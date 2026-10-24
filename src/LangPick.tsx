@@ -46,7 +46,7 @@ interface Seed {
   /** Spoken language code, for the rail's origin chip. */
   source?: string;
   /** The Profile's configured targets — preselected, so Enter with no keystrokes
-   *  reproduces exactly today's behaviour. */
+   *  reproduces exactly what the Profile does without the picker. */
   preset?: string[];
   /** Recently picked codes, most-recent first. */
   recent?: string[];
