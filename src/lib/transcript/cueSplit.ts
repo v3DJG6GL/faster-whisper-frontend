@@ -587,7 +587,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     // me:", or a Latin word or number: AI", unless it may close an uncounted one: skippedOpener;
     // or an ASCII quote that closes the quotation before it: "你好"", as quoteSeams cuts there):
     // when it opens the next quotation (an even count of its kind so far, a later
-    // partner, a letter right after it), it is a token of its own, so the cut never lands right
+    // partner, a letter, digit or opener right after it), it is a token of its own, so the cut never lands right
     // after it. Its clock is a zero-length one at the next word's start (the word's end until
     // that word arrives): a cue starting with it starts once that word is spoken.
     const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po}|(["']))(["'])$/u.exec(tw);
@@ -972,10 +972,10 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     const m = mixedTokens(text);
     seams = new Set(m.toks.map((w, k) => m.at[k] + w.length));
   }
-  // Candidate cut positions: a space (dropped) or, for CJK, any code-point
-  // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
-  // still hold a CJK run (one Latin word in a Japanese line): it cuts between
-  // its characters too — a lone surrogate is never UNSPACED, so no pair splits.
+  // Candidate cut positions: a space (dropped) or, for unspaced text, any of those seams
+  // that is a code-point boundary (never inside a surrogate pair, e.g. an emoji). Spaced text
+  // may still hold a CJK run (one Latin word in a Japanese line): it cuts between its
+  // characters too — a lone surrogate is never UNSPACED, so no pair splits.
   // Never right after an opening bracket (the cut goes before it instead), nor right
   // before a closing bracket or stop (the cut goes after it).
   const cand: number[] = [];
@@ -1278,7 +1278,7 @@ function singleCloses(t: string, from: number, next?: string): boolean | undefin
 }
 
 /** Whether a German low opener `low` („ or ‚) is open at `t[j]`, a “ or ‘: it comes after the
- *  last of `t[j]`'s kind before j; with neither in `t`, the segment's (`open`, QuoteCtx.lowOpen). */
+ *  last of `t[j]`'s kind before j; with neither before j, the segment's (`open`, QuoteCtx.lowOpen). */
 function lowOpenAt(t: string, j: number, low: string, open: true | undefined): boolean {
   const l = t.lastIndexOf(low, j);
   const h = t.lastIndexOf(t[j], j - 1);
@@ -1334,8 +1334,8 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
   }
 }
 
-/** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
- *  wrapLines tokenize unspaced text by them too), per token whether whitespace stood
+/** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens,
+ *  wrapLines and cutByShare tokenize unspaced text by them too), per token whether whitespace stood
  *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
  *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
  *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
@@ -1446,7 +1446,7 @@ function wrapTokens(
   const T = toks.length;
   /** Length of the space-free run at toks[i]'s first (runL) and last (runR) character (mixed
    *  tokenization only). A no-break space inside a token ends a run too: the word of « 東京 » is
-   *  東京, a short one, as it was while the space split the tokens. */
+   *  東京, a short one, as with a plain space. */
   const runL: number[] = [];
   const runR: number[] = [];
   {
