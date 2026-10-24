@@ -2,10 +2,9 @@
 //! webview defined in `tauri.conf.json` as label `overlay`).
 //!
 //! The chip's *content* is driven entirely from the main window, which broadcasts
-//! a `dictation://update` event with the assembled `{status, level, partial}`.
-//! Here we only own the *window*: showing it at the configured screen edge when
-//! dictation starts and hiding it when it ends — never taking focus (focus would
-//! break text injection into the previously-focused app).
+//! the assembled chip state as a `dictation://update` event. Here we only own the
+//! *window*: showing it at the configured screen edge and hiding it — never taking
+//! focus (focus would break text injection into the previously-focused app).
 //!
 //! Placement is platform-specific:
 //!   * **Windows / Linux-X11** — `set_position` works, so the chip is centred at the top (or
@@ -726,7 +725,6 @@ mod kwin {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
 
-    // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::aux_windows::kwin.
     pub use crate::aux_windows::kwin::is_kde_wayland;
     use crate::aux_windows::kwin::{
         config_tools, keep_above_keys, merge_general, reconfigure, set_key,
