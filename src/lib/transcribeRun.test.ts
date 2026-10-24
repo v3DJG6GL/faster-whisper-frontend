@@ -759,7 +759,6 @@ describe("mergeSegmentTranslations kept-original marks", () => {
     mergeSegmentTranslations("kept-1", { 0: { de: "A!" } }, { targets: ["de"] }, { 0: [] });
     expect(saved().result!.segments![0].translationsKept).toBeUndefined();
     expect(saved().result!.segments![0].translations).toEqual({ de: "A!" });
-    // Untouched segment keeps its earlier merge untouched.
     expect(saved().result!.segments![1].translations).toEqual({ de: "B" });
   });
 });
