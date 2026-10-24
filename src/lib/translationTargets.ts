@@ -130,7 +130,7 @@ export function translationRunOptions(args: {
   "translateTo" | "translationMode" | "translationModel" | "translationGlossary" | "translationContextSegments"
 > {
   if (!args.available) return {};
-  // Trimmed: a padded synced id must not reach the wire, and a blank one is the server default.
+  // A padded synced id must not reach the wire.
   const model = args.model?.trim();
   return {
     translateTo: args.targets,
