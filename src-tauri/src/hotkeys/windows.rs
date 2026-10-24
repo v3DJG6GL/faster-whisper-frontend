@@ -323,7 +323,7 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
 /// Whether the OS reading a held Shift (0xA0/0xA1) as UP may be the NumLock shift override
 /// rather than a release: with NumLock on, a numpad digit/decimal pressed under Shift is wrapped
 /// in a fake Shift-up/Shift-down pair, so the async state reads Shift up for as long as that
-/// numpad key is held. The navigation ids count too (VK_CLEAR, PgUp..Down, Insert, Delete): the
+/// numpad key is held. The navigation ids count too (VK_CLEAR, PgUp..ArrowDown, Insert, Delete): the
 /// override hands the low-level hook the key's navigation VK (Shift+Numpad4 → VK_LEFT, scan 0x4B,
 /// not extended), so on the hook feed the numpad id never reaches the held set. The price is a
 /// real Shift release while an arrow/nav key is held with NumLock on: that hold lasts until the
