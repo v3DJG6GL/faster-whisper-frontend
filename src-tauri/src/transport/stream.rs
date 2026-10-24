@@ -321,6 +321,9 @@ fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String
     ))
 }
 
+/// Suffix of every `Incomplete` notice; the frontend's `incompleteFlashMessage` strips it.
+const LAST_PHRASE_MISSING: &str = "the last phrase may be missing.";
+
 /// What a speaking server Close frame tells the UI. Live, it is an `Error`: the session died.
 /// During the drain after Stop, a restart (1012) or keepalive timeout (1011) costs at most the
 /// phrase still being finalized, the same loss as the drain's idle timeout, so it is the same
@@ -330,7 +333,7 @@ fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String
 fn server_close_event(code: u16, message: String, draining: bool) -> StreamEvent {
     if draining && matches!(code, 1011 | 1012) {
         StreamEvent::Incomplete(format!(
-            "{} — the last phrase may be missing.",
+            "{} — {LAST_PHRASE_MISSING}",
             message.trim_end_matches('.')
         ))
     } else {
@@ -345,7 +348,7 @@ fn server_close_event(code: u16, message: String, draining: bool) -> StreamEvent
 fn read_error_event(message: String, draining: bool) -> StreamEvent {
     if draining {
         StreamEvent::Incomplete(format!(
-            "The connection to the server was lost ({}) — the last phrase may be missing.",
+            "The connection to the server was lost ({}) — {LAST_PHRASE_MISSING}",
             message.trim_end_matches('.')
         ))
     } else {
@@ -867,10 +870,9 @@ pub async fn run<F>(
             // phrase would vanish silently. A WARNING, not an `Error`: everything committed
             // before the timeout is good, and the UI's error path would skip the normal close
             // tail (no stop-mode insert, no pending phrase-end Enter) for one slow final.
-            on_event(StreamEvent::Incomplete(
-                "The server did not finish the transcript in time; the last phrase may be missing."
-                    .into(),
-            ));
+            on_event(StreamEvent::Incomplete(format!(
+                "The server did not finish the transcript in time; {LAST_PHRASE_MISSING}"
+            )));
         }
     }
 
