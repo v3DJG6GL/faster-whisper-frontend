@@ -210,7 +210,9 @@ export interface UsagePageQuery {
   with: UsageStageKey[];
 }
 
-export const DEFAULT_PAGE_QUERY: Readonly<UsagePageQuery> = Object.freeze({ range: "30", with: [] });
+/** The range a fresh or reset Statistics page shows, and the one its URL leaves out. */
+export const DEFAULT_RANGE: RangePreset = "30";
+export const DEFAULT_PAGE_QUERY: Readonly<UsagePageQuery> = Object.freeze({ range: DEFAULT_RANGE, with: [] });
 
 /** Longest span the server accepts: 3650 days, just under 10 years. */
 export const MAX_SPAN_DAYS = 3650;
@@ -233,7 +235,7 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
   const rhythm = parseRhythm(get("rhythm"));
   const r = get("range");
   const withS = parseStageList(get("with"));
-  let range: RangePreset = (RANGE_PRESETS as readonly string[]).includes(r ?? "") ? (r as RangePreset) : "30";
+  let range: RangePreset = (RANGE_PRESETS as readonly string[]).includes(r ?? "") ? (r as RangePreset) : DEFAULT_RANGE;
   let from: number | undefined;
   let to: number | undefined;
   if (range === "custom") {
@@ -244,7 +246,7 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
       from = f;
       to = t;
     } else {
-      range = "30";
+      range = DEFAULT_RANGE;
     }
   }
   return { scope, query: { range, ...(range === "custom" ? { from, to } : {}), with: withS }, metric, rhythm };
@@ -257,7 +259,7 @@ export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: Ch
   if (scope !== "all") out.kind = scope;
   if (metric !== "words") out.metric = metric;
   if (rhythm !== "hours") out.rhythm = rhythm;
-  if (q.range !== "30") out.range = q.range;
+  if (q.range !== DEFAULT_RANGE) out.range = q.range;
   if (q.range === "custom" && q.from !== undefined && q.to !== undefined) {
     out.from = String(q.from);
     out.to = String(q.to);
@@ -289,7 +291,7 @@ export function resolveWindow(q: UsagePageQuery, today: number, firstDay?: numbe
 }
 
 /** True when a kind or a stage filter is set — the RANGE is deliberately not
- *  counted; callers that want it add `q.range !== "30"`. */
+ *  counted; callers that want it add `q.range !== DEFAULT_RANGE`. */
 export function isFiltered(scope: UsageScope, q: UsagePageQuery): boolean {
   return scope !== "all" || q.with.length > 0;
 }

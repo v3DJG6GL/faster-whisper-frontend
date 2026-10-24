@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
 import {
   CHART_METRICS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPES, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
-  bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
+  DEFAULT_RANGE, bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
   type RangePreset, type UsagePageQuery, type UsageScope,
 } from "@/lib/usageDerive";
 import { useOutsidePress } from "@/lib/useOutsidePress";
@@ -177,11 +177,11 @@ export function FilterBar({
     else set.add(k);
     onQuery({ ...query, with: STAGE_KEYS.filter((x) => set.has(x)) });
   };
-  const anySet = isFiltered(scope, query) || query.range !== "30";
+  const anySet = isFiltered(scope, query) || query.range !== DEFAULT_RANGE;
   const clearAll = () => {
     setDraft(null);
     onScope("all");
-    onQuery({ range: "30", with: [] });
+    onQuery({ range: DEFAULT_RANGE, with: [] });
   };
   const spanText =
     query.range === "all"
