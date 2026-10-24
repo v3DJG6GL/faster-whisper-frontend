@@ -1,5 +1,3 @@
-// Media element helpers.
-
 /** Let go of everything an <audio>/<video> holds. Unmounting the element is
  *  not enough: WebKit keeps the decoded source (and a blob: URL's backing
  *  buffer) alive for as long as the detached element lingers — with a whole
