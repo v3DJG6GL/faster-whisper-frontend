@@ -417,7 +417,6 @@ export default function Logs() {
     <div className="flex h-full flex-col px-[var(--page-pad)] pt-6">
       <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("logs")}</div>
       <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text"><ScrollText className="size-7 text-accent" aria-hidden />{screenTitle("logs")}</h1>
-      {/* The live status line under the title, like a lede: streaming state left, the session count right. */}
       <div className="mt-2 flex items-center gap-3">
         {attachError ? (
           <span className="flex items-center gap-1.5 text-[12px] font-medium text-warn" title={attachError}>
