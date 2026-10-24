@@ -52,7 +52,8 @@ export function OverrideHeader({
   /** Offer the reset even when the dot is hidden (a locked/pinned key still holding a stored
    *  value); defaults to `overridden`. */
   resettable?: boolean;
-  /** Set when an admin locked the key: the lock icon, and its reason for screen readers. */
+  /** Set when the key is fixed (an admin lock, or live dictation's pin): the lock icon, and its
+   *  reason for screen readers. */
   lockReason?: string;
   /** The id the control's `aria-describedby` names; the lock reason (else `describedText`) is
    * rendered under it. */
@@ -64,7 +65,7 @@ export function OverrideHeader({
   onClear?: () => void;
   canClear?: boolean;
   clearTitle?: string;
-  /** Back to inherit; offered while `overridden`. */
+  /** Back to inherit; offered while `resettable`. */
   onReset?: () => void;
   /** The whole row is unusable right now; `disabledTitle` says why (tooltip). */
   disabled?: boolean;
