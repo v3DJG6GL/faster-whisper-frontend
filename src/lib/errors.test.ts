@@ -92,7 +92,7 @@ describe("describeTransportError", () => {
     expect(`${off.title} ${off.hint}`).not.toContain("API key");
     expect(describeTransportError("transcribe", "HTTP 403: video download is not enabled on this server", "").title)
       .toBe("The backend has this feature turned off.");
-    // A key refusal still points at the key, and translate's own wording is unchanged.
+    // A key refusal still points at the key, and translate keeps its own "turned off" wording.
     const key = describeTransportError("transcribe", "HTTP 403: invalid API key", "GPU box");
     expect(key.title).toBe("GPU box rejected the request (HTTP 403).");
     expect(key.hint).toBe("Check the backend's API key.");
