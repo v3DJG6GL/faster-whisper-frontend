@@ -58,14 +58,9 @@ function append(lines: LogLine[]) {
 /** The buffer minus the "Clear view" floor. Reference-stable WITHIN a version,
  *  and a NEW array on every version bump.
  *
- *  The second half is load-bearing and used to be wrong: with no clear floor
- *  this returned `buf` itself, which `append()` mutates in place — so the
- *  reference never changed, and every `useMemo` keyed on it in Logs.tsx went
- *  on believing its work was still valid. The screen rendered the snapshot it
- *  computed at mount (empty, before hydration) forever: no lines, no subsystem
- *  chips, no live tail, no "N new lines" pill, and a bug report that copied
- *  nothing. Changing a filter was the only thing that invalidated those memos,
- *  which is why the view only ever populated after touching one.
+ *  The new array is load-bearing: `append()` mutates `buf` in place, so returning
+ *  `buf` itself would keep the reference stable and every `useMemo` keyed on it in
+ *  Logs.tsx would keep its mount-time (empty) result.
  *
  *  Cost is one slice per event BATCH (not per render), bounded by the 10k cap. */
 export function visibleLines(): LogLine[] {
@@ -136,10 +131,8 @@ export function initLogStatus(): void {
   statusStarted = true;
   void (async () => {
     // Register the listener FIRST so no status event emitted between the
-    // hydration snapshot and the listen() call is lost (the same ordering
-    // hazard attachLogStream already fixed for log://lines).
-    // Track the highest seq we've applied so a late hydration snapshot
-    // never overwrites a newer event.
+    // hydration snapshot and the listen() call is lost. Track the highest seq
+    // applied so a late hydration snapshot never overwrites a newer event.
     let appliedSeq = 0;
     await onLogStatus((p) => {
       if (p.seq > appliedSeq) {
