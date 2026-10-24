@@ -295,7 +295,7 @@ export function ListPicker<R>({
       e.preventDefault();
       const r = flat[act];
       if (r) {
-        // Enter ticks and closes: on a row a multi list already has ticked (where show() parks
+        // Enter picks and closes: on a row a multi list already has ticked (where show() parks
         // the highlight) it just closes — toggling would drop that choice.
         if (!multi || !isSelected(r)) onPick(r);
         close(true);
