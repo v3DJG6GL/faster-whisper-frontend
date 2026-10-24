@@ -98,8 +98,6 @@ pub async fn get_pipeline_rules(
 
 /// Apply a per-rule patch (`PATCH /v1/pipeline-rules`). `patch` is the
 /// `{rules_patch, fingerprints}` object the client builds from its edits.
-/// Structured result carries saved / conflicts / requires_restart, plus 422
-/// `errors` or a 400/403/500 `detail`.
 #[tauri::command]
 pub async fn save_pipeline_rules(
     server_url: String,
