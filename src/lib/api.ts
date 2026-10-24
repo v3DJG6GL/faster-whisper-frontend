@@ -78,6 +78,16 @@ async function invokeServer<T>(
   });
 }
 
+/** A best-effort local command: `fallback` outside Tauri and on any rejection, never throws. */
+async function invokeOr<T>(cmd: string, args: Record<string, unknown>, fallback: T): Promise<T> {
+  if (!isTauri) return fallback;
+  try {
+    return await invoke<T>(cmd, args);
+  } catch {
+    return fallback;
+  }
+}
+
 /** The config plus whether Rust had to RECOVER it (backed up an unreadable/corrupt file to
  *  config.json.bak and returned defaults) — so the UI can warn the settings were reset. */
 export interface LoadedConfig {
@@ -166,12 +176,7 @@ export function logLine(level: "info" | "warn", tag: string, msg: string): void 
  *  check needs a live window and so can't be asked here). False outside the desktop app
  *  or on any error: the hint then reads "not a known client", which is the honest default. */
 export async function remoteDesktopAutoDetected(appId: string): Promise<boolean> {
-  if (!isTauri) return false;
-  try {
-    return (await invoke<boolean>("remote_desktop_auto_detected", { appId })) === true;
-  } catch {
-    return false;
-  }
+  return (await invokeOr<boolean>("remote_desktop_auto_detected", { appId }, false)) === true;
 }
 
 export async function testConnection(args: ServerTarget): Promise<ConnectionInfo> {
@@ -901,8 +906,7 @@ export async function getLogStatus(): Promise<LogTail> {
  *  log-folder preference (null/blank = the default folder); the on-disk config lags the
  *  debounced save, so the command never falls back to it. */
 export async function logFolderPath(custom: string | null): Promise<string | null> {
-  if (!isTauri) return null;
-  return invoke<string>("log_folder_path", { custom }).catch(() => null);
+  return invokeOr<string | null>("log_folder_path", { custom }, null);
 }
 
 // One Open-folder call per folder at a time, shared by every caller: the commands block on a
@@ -1357,12 +1361,7 @@ export async function abortLangPick(): Promise<void> {
  *  "When you say" field on summon. null when nothing usable is selected (leave it empty +
  *  show the recent-words dropdown). Best-effort: any error → null. */
 export async function getQuickAddSeed(): Promise<string | null> {
-  if (!isTauri) return null;
-  try {
-    return (await invoke<string | null>("get_quickadd_seed")) ?? null;
-  } catch {
-    return null;
-  }
+  return (await invokeOr<string | null>("get_quickadd_seed", {}, null)) ?? null;
 }
 
 /** Read the source app's CURRENT text selection for the correct-on-close guard (it confirms the
@@ -1371,12 +1370,7 @@ export async function getQuickAddSeed(): Promise<string | null> {
  *  (win_seed) that touches and restores the clipboard. null when nothing is selected or it can't
  *  be read. */
 export async function getFocusedSelection(): Promise<string | null> {
-  if (!isTauri) return null;
-  try {
-    return (await invoke<string | null>("get_focused_selection")) ?? null;
-  } catch {
-    return null;
-  }
+  return (await invokeOr<string | null>("get_focused_selection", {}, null)) ?? null;
 }
 
 /**
@@ -1402,12 +1396,7 @@ export async function setChipHitRegion(
  *  reshapes mid-exit). Fail-open: true outside Tauri / on any error, so a query hiccup can
  *  never cancel a legitimate hover. */
 export async function chipPointerOver(): Promise<boolean> {
-  if (!isTauri) return true;
-  try {
-    return await invoke<boolean>("chip_pointer_over");
-  } catch {
-    return true;
-  }
+  return invokeOr<boolean>("chip_pointer_over", {}, true);
 }
 
 /** Reflect the dictation status in the tray tooltip. */
