@@ -268,12 +268,7 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
     // already existed when the user picked it (a synced tree, a backup restore) keeps whatever
     // permissions it had. Best-effort, like the directory call.
     #[cfg(windows)]
-    if let Err(e) = windows_owner_only_dacl(path) {
-        tracing::warn!(
-            "[audio] could not restrict {} to the current user: {e}",
-            path.display()
-        );
-    }
+    windows_owner_only_logged(path);
     Ok(f)
 }
 
@@ -290,12 +285,7 @@ pub(crate) fn restrict_file_private(path: &Path) {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     #[cfg(windows)]
-    if let Err(e) = windows_owner_only_dacl(path) {
-        tracing::warn!(
-            "[audio] could not restrict {} to the current user: {e}",
-            path.display()
-        );
-    }
+    windows_owner_only_logged(path);
     #[cfg(not(any(unix, windows)))]
     let _ = path;
 }
@@ -335,17 +325,23 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         }
         std::fs::create_dir_all(dir)?;
         // Best-effort, deliberately: a failure here must not stop the user recording.
-        if let Err(e) = windows_owner_only_dacl(dir) {
-            tracing::warn!(
-                "[audio] could not restrict {} to the current user: {e}",
-                dir.display()
-            );
-        }
+        windows_owner_only_logged(dir);
         Ok(())
     }
     #[cfg(not(any(unix, windows)))]
     {
         std::fs::create_dir_all(dir)
+    }
+}
+
+/// `windows_owner_only_dacl`, best-effort: a failure is logged, never returned.
+#[cfg(windows)]
+fn windows_owner_only_logged(path: &Path) {
+    if let Err(e) = windows_owner_only_dacl(path) {
+        tracing::warn!(
+            "[audio] could not restrict {} to the current user: {e}",
+            path.display()
+        );
     }
 }
 
