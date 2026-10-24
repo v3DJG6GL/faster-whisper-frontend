@@ -132,6 +132,13 @@ async function seed(...rows: LedgerRow[]) {
   for (const r of rows) await persistRow(r);
 }
 
+/** JOB_A's lost request is still running on the server: watch it headless and let the first poll land. */
+async function watchRunningLost(): Promise<void> {
+  getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+  watchOrphan(JOB_A);
+  await vi.advanceTimersByTimeAsync(0);
+}
+
 describe("reconcileJobs", () => {
   it("a done row ingests one record with createdAt = startedAt and forgets the row", async () => {
     await seed(row(JOB_A, T0));
@@ -466,9 +473,7 @@ describe("reconcileJobs", () => {
     await persistRow(r);
     // The pump's lost-contact catch already left a failed queue row naming the orphan job.
     useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     expect(getJob).toHaveBeenCalledTimes(1);
     useApp.setState({ backends: [] });
     getJob.mockClear();
@@ -943,9 +948,7 @@ describe("reconcileJobs", () => {
     await persistRow(r);
     useTranscribeRun.setState({ files: [r.path], running: false, lastOptions: undefined,
       queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     expect(getJob).toHaveBeenCalledTimes(1);
     deleteJob.mockClear();
     retryFile(r.path, r.ctx);
@@ -966,9 +969,7 @@ describe("reconcileJobs", () => {
   async function watchEvicted() {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     for (let i = 0; i < 20; i++) await persistRow({ ...row((i + 16).toString(16).repeat(16), Date.now()), path: `/n${i}.mp3` });
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
     deleteJob.mockClear();
@@ -1004,9 +1005,7 @@ describe("reconcileJobs", () => {
     await persistRow(r);
     useTranscribeRun.setState({ files: [r.path], running: false,
       queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     deleteJob.mockClear();
     startRun(undefined, {}, r.ctx);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
@@ -1019,9 +1018,7 @@ describe("reconcileJobs", () => {
   it("a lost request opened from History settles its row and a retry stops its watcher", async () => {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     const rec = lostFailedRecord(r);
     expect(openHistoryRecord(rec)).toBe(true);
     // The rebuilt row still names the job, so the watcher's ingest would settle it.
@@ -1061,9 +1058,7 @@ describe("reconcileJobs", () => {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
     useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     closeRecord();
     expect(useTranscribeRun.getState().queue).toEqual([]);
     useTranscribeRun.setState({ files: [r.path] });
@@ -1082,9 +1077,7 @@ describe("reconcileJobs", () => {
     // removeFile kept the settled failed row, but the file is no longer in the list.
     useTranscribeRun.setState({ files: ["/other.mp3"], running: false,
       queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     deleteJob.mockClear();
     startRun(undefined, {}, r.ctx);
     expect(deleteJob).not.toHaveBeenCalled();
@@ -1113,9 +1106,7 @@ describe("reconcileJobs", () => {
     await persistRow(r);
     const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [rec] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     deleteJob.mockClear();
     deleteRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
@@ -1134,9 +1125,7 @@ describe("reconcileJobs", () => {
     await persistRow(r);
     const rec = lostFailedRecord(r);
     useTranscriptHistory.setState({ records: [rec] });
-    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
-    watchOrphan(JOB_A);
-    await vi.advanceTimersByTimeAsync(0);
+    await watchRunningLost();
     if (register) expect(openHistoryRecord(rec)).toBe(true);
     deleteJob.mockClear();
   }
