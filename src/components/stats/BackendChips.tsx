@@ -24,7 +24,6 @@ export function BackendChips({
   className?: string;
 }) {
   if (backends.length === 0) return null;
-  // One pass for the whole list — the collision suffix needs every name at once.
   const labels = backendLabels(labelsFrom ?? backends);
   const labelOf = (b: Backend) => labels.get(b.id) ?? "";
   if (backends.length === 1) {
