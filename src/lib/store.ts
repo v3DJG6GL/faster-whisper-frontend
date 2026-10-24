@@ -890,10 +890,8 @@ export const useApp = create<AppState>((set) => ({
 
   setCaps: (backendId, caps) =>
     set((s) => {
-      // Same stability guard as setUsage, for the same reason: refreshCaps can be
-      // re-triggered by unrelated store churn and hands us a structurally identical
-      // object each time. hasOwn, not `in`, so an id like `constructor` doesn't read
-      // as already-present via the prototype.
+      // Same stability guard (and hasOwn) as setUsage: refreshCaps can be re-triggered by
+      // unrelated store churn and hands us a structurally identical object each time.
       if (hasOwn(s.caps, backendId) && JSON.stringify(s.caps[backendId]) === JSON.stringify(caps)) return {};
       return { caps: { ...s.caps, [backendId]: caps } };
     }),
