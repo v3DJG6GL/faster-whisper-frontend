@@ -500,8 +500,14 @@ function nameReserve(ctx: Ctx, seg: TranscriptSegment): number {
   return namePrefix(ctx, seg.speaker).length;
 }
 
+/** One cue line of `track` wrapped as the cue split reserved it: room for the segment's
+ *  "Name: " prefix (plus `extra` chars of a tag before it) and the segment's quotes. */
+function wrapCueLine(ctx: Ctx, seg: TranscriptSegment, text: string, track: string, extra = 0): string {
+  return ctx.wrap(text, track, extra + nameReserve(ctx, seg), cueQuoteCtx(seg, track));
+}
+
 function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
-  return srtStyled(ctx, seg, ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg), cueQuoteCtx(seg, "orig")));
+  return srtStyled(ctx, seg, wrapCueLine(ctx, seg, clean(seg.text), "orig"));
 }
 
 function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string): string {
@@ -512,7 +518,7 @@ function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string)
   // is tagged too (as the TXT export does).
   const orphan = ctx.origIncluded && !clean(seg.text);
   const tag = ambiguous(ctx) || orphan ? langTag(lang) : "";
-  return srtStyled(ctx, seg, tag + ctx.wrap(text, lang, tag.length + nameReserve(ctx, seg), cueQuoteCtx(seg, lang)));
+  return srtStyled(ctx, seg, tag + wrapCueLine(ctx, seg, text, lang, tag.length));
 }
 
 function srtExport(result: BatchResult, ctx: Ctx): string {
@@ -577,14 +583,14 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
       if (mode === "line") return `<c.${cls}>${name}: ${text}</c>`;
       return `<c.${cls}>${text}</c>`;
     };
-    const orig = plain(vttEscape(ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg), cueQuoteCtx(seg, "orig"))));
+    const orig = plain(vttEscape(wrapCueLine(ctx, seg, clean(seg.text), "orig")));
     const lines = cueLines(ctx, seg, orig, (t, _s, lang) => {
-      if (isSite(lang)) return plain(vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg), cueQuoteCtx(seg, lang))));
+      if (isSite(lang)) return plain(vttEscape(wrapCueLine(ctx, seg, t, lang)));
       const mt = ambiguous(ctx) ? `mt.mt-${vttClass(lang)}` : "mt";
       // Translated lines carry the SAME speaker classes as the original (the
       // speaker is language-independent) stacked with .mt — the spk STYLE
       // block is emitted after .mt's, so the speaker color wins when on.
-      const escaped = vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg), cueQuoteCtx(seg, lang)));
+      const escaped = vttEscape(wrapCueLine(ctx, seg, t, lang));
       if (!seg.speaker || !ctx.hasSpeakers) return `<c.${mt}>${escaped}</c>`;
       const name = vttEscape(nameOf(ctx, seg.speaker));
       if (mode === "off") {
