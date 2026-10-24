@@ -220,7 +220,6 @@ describe("formatLine / buildBugReport", () => {
     expect(report).toContain(`—— last ${BUG_REPORT_LINES} lines ——`);
     expect(report).not.toContain("m49\n"); // dropped: older than the cap
     expect(report).toContain(`m${BUG_REPORT_LINES + 49}`); // newest kept
-    // header count matches actual body lines
     const body = report.split("——")[2].trim().split("\n");
     expect(body.length).toBe(BUG_REPORT_LINES);
   });
