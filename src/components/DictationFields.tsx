@@ -39,8 +39,8 @@ export interface DictationFieldsProps {
 }
 
 /** The four insertion controls as ready-to-place elements, deliberately NOT a component that
- *  renders rows: the surfaces lay them out differently (SettingRow, a Labeled grid, a flat
- *  stack), so this keeps one definition of each CONTROL and leaves the layouts alone. */
+ *  renders rows: the surfaces lay them out differently (OverrideHeader rows, a Labeled stack),
+ *  so this keeps one definition of each CONTROL and leaves the layouts alone. */
 export function dictationControls({ value, onChange, disabled, inherited }: DictationFieldsProps) {
   // A cleared control writes `undefined` and the key is PRUNED: "inherit" is the ABSENCE of a
   // value, which is what makes a later change to the layer below propagate. (App Rules map the
