@@ -147,8 +147,8 @@ fn now_ms() -> u64 {
     chrono::Utc::now().timestamp_millis().max(0) as u64
 }
 
-/// The capture layer. Does one string format and one VecDeque push under a
-/// short lock — and never logs itself, so it cannot re-enter.
+/// The capture layer. Formats outside the ring lock (held only for the push) and never
+/// logs itself, so it cannot re-enter.
 pub struct RingLayer {
     pub ring: LogRing,
 }
