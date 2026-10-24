@@ -1,7 +1,7 @@
 // dictationVisual is the SSOT every dictation surface reads its colour/label from,
-// and the two membership helpers gate stop-vs-cancel, chip visibility and epoch
-// checks. Both are pure, so the drift they used to suffer (a new status landing in
-// one surface's hand-rolled map and not another's) is cheap to pin here.
+// and the membership helpers gate stop-vs-cancel, chip visibility and epoch checks.
+// All are pure, so the drift a hand-rolled per-surface map invites (a new status
+// landing in one surface and not another) is cheap to pin here.
 
 import { describe, expect, it } from "vitest";
 import homeSrc from "../../screens/Dashboard.tsx?raw";
