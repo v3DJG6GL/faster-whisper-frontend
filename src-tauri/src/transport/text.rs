@@ -12,11 +12,11 @@ use std::time::Duration;
 const MAX_TEXTS: usize = 512;
 use super::MAX_TARGETS;
 
-/// Generous per-request ceiling, like batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a
-/// 400-segment chunk against a slow / CPU-only MT backend (or one that first has to
-/// download the model) can legitimately work far longer than the shared client's 120 s
-/// default. Still bounded so a black-holed server can't hang the run forever. Dictation
-/// races the call against its own much shorter budget in JS, so it is unaffected.
+/// Generous per-request ceiling, like batch.rs's `FILE_TRANSCRIBE_TIMEOUT`: a request
+/// of up to [`MAX_TEXTS`] segments against a slow / CPU-only MT backend (or one that first
+/// has to download the model) can legitimately work far longer than the shared client's
+/// 120 s default. Still bounded so a black-holed server can't hang the run forever.
+/// Dictation races the call against its own much shorter budget in JS, so it is unaffected.
 const TEXT_TRANSLATE_TIMEOUT: Duration = Duration::from_secs(3600);
 
 #[derive(serde::Serialize)]
