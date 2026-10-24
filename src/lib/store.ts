@@ -116,8 +116,8 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
 /** Complete the per-setting sync gates from a persisted (possibly
  *  older-version) config: manifest defaults ← old category toggles (an OFF
  *  category seeds its members OFF) ← legacy sub keys ← saved gate values.
- *  The legacy four keys are also written BACK (derived from the gates) so a
- *  downgraded app still reads the same intent. */
+ *  The pre-rename keys (`recordingsDir`, `latchAutoStop`) are also written BACK
+ *  (derived from the gates) so a downgraded app still reads the same intent. */
 function completeSub(
   saved: Partial<SyncSubSettings> | undefined,
   savedCategories: Partial<Record<SyncCategory, boolean>> | undefined,
@@ -447,10 +447,10 @@ interface AppState {
    *  Per-device view state — never synced, never persisted. */
   usageViewQuery: UsagePageQuery;
 
-  /** Last config auto-save failure (disk full / read-only / IPC), surfaced as a banner so the
-   *  user knows their recent settings/backends/profiles changes were NOT written to disk and
-   *  may be lost on restart. null = last save succeeded. Runtime-only; set by the persistence
-   *  auto-save, cleared on the next successful save. */
+  /** The config banner: a save failure or conflict freeze (disk full / read-only / IPC — the
+   *  recent settings/backends/profiles changes were NOT written to disk and may be lost on
+   *  restart) or a startup load notice; `saveErrorKind` says which. Runtime-only; set by the
+   *  persistence auto-save, which clears a save failure on the next successful save. */
   saveError: string | null;
   // What KIND of notice saveError holds, so the banner can frame it correctly: "save" = an actual
   // write/conflict failure ("Couldn't save…"), "load" = a startup load-recovery / load-failure notice
@@ -757,8 +757,8 @@ export const useApp = create<AppState>((set) => ({
   forgetBackendCaches: (id) => set((s) => evictBackendCaches(s, id)),
   removeBackend: (id) =>
     set((s) => {
-      // Drop the removed backend's cached connection + usage + caps too, so a re-added backend
-      // that recycles the id (or a late in-flight fetch) can't read the dead server's state.
+      // Evict the removed backend's caches too (evictBackendCaches), so a re-added backend that
+      // recycles the id (or a late in-flight fetch) can't read the dead server's state.
       return {
         backends: s.backends.filter((b) => b.id !== id),
         // Only build a new profiles array if a profile actually referenced the removed backend —
