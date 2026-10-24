@@ -75,7 +75,7 @@ export function visibleLines(): LogLine[] {
 }
 
 /** Lines "Clear view" hid — still in the ring and on disk, absent from the view.
- *  `buf` is seq-ordered, so they are exactly the ring minus the per-version visible
+ *  `buf` is seq-ordered, so they are exactly the buffer minus the per-version visible
  *  slice: no scan of up to LOG_BUFFER_CAP lines per render. */
 export function clearedCount(): number {
   return buf.length - visibleLines().length;
@@ -141,8 +141,8 @@ export function initLogStatus(): void {
       }
     }).catch(() => {});
     // The baseline deliberately stays at zero here: startup errors and warns SHOULD light
-    // the badge on a fresh session. It moves to the current totals only when the Logs
-    // screen is opened or closed (markLogsViewed).
+    // the badge on a fresh session. Only the Logs screen moves it to the current totals
+    // (markLogsViewed, on open, while open, and on close).
     try {
       const t = await getLogStatus();
       if (t.seq > appliedSeq) {
