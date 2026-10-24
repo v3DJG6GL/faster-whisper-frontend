@@ -1041,12 +1041,10 @@ function bookOwedUtterances(how: "typed" | "clipboard", ev: OwedEvent): void {
   }
 }
 
-/** Save the finished session to History — the settleIdle hook. Skips: empty
- *  sessions, App-rules-blocked targets, and the "Keep dictation history" off
- *  switch. Runs once per session (capturedRecordId latch), and not at all once
- *  per-utterance records took the session over. Returns whether a record
- *  was written by THIS call — the chip's "not inserted · saved to History" note must
- *  only promise a record that exists. */
+/** Save the finished session to History — the settleIdle hook. Runs once per session
+ *  (capturedRecordId latch), and not at all once per-utterance records took the session
+ *  over. Returns whether a record was written by THIS call — the chip's "not inserted ·
+ *  saved to History" note must only promise a record that exists. */
 function captureDictationHistory(): boolean {
   const meta = historyMeta();
   if (!meta || capturedRecordId || utteranceFinalSeen) return false;
@@ -2383,7 +2381,7 @@ async function ensureListeners(): Promise<void> {
           // Typed (paste/direct), append-only. Diffed IN-QUEUE against the typed baseline: the queue is
           // serial, so a landed phrase advances the baseline before the next one diffs, and a phrase the
           // own-window guard skips leaves it untouched and is re-typed into the real window after a focus
-          // switch. Empty toType = a re-sent final or already-typed text → skip.
+          // switch. Empty toType = a re-sent final or already-typed text → skip, unless a carry is pending.
           noteDivergence("typed", injectedText, target, utterance);
           const toType = target.slice(commonPrefixLen(injectedText, target));
           // Text a hard break carried over untyped goes out FIRST, joined by that break's separator
@@ -3685,9 +3683,7 @@ async function startLiveInner(
     sessionPhraseContext = [];
     // Publish the RESOLVED route so the chip can show it. `sessionTranslation` is module
     // state the overlay's own webview can never read, and the chip must not re-derive it
-    // from the Profile: the two are the same only until something can change the targets
-    // for one session (a per-session picker). Cleared alongside the rest of the session's
-    // state, so the standby dock falls back to previewing the home Profile's own route.
+    // from the Profile: the translate-to picker can change the targets for one session.
     // `routePending` says what the chip may NOT promise yet: a push-to-talk session with the
     // picker armed has no route until release ("undecided" → the chip's dashed "→ ?"), and a
     // hands-free "0" is acknowledged once as "original" (the one-shot hint from dictation.ts).
