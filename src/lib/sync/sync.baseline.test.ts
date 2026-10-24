@@ -771,8 +771,8 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("an explicit restore also brings the folders and Transcribe picks the legacy sub keys gate", async () => {
-    // These arms used to read `sub` directly, which ignoreGates never neutralised —
-    // the very folders the restore comment promises were still dropped.
+    // ignoreGates must also neutralise these arms' legacy `sub` gates, or a restore drops the
+    // very folders it promises.
     useApp.setState({ settings: settings() });
     await applyBlob(
       {
@@ -994,8 +994,8 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("the import/restore preview's collision prediction is what applyBlob installs", async () => {
-    // The Sync tab's previews call `disableConflictingProfiles` on the would-be state; it once
-    // ran its own `conflicts()` and warned of a save freeze the apply never leaves behind.
+    // The Sync tab's previews call `disableConflictingProfiles` on the would-be state; a check of
+    // their own would warn of a save freeze the apply never leaves behind.
     const inbound = [
       profile({ id: "p1", hotkey: ["ControlLeft", "Space"] }),
       profile({ id: "p2", hotkey: ["ControlRight", "Space"] }), // an L/R-only pair
@@ -1913,8 +1913,8 @@ describe("sanitizers trim overrideProfile", () => {
 });
 
 // initSync holds the engine lock across the launch work (the keyring restore parks up to 10 s on a
-// locked wallet), and a manual Push / Pull clicked then used to drop at the gate without a word —
-// the startup pull that followed is an automatic one, so the forced push never happened. A fresh
+// locked wallet), and a manual Push / Pull clicked then must not drop at the gate without a word —
+// the startup pull that follows is an automatic one, so the forced push would never happen. A fresh
 // engine per case (initSync runs once per module), "in Tauri", with the launch keyring read parked.
 describe("a manual Push / Pull clicked during launch", () => {
   const io = {
@@ -2016,7 +2016,7 @@ describe("a manual Push / Pull clicked during launch", () => {
 
   it("a sync-server switch does not wait for a startup pull that hangs", async () => {
     // The configured server is unreachable: the startup pull waits out its timeout. The user
-    // switches to another server meanwhile — its pull must start at once, as before launch waited.
+    // switches to another server meanwhile — its pull must start at once, not behind the hung one.
     io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
     const { store, init } = await launchEngine();
     let hung = true;
