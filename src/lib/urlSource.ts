@@ -43,13 +43,12 @@ function trimMediaEdges(raw: string): string {
   return raw.slice(lead, end);
 }
 
-/** A pasted MEDIA link's edges, cleared of whitespace and of the invisible format characters
- *  web pages and chat clients add to copied text (U+200B, U+FEFF, U+2060, U+00AD — Unicode Cf),
- *  then what stripUrlNoise does. Only the edges: inside the link nothing changes. A SERVER
- *  address keeps stripUrlNoise alone (exactly the Rust transport's trim, which keeps U+FEFF).
- *  Once these edges are clear, stripUrlNoise's own edge trims (a subset of this class) find
- *  nothing and only its inner tab/line-break deletion is left, done here directly: its `[…]+$`
- *  trims carry the same quadratic cost on an inner whitespace run. */
+/** A pasted MEDIA link with its edges cleared of whitespace and of the invisible format
+ *  characters web pages and chat clients add to copied text (U+200B, U+FEFF, U+2060, U+00AD —
+ *  Unicode Cf), and its inner tabs/line breaks deleted as stripUrlNoise does. A SERVER address
+ *  keeps stripUrlNoise alone (exactly the Rust transport's trim, which keeps U+FEFF). It does not
+ *  call stripUrlNoise: those edge trims would find nothing here, and their `[…]+$` form carries
+ *  the quadratic cost trimMediaEdges avoids on an inner whitespace run. */
 export function stripMediaUrlNoise(raw: string): string {
   return trimMediaEdges(raw).replace(/[\t\n\r]/g, "");
 }
@@ -60,11 +59,9 @@ export function stripMediaUrlNoise(raw: string): string {
  *  into one queue key. A second scheme WITHOUT a separator before it stays a link: archive and
  *  redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…).
  *  Judged on the RAW text: stripUrlNoise deletes inner tabs, which would glue the two cells into
- *  one link. Line breaks (CR, LF) go first, as the parsers drop them (a soft-wrapped single link
- *  stays one); the separators the parsers keep — U+2028/U+2029/U+0085, VT, FF, and a format
- *  character such as U+200B — part two links. The edges are trimmed as stripMediaUrlNoise trims
- *  them (a rich-text copy's U+00A0, an IME's U+3000, a BOM, a zero-width space). Text that does
- *  not start with a link is not "several links" — it is text before a link. */
+ *  one link. CR/LF go first, as the parsers drop them (a soft-wrapped single link stays one);
+ *  the separators the parsers keep part two links. Text that does not start with a link is not
+ *  "several links" — it is text before a link. */
 export function pastesSeveralLinks(raw: string): boolean {
   const t = trimMediaEdges(raw.replace(/[\n\r]/g, ""));
   return (
@@ -302,17 +299,14 @@ export function rungFacts(
   return parts.join(" · ");
 }
 
-/** The rung a height cap selects: the highest video rung at or under it
- *  (null = best available); the smallest one when nothing fits; null when
- *  the ladder has no video at all. Mirrors the server's pick_rung. */
+/** The rung the server's pick_rung would select from the rank-ordered (best-first) ladder: the
+ *  named format id while it is still on the ladder, else the best video rung at or under the
+ *  height cap (no cap = the best), else the smallest; null when the ladder has no video. */
 export function pickRung(
   ladder: VideoRung[] | null | undefined,
   maxHeight: number | null,
   formatId?: string | null,
 ): VideoRung | null {
-  // Mirrors the server's pick_rung: the ladder is rank-ordered (best
-  // first), an explicit format id wins while it is on the ladder, a height
-  // cap takes the best-ranked rung under it, else the smallest.
   const rungs = (ladder ?? []).filter((r) => r.kind === "video");
   if (!rungs.length) return null;
   if (formatId) {
