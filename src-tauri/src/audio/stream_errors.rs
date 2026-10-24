@@ -1,4 +1,4 @@
-//! One policy for cpal stream errors, shared by every capture path.
+//! One policy for cpal stream errors, shared by every capture and playback stream.
 //!
 //! cpal calls the error callback from its audio thread, and a backend stuck in a bad state can
 //! call it thousands of times a second: cpal 0.17's ALSA worker reported each POLLERR and polled
