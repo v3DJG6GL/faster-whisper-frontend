@@ -831,7 +831,7 @@ export function TranscriptViewer({
         // Test the CLEANED text, as the TXT export does: a mark-only line (a
         // bare U+200E survives trim()) would otherwise paste as an empty
         // "[ts] Name: " line once the outer strip drops the mark.
-        const body = stripControlChars(seg.text).trim();
+        const body = rowText(seg.text);
         if (origVisible && body) lines.push(`${ts}${who}${body}`);
         const trLines: string[] = [];
         for (const lang of visLangs) {
@@ -839,7 +839,7 @@ export function TranscriptViewer({
           // trText skips a track the server's quality guard kept as the
           // ORIGINAL — pasting the source language under a translation's
           // label is worse than omitting it.
-          const tr = src && stripControlChars(trText(src, lang) ?? "").trim();
+          const tr = src && rowText(trText(src, lang) ?? "");
           if (!tr) continue;
           // Tag only when the clipboard would otherwise be ambiguous: with
           // two targets an untagged line says nothing about which language it is.
