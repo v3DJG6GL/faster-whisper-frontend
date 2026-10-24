@@ -96,6 +96,13 @@ import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/t
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // The minimal run context: a full (non-standard) backend "b1" at http://x.
 const RUN_CTX = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+/** A done file record of `sourcePath` (named by its last path part), stamped 2026-08-30 12:00Z; `over` sets the rest. */
+const recordOf = (id: string, sourcePath: string, over: Partial<TranscriptRecord> = {}): TranscriptRecord => ({
+  schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
+  sourcePath, sourceName: sourcePath.slice(sourcePath.lastIndexOf("/") + 1), status: "done", ...over,
+});
+/** A one-segment result whose only line is `text`. */
+const oneLine = (text: string) => ({ text, segments: [{ start: 0, end: 1, text }] });
 
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
@@ -685,15 +692,7 @@ describe("foldProgress no longer learns; it stamps per-language clocks", () => {
 });
 
 describe("selectPath keeps a same-path open record", () => {
-  const recOf = (id: string, sourcePath: string): TranscriptRecord => ({
-    schemaVersion: 1,
-    kind: "file",
-    id,
-    createdAt: "2026-08-30T12:00:00Z",
-    sourcePath,
-    sourceName: sourcePath,
-    status: "done",
-  });
+  const recOf = (id: string, sourcePath: string) => recordOf(id, sourcePath, { sourceName: sourcePath });
 
   it("re-selecting the open record's path does not swap to the last-registered record", () => {
     // rec-1 and rec-2 are two records of the SAME source; registering rec-2 makes it
@@ -733,14 +732,7 @@ describe("selectPath keeps a same-path open record", () => {
 describe("mergeSegmentTranslations kept-original marks", () => {
   it("sets translationsKept per merged segment; a clean re-merge clears it", async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
-    const rec: TranscriptRecord = {
-      schemaVersion: 1,
-      kind: "file",
-      id: "kept-1",
-      createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/k.mp3",
-      sourceName: "k.mp3",
-      status: "done",
+    const rec = recordOf("kept-1", "/k.mp3", {
       result: {
         text: "a b",
         segments: [
@@ -748,7 +740,7 @@ describe("mergeSegmentTranslations kept-original marks", () => {
           { start: 1, end: 2, text: "b" },
         ],
       },
-    };
+    });
     openHistoryRecord(rec);
     mergeSegmentTranslations(
       "kept-1",
@@ -772,9 +764,8 @@ describe("dropping a correction a re-translate was made from", () => {
   // The overlay persist debounces through window timers.
   beforeEach(() => vi.stubGlobal("window", globalThis));
   afterEach(() => vi.unstubAllGlobals());
-  const recOf = (id: string): TranscriptRecord => ({
-    schemaVersion: 1, kind: "file", id, createdAt: "2026-10-13T12:00:00Z",
-    sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done",
+  const recOf = (id: string) => recordOf(id, `/${id}.mp3`, {
+    createdAt: "2026-10-13T12:00:00Z",
     result: {
       text: "I red the book",
       segments: [{ start: 0, end: 1, text: "I red the book", translations: { de: "Ich rot das Buch" } }],
@@ -995,11 +986,9 @@ describe("dropping a correction a re-translate was made from", () => {
 describe("refreshRowMediaPaths after a storage move", () => {
   it("points the open link's queue row at its record's moved copy", async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
-    const rec: TranscriptRecord = {
-      schemaVersion: 1, kind: "url", id: "moved-1", createdAt: "2026-10-13T12:00:00Z",
-      sourcePath: "https://host/v", sourceName: "v", status: "done", mediaPath: "/old/links/moved-1.m4a",
-      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
-    };
+    const rec = recordOf("moved-1", "https://host/v", {
+      kind: "url", createdAt: "2026-10-13T12:00:00Z", mediaPath: "/old/links/moved-1.m4a", result: oneLine("x"),
+    });
     openHistoryRecord(rec);
     const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/v");
     expect(row()?.mediaPath).toBe("/old/links/moved-1.m4a");
@@ -1015,11 +1004,9 @@ describe("refreshRowMediaPaths after a storage move", () => {
   // refreshRowMediaPaths has nothing to re-point: the row follows the moved path the save hands back.
   it("a row follows a save Rust re-pointed after the reload", async () => {
     const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
-    const rec: TranscriptRecord = {
-      schemaVersion: 1, kind: "url", id: "moved-2", createdAt: "2026-10-23T12:00:00Z",
-      sourcePath: "https://host/w", sourceName: "w", status: "done", mediaPath: "/old/links/moved-2.m4a",
-      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
-    };
+    const rec = recordOf("moved-2", "https://host/w", {
+      kind: "url", createdAt: "2026-10-23T12:00:00Z", mediaPath: "/old/links/moved-2.m4a", result: oneLine("x"),
+    });
     openHistoryRecord(rec);
     const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/w");
     await flushRecordWrites();
@@ -1039,11 +1026,9 @@ describe("refreshRowMediaPaths after a storage move", () => {
 // so stripping the record's copy alone would leave the deleted path playing.
 describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'", () => {
   it("drops the wiped copy from the open link's row; a path the wipe did not delete stays", async () => {
-    const rec: TranscriptRecord = {
-      schemaVersion: 1, kind: "url", id: "wiped-1", createdAt: "2026-10-14T12:00:00Z",
-      sourcePath: "https://host/wiped", sourceName: "wiped", status: "done", mediaPath: "/links/wiped-1.m4a",
-      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
-    };
+    const rec = recordOf("wiped-1", "https://host/wiped", {
+      kind: "url", createdAt: "2026-10-14T12:00:00Z", mediaPath: "/links/wiped-1.m4a", result: oneLine("x"),
+    });
     openHistoryRecord(rec);
     const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/wiped");
     expect(row()?.mediaPath).toBe("/links/wiped-1.m4a");
@@ -1055,11 +1040,9 @@ describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'"
     expect(row()?.mediaPath).toBeUndefined();
   });
   it("a record that kept its copy (re-stamped during the wipe) keeps the row's path", async () => {
-    const rec: TranscriptRecord = {
-      schemaVersion: 1, kind: "url", id: "fresh-1", createdAt: "2026-10-14T12:00:00Z",
-      sourcePath: "https://host/fresh", sourceName: "fresh", status: "done", mediaPath: "/links/fresh-1.m4a",
-      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
-    };
+    const rec = recordOf("fresh-1", "https://host/fresh", {
+      kind: "url", createdAt: "2026-10-14T12:00:00Z", mediaPath: "/links/fresh-1.m4a", result: oneLine("x"),
+    });
     openHistoryRecord(rec);
     clearWipedRowMediaPaths(new Set(["/links/fresh-1.m4a"]));
     expect(useTranscribeRun.getState().queue.find((q) => q.path === "https://host/fresh")?.mediaPath).toBe("/links/fresh-1.m4a");
@@ -1069,15 +1052,14 @@ describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'"
 describe("mergeSegmentTranslations keeps a known translation source", () => {
   it("an auto-detect answer's empty source never overwrites the record's code", async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
-    openHistoryRecord({
-      schemaVersion: 1, kind: "file", id: "src-1", createdAt: "2026-10-11T12:00:00Z",
-      sourcePath: "/s.json", sourceName: "s.json", status: "done",
+    openHistoryRecord(recordOf("src-1", "/s.json", {
+      createdAt: "2026-10-11T12:00:00Z",
       result: {
         text: "a", language: "english",
         segments: [{ start: 0, end: 1, text: "a" }],
         translation: { source: "en", targets: ["de"] },
       },
-    });
+    }));
     mergeSegmentTranslations("src-1", { 0: { de: "A" } }, { targets: ["de"], source: "" });
     const saved = useTranscriptHistory.getState().records.find((r) => r.id === "src-1")!;
     expect(saved.result!.translation?.source).toBe("en");
@@ -1087,17 +1069,8 @@ describe("mergeSegmentTranslations keeps a known translation source", () => {
 describe("mergeSegmentTranslations respects the OPEN record", () => {
   it("a background merge of record A never repaints the open record B of the same source", async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
-    const of = (id: string, text: string): TranscriptRecord => ({
-      schemaVersion: 1,
-      kind: "file",
-      id,
-      createdAt: "2026-08-30T12:00:00Z",
-      // The SAME source: the queue row is keyed by path, so both records share it.
-      sourcePath: "/same.mp3",
-      sourceName: "same.mp3",
-      status: "done",
-      result: { text, segments: [{ start: 0, end: 1, text }] },
-    });
+    // The SAME source: the queue row is keyed by path, so both records share it.
+    const of = (id: string, text: string) => recordOf(id, "/same.mp3", { result: oneLine(text) });
     const a = of("open-a", "a");
     const b = of("open-b", "b");
     openHistoryRecord(a);
@@ -1112,16 +1085,7 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
   });
 
   it("an open record of a DIFFERENT path does not suppress A's own queue row", () => {
-    const of = (id: string, path: string): TranscriptRecord => ({
-      schemaVersion: 1,
-      kind: "file",
-      id,
-      createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: path,
-      sourceName: path.slice(1),
-      status: "done",
-      result: { text: id, segments: [{ start: 0, end: 1, text: id }] },
-    });
+    const of = (id: string, path: string) => recordOf(id, path, { result: oneLine(id) });
     const a = of("diff-a", "/a.mp3");
     const b = of("diff-b", "/b.mp3");
     openHistoryRecord(a);
@@ -1163,11 +1127,7 @@ describe("a run's late audio copy respects the OPEN record", () => {
 
   it("an older record of the same file opened meanwhile keeps its own audio", async () => {
     const { land, saved } = await runHeldCopy();
-    const older: TranscriptRecord = {
-      schemaVersion: 1, kind: "file", id: "late-older", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/late.mp3", sourceName: "late.mp3", status: "done",
-      result: { text: "old", segments: [{ start: 0, end: 1, text: "old" }] },
-    };
+    const older = recordOf("late-older", "/late.mp3", { result: oneLine("old") });
     expect(openHistoryRecord(older)).toBe(true);
     land("/store/new-copy.mp3");
     // The fresh record still gets its copy...
@@ -1410,16 +1370,9 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
     // the test env is `node`, so point `window` at the (faked) globals.
     vi.stubGlobal("window", globalThis);
     try {
-      const rec: TranscriptRecord = {
-        schemaVersion: 1,
-        kind: "file",
-        id: "gone-1",
-        createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/gone.mp3",
-        sourceName: "gone.mp3",
-        status: "done",
+      const rec = recordOf("gone-1", "/gone.mp3", {
         result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
-      };
+      });
       // Opened from History's list, so the mirror holds it.
       useTranscriptHistory.setState({ records: [rec], loaded: false });
       saveTranscriptRecord.mockClear();
@@ -1439,12 +1392,11 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
 });
 
 describe("forgetRecord(null) without deleted (the records stay; pending edits are dropped)", () => {
-  const rec: TranscriptRecord = {
-    schemaVersion: 1, kind: "file", id: "move-1", createdAt: "2026-10-13T12:00:00Z",
-    sourcePath: "/old/m.mp3", sourceName: "m.mp3", status: "done",
+  const rec = recordOf("move-1", "/old/m.mp3", {
+    createdAt: "2026-10-13T12:00:00Z",
     renames: { SPEAKER_00: "Alice" },
     result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
-  };
+  });
   beforeEach(async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
@@ -1487,20 +1439,15 @@ describe("forgetRecord(null) without deleted (the records stay; pending edits ar
 });
 
 describe("one current copy per record (the registries hold ids, never copies)", () => {
-  const rec: TranscriptRecord = {
-    schemaVersion: 1,
+  const rec = recordOf("cur-1", "https://example.com/watch?v=1", {
     kind: "url",
-    id: "cur-1",
-    createdAt: "2026-08-30T12:00:00Z",
-    sourcePath: "https://example.com/watch?v=1",
     sourceName: "clip",
-    status: "done",
     result: {
       text: "a",
       sourceMediaId: "srv-audio",
       segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }],
     },
-  };
+  });
   const saves = () => saveTranscriptRecord.mock.calls.filter(([id]) => id === rec.id);
 
   beforeEach(async () => {
@@ -1857,10 +1804,7 @@ describe("keep_video: the secondary download folds into the Download row's meta"
 
 // Opens a done link record as the settled panel; an earlier attempt left its Video row failed.
 function openFailedVideoLink(id: string, url: string): void {
-  openHistoryRecord({
-    schemaVersion: 1, kind: "url", id, createdAt: "2026-10-05T12:00:00Z",
-    sourcePath: url, sourceName: "Talk", status: "done",
-  });
+  openHistoryRecord(recordOf(id, url, { kind: "url", createdAt: "2026-10-05T12:00:00Z", sourceName: "Talk" }));
   useTranscribeRun.setState({ lastRunPath: url,
     stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
 }
