@@ -31,7 +31,6 @@ const NAMED_CODES = new Set<string>([
   ...Array.from({ length: 24 }, (_, i) => `F${i + 1}`),
 ]);
 
-/** Modifier `event.code`s — used to drive the live preview while a chord is held. */
 export const MODIFIER_CODES = new Set<string>([
   "ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight",
   "AltLeft", "AltRight", "MetaLeft", "MetaRight",
@@ -89,7 +88,7 @@ const NUMPAD_KEY_CODES: Record<string, string> = {
  * without the fallback such chords can't be captured at all. VK→key→VK round-trips
  * for letters/digits/named keys, so the binding fires on the same virtual key the
  * injector sends. Returns the raw (unusable) `code` when no fallback applies —
- * downstream `codeToToken` then rejects it exactly as before.
+ * downstream `codeToToken` then rejects it.
  */
 export function eventToCode(e: Pick<KeyboardEvent, "code" | "key" | "location">): string {
   if (e.code && e.code !== "Unidentified") return ownProp(LEGACY_CODES, e.code) ?? e.code;
@@ -144,7 +143,6 @@ export function codeToLabel(code: string): string {
   return prettyToken(code); // Numpad0 → Num 0, ArrowUp → ↑, Backspace → ⌫, F1 …
 }
 
-/** Display labels for a chord's code list (for `<kbd>` chips). */
 export function codesToLabels(codes: string[]): string[] {
   return codes.map(codeToLabel);
 }
