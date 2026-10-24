@@ -311,11 +311,10 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     result
 }
 
-/// Read a source's app id, editability (element focus), and whether its window is ACTIVE
-/// (window:activate). Pure I/O — the caller bounds it with a timeout. Returns `None` if it
-/// can't resolve (proxy error / empty name). `read_editable` reads the element's role/state
-/// (focus events); `read_active` reads the frame's STATE_ACTIVE (window:activate, to reject a
-/// background app's stray activate). Both off for window:deactivate (app id is enough).
+/// Read a source's app id, plus its editability (`read_editable`: the element's role/state, for
+/// element focus) and its frame's STATE_ACTIVE (`read_active`, for window:activate — to reject a
+/// background app's stray activate); both off for window:deactivate (app id is enough). Pure I/O —
+/// the caller bounds it with a timeout. `None` if it can't resolve (proxy error / empty name).
 async fn resolve_focus(
     item: &ObjectRefOwned,
     bus: &zbus::Connection,
