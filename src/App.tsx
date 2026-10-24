@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type DependencyList, type ReactNode, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, type ReactNode, useRef } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -22,6 +22,7 @@ import { flushRecordWrites, listenRetentionSweeps } from "@/lib/transcript/trans
 import { flushPersistEdits } from "@/lib/transcribeRun";
 import { flushOutcomeSave } from "@/lib/usageOutcome";
 import { tryNavigate } from "@/lib/navGuard";
+import { useTauriListener } from "@/lib/useTauriListener";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
 import Dashboard from "@/screens/Dashboard";
@@ -39,28 +40,6 @@ import Settings from "@/screens/Settings";
 function flushPendingWrites(): Promise<PromiseSettledResult<void>[]> {
   flushPersistEdits();
   return Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
-}
-
-// Subscribe to a Tauri event for the component's lifetime. React StrictMode (dev) runs the cleanup
-// BEFORE the listen() promise resolves; without the cancelled-guard the first listener is never
-// removed, so every event fires its handler twice (double sound + duplicate sessions). `subscribe`
-// is recreated each render, so only `deps` drive the effect.
-function useTauriListener(subscribe: () => Promise<() => void>, deps: DependencyList) {
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void subscribe()
-      .then((u) => {
-        if (cancelled) u();
-        else unlisten = u;
-      })
-      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
 }
 
 // Each page opens at its top: <main> is one persistent scroll container that would

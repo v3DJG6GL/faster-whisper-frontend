@@ -25,7 +25,7 @@
 // out of this window is a decision the user can see.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { abortLangPick, commitLangPick, isTauri, subscribe } from "@/lib/api";
+import { abortLangPick, commitLangPick, subscribe } from "@/lib/api";
 import { routeSourceCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
 import { comboboxInputProps, navKey, pickerKeyActsOnce } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
@@ -35,6 +35,7 @@ import { TargetRow } from "@/components/LanguagePicker";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
+import { useTauriListener } from "@/lib/useTauriListener";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 import { imeComposing } from "@/lib/keys";
 
@@ -81,32 +82,22 @@ export default function LangPick() {
   useEffect(() => watchSystemTheme(() => themeRef.current), []);
   useEffect(() => startAccentDrift(), []);
 
-  useEffect(() => {
-    if (!isTauri) return;
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-    void subscribe<Seed>("langpick://shown", (p) => {
-      const s = p ?? {};
-      setSeed(s);
-      themeRef.current = s.theme ?? "auto";
-      applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
-      // Preselect the preset: anything else makes the prompt a trap — confirming it by
-      // habit would silently change the outcome. (Esc, the other habit, aborts loudly instead.)
-      setChosen(cleanRecent(s.preset, targetCap(s.max)));
-      setQuery("");
-      setActive(0);
-      setShowSeq((n) => n + 1);
-    })
-      .then((un) => {
-        if (cancelled) un();
-        else unlisten = un;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
+  useTauriListener(
+    () =>
+      subscribe<Seed>("langpick://shown", (p) => {
+        const s = p ?? {};
+        setSeed(s);
+        themeRef.current = s.theme ?? "auto";
+        applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
+        // Preselect the preset: anything else makes the prompt a trap — confirming it by
+        // habit would silently change the outcome. (Esc, the other habit, aborts loudly instead.)
+        setChosen(cleanRecent(s.preset, targetCap(s.max)));
+        setQuery("");
+        setActive(0);
+        setShowSeq((n) => n + 1);
+      }),
+    [],
+  );
 
   useEffect(() => {
     inputRef.current?.focus();

@@ -37,6 +37,7 @@ import { IS_WINDOWS } from "@/lib/platform";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, PipelineSaveResult, ThemeName } from "@/lib/types";
 import { imeComposing } from "@/lib/keys";
+import { useTauriListener } from "@/lib/useTauriListener";
 
 // Client-side ceilings on the two server-supplied lists this window renders (defence in depth:
 // Rust caps the recent-words count but bounds the rules only by body bytes). This webview is
@@ -572,20 +573,7 @@ export default function QuickAdd() {
   // An OS/WM close (Alt+F4 / compositor close) hides the window in Rust but bypasses the in-app
   // Esc/X path, so Rust emits quickadd://closing — run the same closeNow (flush a pending save +
   // correct-on-close). closeNow's own hideQuickAdd is a no-op since Rust already hid it.
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    let cancelled = false;
-    subscribe("quickadd://closing", () => closeNow())
-      .then((f) => {
-        if (cancelled) f();
-        else un = f;
-      })
-      .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
-    return () => {
-      cancelled = true;
-      un?.();
-    };
-  }, [closeNow]);
+  useTauriListener(() => subscribe("quickadd://closing", () => closeNow()), [closeNow]);
 
   // Esc closes the window from anywhere in it — not only when a text field is focused.
   // (Clicking empty space moves focus to <body>, an ancestor of the React root, so a

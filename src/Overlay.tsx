@@ -4,6 +4,7 @@ import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri, subscribe } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useTauriListener } from "@/lib/useTauriListener";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { langCode, langText } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screenRegistry";
@@ -552,24 +553,14 @@ export default function Overlay() {
   // leaving the dot dead to every later hover. The Rust side forwards the compositor-fed
   // GDK crossings as `chip://pointer`; the DOM handlers above stay attached as a
   // same-frame fast path (and as the only path on Windows, which doesn't emit this event).
-  useEffect(() => {
-    if (!isTauri) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    subscribe<boolean>("chip://pointer", (p) => {
-      if (p) onPointerEnterRef.current();
-      else clearHover();
-    })
-      .then((un) => {
-        if (cancelled) un();
-        else unlisten = un;
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [clearHover]);
+  useTauriListener(
+    () =>
+      subscribe<boolean>("chip://pointer", (p) => {
+        if (p) onPointerEnterRef.current();
+        else clearHover();
+      }),
+    [clearHover],
+  );
   // `language` is sync-authored and lands unattended — the sanitizers clamp neither its length nor
   // its character set, and a language edit raises no security-review prompt — and it sits in a
   // `shrink-0` row beside the `min-w-0` live-preview cell: unbounded, it squeezes out the surface
