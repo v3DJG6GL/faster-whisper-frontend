@@ -2,9 +2,8 @@
 //
 // This lives OUTSIDE the component on purpose: switching to another tab
 // unmounts the screen, and a run's queue, results, live progress, renames
-// and colors must survive that (the async pump never depended on the mount —
-// it kept running against dead setState calls before this store existed).
-// Returning to the tab re-subscribes to exactly where the run is.
+// and colors must survive that. Returning to the tab re-subscribes to exactly
+// where the run is.
 
 import { create } from "zustand";
 import {
@@ -214,9 +213,8 @@ export function activeRailIndex(
   }
   if (!progress?.stage) return 0;
   if (progress.stage === "waiting") {
-    // Find the first stage whose clock hasn't closed AND isn't skipped.
-    // Without the skipped check, a declined stage's seeded clock (never
-    // closed by a rail transition) latches this forever.
+    // Skipped stages are excluded: a declined stage's seeded clock (never
+    // closed by a rail transition) would latch this forever.
     const i = stages.findIndex((st) => !stageTimes[st]?.end && !skipped?.has(st));
     return i === -1 ? railIndex(progress.stage, stages) : i;
   }
@@ -273,9 +271,7 @@ export function skippedStages(s: {
   return out;
 }
 
-/** Why a stage the run asked for did not happen — one sentence per stage. The
- *  old two-way branch predated `translating`/`downloading` on the rail and
- *  printed the diarization sentence for both. */
+/** Why a stage the run asked for did not happen — one sentence per stage. */
 export const SKIPPED_EXPLANATIONS: Record<RailStage, string> = {
   downloading: " — the server already had the media.",
   separating: " — transcribing the original audio instead.",
@@ -526,8 +522,9 @@ export function planTimeline(s: {
  *  keeps the top row when it fits inside its own segment and nothing before
  *  it overflows into its spot; otherwise it drops to the stagger row on a
  *  longer leader tick. A label that would run past the strip's right edge is
- *  pulled left to end exactly at it (`offset` ≤ 0, applied relative to its
- *  column). `px` are segment widths, `labelPx` measured label widths. */
+ *  pulled left to end exactly at it. `offset` is relative to the label's
+ *  column (negative = pulled left, positive = pushed right past a
+ *  predecessor). `px` are segment widths, `labelPx` measured label widths. */
 export function axisLayout(
   px: number[],
   labelPx: number[],
@@ -538,7 +535,6 @@ export function axisLayout(
   let topEnd = -Infinity;
   let dropEnd = -Infinity;
   px.forEach((w, i) => {
-    // Clamp so the label never crosses the strip's right edge.
     const xl = Math.min(x, Math.max(totalW - labelPx[i], 0));
     const clamped = xl < x - 0.5;
     const fitsOwn = (labelPx[i] <= w - 2 || i === px.length - 1) && !clamped;
@@ -584,8 +580,8 @@ function lanesOf(p: PlanStage | undefined, done: boolean): TimelineLane[] | unde
   return lanes.length ? lanes : undefined;
 }
 
-/** Everything the pump needs from the screen, captured once per run — the
- *  same freeze-at-start the old component closure gave. */
+/** Everything the pump needs from the screen, captured once per run (frozen at
+ *  start). */
 export interface RunContext {
   backendId: string;
   serverUrl: string;
@@ -681,8 +677,9 @@ export interface TranscribeRunState {
     /** The link card's explicit rung (a yt-dlp format id); absent = the
      *  Settings height cap decides at run time. */
     videoFormat?: string | null;
-    /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) when it
-     *  differs from the screen's — named by the site, detected, or picked. */
+    /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) named by the site,
+     *  detected, or picked — kept even when it equals the screen's (frozenLinkSpoken); absent =
+     *  follow the screen's pick at run time. */
     spokenLanguage?: string;
     /** Whether the server's own default (as the card saw it) is multilingual — lets an
      *  Auto-detect pick send multilingual=false instead of inheriting it. */
@@ -694,7 +691,7 @@ export interface TranscribeRunState {
     prefetchExpiresAt?: number;
     /** The backend that issued `prefetchMediaId` (see linkPrefetchFor). */
     prefetchBackendId?: string;
-    /** The link card's site-subtitle plan (D86), frozen at Add link. */
+    /** The link card's site-subtitle plan, frozen at Add link. */
     siteSubs?: SiteSubsRun;
   }>;
   /** Options/overrides of the current or last run as REQUESTED (Retry replays them). A retry
@@ -756,11 +753,9 @@ const get = useTranscribeRun.getState;
  *  foldProgress and activeRailIndex first ask mtFetchStage, which keeps a
  *  "downloading" poll after the rail moved past the download on the active row. */
 export function railOf(stage: string | undefined | null): RailStage {
-  // "resolving" (the metadata probe) folds onto the download row the same
-  // way "waiting"/"analyzing" fold onto transcribe — seconds-long phases
-  // don't get their own rail rows.
+  // Seconds-long phases fold onto a neighbouring row (as "waiting"/"analyzing" do onto
+  // transcribe) instead of getting their own rail rows.
   if (stage === "downloading" || stage === "resolving") return "downloading";
-  // "loading" is the MT-model loading sub-phase — always part of translation.
   if (stage === "loading") return "translating";
   return stage === "separating" || stage === "diarizing" || stage === "translating"
     ? stage
@@ -798,13 +793,11 @@ export function patchItem(path: string, patch: Partial<QueueItem>) {
 }
 
 /** Changed inputs abandon pending work (epoch bump so a stale in-flight
- *  completion can't land) — but SETTLED results survive: adding one more file
- *  used to wipe every finished transcript from view, and they are in the
- *  history now, so keep showing them. */
+ *  completion can't land), but SETTLED results stay on view — they are in
+ *  the history already. */
 export function resetForInputChange() {
-  // Reached from addFiles/removeFile: touching the file list mid-run used to
-  // abandon the running file silently, leaving the server transcribing for a
-  // queue we had already thrown away.
+  // Also reached mid-run (addFiles/removeFile): stop the running file's server job rather
+  // than leave the server transcribing for a queue we already threw away.
   abandonActiveRun();
   set((s) => {
     const settled = s.queue.filter(
@@ -885,8 +878,8 @@ export function selectPath(path: string | null) {
   // record registered for the newly selected row. If the CURRENTLY open
   // record already belongs to this path, keep it — idByPath only holds
   // the last-registered record per path, and the user may have an OLDER
-  // same-path record open (three records of one URL). Recomputing here used
-  // to swap the overlay/run key under the viewer mid-look.
+  // same-path record open (three records of one URL); recomputing would
+  // swap the overlay/run key under the viewer mid-look.
   set((s) => {
     const cur = s.openRecordId ? registered(s.openRecordId) : undefined;
     return {
@@ -899,13 +892,12 @@ export function selectPath(path: string | null) {
   });
 }
 
-// ── history bridge ───────────────────────────────────────────────────────────
 // Which records the workbench may re-save, by ID only — the record itself is always read
-// back from the history mirror (currentRecord). These maps used to hold full copies, which
-// went stale the moment the viewer (or a media fetch) upserted the record directly: the
-// next rename/edit re-saved the old copy and reverted videoPath, sourceMediaId, an expired
-// id's deletion. Every registration also upserts (recordRun, the persist paths) or passes a
-// record the mirror holds (openHistoryRecord), so a registered id resolves unless deleted.
+// back from the history mirror (currentRecord): a held copy goes stale the moment the viewer
+// (or a media fetch) upserts the record directly, and the next rename/edit would re-save it,
+// reverting videoPath, sourceMediaId, an expired id's deletion. Every registration also
+// upserts (recordRun, the persist paths) or passes a record the mirror holds
+// (openHistoryRecord), so a registered id resolves unless deleted.
 //
 // Overlay slots and edit persistence are keyed by RECORD ID — the path can't do it, two
 // records of the same URL share theirs.
@@ -935,11 +927,11 @@ function registered(key: string): TranscriptRecord | undefined {
  *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk).
  *  `deleted` (bulk only): the records themselves are being deleted (Settings' clear) — stop
  *  every lost request's job too, as the single-id path does, or the finished job lands its
- *  transcript again. Without it only the pending edit writes go (dropped, not landed); the ID
- *  registry stays — it re-reads the mirror (currentRecord), so the open record keeps its
- *  overlays and later edits save onto the reloaded copy. A storage move does not use this: it
- *  lands those writes (flushPersistEdits), since Rust re-points every save onto the moved
- *  paths and a dropped one loses the edit from both the disk and the reloaded mirror. */
+ *  transcript again. Without it (tests only; no app caller) only the pending edit writes go
+ *  (dropped, not landed); the ID registry stays — it re-reads the mirror (currentRecord). A
+ *  storage move does not use this: it lands those writes (flushPersistEdits), since Rust
+ *  re-points every save onto the moved paths and a dropped one loses the edit from both the
+ *  disk and the reloaded mirror. */
 export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): void {
   if (id === null) {
     for (const t of persistTimers.values()) window.clearTimeout(t);
@@ -1021,8 +1013,7 @@ export function clearWipedRowMediaPaths(wiped: ReadonlySet<string>): void {
 
 /** Re-save a record with the CURRENT overlays, debounced — every
  *  rename/recolor/correction lands in the history within a second, without a
- *  disk write per keystroke. `key` is the overlay key: the record id
- *  (legacy path keys still resolve through idByPath). The record is re-read
+ *  disk write per keystroke. `key` is the overlay key. The record is re-read
  *  when the timer fires, so the overlays land on its latest copy. */
 function schedulePersistEdits(key: string) {
   if (!registered(key)) return;
@@ -1030,8 +1021,6 @@ function schedulePersistEdits(key: string) {
   persistTimers.set(key, window.setTimeout(() => persistEditsNow(key), 800));
 }
 
-/** The debounced write itself: drop the key's timer entry first, then re-save the record's
- *  latest copy with the current overlays. */
 function persistEditsNow(key: string) {
   persistTimers.delete(key);
   const rec = registered(key);
@@ -1121,9 +1110,8 @@ function patchOwnRow(rec: TranscriptRecord, patch: Partial<QueueItem>) {
 }
 
 /** Copy the finished run's input audio into the app's media store (unless the
- *  setting is off), then late-link the path into the record and queue row —
- *  exactly the dictation recording-path pattern. Best-effort: a failed copy
- *  never touches the run outcome. */
+ *  setting is off), then late-link the path into the record and queue row.
+ *  Best-effort: a failed copy never touches the run outcome. */
 function copyRunMedia(path: string, rec: TranscriptRecord) {
   const s = useApp.getState().settings;
   if (s.transcribe?.keepAudioCopies === false) return;
@@ -1194,9 +1182,7 @@ const NO_JOB_RECORD = "this server keeps no record of how the video ended — Tr
 const TOOK_TOO_LONG = "the video took too long — Try again downloads it once more";
 
 /** The transcript returned while its video was still downloading: keep
- *  polling the run's progress id (its own poller: every second while this
- *  link is the one on screen, every 5 s otherwise or while the window is
- *  hidden — the run poller is gone)
+ *  polling the run's progress id (its own poller — the run poller is gone)
  *  until the `video` sub-object reaches a terminal state, folding it
  *  into the rail only while this run is still the one on screen, then pull
  *  the file. Gives up when the entry vanishes (server restart / stale
@@ -1324,7 +1310,6 @@ function awaitRunUrlVideo(
     skip = 0;
     hiddenSkip = false;
   });
-  // Every way the poll ends drops the show listener with the timer.
   function end() {
     window.clearInterval(timer);
     offHidden();
@@ -1415,8 +1400,7 @@ function awaitRunUrlVideo(
 
 /** The Video row's "Try again": fetch the link's video on demand for the
  *  panel's finished link run, folding the server's progress into the same
- *  `video` sub-object the run used, then pull the file like a kept one.
- *  Runs through the run's own progress id so the rail keeps one clock. */
+ *  `video` sub-object the run used, then pull the file like a kept one. */
 export function retryRunVideo(path: string, ctx: RunContext): void {
   const s = get();
   // The OPEN record first: idByPath holds the last-registered record of the path, and
@@ -1497,10 +1481,9 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
   // Loading a history record replaces the workbench (epoch bump below), so any
   // still-registered server-side run is ours to stop.
   abandonActiveRun();
-  // Re-opening the open record (its Recent row stays clickable) while an edit still waits for
-  // its debounced save: the caller's row predates that edit, and restoring the overlays from it
-  // wiped the edit, which the pending timer then re-saved as gone. Save it now and read the
-  // overlays back from the saved copy.
+  // Re-opening the open record while an edit still waits for its debounced save: the caller's
+  // row predates that edit, and restoring the overlays from it would lose the edit (the pending
+  // timer then re-saves it as gone). Save now and read the overlays back from the saved copy.
   const pending = persistTimers.get(rec.id);
   if (pending !== undefined) {
     window.clearTimeout(pending);
@@ -1547,7 +1530,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     runOptions: undefined,
     lastOverrides: {},
     // Overlay slots keyed by record ID — the path can't do it, two records
-    // of the same URL share theirs (edits used to bleed between them).
+    // of the same URL share theirs.
     renames: { ...s.renames, [rec.id]: rec.renames ?? {} },
     speakerColors: { ...s.speakerColors, [rec.id]: rec.speakerColors ?? {} },
     edits: { ...s.edits, [rec.id]: rec.edits ?? {} },
@@ -1640,11 +1623,10 @@ export function clearEdits(key: string) {
 }
 
 /** Merge fresh per-segment translations into a record (re-translate /
- *  retro-translate): updates the persisted record DIRECTLY (not via the
- *  debounced schedulePersistEdits — its single timer handle could drop a
- *  pending write for another key), patches the open queue item so the viewer
- *  re-renders, and clears the merged indexes' stale marks — only where the
- *  merge re-translated what the line says now, in every language it holds. */
+ *  retro-translate): updates the persisted record directly (not debounced),
+ *  patches the open queue item so the viewer re-renders, and clears the merged
+ *  indexes' stale marks — only where the merge re-translated what the line says
+ *  now, in every language it holds. */
 export function mergeSegmentTranslations(
   key: string,
   patch: Record<number, Record<string, string>>,
@@ -1666,9 +1648,6 @@ export function mergeSegmentTranslations(
   const segments = rec.result.segments.map((seg, i) => {
     if (!patch[i]) return seg;
     const next: typeof seg = { ...seg, translations: { ...seg.translations, ...patch[i] } };
-    // Carry the marks of languages this patch did NOT touch: a re-translate
-    // targeting a SUBSET of the record's tracks must not erase the untouched
-    // tracks' kept-original marks.
     const touched = new Set(Object.keys(patch[i]));
     const carried = (seg.translationsKept ?? []).filter((l) => !touched.has(l));
     const marks = [...carried, ...(kept?.[i] ?? [])];
@@ -1778,13 +1757,10 @@ export function foldProgress(p: BatchProgress) {
       if (prev && pc && !pc.end) {
         stageTimes[prev] = { ...pc, end: now };
       }
-      // Close every still-open clock whose pipeline order is before `cur`.
-      // This handles seeded clocks for stages the server skipped (e.g. the
-      // pump seeds "separating" at request entry, but if the server declines
-      // BGM separation and jumps to "transcribing", the seeded clock must be
-      // closed — otherwise it spans the whole run and defeats the "skipped"
-      // inference). Only when `obs` is true: "waiting" is not evidence that
-      // the earlier stages won't still happen.
+      // Close still-open clocks of earlier stages: a clock the pump seeded for a
+      // stage the server skipped would otherwise span the whole run and defeat
+      // the "skipped" inference. Not on "waiting": it is no evidence the earlier
+      // stages won't still happen.
       if (obs) {
         const curIdx = RAIL_ORDER.indexOf(cur);
         for (let ri = 0; ri < curIdx; ri++) {
@@ -1875,8 +1851,8 @@ export function foldProgress(p: BatchProgress) {
 let railFileSeq = 0;
 
 /** The in-flight file's server-side progress id + where to send a cancel for
- *  it. Module-level (not store state): only cancelRun reads it, and it must
- *  survive component unmounts exactly like the pump itself. */
+ *  it. Module-level (not store state): only abandonActiveRun reads it, and it
+ *  must survive component unmounts exactly like the pump itself. */
 let activeCancel: {
   /** Where a cancel goes, resolved when it is sent — a re-attached run's follows the
    *  backend's current address (an edit mid-run applies). */
@@ -2159,9 +2135,9 @@ export async function translateParsed(
       chars += parsed.segments[end].text.length;
       if (chars > TRANSLATE_CHUNK_CHARS) break;
     }
-    // A cancel or an input change bumps the epoch; the pump only checks it after this
-    // function returns, so without this a feature-length file kept POSTing chunk after
-    // chunk for minutes after Cancel. The partial result is discarded by the pump.
+    // A cancel or an input change bumps the epoch, but the pump only checks it after this
+    // returns: stop here so a feature-length file stops POSTing chunks on Cancel. The pump
+    // discards the partial result.
     if (epoch !== undefined && epoch !== get().epoch) break;
     // The run panel reads every poll of this chunk against where it sits in the whole source.
     set((s) => ({
@@ -2225,8 +2201,7 @@ export async function translateParsed(
 /** Pair parsed text-source segments with their translations — and with the targets the
  *  server's quality guard KEPT as the source text, marked exactly as the audio path's
  *  `mergeSegmentTranslations` marks them, so the viewer flags them, "Re-translate N
- *  flagged" finds them and the exports drop them. Without the mark a kept line was stored
- *  and exported as a genuine translation. */
+ *  flagged" finds them and the exports drop them. */
 export function assembleTranslatedSegments(
   parsed: ImportedText["segments"],
   results: Record<string, string>[],
@@ -2285,7 +2260,7 @@ function attachFetched(
   return attachSiteTracks(res, timed, got.warnings);
 }
 
-/** A transcription result + the link's site tracks (D86). Shared by the run and
+/** A transcription result + the link's site tracks. Shared by the run and
  *  by a job result ingested after a restart. Only a link whose site transcript
  *  fell back to the audio is ever ledgered with a transcript track named, so that
  *  track never rides along as an extra site track (it may download fine now) and
@@ -2306,9 +2281,9 @@ export async function withSiteTracks(
 /** The translation targets a link run actually sends: with the site's own tracks in use, only
  *  the targets the site lacks (`mtTargets`, possibly none — the plan already leaves the link's
  *  language out); else the run's own, less the link's own spoken language when it names one (frozen
- *  at Add link: picked, detected or named by the site). The run's list is pruned of the SCREEN's
- *  source only, so an English link on a German screen with an "en" chip sent translate_to ["en"]:
- *  an en→en copy track, and a warm-up of the translation model for nothing. A backend without
+ *  at Add link: picked, detected or named by the site). The run's list arrives pruned of the
+ *  SCREEN's source only, so without this an English link on a German screen with an "en" chip
+ *  would get an en→en copy track and a translation-model warm-up for nothing. A backend without
  *  a T2T stage (`translateTo` undefined) sends nothing, even with a site plan frozen at Add link on
  *  one that had it; chips cleared after Add (`[]`) still send the frozen `mtTargets`. Shared by
  *  runLink, the warm-up and the run panel's rail, so the rail never shows a Translating stage the
@@ -2447,8 +2422,6 @@ async function pump(
 ) {
   if (get().running) return;
   set({ running: true });
-  // One failure path for the queue item AND its history record — the three sites below
-  // used to spell the pair out (and one repeated the message literal in both calls).
   const failFile = (path: string, error: string) => {
     patchItem(path, { status: "failed", error });
     recordRun(path, ctx, options, { status: "failed", error });
@@ -2479,10 +2452,9 @@ async function pump(
       }
       patchItem(next.path, { status: "running", siteFallback: undefined });
       // Live progress (full backend only): a fresh hex id per file keys the
-      // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
-      // error (older backend, standard server) just leaves it indeterminate.
-      // Text runs poll too: /v1/text/translations registers the same progress
-      // entry (stage "translating" + last_text live line).
+      // server-side entry. Best-effort — a poll error (older backend) just
+      // leaves it indeterminate. Text runs poll too: /v1/text/translations
+      // registers the same progress entry (stage "translating" + last_text).
       const pid = ctx.standard ? null : newProgressId();
       activeCancel = pid
         ? { serverUrlOf: () => ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
@@ -2508,9 +2480,9 @@ async function pump(
       // this file's polls from the previous file's last in-flight one — a late
       // answer would open the previous file's stage on the next file's clocks.
       let pollingDone = false;
-      // Monotonic sequence: drop any response whose seq is older than the
-      // newest folded one — out-of-order responses (poll latency > 1s on a
-      // loaded backend) would rewind the stage clocks.
+      // Monotonic sequence: fold only the newest-sent poll's answer — an
+      // out-of-order response (poll latency > 1s on a loaded backend) would
+      // rewind the stage clocks.
       let pollSeq = 0;
       let pollInFlight = false;
       // The file's ledger row is on disk (the server holds a job under pid),
@@ -2519,7 +2491,7 @@ async function pump(
       let handedOff = false;
       const poller = pid
         ? window.setInterval(() => {
-            if (pollInFlight) return; // don't stack concurrent polls
+            if (pollInFlight) return;
             const seq = ++pollSeq;
             const sentAt = Date.now();
             pollInFlight = true;
@@ -2540,8 +2512,6 @@ async function pump(
           }, 1000)
         : undefined;
       try {
-        // A URL item's keep-video choice: the link card's per-item pick,
-        // else the Settings default — only when the server can do it.
         let itemOptions = options;
         if (isUrl && ctx.urlVideoEnabled) {
           const meta = get().urlMeta[next.path];
@@ -2572,11 +2542,9 @@ async function pump(
         // The in-flight ledger row lands BEFORE the request leaves: the
         // server's job row and ours share this id, and a quit in the first
         // second must still find the run at the next launch. Text sources
-        // post N chunk requests under one id (translateTextSource) — a
-        // server job row is one chunk, not the run — so they stay out, and
-        // so does a link whose transcript is the site's own subtitle track
-        // (no server job) — unless that track fails and the link falls back
-        // to a transcription: runLink ledgers it right before that request.
+        // stay out (N chunk requests share the id, so a server job is one
+        // chunk, not the run), and so does a link served by the site's own
+        // subtitles (no server job) — runLink ledgers it if it falls back.
         const siteTranscript = isUrl && linkUsesSiteTranscript(get().urlMeta[next.path]);
         const ledgerRow = async () => {
           try {
@@ -2687,8 +2655,8 @@ async function pump(
             set({ progress: null, stageTimes: {}, stageMeta: {} });
           } else {
             // Last file of the run: KEEP the rail data — the panel settles
-            // into its completed-receipts state (per the approved design)
-            // until the input changes. Just close any still-open clocks.
+            // into its completed-receipts state until the input changes. Just
+            // close any still-open clocks.
             const doneAt = Date.now();
             set((s) => ({
               stageTimes: Object.fromEntries(
@@ -2716,7 +2684,7 @@ export function startRun(options: TranscribeOptions | undefined,
   // stop it before the new run competes with it for the same GPU.
   abandonActiveRun();
   // A lost request's job for a file this run re-queues would transcribe it twice: stop
-  // those watchers first (see retryFile). Other files' orphans keep landing in History.
+  // those watchers first. Other files' orphans keep landing in History.
   stopOrphans(s.files);
   const epoch = s.epoch + 1;
   set({
@@ -2774,13 +2742,12 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  the wire-shaping keys follow the server the retry goes to: `standard` (how an "auto"
  *  language goes out), for Whisper's translate task the endpoint it is routed to, and on a
  *  server without a translating stage (any standard one, or a full one with translation off)
- *  no T2T slice at all — `translateTo` undefined is "no translating stage" (as
- *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
- *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
- *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
- *  `runOptions` (retryFile stores these there; `lastOptions` keeps the requested ones for the
- *  next retry), shows no Translating stage. `translationAvailable` unset = unknown (caps not
- *  loaded): only a standard server is assumed to lack it. */
+ *  no T2T slice at all. `translateTo` undefined means "no translating stage" (as
+ *  `translationRunOptions` leaves it) and stays undefined: an explicit empty list would make
+ *  `linkTranslateTo` turn a site plan's frozen targets back on while the rail (it reads
+ *  `runOptions`, where retryFile stores these) shows no Translating stage.
+ *  `translationAvailable` unset = unknown (caps not loaded): only a standard server is
+ *  assumed to lack it. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
@@ -2819,8 +2786,6 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // A retry may carry NEW decode overrides (the VAD one-click fix); the rail's honesty
   // line reads the store, so the store must learn them too.
   if (overrides) set({ lastOverrides: overrides });
-  // A lost request's job may still be running under a headless watcher: stop it, or
-  // the old job lands a second record (and transcribes the file twice).
   stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
   // Reconciled from the REQUESTED options every time (lastOptions, never overwritten here): a
@@ -2836,8 +2801,8 @@ export function cancelRun() {
   // Abort the in-flight file AND skip everything queued. Two sides to the
   // abort: the server is told to stop the actual work (dropping the HTTP
   // request alone leaves its pipeline stages running to completion), and
-  // the store epoch bump drops our end of the request. Bumping the epoch
-  // makes the pump exit and ignores the aborted call's rejection.
+  // cancelFileTranscription drops our end of the request. The store epoch
+  // bump makes the pump exit and ignore the aborted call's rejection.
   abandonActiveRun();
   set((s) => ({
     epoch: s.epoch + 1,
