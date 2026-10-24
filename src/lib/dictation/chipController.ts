@@ -275,9 +275,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // mode the words are still sent but the chip only surfaces them while hovered.
     // Tail only: `state.partial` is the whole document since the last hard break and this
     // payload crosses IPC on every ~30 Hz level tick, while the chip shows just the last 400
-    // code points. 800 UTF-16 units is the Overlay's own first cut (>=400 code points). The
-    // cut must be well-formed HERE: `emit` JSON-encodes the payload and serde_json rejects a
-    // lone surrogate on the IPC hop, which drops the whole chip update — see tailUnits.
+    // code points. 800 UTF-16 units is the Overlay's own first cut (>=400 code points); the
+    // cut must be well-formed HERE, before the IPC hop — see tailUnits.
     partial: rec.realtimePreview ? tailUnits(state.partial, 800) : "",
     previewOnHover: rec.realtimePreview && rec.realtimePreviewOnHover,
     dictationError: state.dictationError ?? "",
@@ -291,8 +290,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // …and the Signal colour, derived per window (theme.ts) — the chip cannot read the store.
     accentHue: state.settings.accentHue,
     accentMotion: state.settings.accentMotion,
-    // Overlay-chip behaviour (persistent dock / edge-peek / quick-launch). The ?? fallbacks
-    // read the store defaults (hydrate fills missing fields, so they're belt-and-braces).
+    // The ?? fallbacks read the store defaults (hydrate fills missing fields, so they're
+    // belt-and-braces).
     persistentDock: rec.persistentDock ?? REC_DEFAULTS.persistentDock,
     overlayPeek: rec.overlayPeek ?? REC_DEFAULTS.overlayPeek,
     peekTimeoutSec: rec.peekTimeoutSec ?? REC_DEFAULTS.peekTimeoutSec,
