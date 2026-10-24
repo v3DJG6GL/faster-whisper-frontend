@@ -2,12 +2,10 @@
 //!
 //! Played from Rust (not the WebView): dictation is usually triggered by a global
 //! hotkey, which carries no DOM user-gesture, so WebView audio would be blocked by
-//! the autoplay policy. Tones are built sample-by-sample with a soft attack +
-//! exponential-decay envelope (no hard on/off → no click) and a light second
-//! harmonic for a gentle "bell" timbre — a flat-envelope sine cut abruptly was the
-//! source of the harsh "beep". Cues are two-tone: rising for start, falling for
-//! stop, low/falling for error. The "Sound effects" setting is checked on the
-//! frontend before this command is invoked.
+//! the autoplay policy. Soft attack + exponential decay and a light second harmonic
+//! give a gentle "bell": a flat-envelope sine cut abruptly clicks and sounds like a
+//! harsh beep. The "Sound effects" setting is checked on the frontend before this
+//! command is invoked.
 
 const SAMPLE_RATE: u32 = 48_000;
 const ATTACK_MS: f32 = 10.0;
