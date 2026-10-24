@@ -52,7 +52,7 @@ const FILES = [
 // Writers make targeted single-line edits to keep the diff minimal.
 function writeJsonVersion(p, v) {
   const src = readFileSync(p, "utf8");
-  const re = /("version":\s*")[^"]*(")/; // first match = top-level
+  const re = /("version":\s*")[^"]*(")/;
   // Test the regex, not `out === src`: an idempotent re-set yields identical bytes, so that guard
   // would throw on tauri.conf.json (written first) and leave the other two files unwritten.
   if (!re.test(src)) throw new Error(`no top-level "version" found in ${p}`);
