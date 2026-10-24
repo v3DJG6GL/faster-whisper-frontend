@@ -571,7 +571,6 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const tw = w.word.trim();
     if (!tw) continue;
     const at = text.indexOf(tw, cur);
-    // Only whitespace/punctuation may sit between consecutive words.
     if (at < 0 || !/^[\s\p{P}]*$/u.test(text.slice(cur, at))) return null;
     if (out.length) {
       const pv = out[out.length - 1];
