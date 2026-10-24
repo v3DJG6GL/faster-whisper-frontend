@@ -296,7 +296,7 @@ export const CONFIG_VERSION = 3;
 function migrateConfig(raw: unknown): Config {
   const c = raw as Record<string, unknown> | null;
   // No config at all = a genuinely fresh install: EMPTY (no seeded backend or
-  // profiles) — the first-run onboarding / Home checklist takes it from here.
+  // profiles) — the first-run onboarding / Dashboard checklist takes it from here.
   if (!c || typeof c !== "object") {
     return { settings: DEFAULT_SETTINGS, backends: [], profiles: [] };
   }
@@ -849,8 +849,8 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       // The 30 s usage poll hands over a fresh object even when the numbers are identical: keep the
       // `usage` reference stable, or every poll re-emits the overlay payload and re-renders the
-      // UsageStats chart. The document is small (today/total + a ≤30-point series), so
-      // stringify-compare is cheap; JSON.stringify(null) === "null" covers the null path.
+      // UsageStats chart. The fixed 30-day document is small, so stringify-compare is cheap;
+      // JSON.stringify(null) === "null" covers the null path.
       // hasOwn, not `in`: an id like `constructor` is inherited-present, and skipping the write
       // for it would leave the prototype member in place for every reader.
       if (hasOwn(s.usage, backendId) && JSON.stringify(s.usage[backendId]) === JSON.stringify(stats)) return {};
