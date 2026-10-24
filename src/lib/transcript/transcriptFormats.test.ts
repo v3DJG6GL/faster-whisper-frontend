@@ -642,9 +642,8 @@ describe("multi-target language tagging", () => {
     expect(out).not.toMatch(/Hallo zusammen\. Salut/);
     expect(out).toContain("[DE]");
     expect(out).toContain("[FR]");
-    // Every paragraph is tagged, and no paragraph mixes two languages.
-    // (Paragraphs group by speaker TURN, so the tracks alternate per turn
-    // rather than forming two document-length blocks.)
+    // Paragraphs group by speaker TURN, so the tracks alternate per turn
+    // rather than forming two document-length blocks.
     const paras = out.trim().split("\n\n");
     expect(paras.length).toBeGreaterThan(1);
     for (const para of paras) {
