@@ -130,7 +130,6 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     let mut stream = std::pin::pin!(conn.event_stream());
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(4));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // Single-flight guard for the periodic deep-detection poke (see the ticker arm below).
     let poke_busy = Arc::new(AtomicBool::new(false));
     // window:activate/deactivate events were lost while disconnected (`run` reuses this
     // snapshot across reconnects), so a kept foreground mark may name an app the user has
