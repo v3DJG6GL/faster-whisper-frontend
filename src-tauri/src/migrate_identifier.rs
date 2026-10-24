@@ -163,9 +163,9 @@ pub enum Verdict {
 
 /// The launch's verdict from what the migration saw. `failed` = the old folders whose move
 /// failed (nothing is lost: a failed move leaves the old folder whole and the new one absent).
-/// `unrepointed` = the config.json files whose settings could not be re-pointed into a moved
-/// folder: going on would run a session on the vacated folder they still name, re-created
-/// empty, and strand what it records there once the next launch's retry re-points them.
+/// `unrepointed` = the config.json files whose failed re-point stops this launch (see
+/// `repoint_fault_stops`): going on would run a session on the vacated folder they still name,
+/// re-created empty, and strand what it records there once the next launch's retry re-points them.
 fn verdict(legacy_running: bool, failed: &[PathBuf], unrepointed: &[PathBuf]) -> Verdict {
     if legacy_running {
         return Verdict::Stop(
