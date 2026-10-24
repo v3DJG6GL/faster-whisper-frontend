@@ -78,7 +78,7 @@ pub fn play_cue(kind: String) {
                 amp: 0.18,
             },
         ],
-        // low, gently dissonant fall — error (no piercing 2–4 kHz content)
+        // low falling major third — error (no piercing 2–4 kHz content)
         "error" => &[
             Note {
                 freq: 440.00,
