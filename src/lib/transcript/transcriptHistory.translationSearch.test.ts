@@ -3,7 +3,6 @@
 // not in the whole-text `result.translations` snapshot a run leaves when it first finishes.
 import { describe, expect, it } from "vitest";
 import { recordTranslationTexts, type TranscriptRecord } from "./transcriptHistory";
-// Raw source (vite `?raw`).
 import historySrc from "../../screens/History.tsx?raw";
 
 const rec = (result: Record<string, unknown>): TranscriptRecord =>
