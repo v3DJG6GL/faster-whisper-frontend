@@ -18,7 +18,7 @@ export interface LiveTimings {
   separator: string;
 }
 
-/** The server's defaults (settings-batch contract), for a preview the server hasn't answered. */
+/** The server's defaults, for a preview the server hasn't answered. */
 export const LIVE_FALLBACK: LiveTimings = { innerMs: 700, outerMs: 1200, hardMs: 5000, separator: "" };
 
 export type PauseKind = "go" | "ref" | "end" | "par";
