@@ -582,7 +582,7 @@ export default function Overlay() {
   // The translation route, shown BESIDE the tag rather than inside the hover-revealed detail.
   // A route is a promise about what will be typed — that your German comes out as French — so
   // it cannot be a thing you have to hover to discover. Codes, not names: this shares a line
-  // with the live transcript, and "German → French, Italian" is 26 characters of it.
+  // with the live transcript, and "German → French, Italian" is 24 characters of it.
   const routeTargets = (state.translateTo ?? [])
     .map((t) => langCode(t, 12))
     .filter(Boolean);
@@ -922,11 +922,6 @@ export default function Overlay() {
     return () => clearTimeout(t);
   }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome, peeked]);
 
-  // Status dot colour: `vis` (the shared dictationVisual() mapping, computed above next to
-  // srvBusy). The chip layers its own presentation on top: a tucked (peeked) dot is SOLID so
-  // its visible half reads (a hollow standby ring would all but vanish at half-size), and the
-  // docked standby dot at rest is a hollow ring. Active states (error / speaking /
-  // finishing) keep their tone even while tucked.
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
@@ -978,7 +973,10 @@ export default function Overlay() {
         : state.sessionOutcome === "typed"
           ? "Inserted"
           : "";
-  // The states whose dot colour comes from the tone map rather than the armed/standby tokens.
+  // The states whose dot colour comes from the tone map rather than the armed/standby tokens;
+  // they keep that tone even while tucked. Otherwise a tucked (peeked) dot is SOLID so its
+  // visible half reads (a hollow ring would all but vanish at half-size), and the docked
+  // standby dot at rest is a hollow ring.
   const toneOwnsDot = vis.state === "error" || vis.state === "speaking" || vis.state === "processing";
   const dotColorClass =
     toneOwnsDot
@@ -1005,8 +1003,8 @@ export default function Overlay() {
       ? TONE_GLOW[vis.tone]
       : peeked
         ? standby
-          ? TONE_GLOW.dim // tucked idle: soft neutral halo
-          : TONE_GLOW.armed // tucked armed: amber halo
+          ? TONE_GLOW.dim
+          : TONE_GLOW.armed
         : standby
           ? "none"
           : !expanded
@@ -1188,8 +1186,6 @@ export default function Overlay() {
     else void emitOverlayAction(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
   };
 
-  // Edge-peek slide offset (CSS translateY; geometry at EDGE_MARGIN / PEEK_TUCK). Mirrored for
-  // the bottom edge.
   const restY = state.position === "bottom" ? -EDGE_MARGIN : EDGE_MARGIN;
   const tuckY = state.position === "bottom" ? PEEK_TUCK : -PEEK_TUCK;
   // Restoring a tucked chip via hover: anchor the pill FLUSH to the edge (not the rest inset) so
@@ -1518,13 +1514,11 @@ export default function Overlay() {
                                 {/* Tail only: the chip is right-pinned and ~800px wide, so this is
                                     what was visible anyway. */}
                                 {/* `transport::stream` bounds the transcript with `bounded`, NOT
-                                    `bounded_server_text`, deliberately — a transcript legitimately
-                                    contains newlines. So Cf/bidi survive to the frontend by design,
-                                    and this preview exists precisely so the user can supervise what
-                                    is about to be typed. Without this the previewed copy can be
-                                    reordered while the copy that actually lands is cleaned by
-                                    `sanitize_injected`. `stripControlChars` is that function's TS
-                                    mirror and keeps Tab/LF, so wrapping is unaffected. */}
+                                    `bounded_server_text` (a transcript legitimately contains
+                                    newlines), so Cf/bidi reach here. This preview is how the user
+                                    supervises what will be typed, so it must not be reordered while
+                                    the landed copy is cleaned by `sanitize_injected`;
+                                    `stripControlChars` is that function's TS mirror (keeps Tab/LF). */}
                                 {/* Code-point-safe tail: a UTF-16 slice(-400) could split a
                                     surrogate pair (→ U+FFFD), so spread → slice → join counts
                                     code points. The slice(-800) unit cut first (chipPayload
