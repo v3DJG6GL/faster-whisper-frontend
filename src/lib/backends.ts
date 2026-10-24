@@ -14,20 +14,14 @@ const RUST_TRIM =
  *  judge the same string the parsers do.
  *
  *  Both the browser's `URL` and Rust's `url` crate (behind reqwest) delete every ASCII tab, LF and
- *  CR from ANYWHERE in the input, and strip leading/trailing C0 controls and spaces. Testing the
- *  raw string instead let `"h<TAB>ttp://evil.tld"` read as SCHEMELESS here — so it was stored, and
- *  `http://` was prepended for display, making every helper below see host `"http"` (dotless, so
- *  `isLocalAddress` returned true and the not-encrypted warning was suppressed) while reqwest
- *  resolved evil.tld and sent it the bearer key, the uploaded audio and the sync blob — which
- *  carries every backend's plaintext key. A leading NUL was the same bug via the other rule: JS
- *  `trim()` does not strip C0, but both parsers do.
+ *  CR from ANYWHERE in the input, and strip leading/trailing C0 controls and spaces (JS `trim()`
+ *  does not strip C0). Testing the raw string let `"h<TAB>ttp://evil.tld"` read as schemeless here
+ *  (host `"http"`: local, no plaintext warning) while reqwest sent the key and audio to evil.tld.
  *
- *  Before both, the Rust transport `str::trim`s the stored address (base_url, the stream URL),
- *  which strips the Unicode White_Space set at the edges — U+00A0, U+2028, U+3000 … A synced
- *  "http://localhost:8000@evil.tld<NBSP>" then connected to evil.tld while every helper here saw an
- *  unparseable address and showed no host and no plaintext warning. So the edges lose that set
- *  first, exactly: not JS `\s`, which also holds U+FEFF (Rust's trim keeps it; so do the parsers,
- *  and the address then fails to parse on both sides). Inside the address nothing changes. */
+ *  Before both, the Rust transport `str::trim`s the stored address, stripping the Unicode
+ *  White_Space set at the edges (U+00A0, U+2028, U+3000 …), so the edges lose exactly that set
+ *  first: not JS `\s`, which also holds U+FEFF (Rust's trim and the parsers keep it). Inside the
+ *  address nothing changes. */
 export function stripUrlNoise(raw: string): string {
   return (
     raw
@@ -39,8 +33,8 @@ export function stripUrlNoise(raw: string): string {
 }
 
 /** Loose user input → a connectable URL: trim, strip trailing slashes, default
- *  the scheme to http (LAN servers are the common case). Shared by the
- *  first-run gate and the Backends connect step so both accept "host:8000". */
+ *  the scheme to http (LAN servers are the common case, so "host:8000" is accepted).
+ *  "" when it carries a scheme other than http(s). */
 export function normalizeUrl(raw: string): string {
   const t = stripUrlNoise(raw).replace(/\/+$/, "");
   if (/^https?:\/\//i.test(t)) return t;
@@ -48,20 +42,17 @@ export function normalizeUrl(raw: string): string {
 }
 
 /** A Server URL typed in the Backend editor → the form to STORE and send: a schemeless
- *  `host:8000` gains `http://` (as the connect step and the sync sanitizer already store it),
- *  because the Rust transport only trims and reqwest rejects an address without a scheme —
- *  the field showed it as valid while Test, Save and every transcription failed. An http(s)
+ *  `host:8000` gains `http://` (as the connect step and the sync sanitizer store it), because
+ *  the Rust transport only trims and reqwest rejects an address without a scheme. An http(s)
  *  URL is kept as typed (no trailing-slash stripping, so a stored URL is not re-evicted on
  *  an unchanged save), and anything else stays verbatim so the connect error still names it. */
 export function storedTypedUrl(raw: string): string {
   // A lenient http(s) scheme (`http:/h`, `HTTPS:\\h`) is canonicalised first: WHATWG reads it as
-  // `http://h`, but it fails the two-slash test, so it used to be stored verbatim — reqwest then
-  // connected in cleartext while the not-encrypted warning (which parsed it as nothing) stayed
-  // silent and the WS URL built from it was garbage. With NO slash (`http:evil.tld:8000`) the
-  // parsers still read a special scheme followed by the authority, so it gains `//` too — unless
-  // the remainder is a port (the isSchemelessAddress rule): `http:8000` (host `http`, port 8000)
-  // keeps its schemeless meaning, and a bare `http:` is left alone. A URL that already passes
-  // is left untouched, so a stored URL is not rewritten (and re-evicted) on an unchanged save.
+  // `http://h`, but it fails the two-slash test, so stored verbatim it connected in cleartext
+  // with no not-encrypted warning. With NO slash (`http:evil.tld:8000`) the parsers still read a
+  // special scheme followed by the authority, so it gains `//` too — unless the remainder is a
+  // port (the isSchemelessAddress rule): `http:8000` (host `http`, port 8000) keeps its
+  // schemeless meaning, and a bare `http:` is left alone.
   const t = canonicalHttpScheme(stripUrlNoise(raw.trim()));
   return !t || /^https?:\/\//i.test(t) ? t : normalizeUrl(t) || t;
 }
@@ -112,13 +103,10 @@ export function fatesAfterSuppliedKey<F extends { missing: Backend[]; moved: { b
 
 /** Does this string carry NO scheme, so that prefixing `http://` is honest?
  *
- *  The two-slash test above is not the same rule the parsers use. WHATWG (the browser's `URL`,
- *  and Rust's `url` crate behind reqwest) also honours a scheme written with ONE slash, a
- *  backslash, or none at all — so `https:/evil.tld` fails the test above, gets `http://`
- *  PREPENDED, and then reads as host `https` to every helper here while reqwest connects to
- *  evil.tld. That made the address shown on the backends card and in the sync consent dialog
- *  disagree with where the audio and the bearer key actually went, and (host `http`, no dot)
- *  it also read as a bare LAN name, which suppressed the not-encrypted warning.
+ *  A two-slash test is not the rule the parsers use: WHATWG (the browser's `URL`, and Rust's
+ *  `url` crate behind reqwest) also honours a scheme written with ONE slash, a backslash, or
+ *  none at all — `https:/evil.tld` with `http://` prepended reads as host `https` (a bare LAN
+ *  name) to every helper here while reqwest connects to evil.tld.
  *
  *  A colon alone cannot be the test: `host:8000` is the LAN form this function exists to
  *  accept. A scheme is a colon whose remainder is not a port, so require digits after it. */
@@ -148,18 +136,17 @@ export function serverUrlFromPeer(raw: string): string {
 }
 
 /** True for addresses that never leave the user's own machine or LAN, where plain http is the
- *  normal, expected setup: loopback, an mDNS/`.local` name, a bare hostname with no dot, and the
- *  private + link-local IPv4 ranges. Everything else is a route across networks the user does
- *  not control. */
+ *  normal, expected setup: loopback, a `.local` / `.home.arpa` / `.internal` name, a bare hostname
+ *  with no dot, the private + link-local IPv4 ranges and IPv6 ULA / link-local literals.
+ *  Everything else is a route across networks the user does not control. */
 function isLocalAddress(host: string): boolean {
   const h = host.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h === "::1" || h.endsWith(".localhost")) return true;
   if (h.endsWith(".local") || h.endsWith(".home.arpa") || h.endsWith(".internal")) return true;
   if (!h.includes(".") && !h.includes(":")) return true; // bare LAN hostname
   const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  // ULA / link-local, but ONLY for an IPv6 LITERAL — an IPv6 address always contains ":".
-  // Testing the prefix on any non-dotted-quad host classified every public DNS name beginning
-  // "fc" or "fd" (fcc.gov, fdic.gov, fc2.com …) as LAN and silently suppressed the warning.
+  // ULA / link-local, but ONLY for an IPv6 LITERAL (always contains ":") — otherwise public
+  // names like fcc.gov or fdic.gov would read as LAN and suppress the warning.
   if (!v4) return h.includes(":") && (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:"));
   const [a, b] = [Number(v4[1]), Number(v4[2])];
   // 0.0.0.0/8 = "this host", never routed — the bind-all address uvicorn prints at startup.
@@ -192,9 +179,9 @@ export function insecureUrlWarning(url: string): string | null {
  *  add, Backends connect-first add, Onboarding) goes through here, so the
  *  defaults can't diverge. With a connection: name from the host, batch endpoint
  *  for standard servers, and the model: a full server's default (the inherit
- *  alias, like the language — decided 2026-10-09: /v1/models has no default
- *  marker, so its loaded model may be one another client asked for), a standard
- *  server's loaded (else first) model, since there the alias is a literal name. */
+ *  alias, like the language — /v1/models has no default marker, so its loaded
+ *  model may be one another client asked for), a standard server's loaded (else
+ *  first) model, since there the alias is a literal name. */
 export function newBackendDraft(conn?: {
   serverUrl: string;
   hasApiKey: boolean;
@@ -207,8 +194,7 @@ export function newBackendDraft(conn?: {
     hasApiKey: false,
     model: WHISPER_ALIAS,
     endpoint: "stream",
-    // "" = the server's DEFAULT_LANGUAGE (W6, decided 2026-10-05): a backend added from now on
-    // starts on the server's language; backends that already exist keep their "auto".
+    // "" = the server's DEFAULT_LANGUAGE; backends created before this default keep their "auto".
     language: "",
     prompt: "",
     responseFormat: "verbose_json",
@@ -248,8 +234,7 @@ export function backendPrompt(b: Pick<Backend, "prompt" | "promptCleared">): str
 
 /**
  * Effective language: a set per-Profile override wins; else the Backend's. Trims the
- * override so a padded value never reaches a server request — five call sites used to
- * open-code this and only one of them trimmed the value it returned. A word naming a Whisper
+ * override so a padded value never reaches a server request. A word naming a Whisper
  * language (a synced "english") is returned as its code: the server's handshake takes only
  * codes, and the session, its shape, the target picker and every route label must agree on
  * the value that is sent. "auto", blank and anything else stay as given.
@@ -270,8 +255,7 @@ export function effectiveLanguage<B extends string | undefined>(
  * Effective server override-profile name: a set own pick (a Profile's, or a Transcribe run's)
  * wins; else the Backend's. Both sides trimmed and a blank inherits, so a blank inherited name is
  * `undefined` (omit the field); NO_OVERRIDE_PROFILE passes through verbatim (it forces "no
- * profile" server-side). startLiveInner, sessionShape, Profiles and Transcribe share it so the
- * profile a label shows is the one a run sends — hand-copied, the copies drifted apart.
+ * profile" server-side). One rule, so the profile a label shows is the one a run sends.
  */
 export function effectiveOverrideProfile(
   own: string | undefined,
@@ -284,8 +268,7 @@ export function effectiveOverrideProfile(
  * Effective translation model id: a set own pick (a Profile's, or a Transcribe / retro-translate
  * run's) wins; else the Backend's. Both sides trimmed and a blank inherits — the stored values are
  * synced, so stray spaces must not reach the wire or name a different model than the preload plan
- * warms; a blank inherited id is `undefined` (the server's default). The one rule for live
- * dictation, its session shape, the target picker, Transcribe and retro translate.
+ * warms; a blank inherited id is `undefined` (the server's default).
  */
 export function effectiveTranslationModel(
   own: string | undefined,
@@ -322,14 +305,12 @@ export function nameFromUrl(url: string): string {
  */
 export function effectiveServerUrl(backend: Backend, settings: AppSettings): string {
   // Read the value out FIRST and type-check it. `?.` guards nullish but NOT prototype-inherited:
-  // a backend whose id is "constructor" / "toString" / "valueOf" makes this lookup return a
-  // function off Object.prototype, which is non-nullish, so `.trim()` threw — inside a render
-  // body, in a tree with no error boundary, so the window unmounted. The `__..__` filter that
-  // polices ids only rejects the keyring namespace, so those ids survive sanitization.
+  // a backend id "constructor" / "toString" / "valueOf" returns a function off Object.prototype,
+  // and `.trim()` on it throws in render. The id sanitizer's `__..__` filter does not reject those.
   const raw = settings.sync?.urlOverrides?.[backend.id];
   // Stored form, as Server URL is saved: a schemeless `host:8000` typed into "Address on this
-  // device" gains `http://`. The Rust transport only trims and reqwest refuses an address without
-  // a scheme, so every request for the backend failed while the card showed the address as fine.
+  // device" gains `http://` — the Rust transport only trims and reqwest refuses an address
+  // without a scheme.
   const override = typeof raw === "string" ? storedTypedUrl(raw) : "";
   return override ? override : backend.serverUrl;
 }
@@ -359,42 +340,32 @@ const SEP = " \u00b7 ";
  *  distinct backends named `"Work"` and `"Work\u200b"` draw identically, while the option value
  *  stays the distinct id. A backend RENAME raises no security-review prompt, so a sync server can
  *  relabel an already-approved second backend to collide with the user's real one on an unattended
- *  pull; the affected controls are the ones that decide which server receives a profile's audio and
- *  bearer key, and none of them shows the address. This is the two-arm conflict Segmented's
- *  collision fallback, generalized to an N-option list: on a collision, name the thing the option
- *  actually selects. Legitimate duplicates ("Local" on two machines) simply gain a host suffix.
+ *  pull; the affected controls decide which server receives a profile's audio and bearer key, and
+ *  none of them shows the address. So on a collision, name what the option actually selects: its
+ *  host. Legitimate duplicates ("Local" on two machines) simply gain that suffix.
  *
- *  List-level by design. The per-item form was O(n^2) with an 80-codepoint scan per comparison,
- *  called from three unmemoized render bodies over a list `MAX_SYNCED_ENTRIES` bounds at 500 —
+ *  List-level by design: a per-item form is O(n^2) over a list of up to `MAX_SYNCED_ENTRIES` (500),
  *  measured at 233ms per render pass. One pass builds the collision counts, then labels. */
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   // Joiners (ZWNJ/ZWJ) are dropped from the KEY only: the identity fold keeps interior ones, so
   // `"Wo\u200drk"` would count apart from `"Work"` while drawing exactly like it.
   const norm = (s: string) => dropJoiners(s).replace(/\s+/g, " ").trim().toLowerCase();
-  // `safeIdentityText`, not `safeDisplayText`: G4 moved the three identity renders beside a trust
-  // decision onto it and this fourth site was missed. `safeDisplayText` passes the invisible class
+  // `safeIdentityText`, not `safeDisplayText`: the latter passes the invisible class
   // `isInvisibleKeyChar` enumerates — U+2800, U+034F, the variation selectors, the tags block —
   // and `norm`'s `\s+` does not match any of them either, so `"Work" + 90×U+2800` and `"Work"`
-  // both draw as exactly `Work` while counting as two distinct labels: neither collides, neither
-  // is suffixed, and the Q14 guard is inert for the whole class. A rename raises no
-  // SecurityChange, so it arrives on the unattended pull. The pickers this feeds choose which
-  // server receives a profile's audio and bearer key, which receives an uploaded file, and which
-  // receives the whole synced blob — and none of them shows an address.
-  // safeIdentityText drops the invisible head itself: a joiner-only name then takes the blank
+  // would both draw as `Work` while counting apart, and neither would be suffixed.
+  // safeIdentityText also drops the invisible head: a joiner-only name then takes the blank
   // branch, and a leading-joiner "Work" collides with "Work" and gets its host suffix.
   const labels = all.map((b) => safeIdentityText(b.name, max));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
   // A name that already CONTAINS the separator is forced into the suffix branch whatever the
-  // counts say. That, and not a second counting pass, is what makes the suffix unforgeable: the
-  // collision test compares WHOLE labels, so an impostor renamed to `"Work · good.tld"` is
-  // distinct from the real `"Work"` and neither collides — leaving the real one bare while the
-  // impostor alone renders in the form that now MEANS "disambiguated, at good.tld". Suffixing it
-  // appends its REAL host, so the forgery reads `Work · good.tld · evil.tld` and gives itself away.
-  // Tested on the joiner-stripped label like `norm`: an interior ZWJ ("Work \u00b7\u200d good.tld")
-  // hides the separator from a raw `includes` while the label draws exactly as the suffixed form.
-  // (`safeIdentityText` now folds a joiner touching whitespace itself; the strip stays as the
-  // backstop for any joiner the fold keeps.)
+  // counts say — that is what makes the suffix unforgeable: the collision test compares WHOLE
+  // labels, so an impostor renamed to `"Work · good.tld"` collides with nothing and would alone
+  // render in the "disambiguated, at good.tld" form. Suffixed with its REAL host it reads
+  // `Work · good.tld · evil.tld` and gives itself away. Tested on the joiner-stripped label like
+  // `norm`: an interior ZWJ ("Work \u00b7\u200d good.tld") would hide the separator from a raw
+  // `includes` (a backstop for any joiner `safeIdentityText`'s whitespace fold keeps).
   const forgesSuffix = (l: string) => dropJoiners(l).includes(SEP);
   const out = all.map((b, i) => {
     const label = labels[i];
