@@ -218,7 +218,7 @@ export interface TextTranslationResult {
   results: Record<string, string>[];
   /** kept[i] = target codes for which results[i] carries the SOURCE text
    *  unchanged (server quality guard) — dense, aligned with `results`.
-   *  Optional defensively (absent from older payloads / test fixtures). */
+   *  Rust always sends it; optional only for test fixtures. */
   kept?: string[][];
   model?: string;
   source?: string;
