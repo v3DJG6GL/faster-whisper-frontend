@@ -36,7 +36,6 @@ pub async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
 }
 
 fn suspend_shortcuts_blocking(app: &AppHandle) {
-    // Same lock as the suspend-watch's re-arm, so it can't race the teardown below.
     let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
     crate::hotkeys::triggers::unregister_all(app);
@@ -506,8 +505,6 @@ impl InputNodeWatch {
         };
         self.pending.retain(|n| now.contains(n));
         self.prev = Some(now);
-        // A loss already seen on an earlier tick: its keyboard may have come straight back under
-        // the same name, so it gets the same one-tick grace as a new node.
         if lost {
             self.clean_run = 0;
         } else {
@@ -517,6 +514,8 @@ impl InputNodeWatch {
                 self.loss_wait = 0;
             }
         }
+        // A loss already seen on an earlier tick: its keyboard may have come straight back under
+        // the same name, so it gets the same one-tick grace as a new node.
         let lost_due = lost && self.lost_seen && self.loss_wait == 0;
         if lost && self.loss_wait > 0 {
             self.loss_wait -= 1;
