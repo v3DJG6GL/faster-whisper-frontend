@@ -1260,8 +1260,8 @@ mod imp {
             // the active XKB group (`active_xkb_group`) mid-run would otherwise garble typed text (y↔z,
             // symbols) until an app restart. The build costs ms next to a multi-second utterance, and the
             // portal session stays open, so there is no consent re-prompt. A bare auto-Enter job (no text,
-            // no chord) presses only KEY_ENTER, so it skips the build — and a keymap failure that would
-            // fail an Enter needing no keymap. On the blocking pool: xkbcomp, XOpenDisplay and the xkb
+            // no chord) presses only KEY_ENTER, so it skips the build, and a keymap failure cannot fail
+            // an Enter that needs no keymap. On the blocking pool: xkbcomp, XOpenDisplay and the xkb
             // compile must not stall a runtime worker. A paste job reads only the chord's letter key, so
             // it skips the compose table and the dead-key pass.
             let charmap = if !job.paste && job.text.is_empty() {
@@ -1435,8 +1435,8 @@ mod imp {
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     return Ok(crate::inject::Landed::Yes);
                 }
-                // Characters actually sent to the compositor, and the countdown to the next focus
-                // probe. See the probe below for why it is periodic rather than per character.
+                // Characters actually sent to the compositor; it also paces the focus probe. See the
+                // probe below for why it is periodic rather than per character.
                 let mut typed: usize = 0;
                 for c in text.chars() {
                     // The cancel is read between characters: this loop runs for SECONDS on a long transcript.
@@ -1445,9 +1445,8 @@ mod imp {
                     // break's Return included.
                     //
                     // Focus is followed too, or a click into one of our own windows part-way through lands every
-                    // remaining character there. The X11/Windows twin re-asks once per 512-char chunk; at ~10ms
-                    // per character here, every 32 characters is the same ~third-of-a-second cadence. Periodic
-                    // rather than per character on purpose: each probe is a round trip to the UI thread.
+                    // remaining character there. Every 32 characters (~a third of a second at ~10ms per
+                    // character), not per character: each probe is a round trip to the UI thread.
                     //
                     // The already-typed prefix stays — re-sending it would duplicate text on screen — so the
                     // untyped tail is dropped and this reports `Yes`.
@@ -1579,9 +1578,8 @@ mod imp {
             }
             .await;
 
-            // GUARANTEED cleanup: release anything still held (an error bailed out
-            // mid-chord). Best-effort — release in reverse press order, ignoring
-            // errors since we're already reporting the real failure.
+            // Release anything still held (an error bailed out mid-chord), ignoring errors:
+            // the real failure is already being reported.
             for code in held.iter().rev() {
                 let _ = proxy
                     .notify_keyboard_keycode(
