@@ -102,16 +102,15 @@ function raiseLoadNotice(msg: string): void {
 }
 
 export async function initConfig(): Promise<void> {
-  // Run once. React StrictMode double-invokes the App effect in dev; without this guard a
-  // second initConfig would register a second auto-save subscriber (doubled saveConfig +
-  // reregisterShortcuts on every change). Mirrors initOverlayController / initUsageController.
   if (!isTauri) {
     useApp.getState().setConfigLoaded();
     resolveConfigReady();
     return;
   }
-  // A StrictMode re-entry must NOT resolve configReady — the FIRST call does,
-  // after hydration + arming (else initSync starts against seeded defaults).
+  // Run once: React StrictMode double-invokes the App effect in dev, and a second run would arm a
+  // second auto-save subscriber (doubled saveConfig + reregisterShortcuts on every change). The
+  // re-entry must NOT resolve configReady — the FIRST call does, after hydration + arming (else
+  // initSync starts against seeded defaults).
   if (started) return;
   started = true;
 
