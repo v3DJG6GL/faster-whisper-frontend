@@ -171,8 +171,6 @@ export default function QuickAdd() {
     try {
       const rw = await getRecentWords({ serverUrl: t.serverUrl, backendId: t.backendId });
       if (rg !== recentGen.current) return; // a newer fetch won
-      // The pool is server-supplied and re-scanned on every keystroke; Combobox assumes it is
-      // "already server-capped", which is exactly the assumption an untrusted server breaks.
       setRecent((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
       setRecentMax(rw.max ?? undefined);
     } catch {
@@ -293,7 +291,7 @@ export default function QuickAdd() {
     } catch (e) {
       // readConfig() rejects on an unreadable file or a plumbing failure; without this the
       // standalone window would hang on "Loading…" forever (phase never advances) and Retry would
-      // re-throw. The main app guards the same call in initConfig — this is the parallel path.
+      // re-throw.
       if (gen !== loadGen.current) return;
       console.error("quick-add refresh failed:", e);
       // status -1: a LOCAL failure, not a network one — 0 would title it "Couldn't reach the server".
@@ -426,9 +424,9 @@ export default function QuickAdd() {
         void targetMoved.then((moved) => {
           if (sgen !== summonGen.current) return;
           if (moved) {
-            // The unsaved rows are the list the user re-pinned away from: drop them and load the
-            // new one. Disarm the debounce and supersede any queued flight first — either would
-            // otherwise send these rows to the new target once refresh() has switched to it.
+            // The unsaved rows belong to the list the pin moved off (quickAddTargetMoved): drop them
+            // and load the new one. Disarm the debounce and supersede any queued flight first — either
+            // would otherwise send these rows to the new target once refresh() has switched to it.
             if (saveTimer.current) window.clearTimeout(saveTimer.current);
             saveTimer.current = null;
             ++saveSeq.current;
