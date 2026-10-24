@@ -24,8 +24,8 @@ import type { Backend, DictationStatus, Profile } from "../types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
 
-// "Busy" = any non-idle state. A new session must not start over one; a stop/toggle
-// while busy ends it.
+// "Busy" = a session running (idle and error are not busy). A new session must not start
+// over one; a stop/toggle while busy ends it.
 function isBusy(): boolean {
   return isActiveDictation(useApp.getState().status);
 }
