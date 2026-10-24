@@ -33,7 +33,7 @@ pub struct Job {
     /// `crate::inject::injection_cancelled` reports it superseded, so a long transcript stops
     /// typing into whatever holds focus when the user cancels.
     epoch: u64,
-    paste: bool, // true → synthesize the paste chord instead of typing `text`
+    paste: bool,
     // The paste chord as KeyboardEvent.code strings (modifiers first, main key last) — NOT pre-resolved
     // keycodes — so the MAIN letter key is resolved by KEYSYM against the active layout's charmap inside
     // session_loop (where the charmap is built). A fixed physical position would mis-paste on a layout
