@@ -39,7 +39,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type QueueItem, type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, MEDIA_URL_MAX_CHARS, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -1476,11 +1476,11 @@ export default function Transcribe() {
           {urlDraft.trim() !== "" && !draftUrl && (
             <div className="mt-2 text-[12px] text-warn">
               {/* normalizeMediaUrl also rejects links that DO carry the scheme
-                  (over 2,048 characters, unparsable host) — don't tell those to add it. */}
+                  (over MEDIA_URL_MAX_CHARS, unparsable host) — don't tell those to add it. */}
               {pastesSeveralLinks(urlDraft)
                 ? "Paste one link at a time."
                 : isSourceUrl(stripMediaUrlNoise(urlDraft))
-                ? "This isn't a valid web address (links over 2,048 characters aren't supported)."
+                ? `This isn't a valid web address (links over ${MEDIA_URL_MAX_CHARS.toLocaleString("en-US")} characters aren't supported).`
                 : "Include http:// or https:// at the start of the link."}
             </div>
           )}

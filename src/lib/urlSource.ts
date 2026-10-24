@@ -69,6 +69,9 @@ export function pastesSeveralLinks(raw: string): boolean {
   );
 }
 
+/** The longest media link normalizeMediaUrl accepts, in and out (the Rust transport's matching cap). */
+export const MEDIA_URL_MAX_CHARS = 2048;
+
 /** Loose pasted text → a normalized media URL, or null when it isn't one.
  *
  *  Deliberately NOT backends.ts `normalizeUrl`: that helper defaults a
@@ -85,7 +88,7 @@ export function pastesSeveralLinks(raw: string): boolean {
  *  from what the user pasted. */
 export function normalizeMediaUrl(raw: string): string | null {
   const t = stripMediaUrlNoise(raw);
-  if (t.length === 0 || t.length > 2048) return null;
+  if (t.length === 0 || t.length > MEDIA_URL_MAX_CHARS) return null;
   if (!isSourceUrl(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.
   if (pastesSeveralLinks(raw)) return null;
@@ -101,7 +104,7 @@ export function normalizeMediaUrl(raw: string): string | null {
   // could return a queue key ~6× over the bound, which this function would
   // then reject when stageFiles re-normalizes it.
   const out = url.toString();
-  return out.length > 2048 ? null : out;
+  return out.length > MEDIA_URL_MAX_CHARS ? null : out;
 }
 
 /** Human label for a queue key: files show their basename, links show the
