@@ -548,9 +548,8 @@ export function TranscriptViewer({
   const effTargets = trTargets ?? seededTargets;
 
   // Warm the translation model while the panel is open, so the run doesn't start
-  // with a cold load. Released on close and on unmount — the panel also closes
-  // itself on a successful start, which drops the lease exactly when the run
-  // takes over keeping the model hot.
+  // with a cold load. Released on close and on unmount; a successful run folds
+  // the panel when it finishes, which drops the lease.
   useEffect(() => {
     if (!showTranslate || !trBackend || !retroTranslateAvailable) return;
     const plan = preloadPlanFor({
@@ -1099,8 +1098,7 @@ export function TranscriptViewer({
    *  WAV file in Rust and play that; (3) only when the WAV errors too is playback
    *  declared broken. */
   const onAudioError = (reason?: string) => {
-    // Capture the current generation so async callbacks from a previous record
-    // (still in flight after a record switch) are silently discarded.
+    // Async completions that land after a record switch or unmount are discarded.
     const gen = audioGenRef.current;
     const stale = () => gen !== audioGenRef.current;
 
@@ -1656,8 +1654,7 @@ export function TranscriptViewer({
       // A correction is one logical line, as every export writes it (clean()): a
       // pasted line break would show in Read but become a space in the files.
       // Flattened like the subtitle import (see cjkWraps) and compared flattened, so a
-      // bare blur on an imported multi-line line is still "no edit" (and returns
-      // `orig` itself, keeping the caret).
+      // bare blur on an imported multi-line line is still "no edit".
       const flat = (s: string) => joinLineBreaks(s, cjkWraps(s));
       const edit = t && flat(t) !== flat(orig) ? flat(t) : null;
       setSegmentEdit(okey, i, edit);
