@@ -756,11 +756,10 @@ fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Re
 
 /// Copy one of a record's media files (its source, its audio copy or its
 /// video copy — or any file inside the app's media folders) to a user-picked
-/// path. Plain copy via tmp + rename (the export gets plain umask permissions,
-/// not the store's 0600); returns the bytes copied. The
-/// destination must lie OUTSIDE the app's own storage. `no_clobber`: write only
-/// when nothing is at `dest` yet, else leave it alone and return None (a name the
-/// save dialog never showed, so no overwrite was approved for it).
+/// path via tmp + rename; returns the bytes copied. The destination must lie
+/// OUTSIDE the app's own storage. `no_clobber`: write only when nothing is at
+/// `dest` yet, else leave it alone and return None (a name the save dialog
+/// never showed, so no overwrite was approved for it).
 #[tauri::command]
 pub async fn copy_media_to(
     app: tauri::AppHandle,
