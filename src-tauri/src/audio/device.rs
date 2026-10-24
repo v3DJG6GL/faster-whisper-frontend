@@ -338,26 +338,22 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
             tracing::warn!(
                 "[audio] sound server not answering; recording '{pin}' through the default input for now"
             );
-            let device =
-                host::default_input().ok_or_else(|| "no default input device".to_string())?;
-            return Ok(Resolved {
-                device,
-                fallback: None,
-                watch_source: None,
-            });
+            return system_default();
         }
         tracing::warn!("[audio] microphone '{pin}' is not connected; using the default input");
-        let device = host::default_input().ok_or_else(|| "no default input device".to_string())?;
-        let using = host::device_label(&device).unwrap_or_else(|| "the default input".into());
-        return Ok(Resolved {
-            device,
-            fallback: Some(MicFallback {
-                wanted_id: pin.to_string(),
-                using,
-            }),
-            watch_source: None,
+        let mut r = system_default()?;
+        let using = host::device_label(&r.device).unwrap_or_else(|| "the default input".into());
+        r.fallback = Some(MicFallback {
+            wanted_id: pin.to_string(),
+            using,
         });
+        return Ok(r);
     }
+    system_default()
+}
+
+/// The default input, recorded without a fallback notice or a source watch.
+fn system_default() -> Result<Resolved, String> {
     let device = host::default_input().ok_or_else(|| "no default input device".to_string())?;
     Ok(Resolved {
         device,
