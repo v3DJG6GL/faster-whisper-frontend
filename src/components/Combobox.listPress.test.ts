@@ -82,7 +82,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("Combobox suggestion list press", () => {
   it("a press on the listbox itself keeps its default, keeps the list open through a blur its parents never see, and refocuses on release", () => {
     render();
-    (inputOf(render()).props.onFocus as () => void)(); // opens the list
+    (inputOf(render()).props.onFocus as () => void)();
     let tree = render();
     expect(listOf(tree)).not.toBeNull();
     const input = inputOf(tree);
