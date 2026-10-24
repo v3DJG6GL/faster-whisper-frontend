@@ -75,7 +75,6 @@ function listKeyHandler(node: unknown): ((e: unknown) => void) | null {
   return listKeyHandler(p.children);
 }
 
-/** The first element of `type` in the tree. */
 function findElement(node: unknown, type: string): ReactElement | null {
   if (!node || typeof node !== "object") return null;
   if (Array.isArray(node)) {
