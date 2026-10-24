@@ -247,7 +247,6 @@ export async function runDictationTranslate(
       ? Math.max(0, Math.floor(req.contextSegments))
       : req.context.length;
   const context = depth > 0 ? req.context.slice(-depth) : [];
-  // Every character the server will actually translate, not just this phrase's.
   const submittedChars =
     context.reduce((n, c) => n + c.length, 0) + original.length;
   const ceilingMs = translateCeilingMs(submittedChars, req.targets.length, {
@@ -337,9 +336,8 @@ export async function runDictationTranslate(
     // failure path, which at least says so. A kept target reads as a missing one here, so
     // "every target kept" falls into the EmptyTranslation fallback below.
     const kept = new Set(r.kept?.[lastIdx] ?? []);
-    // Keep the language keys alongside the parts. Same iteration, same
-    // drop-a-missing-target rule — the parts array is derived FROM the map so
-    // the two can never disagree about which targets came back.
+    // The parts array is derived FROM the map so the two can never disagree
+    // about which targets came back.
     const byLang: Record<string, string> = {};
     for (const lang of req.targets) {
       const t = last[lang]?.trim();
