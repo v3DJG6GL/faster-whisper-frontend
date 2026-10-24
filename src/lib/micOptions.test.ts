@@ -184,8 +184,8 @@ describe("labelForPick", () => {
   });
 });
 
-// Run #75 F12-1: forward Tab from the "Show all audio paths" switch refocused the trigger and
-// cancelled the default, sending focus BACKWARD — the picker could never be Tabbed past that way.
+// Forward Tab from the "Show all audio paths" switch must not refocus the trigger: cancelling the
+// default there sends focus BACKWARD, and the picker can never be Tabbed past.
 describe("micFootKey — keys on the menu's paths switch", () => {
   it("forward Tab leaves the menu onward (no trigger refocus), Shift+Tab returns to the list", () => {
     expect(micFootKey("Tab", false)).toBe("leave");
