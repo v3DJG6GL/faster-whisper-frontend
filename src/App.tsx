@@ -277,8 +277,8 @@ export default function App() {
   const theme = useApp((s) => s.settings.theme);
   const accentHue = useApp((s) => s.settings.accentHue);
   const accentMotion = useApp((s) => s.settings.accentMotion);
-  // First-run gate: a LOADED config with no backends AND no profiles (fresh
-  // install — seeds are gone) and no prior skip mounts the onboarding flow
+  // First-run gate: a LOADED config with no backends AND no profiles (a fresh
+  // install seeds none) and no prior skip mounts the onboarding flow
   // instead of the shell. Latched locally so the flow survives its own store
   // writes (creating Backend #1 makes backends non-empty mid-flow); it closes
   // only via onDone, and setupDismissed keeps it from ever re-opening.
