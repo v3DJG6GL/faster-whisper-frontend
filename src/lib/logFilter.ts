@@ -230,9 +230,9 @@ export interface BugReportRun {
  *
  *  Either every field comes from the last recorded run, or — with no run recorded — the
  *  block is the Transcribe screen's settings and SAYS so. The two must never interleave:
- *  a file run has no profile, so borrowing the Home profile for it named a profile that
- *  had nothing to do with the run, and a batch run keeps its targets in the result /
- *  options rather than in `translationTargets` (which only dictation writes). */
+ *  a file run has no profile, so borrowing the Home profile would name one unrelated to
+ *  the run, and a batch run keeps its targets in the result / options rather than in
+ *  `translationTargets` (which only dictation writes). */
 export function bugReportRunFields(
   last: BugReportRun | null,
   transcribe: { backendId?: string; model?: string } | undefined,
@@ -245,7 +245,7 @@ export function bugReportRunFields(
     return {
       source: historyUnavailable ? "settings (history unavailable)" : "settings (no run recorded)",
       backend,
-      // Gated on the saved backend resolving and trimmed, like Transcribe's seed (savedBackend):
+      // Gated on the saved backend resolving and trimmed, like Transcribe's seed (savedBackendOf):
       // a pick whose backend is absent or deleted is never sent, a whitespace-only synced pick is
       // no pick (the run sends the Backend's model), and a padded one runs trimmed.
       model: backend ? transcribe?.model?.trim() || null : null,
