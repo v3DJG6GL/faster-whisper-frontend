@@ -1,9 +1,6 @@
 // The insertion cascade — constraint > app rule > profile > global — plus the two
-// coercion helpers that were each written out several times before being extracted.
-//
-// These are pure functions in streaming.ts (nothing here touches the store or Tauri),
-// which is the point of extracting them: the precedence is the part that has to be right,
-// and it was previously only observable by running a dictation.
+// coercion helpers. Pure functions in streaming.ts (no store, no Tauri), so the precedence,
+// the part that has to be right, is testable without running a dictation.
 
 import { describe, expect, it } from "vitest";
 import { holdCoerced, liveAllowed, resolveInjectionTarget, settleOwedUtterances, type OwedUtterance } from "./streaming";
@@ -138,7 +135,7 @@ describe("resolveInjectionTarget precedence", () => {
 
   it("short-circuits on our own window without matching a rule", () => {
     // Nothing is typed here, so no rule applies and nothing is coerced — but the profile
-    // layer still resolves, which the two hand-copied call sites used to get wrong.
+    // layer still resolves.
     const r = resolveInjectionTarget(app({ isSelf: true }), [rule({ insertMethod: "clipboard" })], G, {
       insertMethod: "direct",
     });
