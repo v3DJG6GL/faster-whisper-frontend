@@ -87,6 +87,14 @@ function lostFailedRecord(r: LedgerRow): TranscriptRecord {
     sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
 }
 
+/** An earlier launch's lost request on JOB_A, seeded (with any `more` rows): the failed record
+ *  the pump wrote for it. */
+async function seedLost(...more: LedgerRow[]): Promise<TranscriptRecord> {
+  const r = row(JOB_A, T0);
+  await seed(r, ...more);
+  return lostFailedRecord(r);
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(T0 + 60_000);
@@ -492,9 +500,7 @@ describe("reconcileJobs", () => {
   });
 
   it("an earlier launch's lost request whose backend is deleted settles its failed record with the reason", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r);
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost();
     useTranscriptHistory.setState({ records: [rec] });
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
@@ -507,9 +513,7 @@ describe("reconcileJobs", () => {
   });
 
   it("the reconcile pass settles an earlier launch's lost record whose backend is gone", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r);
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost();
     // At launch nothing has loaded History yet (the app opens on the Dashboard): the record is on disk only.
     useTranscriptHistory.setState({ records: [], loaded: false });
     listTranscriptRecords.mockResolvedValueOnce([rec]);
@@ -521,9 +525,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a failed History listing keeps a gone backend's row; a later pass settles its record", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r);
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost();
     useTranscriptHistory.setState({ records: [], loaded: false });
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     useApp.setState({ backends: [] });
@@ -538,9 +540,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a gone backend's headless row is kept when the History listing fails, and settled by the retry pass it schedules", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r);
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost();
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     await reconcileJobs();
@@ -562,9 +562,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a retry the headless watcher schedules while a pass is in flight runs after that pass", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r, row(JOB_B, T0 + 1));
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost(row(JOB_B, T0 + 1));
     // A non-idle workbench: A is watched headless; B's per-row error arms the retry timer.
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
@@ -598,9 +596,7 @@ describe("reconcileJobs", () => {
   });
 
   it("the last retry of the launch's budget firing mid-pass still runs its pass", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r, row(JOB_B, T0 + 1));
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost(row(JOB_B, T0 + 1));
     useTranscribeRun.setState({ files: ["/picked.wav"] });
     let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
     let bCalls = 0;
@@ -628,9 +624,7 @@ describe("reconcileJobs", () => {
   });
 
   it("a gone backend's row stopped during the History listing settles nothing", async () => {
-    const r = row(JOB_A, T0);
-    await seed(r);
-    const rec = lostFailedRecord(r);
+    const rec = await seedLost();
     useTranscriptHistory.setState({ records: [], loaded: false });
     let resolveListing: (v: unknown[]) => void = () => {};
     listTranscriptRecords.mockReturnValueOnce(new Promise<unknown[]>((res) => { resolveListing = res; }));
@@ -841,9 +835,7 @@ describe("reconcileJobs", () => {
     loadJobsLedger.mockImplementation(() => Promise.reject("jobs ledger unreadable: Permission denied"));
     await initJobReconcile();
     const r = row(JOB_A, T0);
-    useTranscriptHistory.setState({ records: [{ schemaVersion: 1, kind: "file", id: JOB_A,
-      createdAt: new Date(r.startedAt).toISOString(), sourcePath: r.path, sourceName: r.path,
-      status: "failed", error: "timed out" }] });
+    useTranscriptHistory.setState({ records: [lostFailedRecord(r)] });
     deleteJob.mockClear();
     deleteRecord(JOB_A);
     // stopOrphan had no row to find yet.
