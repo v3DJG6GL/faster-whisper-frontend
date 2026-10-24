@@ -6,11 +6,11 @@
 //
 // Like Overlay.tsx this is a STANDALONE root (its own JS context): it loads
 // config itself and talks to the backend directly — it never mounts <App/> or
-// touches the main window's store. Layout "A": an accent-bordered capture row on
+// touches the main window's store. Layout: an accent-bordered capture row on
 // top, the existing (inline-editable) list below.
 //
 // Saving is debounced last-writer-wins: we PATCH the whole map WITHOUT a
-// fingerprint, so the backend applies unconditionally (quick_config_routes.py).
+// fingerprint, so the backend applies unconditionally (quick_config/routes.py).
 // Re-fetching on each summon re-syncs any out-of-band edits — adequate for a
 // single-user quick-capture surface (the Dictionary screen keeps explicit-save).
 
@@ -38,9 +38,10 @@ import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/t
 import type { AppRule, GeneralSettings, PipelineFetch, PipelineSaveResult, ThemeName } from "@/lib/types";
 import { imeComposing } from "@/lib/keys";
 
-// Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
-// opaque JSON with no bound on either side of the IPC, and this webview is summoned by a global
-// hotkey — a huge list would wedge it (and, on Linux, the renderer it shares with the chip).
+// Client-side ceilings on the two server-supplied lists this window renders (defence in depth:
+// Rust caps the recent-words count but bounds the rules only by body bytes). This webview is
+// summoned by a global hotkey — a huge list would wedge it (and, on Linux, the renderer it
+// shares with the chip).
 const MAX_SHOWN_ROWS = 500;
 const MAX_RECENT_WORDS = 500;
 
@@ -110,7 +111,7 @@ export default function QuickAdd() {
   rowsRef.current = rows;
   // Live mirror of `phase` for closeNow: correct-on-close only runs the list while it is on
   // screen ("ok") — not on nopin, while loading, or after an error, when the capture row is
-  // replaced and a hidden paste on close would surprise (deliberate, Run #34).
+  // replaced and a hidden paste on close would surprise (deliberate).
   const phaseRef = useRef<Phase>("loading");
   phaseRef.current = phase;
   // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
@@ -145,9 +146,9 @@ export default function QuickAdd() {
   // refresh() re-applies the setting itself on every summon.
   useEffect(() => startAccentDrift(), []);
   useEffect(() => watchSystemTheme(() => themeRef.current), []);
-  // Generation guards so an out-of-order async resolution can't apply stale state (mirrors
-  // Dictionary's selectedIdRef / Transcribe's runId). `loadGen` covers refresh()'s fetches
-  // (a re-pin between rapid summons); `summonGen` covers the per-summon selection seed.
+  // Generation guards so an out-of-order async resolution can't apply stale state. `loadGen`
+  // covers refresh()'s fetches (a re-pin between rapid summons); `summonGen` covers the
+  // per-summon selection seed.
   const loadGen = useRef(0);
   const summonGen = useRef(0);
   // `recentGen` covers the recent-words pool, which refreshes on EVERY summon — including the
@@ -159,9 +160,10 @@ export default function QuickAdd() {
   const localReadFailed = useRef(false);
 
   // Recent-words fetch, shared by refresh() and the summon path. Read-only (can never clobber
-  // an edit), so unlike the rows re-sync it is safe to run unconditionally. Best-effort: a
-  // failure keeps the previous pool. Null target = no successful config load yet (a summon
-  // racing the initial load) or no pinned list — nothing to fetch from.
+  // an edit), so unlike the rows re-sync it is safe to run unconditionally. Best-effort: Rust
+  // answers a server failure with an empty list; only an IPC rejection keeps the previous pool.
+  // Null target = no successful config load yet (a summon racing the initial load) or no pinned
+  // list — nothing to fetch from.
   const fetchRecent = useCallback(async () => {
     const t = target.current;
     if (!t) return;
@@ -189,19 +191,15 @@ export default function QuickAdd() {
 
   /** The LOCAL half of `refresh`: theme plus the injection policy this window types under.
    *
-   *  Split out because `refresh` is skipped on a summon whenever a save is pending, in flight,
-   *  or FAILED — and a persistently failing backend holds that error state for the life of the
-   *  window, so the policy refs froze at whatever was loaded at startup. A `block` rule the
-   *  user added afterwards ("never type into this app") was then invisible to the correction
-   *  path, which resolves against these refs. This read touches no server and never replaces
-   *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
-   *  already split out `fetchRecent`.
+   *  Split out because `refresh` is skipped on a summon while a save is pending, in flight or
+   *  failed — with a persistently failing backend, for the window's whole life — and the
+   *  correction path resolves against these refs (a later `block` rule must still apply). It
+   *  touches no server and never replaces `rows`, so it cannot clobber an unsaved edit.
    *
-   *  Resolves true when the pin has moved off the list this window targets (re-pinned, its
-   *  backend removed, or its Server URL edited — maybe to another server): the summon then
-   *  re-syncs even over unsaved rows, which belong to the old list — kept, every later mapping
-   *  went to the list the user had left. The same list at a new address on this device only is
-   *  adopted here instead, rows kept, so the pending save retries the new address. */
+   *  Resolves true when the pin has moved off the list this window targets (quickAddTargetMoved):
+   *  the summon then re-syncs even over unsaved rows, which belong to the old list. Otherwise the
+   *  target follows the file's current address (quickAddTargetOnSummon), rows kept, so the
+   *  pending save retries there. */
   const refreshLocalConfig = useCallback(async (): Promise<boolean> => {
     try {
       // readConfig, not loadConfig: a mid-session read must never recover (rename the file to
@@ -284,9 +282,8 @@ export default function QuickAdd() {
         setPhase("error");
         return;
       }
-      // Third render of the server-authored rule label, through the same rule as the Dictionary
-      // and Onboarding (`ruleListLabel`): defanged, invisible head dropped and trimmed, a
-      // blank-looking label falls back to the list's name. "Word mappings" only when both are blank.
+      // The server-authored label goes through the same rule as the Dictionary and Onboarding
+      // (`ruleListLabel`); "Word mappings" only when label and name are both blank.
       setLabel(ruleListLabel(rule.label, rule.name, 80) || "Word mappings");
       setColor(rule.color);
       setRows(mapRowsFromRule(rule));
@@ -310,7 +307,6 @@ export default function QuickAdd() {
     void refresh();
   }, [refresh]);
 
-  // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
   // Returns whether the PATCH landed, so the summon auto-retry can chain a re-sync on success.
   const flushSave = useCallback(async (): Promise<boolean> => {
     // A retry (badge click / summon auto-retry) can run while the 600ms debounce is still
@@ -392,8 +388,8 @@ export default function QuickAdd() {
       return outcome === "saved" && newest;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
-      // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
-      // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
+      // stays stuck at "saving" (no retry button + unhandled rejection), and every summon then skips
+      // the re-sync without auto-retrying. Treat a reject as a save error.
       console.error("quick-add save failed:", e);
       if (saveTimer.current === null && mySeq === saveSeq.current) setSaveState("error");
       return false;
@@ -414,18 +410,14 @@ export default function QuickAdd() {
       setOpenOnSummon(false);
       setFocusInsert(false);
       setShowSeq((s) => s + 1);
-      // Don't re-fetch over an unsaved edit: refresh() replaces `rows` with the server map, so
-      // re-summoning while a debounced list edit is still pending would clobber the in-progress
-      // edit — and the still-armed 600ms saveTimer would then re-save the stale server rows over
-      // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
-      // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
-      // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
-      // which would drop the only retry signal). Let the save flush / retry. A "rejected" one (a
-      // 422) is among them too — its rows are the user's to fix, not to lose — but is never
-      // auto-retried: the same rows would only be rejected again. A "pinned" save is not among
-      // them: the server will never take those rows, so re-sync to what it serves.
-      // Unconditionally, ahead of the branch below: the policy this window types under must
-      // never be older than the last summon, whatever the save state is doing.
+      // Don't re-fetch over unsaved rows: refresh() replaces `rows` with the server map (and resets
+      // saveState to "idle", dropping the only retry signal), and a still-armed 600ms saveTimer
+      // would then re-save the stale server rows. Unsaved = timer armed, PATCH in flight
+      // ("saving"), failed ("error"), or "rejected" (a 422: the user's rows to fix, never
+      // auto-retried — the same rows would be rejected again). A "pinned" save is not: the server
+      // will never take those rows, so re-sync to what it serves.
+      // refreshLocalConfig runs unconditionally, ahead of the branch: the policy this window types
+      // under must never be older than the last summon.
       const targetMoved = refreshLocalConfig();
       const unsaved = saveStateRef.current === "error" || saveStateRef.current === "rejected" || saveStateRef.current === "saving";
       if (saveTimer.current === null && !unsaved) {
@@ -445,16 +437,13 @@ export default function QuickAdd() {
             return;
           }
           // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
-          // is read-only, so keep it fresh regardless: one failed save used to freeze the
-          // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
-          // Only once the read above has adopted a new device address: fetched before it, the
-          // pool came from the old, unreachable one.
+          // is read-only, so keep it fresh regardless. Only once the read above has adopted a new
+          // device address: fetched before it, the pool came from the old, unreachable one.
           void fetchRecent();
-          // Failed save: retry it now instead of waiting for a click on the tiny badge (the
-          // whole stuck state was invisible enough to ship). Only when no timer is armed — an
-          // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
-          // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
-          // whose own flush now owns the state.
+          // Failed save: retry it now instead of waiting for a click on the tiny badge. Only when
+          // no timer is armed — an armed timer flushes the newest rows itself, and a parallel
+          // retry would double-PATCH. On success, re-sync fully — unless an edit arrived during
+          // the retry (timer re-armed), whose own flush now owns the state.
           if (saveStateRef.current === "error") {
             void flushSave().then((ok) => {
               if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
@@ -463,8 +452,8 @@ export default function QuickAdd() {
         });
       }
       // Seed from whatever the user highlighted in the source app. Got a word → fill it and
-      // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
-      // the old behaviour: open the recent-words dropdown on the (already-focused) find field.
+      // drop the cursor straight in "Insert" (it's captured). Nothing usable → open the
+      // recent-words dropdown on the (already-focused) find field.
       const seed = await getQuickAddSeed();
       if (sgen !== summonGen.current) return; // a newer summon superseded this one
       originalSelectionRef.current = seed; // remember the selected word for correct-on-close (always)
@@ -519,8 +508,6 @@ export default function QuickAdd() {
     if (phase === "ok" && focusInsert) insertRef.current?.focus();
   }, [showSeq, focusInsert, phase]);
 
-  // (flushSave is defined ABOVE the summon listener — the listener's dep array reads it at
-  // render time, and a later declaration would be a temporal-dead-zone error.)
   const scheduleSave = useCallback(() => {
     if (!target.current) return;
     setSaveState("saving");
@@ -628,11 +615,11 @@ export default function QuickAdd() {
   return (
     // The window is a transparent rectangle and CLIPS whatever is painted past its edge, so
     // the margin here must be at least the shadow's reach (offset + blur + spread) on each
-    // side — otherwise the shadow ends in a hard, square-cornered cut instead of fading out
-    // (it did: a 60px-blur shadow in a 12px margin). Drop shadow 0/12/32/-12 reaches 32px
-    // down, 20px sideways, 8px up; the glow 0/0/32/-12 reaches 20px all round → 24px sides
-    // and top, 36px bottom. Change one and the other must follow, plus the window size
-    // (quickadd.rs QA_W/QA_H + tauri.conf.json), which is the 576×456 panel + this margin.
+    // side — otherwise the shadow ends in a hard, square-cornered cut instead of fading out.
+    // Drop shadow 0/12/32/-12 reaches 32px down, 20px sideways, 8px up; the glow 0/0/32/-12
+    // reaches 20px all round → 24px sides and top, 36px bottom. Change one and the other must
+    // follow, plus the window size (quickadd.rs QA_W/QA_H + tauri.conf.json), which is the
+    // 576×456 panel + this margin.
     <div className="flex h-screen w-screen bg-transparent px-6 pb-9 pt-6">
       <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_12px_32px_-12px_rgba(0,0,0,0.75),0_0_32px_-12px_color-mix(in_srgb,var(--c-accent)_20%,transparent)]">
         {/* header */}
@@ -858,10 +845,9 @@ async function replaceSelectionAfterClose(
   // paste/type would misfire; the resolver coerces those to clipboard-only.)
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null) return;
-  // No profile layer, deliberately: this window has no dictation session and no active
-  // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
-  // app-rule ← global exactly as it always has. Passing `undefined` states that rather
-  // than leaving it to argument order.
+  // No profile layer, deliberately: the correction is a Quick-Add action, not a dictation,
+  // so it resolves app-rule ← global. Passing `undefined` states that rather than leaving
+  // it to argument order.
   const { rule, method, pasteShortcut, restoreClipboard, remoteDesktop } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
   // The seed was trimmed Rust-side (sanitize_seed) but this live re-read is not, and the paste
