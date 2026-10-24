@@ -64,7 +64,7 @@ describe("deriveAccent", () => {
   });
 
   it("derives chrome only — no state or stage colour comes out of the engine", () => {
-    // D13′: the translating stage, the speaker palette and the armed amber are fixed
+    // The translating stage, the speaker palette and the armed amber are fixed
     // app.css tokens; the accent must not be able to move them.
     expect(Object.keys(deriveAccent(185, true)).sort()).toEqual(
       ["accent", "cal", "glow0", "glowA", "glowB", "ink", "soft"],
@@ -148,7 +148,7 @@ describe("motion arithmetic", () => {
 
   it("an arc with no near end breathes from the palette's stand-in, never in place", () => {
     // A stored arc without arcFrom and a Signal colour at/near Rose: the palette shows
-    // Lilac ↔ Rose, and that is what must move (it used to sit on 350 → 350).
+    // Lilac ↔ Rose, and that is what must move, not 350 → 350 in place.
     const m = { period: 100, range: "arc" as const };
     expect(driftHue(350, m, 0)).toBe(305);
     expect(driftHue(350, m, 50_000)).toBeCloseTo(350);
