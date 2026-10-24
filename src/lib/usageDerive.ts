@@ -606,9 +606,9 @@ export interface RhythmCell extends KindSplit {
   level: Level;
   /** The scoped companion measure (companionMetric). */
   companion: number;
-  /** False for a weekday a short window never reaches (hours), a day-of-month column a
-   *  one-month window does not reach (days), or a month the window does not touch (months);
-   *  rendered hatched, never levelled or counted. */
+  /** False for a weekday a short window never reaches (hours), a day of month the window
+   *  never reaches (days), or a month the window does not touch (months); rendered hatched,
+   *  never levelled or counted. */
   inWindow: boolean;
 }
 
@@ -629,7 +629,7 @@ export interface RhythmLayout {
   slotWord: string;
   /** What the side bars compare against: a flat "week" / "month" / "year". */
   flatWord: string;
-  /** Days only: how often each day of month occurs in the window (0 = outside a one-month window). */
+  /** Days only: how often each day of month occurs in the window (0 = a day the window never reaches). */
   colOcc: number[] | null;
 }
 
