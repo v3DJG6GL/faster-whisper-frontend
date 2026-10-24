@@ -338,8 +338,8 @@ pub struct DecodeDefaults {
 }
 
 // `GET /v1/usage` types: snake_case passthrough like Capabilities, no remapping to TS.
-// Every field defaults so a server that omits a block (or a later one that adds a
-// facet) still deserializes; the bounding in `discovery::get_usage_stats` caps the lists.
+// Every field defaults so a server that omits a block still deserializes; the bounding in
+// `discovery::get_usage_stats` caps the lists.
 /// One usage bucket's counters for one job kind (or `all`).
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct UsageKindTotals {
@@ -818,10 +818,11 @@ pub const MAX_NOTICES: usize = 50;
 /// full serde tree for 200 characters it will then discard.
 pub const MAX_ERROR_BODY: usize = 256 * 1024;
 
-/// Ceiling on a METADATA response — capabilities, model lists, usage counters, pipeline rules,
-/// recent words. Their per-field caps apply only AFTER the read, so the buffer and the serde tree
-/// need this bound first; several fire on screen entry or from a gesture-free effect. [`MAX_BODY`]
-/// is reserved for routes that can legitimately carry a transcription or a T2T translation.
+/// Ceiling on a METADATA response — capabilities, model lists, job status, recent words, the
+/// pipeline PATCH reply (usage and the pipeline-rules GET have their own larger caps). Their
+/// per-field caps apply only AFTER the read, so the buffer and the serde tree need this bound
+/// first; several fire on screen entry or from a gesture-free effect. [`MAX_BODY`] is reserved for
+/// routes that can legitimately carry a transcription or a T2T translation.
 pub const MAX_META_BODY: usize = 1024 * 1024;
 
 /// Per-request bound on the metadata probes ([`get_json_status`]): they read at most
@@ -1066,9 +1067,7 @@ mod usage_hour_cell_tests {
 }
 
 /// Buffer a response body with an explicit ceiling, giving up once it passes the limit instead of
-/// growing without bound. Every caller now names its own ceiling: an error arm that only wants a
-/// `detail` string takes [`MAX_ERROR_BODY`], a sync payload takes `sync::SYNC_MAX_BODY`, and only a
-/// route that can legitimately carry a transcription takes [`MAX_BODY`].
+/// growing without bound.
 pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result<String, String> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
         return Err(TOO_LARGE.into());
