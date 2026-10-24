@@ -9,9 +9,8 @@
 //! Refcounted by keycode so multiple keyboards compose correctly. When the backend isn't running
 //! the map stays empty, so the gate is a no-op and injection behaves exactly as before.
 //!
-//! A leaked count used to "only cost an injection a bounded wait, never a wedge" — that stopped
-//! being true when the divert-on-still-held branch became reachable on the primary hotkey paths.
-//! A stuck count now means every phrase is silently sent to the clipboard for the process lifetime.
+//! A leaked count is not benign: with the divert-on-still-held branch on the primary hotkey paths,
+//! a stuck count silently sends every phrase to the clipboard for the process lifetime.
 //!
 //! The map is TRANSITION-fed, and that is the reason for the loss latch below: `commit()` on both
 //! backends early-returns on its own `held` set before touching this map, and that set starts empty
@@ -39,16 +38,13 @@ use std::time::{Duration, Instant};
 /// It is ONE process-global slot with no session or profile identity — consumed by whichever
 /// non-empty typing injection arrives first. That is why `clear_chord_lost` exists.
 ///
-/// Armed at the STOP, not at the wipe. Two reasons, both learned the hard way:
+/// Armed at the STOP, not at the wipe, for two reasons:
 ///   * The map is also emptied by DECREMENT in each backend's post-loop cleanup, which then emits
 ///     the same manufactured stop — and on Windows that cleanup RACES the wipe (`*g = None` wakes
-///     the worker before the wipe runs), so arming off the map's contents was a coin flip on the
-///     platform where this is unconditionally exposed.
-///   * A manufactured stop means a session WAS held, so it cannot fire when no session was at
-///     risk at all — which arming off "the
-///     map contained a chord modifier" does: that also fires when the user merely happens to be
-///     holding Shift to select text while an unrelated sync pull lands — a silent clipboard divert
-///     for a phrase that was never at risk, the failure mode this project has twice refused.
+///     the worker before the wipe runs), so arming off the map's contents would be racy.
+///   * A manufactured stop means a session WAS held. Arming off "the map contained a chord
+///     modifier" would also fire when the user merely holds Shift to select text while an
+///     unrelated sync pull lands — a silent clipboard divert for a phrase never at risk.
 ///
 /// `Instant`, not the wall clock: an NTP step or a VM restore can move `SystemTime` backwards, and
 /// an elapsed-time comparison that underflows reads an arbitrarily old latch as fresh — failing
@@ -111,10 +107,9 @@ pub fn clear_chord_lost_if_armed_before(released_at: Option<Instant>) {
 ///
 /// One-shot and self-expiring, so it can never wedge. The TTL has to cover
 /// manufactured-stop → the server returning a final → the injection, and the SERVER controls the
-/// middle leg — so it is sized against the LONGEST such leg, not against a guess. That leg is the
-/// batch transcription POST's 120s client timeout, NOT the stuck-finalize watchdog this doc once
-/// cited: that watchdog is stream-only, so on a batch hold profile it never runs. A tighter bound
-/// would let a slow or deliberately stalling server walk the transcript straight past the control.
+/// middle leg — so it is sized against the LONGEST such leg: the batch transcription POST's 120s
+/// client timeout (the stuck-finalize watchdog is stream-only and never runs on a batch hold
+/// profile). A tighter bound would let a slow or stalling server walk the transcript past the control.
 pub fn take_lost_if_fresh(ttl: Duration) -> bool {
     let at = MODS_LOST_AT.lock().ok().and_then(|mut g| g.take());
     at.is_some_and(|at| at.elapsed() <= ttl)
@@ -207,14 +202,12 @@ impl HeldKeys {
     /// from a previous run can't wedge the gate — and retire every existing writer.
     ///
     /// The retirement is what makes the wipe safe. The Windows worker exits gracefully and
-    /// runs a post-loop that decrements everything it held, and it may still be draining a
+    /// runs a post-loop that decrements everything it held, possibly while still draining a
     /// backlog — but the wipe runs the moment `start()` drops the old listener, BEFORE that
-    /// worker wakes. So the old worker's late writes used to land on the NEW worker's counts:
-    /// a decrement zeroed a modifier the new worker had just recorded as down, the injection
-    /// gate then read "nothing held", skipped its wait, and typed the transcript into a live
-    /// Ctrl; a late increment from its backlog left a count nobody would ever decrement. With
-    /// the generation bumped here, every write from the retired worker is dropped, and the
-    /// counts belong to one listener at a time.
+    /// worker wakes. Its late writes would otherwise land on the NEW worker's counts: a
+    /// decrement zeroing a modifier the new worker recorded as down (the gate then types into
+    /// a live Ctrl), or an increment nobody ever decrements. Bumping the generation drops every
+    /// write from the retired worker, so the counts belong to one listener at a time.
     ///
     /// Deliberately unconditional and evidence-free: see [`MODS_LOST_AT`] for why the loss is
     /// recorded at the manufactured stop instead of here.
@@ -265,7 +258,6 @@ mod tests {
     // other under the default parallel harness.
     #[test]
     fn loss_latch_semantics() {
-        // Not armed ⇒ nothing to take.
         assert!(!take_lost_if_fresh(Duration::from_secs(60)));
 
         // Armed ⇒ taken once, and ONLY once. This is what stops a true positive from leaving the
@@ -329,7 +321,6 @@ mod tests {
 
     #[test]
     fn all_held_is_false_for_an_empty_chord() {
-        // The queued-start gate depends on "nothing to check" never reading as "held".
         let held = HeldKeys::default();
         assert!(!held.all_held(&[]));
     }
