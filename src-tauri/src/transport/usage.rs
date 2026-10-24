@@ -53,6 +53,17 @@ pub struct UsageOutcomePost {
     pub results: Vec<UsageOutcomeResult>,
 }
 
+impl UsageOutcomePost {
+    /// A failed post: `status` 0 = unreachable, else the HTTP status (422 = refused locally).
+    fn failed(status: u16, error: String) -> Self {
+        Self {
+            status,
+            error: Some(error),
+            ..Default::default()
+        }
+    }
+}
+
 fn job_id_ok(id: &str) -> bool {
     (8..=64).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
@@ -72,12 +83,7 @@ pub async fn post_usage_outcomes(
                 .is_some_and(|a| a.is_empty() || a.chars().count() > 64)
     });
     if bad || outcomes.is_empty() || outcomes.len() > MAX_OUTCOMES {
-        return UsageOutcomePost {
-            ok: false,
-            status: 422,
-            error: Some("Invalid usage outcome batch.".into()),
-            results: Vec::new(),
-        };
+        return UsageOutcomePost::failed(422, "Invalid usage outcome batch.".into());
     }
     let base = base_url(server_url);
     let url = format!("{base}/v1/usage/outcome");
@@ -110,19 +116,9 @@ pub async fn post_usage_outcomes(
                     results,
                 }
             } else {
-                UsageOutcomePost {
-                    ok: false,
-                    status: code,
-                    error: Some(detail_from(&text)),
-                    results: Vec::new(),
-                }
+                UsageOutcomePost::failed(code, detail_from(&text))
             }
         }
-        Err(e) => UsageOutcomePost {
-            ok: false,
-            status: 0,
-            error: Some(friendly_err(&e)),
-            results: Vec::new(),
-        },
+        Err(e) => UsageOutcomePost::failed(0, friendly_err(&e)),
     }
 }
