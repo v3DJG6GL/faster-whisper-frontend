@@ -225,9 +225,9 @@ const HOVER_WATCHDOG_MS = 1500;
  * transcript when you speak, and collapses back on silence.
  */
 export default function Overlay() {
-  // Pre-handshake placeholder. It mirrors the STORE defaults (store.ts recording block) —
-  // if the first real update is ever missed, the chip must impersonate a calm docked idle
-  // dot with auto-hide armed, not a fake "armed" session that sits on screen forever.
+  // Pre-handshake placeholder, built from REC: if the first real update is ever missed, the
+  // chip must impersonate a calm docked idle dot with auto-hide armed, not a fake "armed"
+  // session that sits on screen forever.
   const [state, setState] = useState<ChipState>({
     status: "idle",
     level: 0,
@@ -969,7 +969,7 @@ export default function Overlay() {
             : vis.label;
   // The outcome an "incomplete" note shares the sr-only status with — from the stable payload
   // fields, not the 1.1 s pulse, so the live region doesn't change (and re-announce) when the
-  // pulse clears. Without it a clipboard-only or untranslated end went unsaid behind the note.
+  // pulse clears. Without it a clipboard-only or untranslated end would go unsaid behind the note.
   const incompleteEndPhrase =
     state.translateFailure && (state.sessionOutcome === "typed" || state.sessionOutcome === "clipboard")
       ? untranslatedPhrase
@@ -1000,8 +1000,6 @@ export default function Overlay() {
   // the largest case (3× at 0.75 zoom = 40px) still fits the 42px pill.
   const chipZoom = Math.min(2, Math.max(0.75, state.chipScale));
   const dotK = peeked ? Math.min(3, Math.max(1, state.dotScale)) / chipZoom : 1;
-  // toneOwnsDot gates both fill and glow: whenever the fill comes from the tone map, so
-  // does the glow.
   const baseDotGlow =
     toneOwnsDot
       ? TONE_GLOW[vis.tone]
@@ -1176,8 +1174,6 @@ export default function Overlay() {
     sizeNudge, // a size adjustment restarts the wait from the refreshed grace floor
   ]);
 
-  // Quick-launch: icon buttons shown when hovering the idle/standby chip (never while
-  // peeked, speaking, finishing, or in error).
   const hasQuickLaunch = state.quickLaunch.length > 0;
   // Gate quick-launch on the SAME delayed hover-intent as the language/mode detail (not raw
   // `hovering`), so the chip reveals everything in one step after the dwell — never expanding
