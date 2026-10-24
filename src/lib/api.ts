@@ -190,24 +190,35 @@ function withLanguageCode(r: BatchResult): BatchResult {
   return typeof r.language === "string" && r.language ? { ...r, language: languageCodeOf(r.language) } : r;
 }
 
-export async function transcribeFile(args: ServerTarget & {
+/** The decode fields every transcription request carries (file, link, stream, record). */
+interface DecodeRequest {
   model: string;
   language: string;
   // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
   prompt?: string | null;
   decodeOverrides?: DecodeOverrides | null;
   overrideProfile?: string | null;
+}
+
+/** Those fields as command args (absent ones sent as null). */
+function decodeArgs(a: DecodeRequest) {
+  return {
+    model: a.model,
+    language: a.language,
+    prompt: a.prompt ?? null,
+    decodeOverrides: a.decodeOverrides ?? null,
+    overrideProfile: a.overrideProfile ?? null,
+  };
+}
+
+export async function transcribeFile(args: ServerTarget & DecodeRequest & {
   filePath: string;
   /** Per-run stage options (translate / diarization). Omitted keys = absent
    *  on the wire, so the server's own defaults apply. */
   options?: TranscribeOptions | null;
 }): Promise<BatchResult> {
   return invokeServer<BatchResult>("transcribe_file", args, {
-    model: args.model,
-    language: args.language,
-    prompt: args.prompt ?? null,
-    decodeOverrides: args.decodeOverrides ?? null,
-    overrideProfile: args.overrideProfile ?? null,
+    ...decodeArgs(args),
     filePath: args.filePath,
     options: args.options ?? null,
   }, new Error("Transcription requires the desktop app.")).then(withLanguageCode);
@@ -296,21 +307,12 @@ export async function cancelTextTranslation(args: ServerTarget & {
 
 /** Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
  *  and runs the normal pipeline. Full backend only (url_download_enabled). */
-export async function transcribeUrl(args: ServerTarget & {
-  model: string;
-  language: string;
-  prompt?: string | null;
-  decodeOverrides?: DecodeOverrides | null;
-  overrideProfile?: string | null;
+export async function transcribeUrl(args: ServerTarget & DecodeRequest & {
   sourceUrl: string;
   options?: TranscribeOptions | null;
 }): Promise<BatchResult> {
   return invokeServer<BatchResult>("transcribe_url", args, {
-    model: args.model,
-    language: args.language,
-    prompt: args.prompt ?? null,
-    decodeOverrides: args.decodeOverrides ?? null,
-    overrideProfile: args.overrideProfile ?? null,
+    ...decodeArgs(args),
     sourceUrl: args.sourceUrl,
     options: args.options ?? null,
   }, new Error("Transcription requires the desktop app.")).then(withLanguageCode);
@@ -973,14 +975,8 @@ export async function onAudioLevel(cb: (level: number) => void): Promise<() => v
   return subscribe<number>("audio://level", cb);
 }
 
-export async function startStream(args: ServerTarget & {
-  model: string;
-  language: string;
-  // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
-  prompt?: string | null;
+export async function startStream(args: ServerTarget & DecodeRequest & {
   responseFormat: string;
-  decodeOverrides?: DecodeOverrides | null;
-  overrideProfile?: string | null;
   /** Declares that this session's utterances WILL be translated on a separate
    *  request, so the server holds each per-utterance log receipt open and merges
    *  the translation into it instead of logging unlinked [translate] lines.
@@ -1008,12 +1004,8 @@ export async function startStream(args: ServerTarget & {
   muteSystem?: boolean;
 }): Promise<void> {
   await invokeServer<void>("start_stream", args, {
-    model: args.model,
-    language: args.language,
-    prompt: args.prompt ?? null,
+    ...decodeArgs(args),
     responseFormat: args.responseFormat,
-    decodeOverrides: args.decodeOverrides ?? null,
-    overrideProfile: args.overrideProfile ?? null,
     translateExpect: args.translateExpect ?? null,
     clientJob: args.clientJob ?? null,
     deviceId: args.deviceId ?? null,
@@ -1045,13 +1037,7 @@ export async function cancelStream(userInitiated = false, discardRecording = use
   await invoke("cancel_stream", { userInitiated, discardRecording });
 }
 
-export async function startRecord(args: ServerTarget & {
-  model: string;
-  language: string;
-  // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
-  prompt?: string | null;
-  decodeOverrides?: DecodeOverrides | null;
-  overrideProfile?: string | null;
+export async function startRecord(args: ServerTarget & DecodeRequest & {
   deviceId?: string | null;
   save?: boolean;
   recordingsDir?: string | null;
@@ -1061,11 +1047,7 @@ export async function startRecord(args: ServerTarget & {
   standard?: boolean;
 }): Promise<void> {
   await invokeServer<void>("start_record", args, {
-    model: args.model,
-    language: args.language,
-    prompt: args.prompt ?? null,
-    decodeOverrides: args.decodeOverrides ?? null,
-    overrideProfile: args.overrideProfile ?? null,
+    ...decodeArgs(args),
     deviceId: args.deviceId ?? null,
     save: args.save ?? false,
     recordingsDir: args.recordingsDir ?? null,
