@@ -459,7 +459,6 @@ export default function Transcribe() {
       setTranslate(s.translate);
       setTranslationMode(s.translationMode);
       setSeparateBgm(s.separateBgm);
-      // The switch persists as applyBackendPick's does, pruning the stored targets.
       if (switched) {
         persistOptions({ backendId: s.backendId, model: "", translationModel: "", language: undefined, translateTo: targets });
       }
@@ -473,8 +472,8 @@ export default function Transcribe() {
   // standard server hides the full-backend-only stages.
   const isStandard = serverKind === "standard";
 
-  // Capability gate + inherited baseline for the per-run decode editor —
-  // the same context the Backend/Profile editors use.
+  // Capability gate for the per-run decode editor — the same context the Backend/Profile
+  // editors use (the inherited baseline comes from useDecodeDefaults below).
   const serverUrl = backend ? effectiveServerUrl(backend, settings) : "";
   const { caps } = useOverrideContext({ serverUrl, backendId: backend?.id, serverKind });
   // What the server gives this run: the EFFECTIVE model and profile — the per-run picks win,
@@ -569,9 +568,9 @@ export default function Transcribe() {
   // unsupported (the run would then just soft-fail into a "skipped" rail row).
   const bgmAvailable = caps?.bgm_separation_enabled !== false;
   const diarAvailable = caps?.diarization_enabled !== false;
-  // The two stages as the run will actually request them: the screen's pick, else the server's
-  // default; undefined = neither says (an older server), so no field is sent. A standard server
-  // has neither stage, whatever the persisted toggles say.
+  // The two stages as the run will actually request them: a server-locked value, else the
+  // screen's pick, else the server's default; undefined = neither says (an older server), so no
+  // field is sent. A standard server has neither stage, whatever the persisted toggles say.
   const diarWire = diarAvailable && !isStandard ? stagePick(diarize, decodeDefaults?.diarize) : undefined;
   const bgmWire = bgmAvailable && !isStandard ? stagePick(separateBgm, decodeDefaults?.separate_bgm) : undefined;
   const effDiarize = diarWire === true;
@@ -1043,8 +1042,6 @@ export default function Transcribe() {
       // A word naming a Whisper language (a synced Backend "english") is sent as its code, as
       // dictation sends it (effectiveLanguage); "auto" and codes stay.
       language: effectiveLanguage(undefined, language),
-      // Tri-state: unset = inherit the server DEFAULT_PROMPT (omit the field), an
-      // explicit clear = send "" (suppress it), a value = send it.
       prompt: backendPrompt(backend),
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
       // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
@@ -1625,7 +1622,7 @@ export default function Transcribe() {
               />
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
-                {/* Header = the toggle alone; the model pick lives in the
+                {/* Header = gear + switch only; the model pick lives in the
                     expand sub-panel so the header column stays aligned with
                     every other row. */}
                 <SettingRow
@@ -1761,7 +1758,7 @@ export default function Transcribe() {
               </div>
               <div className="relative">
                 <span aria-hidden className="absolute -left-[21px] top-[22px] size-[7px] rounded-full bg-faint" />
-                {/* Toggle-only header, so the header column stays aligned; the
+                {/* Gear + switch header only, so the header column stays aligned; the
                     speaker mode + model live in the expand sub-panel. */}
                 <SettingRow
                   title="Speaker diarization"
@@ -2121,9 +2118,8 @@ export default function Transcribe() {
           !panelItem?.siteFallback &&
           !(panelResult?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
         const stages = railStages(panelOptions, forUrl, forText, siteT);
-        // The server-owned plan behind this file (live poll while it runs,
-        // the response's receipt once settled) and the numbers it derives:
-        // the overall fraction and the ETA are the server's, verbatim.
+        // The server-owned plan behind this file; the overall fraction and the
+        // ETA below are the server's numbers too, verbatim.
         const plan = planOf(progress, panelResult);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
@@ -2422,8 +2418,6 @@ export default function Transcribe() {
                             : planStage.state === "skipped" ? "skipped" : "done"
                       : i === active ? "active"
                         : i > active ? "pending" : "done";
-                // The translate and diarize rows' fraction is unit-weighted (done
-                // units in full, the running one by its own progress).
                 const hasUnits = st === "translating" || st === "diarizing";
                 const frac =
                   state !== "active" ? null
@@ -2863,12 +2857,9 @@ export default function Transcribe() {
                         </div>
                       )}
                       {/* VAD split bar (live): a composition readout of the
-                          whole timeline — muted kept audio, hatched removed
-                          silence. Deliberately thin, flat and dim so it
+                          whole timeline, deliberately thin, flat and dim so it
                           can't be mistaken for the stage progress bar above
-                          (thick, saturated, rounded = progress; hairline
-                          split = composition, same grammar as the storage
-                          bar in Settings). */}
+                          (same grammar as the storage bar in Settings). */}
                       {state === "active" && vr !== null && audioDur ? (
                         <div className="mt-2.5">
                           <div className="flex h-[3px] gap-0.5">
