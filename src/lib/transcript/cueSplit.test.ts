@@ -2334,8 +2334,8 @@ describe("cutByShare", () => {
       .toEqual(["They moved to the U.S.", "The rest of the family stayed in Ireland for good"]);
   });
   it("a name's compact initials or a capital initialism before a capital is judged as a name's initial is", () => {
-    // Compact initials ("J.K.", "C.S.", "J.R.R.") before a capital hold as spaced ones ("J. K.
-    // Rowling") do; a place initialism ("U.S.") never does.
+    // Compact initials ("J.K.", "C.S.", "J.R.R.") before a capital are judged as a single initial
+    // ("F. Scott") is; a place initialism ("U.S.") never holds.
     const cues = (t: string, lang?: string) => {
       const ws = t.split(" ");
       const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
