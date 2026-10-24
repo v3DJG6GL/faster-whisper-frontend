@@ -1,7 +1,8 @@
-// A PATCH the server refuses for good (the list was locked, deleted or hidden after quick-add
-// loaded) must not be a retryable "error": quick-add would re-PATCH the refused list on every
-// summon and never re-run the refresh write gate that shows "List locked" / "re-pin one". Any
-// OTHER refusal must stay "error": the re-sync a "refused" triggers replaces the unsaved rows.
+// A PATCH the server refuses for good must not be a retryable "error": quick-add would re-PATCH
+// the same map on every summon. A refused LIST (locked, deleted, hidden, retyped, quick-config
+// access revoked) is "refused", whose re-sync re-runs the write gate that shows "List locked" /
+// "re-pin one"; refused ROWS (422, dictionary cap) are "rejected" and kept for the user to fix.
+// Anything else stays "error": the re-sync a "refused" triggers would replace the unsaved rows.
 import { describe, expect, it } from "vitest";
 import { quickAddRejectReason, quickAddSaveOutcome, selectionEdges, type QuickAddSaveOutcome } from "./quickAddSave";
 import { envPinnedOf, RULE_LIST_SETTING, saveLanded } from "./pipelineMap";
