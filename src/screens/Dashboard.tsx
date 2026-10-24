@@ -102,7 +102,6 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   // server's target cap from the store.
   useApp((s) => (backend ? ownProp(s.caps, backend.id) : undefined));
   const Glyph = GLYPH[p.activation];
-  // As the Profiles editor saves a blank name (and the Profiles list shows it).
   const name = profileDisplayName(p.name);
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
