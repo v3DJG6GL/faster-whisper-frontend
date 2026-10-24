@@ -153,15 +153,11 @@ describe("effectiveOverrideProfile", () => {
   });
 });
 
-// The "cleared vs inherited" wire shape.
-//
-// The server now reads a PRESENT-but-empty override as "cleared — ignore what you would
-// have inherited", and an ABSENT one as "inherit". Everywhere the client used to collapse
-// the two (`|| undefined`, `!value.trim()`, "prune the empty list") it lost the user's
-// ability to say *no* — the cleared prompt / glossary / target list came back from the
-// server override-profile, silently, with the field still showing empty in the editor.
-//
-// These pin the three states for each field the client can now express.
+// The "cleared vs inherited" wire shape: the server reads a PRESENT-but-empty override as
+// "cleared — ignore what you would have inherited" and an ABSENT one as "inherit". Collapsing
+// the two (`|| undefined`, `!value.trim()`, pruning an empty list) silently brings a cleared
+// prompt / glossary / target list back from the server override-profile while the editor
+// shows the field empty.
 
 const backend = (over: Partial<Backend> = {}): Backend => ({
   id: "b1",
@@ -178,8 +174,7 @@ const backend = (over: Partial<Backend> = {}): Backend => ({
 
 describe("backendPrompt — the Backend default's tri-state", () => {
   it("reads unset as inherit and cleared as an explicit empty", () => {
-    // The pair that used to be one value: both store `prompt: ""`, and only the flag
-    // says whether the server's DEFAULT_PROMPT applies.
+    // Both store `prompt: ""`; only the flag says whether the server's DEFAULT_PROMPT applies.
     expect(backendPrompt(backend())).toBeUndefined();
     expect(backendPrompt(backend({ promptCleared: true }))).toBe("");
   });
@@ -198,7 +193,7 @@ describe("backendPrompt — the Backend default's tri-state", () => {
 
   it("drops the flag on reset, so the stale one cannot survive a spread", () => {
     // `set()` spreads a partial onto the draft — writing only `prompt` would leave a
-    // previous clear's flag behind and re-cleared a field the user had just reset.
+    // previous clear's flag behind and re-clear a field the user had just reset.
     expect(backendPromptFields(undefined).promptCleared).toBeUndefined();
     expect(backendPromptFields("x").promptCleared).toBeUndefined();
     expect(backendPromptFields("").promptCleared).toBe(true);
@@ -261,10 +256,9 @@ describe("effectiveServerUrl", () => {
 });
 
 describe("stripUrlNoise trims the edges the Rust transport trims (str::trim)", () => {
-  // [raw, stripped, authority host (null = unparseable)]. Changed vs 68f08787: the U+00A0, U+2028
-  // and U+3000 rows (and a leading NBSP on a schemeless address) used to keep the character, so
-  // no host, no userinfo flag — while Rust trimmed it and connected. U+FEFF is not White_Space:
-  // Rust keeps it, and so does this (neither side then reads a scheme).
+  // [raw, stripped, authority host (null = unparseable)]. U+00A0, U+2028 and U+3000 are
+  // White_Space, which Rust trims before it connects. U+FEFF is not: Rust keeps it, and so does
+  // this (neither side then reads a scheme).
   const matrix: [string, string, string | null][] = [
     ["http://h.tld\u00a0", "http://h.tld", "h.tld"],
     ["\u00a0http://h.tld", "http://h.tld", "h.tld"],
@@ -296,8 +290,8 @@ describe("stripUrlNoise trims the edges the Rust transport trims (str::trim)", (
   });
 });
 
-// Run #75 F10-1: the connect-first restore writes the key the user just typed into the restored
-// backend for the server it connected to, so the dialog must not tell them that backend needs one.
+// The connect-first restore writes the key the user just typed into the restored backend for
+// the server it connected to, so the dialog must not tell them that backend needs one.
 describe("fatesAfterSuppliedKey — the restore dialog's keyless list", () => {
   const missingAfterSuppliedKey = (missing: Backend[], installed: Backend[], keyFor?: string) =>
     fatesAfterSuppliedKey({ missing, moved: [] }, installed, keyFor).missing;
