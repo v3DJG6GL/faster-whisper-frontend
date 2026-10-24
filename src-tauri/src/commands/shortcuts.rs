@@ -195,9 +195,9 @@ fn apply_bindings_unless_capturing(app: &AppHandle) -> bool {
     true
 }
 
-/// Re-read config and re-apply bindings (call after hotkeys / evdev toggle change).
-/// `async` + spawn_blocking so the wait on APPLY_LOCK happens off the main thread and off
-/// the tokio workers (see APPLY_LOCK).
+/// Re-read config and re-apply bindings, clearing a capture's suspension: the capture-end pair of
+/// `suspend_shortcuts`. `async` + spawn_blocking so the wait on APPLY_LOCK happens off the main
+/// thread and off the tokio workers (see APPLY_LOCK).
 #[tauri::command]
 pub async fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -210,11 +210,11 @@ pub async fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
 }
 
 /// Like `reregister_shortcuts`, but a NO-OP while a binding capture is in progress
-/// (CAPTURE_SUSPENDED). cancelLive's resume-recovery calls this: cancelling a session on
-/// `system://resumed` must NOT clear the capture suspension and re-arm the hotkeys mid-capture
-/// (the suspend-watch deliberately left them suspended, and the capture-end `reregister_shortcuts`
-/// will re-arm once capture truly ends). Outside a capture it behaves exactly like the unconditional
-/// reregister, preserving cancelLive's stuck-hotkey recovery.
+/// (CAPTURE_SUSPENDED). For callers that can fire mid-capture (cancelLive on `system://resumed`, a
+/// config save resolving late): they must NOT clear the capture suspension and re-arm the hotkeys
+/// mid-capture (the suspend-watch deliberately left them suspended, and the capture-end
+/// `reregister_shortcuts` re-arms once capture truly ends). Outside a capture it behaves exactly
+/// like the unconditional reregister, preserving cancelLive's stuck-hotkey recovery.
 #[tauri::command]
 pub async fn reregister_shortcuts_unless_capturing(app: AppHandle) -> Result<(), String> {
     // Outside a capture CAPTURE_SUSPENDED is already false, so applying without clearing it
