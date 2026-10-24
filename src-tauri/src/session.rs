@@ -56,17 +56,17 @@ pub fn retire_active_epoch() {
 /// device-loss salvage arm, never by `finish()` itself, and the epoch a cancel has since disowned.
 ///
 /// `stop_record` takes the session out of managed state and `finish` spawns the transcribe POST
-/// on its own task — so a cancel arriving during the "transcribing…" phase found `None` and had
-/// nothing to discard, while the detached work went on to POST the audio and write the `.wav`
-/// plus its verbatim `.txt` sidecar. The UI meanwhile showed a clean cancelled state.
+/// on its own task, so a cancel during the "transcribing…" phase finds no session; this slot lets
+/// it still disown the detached work, which would otherwise POST the audio and write the `.wav` and
+/// its `.txt` sidecar behind a UI showing a clean cancel.
 ///
 /// A dedicated pair rather than reusing `ACTIVE_EPOCH`: that one is also bumped when the NEXT
 /// session starts, so gating on "still active" would throw away a legitimate transcription
 /// whenever the user began dictating again before the previous batch POST returned.
 ///
-/// The cancelled side is a short list, not one slot: stop A → cancel while A transcribes → start
-/// B → cancel B used to overwrite A's mark with B's, so A's POST returned uncancelled and kept its
-/// `.wav` and wrote its `.txt`. A few recent epochs cover any realistic overlap of detached POSTs.
+/// The cancelled side is a short list, not one slot: in stop A → cancel while A transcribes → start
+/// B → cancel B, one slot would lose A's mark, so A's POST would keep its `.wav` and write its
+/// `.txt`. A few recent epochs cover any realistic overlap of detached POSTs.
 static DETACHED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
 static CANCELLED_BATCHES: Mutex<VecDeque<u64>> = Mutex::new(VecDeque::new());
 /// How many cancelled epochs [`CANCELLED_BATCHES`] remembers (oldest dropped first).
@@ -138,10 +138,10 @@ fn batch_cancelled(epoch: u64) -> bool {
 
 /// The discard state of the stream session most recently DETACHED by `stop_stream` — the stream
 /// twin of [`DETACHED_BATCH_EPOCH`]. `finish()` detaches the WS drain, so a Cancel pressed while
-/// it finalizes found no session and the drain went on to write the `.wav` and its `.txt` while
-/// the UI showed a clean cancel (the batch path discards there since 1be5966). One slot is
-/// enough: a cancel that finds a live session is aimed at that one and never reaches this, so
-/// only the newest detached drain can be the one the user means.
+/// it finalizes finds no session; without this the drain would still write the `.wav` and its
+/// `.txt` behind a UI showing a clean cancel. One slot is enough: a cancel that finds a live
+/// session is aimed at that one and never reaches this, so only the newest detached drain can be
+/// the one the user means.
 ///
 /// The drain retires its own entry at its one decision point ([`settle_detached_stream`]), so a
 /// Cancel after the recording was already written finds the slot empty instead of logging a
@@ -532,9 +532,6 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             );
         }
         StreamEvent::Captured { id, utterance } => {
-            // Epoch-gated like every other event: a cancelled session's
-            // capture id must never reach the UI and get attached to whatever
-            // session started next.
             emit_if_active(
                 &appc,
                 epoch,
@@ -549,8 +546,6 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             emit_if_active(&appc, epoch, "stream://status", "loading");
         }
         StreamEvent::Utterance { state, utterance } => {
-            // Epoch-gated like the rest: a cancelled session's drain can still
-            // deliver "decoding", and it must not paint the next session busy.
             emit_if_active(
                 &appc,
                 epoch,
@@ -614,7 +609,7 @@ struct OpenedInput {
     watch_source: Option<String>,
 }
 
-/// Open the pinned microphone, or the default input when it isn't connected (D77: the pin is kept,
+/// Open the pinned microphone, or the default input when it isn't connected (the pin is kept,
 /// dictation still works, and the UI is told which mic stands in). A working default mic beats a
 /// cryptic "input device not found" that breaks dictation until the user re-picks in Settings.
 fn open_input(device_id: Option<String>) -> Result<OpenedInput, String> {
@@ -762,7 +757,7 @@ fn rms(samples: &[f32]) -> f32 {
 /// on both sides. Deliberately checked on the RAW chunk RMS, NOT the smoothed+gained meter level:
 /// that one passes through chip_level's clamp and a 0-seeded EMA against a threshold
 /// (streaming.ts MIC_LIVE_LEVEL) that quiet mics only hover AT, which held "warming up…" until the
-/// user actually spoke (the "~2s until the chip turns amber" complaint).
+/// user actually spoke.
 const MIC_LIVE_RMS: f32 = 1.0e-5;
 /// Consecutive above-floor callbacks required before the mic counts as live (~30 ms), so the
 /// single open-click/DC blip a warming device can emit doesn't end the warm-up gate early.
@@ -797,8 +792,8 @@ impl LiveDetect {
 }
 
 /// One EMA step of the level meter (chip_level gain + clamp, 0.7/0.3 smoothing) — mirrors the
-/// capture meter. Centralized so the coefficients stay in one place across both capture
-/// loops' per-sample-format arms (they were copied verbatim 6×).
+/// capture meter. Shared by every per-sample-format arm of both capture loops so the coefficients
+/// stay in one place.
 fn smooth(prev: f32, mono: &[f32]) -> f32 {
     prev * 0.7 + crate::audio::chip_level(rms(mono)) * 0.3
 }
@@ -850,7 +845,7 @@ fn run_capture(
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     // Raw-audio go-live detector (→ one-shot `stream://mic-live`), shared between the format arms'
-    // callbacks and the publish loop below. See LiveDetect for why this is raw-RMS, not the meter.
+    // callbacks and the publish loop below. See MIC_LIVE_RMS for why it is raw-RMS, not the meter.
     let live = Arc::new(AtomicBool::new(false));
     let stream = match format {
         SampleFormat::F32 => {
@@ -936,11 +931,9 @@ fn run_capture(
     Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────────
 // Batch-mode dictation: record to a buffer, transcribe the whole clip on stop.
 // Emits the same stream:// events the UI already handles (level, then final +
 // closed after the POST).
-// ─────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 pub struct RecordState(pub Mutex<Option<RecordSession>>);
@@ -977,10 +970,9 @@ pub struct RecordSession {
     // Set by the capture thread's err_cb on a TERMINAL device loss; finish() reads it to avoid
     // double-transcribing (the device-loss arm already salvaged the buffer + spawned its transcribe).
     device_lost: Arc<AtomicBool>,
-    // Set by `discard()` (the user cancelled). The capture thread's device-loss salvage arm runs
-    // INSIDE Drop's join, so without this a cancel that races a mic disconnect still uploaded the
-    // clip and wrote the .wav/.txt — `retire_active_epoch` only suppresses the UI events, not the
-    // POST or the disk write.
+    // Set by `discard()` (the user cancelled). The device-loss salvage arm runs INSIDE Drop's join,
+    // so without it a cancel racing a mic disconnect would still upload the clip and write the
+    // .wav/.txt — `retire_active_epoch` suppresses only the UI events, not the POST or the write.
     discard: Arc<AtomicBool>,
     _mute: SystemMuteGuard,
 }
@@ -1013,19 +1005,15 @@ impl RecordSession {
 
     /// Claim this session as the detached batch BEFORE the state lock is released.
     ///
-    /// `finish()` deliberately does NOT re-publish (see its comment on the removed re-store),
-    /// and `stop_record` has already dropped the `RecordState` guard by then. A `cancel_record`
-    /// landing in the gap between stop and finish found `None`, took the no-live-session branch,
-    /// and `cancel_detached_batch()` copied whatever `DETACHED_BATCH_EPOCH` still held: 0 on a
-    /// first session, otherwise the PREVIOUS session's epoch. Both outcomes are the failure the
-    /// branch exists to prevent — the cancelled clip was uploaded and archived while the UI said
-    /// cancelled, and an earlier still-in-flight POST could be killed and its `.wav` deleted in
-    /// its place.
+    /// `finish()` never publishes, and `stop_record` drops the `RecordState` guard before it runs.
+    /// A `cancel_record` in that gap found no live session, and `cancel_detached_batch()` disowned
+    /// whatever `DETACHED_BATCH_EPOCH` still held: 0 (the cancelled clip uploaded and archived
+    /// while the UI said cancelled) or the PREVIOUS session's epoch (an earlier in-flight POST
+    /// killed and its `.wav` deleted).
     ///
-    /// Publishing early is safe: the capture thread's device-loss salvage arm (in
-    /// `start_record`) publishes with `fetch_max` ([`publish_salvaged_batch`]), so a late salvage
-    /// firing inside `finish()`'s capture join never moves the slot back below a newer claim, and
-    /// the only other accesses are
+    /// Publishing early is safe: the device-loss salvage arm (in `start_record`) publishes with
+    /// `fetch_max` ([`publish_salvaged_batch`]), so a late salvage inside `finish()`'s capture join
+    /// never moves the slot below a newer claim; the only other accesses are
     /// `cancel_detached_batch` (reads it) and `forget_detached_batch` (clears it).
     pub fn claim_detached(&self) {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
@@ -1063,19 +1051,13 @@ impl RecordSession {
         let app = self.app.clone();
         let epoch = self.epoch;
         let params = self.params.clone();
-        // `stop_record` already published the epoch via `claim_detached`, under the RecordState
-        // lock. `cancel_record`'s recovery finish deliberately publishes nothing: its
-        // `settle_detached_batch_on_cancel` already forgot DETACHED_BATCH_EPOCH, so its keep is
-        // final and no later Cancel reaches it. Either way, never publish here. Re-publishing
-        // the epoch after `stop_record`'s claim — AFTER the ~33-50ms
-        // capture-thread join above — is not merely redundant, it can move a monotonic epoch
-        // BACKWARDS: `start_record`/`stop_record` for session N+1 can acquire the freed lock
-        // inside that join and set DETACHED to N+1, and this store would then put it back to N.
-        // A `cancel_record` arriving during N+1's "transcribing…" phase takes the no-live-session
-        // branch, so `cancel_detached_batch` would copy N and disown the ALREADY-FINISHED session
-        // instead of the live one: the clip the user just cancelled gets POSTed to the server and
-        // its .wav plus verbatim .txt sidecar are left on disk, while the UI shows a clean
-        // cancelled state — exactly the failure `claim_detached` was added to prevent.
+        // Never publish the epoch here: `stop_record` already claimed it under the RecordState
+        // lock, and a recovery cancel's keep is final (`settle_detached_batch_on_cancel` forgot
+        // it). A store after the ~33-50ms capture join above can move a monotonic epoch BACKWARDS —
+        // session N+1's `start_record`/`stop_record` can take the freed lock inside that join and
+        // claim N+1 — so a Cancel during N+1's "transcribing…" would disown finished session N
+        // instead, and the clip the user cancelled would be POSTed and its .wav + .txt kept while
+        // the UI showed cancelled.
         tauri::async_runtime::spawn(async move {
             transcribe_recording(app, epoch, params, pcm).await;
         });
@@ -1139,37 +1121,24 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                         // Same as the streaming path: say why, then close (the frontend's error
                         // handler tears the session down; the trailing closed is then ignored).
                         emit_if_active(&app, epoch, "stream://error", mic_open_error(&e));
-                        // Parity with the streaming path: there, a capture failure drops pcm_tx,
-                        // closes the channel, and drives a StreamEvent::Closed → "stream://status:
-                        // closed", so the chip settles back to idle. The batch path has no such
-                        // channel loop, so without this the chip strands on "listening" over a dead
-                        // mic with no error and no recovery but a manual cancel. Emit the same close
-                        // (committedDoc is empty pre-transcription, so the frontend just returns to
-                        // idle, exactly as the streaming path does).
+                        // The streaming path gets this close from the dropped pcm_tx ending its
+                        // channel loop; the batch path has no such loop, so without it the chip
+                        // strands on "listening" over a dead mic. committedDoc is empty
+                        // pre-transcription, so the frontend just returns to idle.
                         emit_if_active(&app, epoch, "stream://status", "closed");
                     }
-                    // A mid-capture device disconnect trips `stop` like a normal stop and returns Ok,
-                    // but with `device_lost` set. Mirror finish(): transcribe (and save, per "Keep
-                    // recordings") what was captured — exactly as the streaming drain does on the same
-                    // loss — instead of discarding it. transcribe_recording emits the final + the
-                    // trailing "closed" that unsticks the chip and writes the .wav/.txt sidecar. A
-                    // racing finish() (a stop, or a recovery cancel that keeps the clip) joins this
-                    // thread first and then bails on `device_lost` (see RecordSession::finish), and
-                    // cancel_record's discard() never transcribes, so there is no double-transcribe.
-                    // finish() (the user stop) never sets `device_lost`.
-                    // ...unless the user CANCELLED. A cancel means "discard this clip", and that has
-                    // to beat the salvage: otherwise a cancel that races a mic disconnect still sends
-                    // the audio to the server and leaves the .wav + plaintext transcript on disk.
-                    // The `discard` flag alone is read at ONE instant — right here, microseconds
-                    // after the disconnect — so a cancel arriving any later (i.e. essentially
-                    // every real one, since the dead chip is what makes the user reach for
-                    // cancel) missed it entirely. Publish the epoch as `stop_record`'s
-                    // `claim_detached` does for a normal stop (`finish()` itself never publishes),
-                    // so this spawn is nameable and `transcribe_recording`'s three
-                    // `batch_cancelled` checks cover it: without this the salvage was the one
-                    // detached path a cancel could not reach, and it left `DETACHED_BATCH_EPOCH`
-                    // stale, so a later `cancel_detached_batch()` disowned some EARLIER session's
-                    // live POST instead.
+                    // A mid-capture device disconnect trips `stop` and returns Ok with
+                    // `device_lost` set. Transcribe (and save, per "Keep recordings") what was
+                    // captured, as the streaming drain does on the same loss; transcribe_recording
+                    // emits the final + the trailing "closed" that unsticks the chip. A racing
+                    // finish() joins this thread first and bails on `device_lost`, and discard()
+                    // never transcribes, so nothing is transcribed twice.
+                    // A cancel must beat the salvage, but `discard` is read only at this instant
+                    // and nearly every real cancel comes later (the dead chip is what prompts it).
+                    // So also publish the epoch, as `stop_record`'s `claim_detached` does for a
+                    // normal stop: `transcribe_recording`'s `batch_cancelled` checks then reach
+                    // this spawn, and a stale `DETACHED_BATCH_EPOCH` can't make a later
+                    // `cancel_detached_batch()` disown an EARLIER session's POST.
                     Ok(())
                         if device_lost.load(Ordering::SeqCst)
                             && !discard.load(Ordering::SeqCst) =>
@@ -1207,7 +1176,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
 
 /// Remove a discarded batch recording — and its `.txt` sidecar when this session wrote one — on
 /// the blocking pool: an unlink on a sleeping disk or an offline share must not park a runtime
-/// worker (the 27d8bdd rule).
+/// worker.
 async fn discard_recording(wav: PathBuf, with_sidecar: bool) {
     let _ =
         tauri::async_runtime::spawn_blocking(move || remove_recording(&wav, with_sidecar)).await;
@@ -1229,15 +1198,13 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         );
         return;
     }
-    // Save the captured clip FIRST, regardless of length — exactly as the streaming save path
-    // does (it saves any non-empty buffer, with no minimum-duration gate). Whether a too-short
-    // recording is worth keeping is the BACKEND's call (CAPTURES_RECORDING_MIN_DURATION_S),
-    // not ours, so "Save recordings" produces the same files on a streaming and a batch backend.
-    // "Trim silence" affects ONLY the saved file — the full clip is still sent for transcription
-    // below — and trim_silence_16k can reduce an all-silence clip to nothing, which save_recording
-    // skips (empty buffer).
+    // Save FIRST, regardless of length, as the streaming save path does: whether a too-short
+    // recording is worth keeping is the BACKEND's call (CAPTURES_RECORDING_MIN_DURATION_S), so
+    // "Keep recordings" produces the same files on a streaming and a batch backend. "Trim silence"
+    // affects ONLY the saved file (the full clip is still transcribed); an all-silence clip can
+    // trim to nothing, which save_recording skips.
     // On the blocking pool, like the streaming drain's save: trim + write + fsync of a long clip
-    // on a sleeping disk or an offline share must not park a runtime worker (the 27d8bdd rule).
+    // on a sleeping disk or an offline share must not park a runtime worker.
     // The clip moves in and comes back out, so it is never copied.
     let (pcm, saved_path) = match params.save_dir.clone() {
         Some(dir) => {
@@ -1273,11 +1240,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         None => (pcm, None),
     };
     if pcm.is_empty() {
-        // Nothing captured at all (an instant tap / misfire) — there's no audio to transcribe, and
-        // the streaming path likewise closes an empty session without sending anything. We do NOT
-        // gate on a minimum DURATION here: any actual audio, however short, is sent so the BACKEND
-        // decides whether it's worth transcribing (its CAPTURES_RECORDING_MIN_DURATION_S etc.) —
-        // keeping batch and streaming identical.
+        // Nothing captured (an instant tap / misfire): close without sending, as the streaming path
+        // does. No minimum-DURATION gate: any actual audio is sent and the BACKEND decides
+        // (CAPTURES_RECORDING_MIN_DURATION_S).
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
@@ -1313,13 +1278,10 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         // it rather than leaving an orphan the user believes they discarded — and do not write the
         // transcript beside it or emit its text.
         //
-        // Checked ahead of the match, so it covers BOTH arms. It used to live only in `Ok`, and
-        // which arm runs is the untrusted server's choice: any non-2xx, a reset, or simply stalling
-        // past the 120s timeout lands in `Err`. So a hostile or MITM'd server could make every
-        // cancelled batch dictation keep its audio on disk — with retention defaulting to
-        // keep-forever — while the UI showed a clean cancelled state and the error emit was
-        // epoch-suppressed. Only ever deletes a file this function just created, and only on the
-        // user's own expressed discard.
+        // Checked ahead of the match so it covers BOTH arms: which arm runs is the untrusted
+        // server's choice (any non-2xx, a reset, or a stall past the 120s timeout lands in `Err`),
+        // so an Ok-only check let a hostile server keep every cancelled clip on disk. Only ever
+        // deletes a file this function just created, and only on the user's own discard.
         _ if batch_cancelled(epoch) => {
             tracing::info!("[record] session {epoch} cancelled during transcription — discarding");
             if let Some(p) = saved_path {
@@ -1327,17 +1289,12 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             }
         }
         Ok(res) => {
-            // N1/N2 bounded the STREAMING transcript at its parse and gave the streaming sidecar
-            // a byte budget; this is the other of the two branches that produce `stream://final`
-            // and the one `save_transcript_sidecar` caller outside the streaming drain (whose
-            // session and per-utterance sidecars both write the parse-bounded document), and it
-            // carried neither.
-            // Bound it HERE and not in `transport::batch`: `post()` is shared with
-            // `commands::transcribe_file` (the Transcribe tab's file upload, 3600s timeout), where
-            // a long transcript IS the product and E8 settled that it stays untouched. Batch
-            // DICTATION is a different sink — a `.txt` beside the recording and keystrokes into
-            // the focused window. At ~50 KB per hour of speech, 4 MiB is ~78 hours; the 120s POST
-            // timeout on this path caps a legitimate one far below that.
+            // Bound the transcript as the streaming path does at its parse: this is the other
+            // `stream://final` producer, and it feeds a `.txt` beside the recording and keystrokes
+            // into the focused window. Bound it HERE, not in `transport::batch`: `post()` is shared
+            // with `commands::transcribe_file` (3600s timeout), where a long transcript IS the
+            // product. At ~50 KB per hour of speech, 4 MiB is ~78 hours; this path's 120s POST
+            // timeout caps a legitimate one far below that.
             let text = crate::transport::stream::bounded(
                 &res.text,
                 crate::transport::stream::MAX_TRANSCRIPT,
@@ -1346,7 +1303,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // and tell the client where it landed so its history record can link the audio.
             // On the blocking pool, like the WAV save above and the streaming drain's sidecar:
             // open + write + fsync into the same folder can hang on a disk or share that went
-            // away during the POST, and must not park a runtime worker (the 27d8bdd rule).
+            // away during the POST, and must not park a runtime worker.
             if let Some(p) = &saved_path {
                 let (sidecar_path, sidecar_text) = (p.clone(), text.clone());
                 let wrote = tauri::async_runtime::spawn_blocking(move || {
@@ -1375,10 +1332,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                     },
                 );
             }
-            // Surface server-locked decode overrides the same way the streaming path's
-            // `ready` frame does. The batch POST hands the same list back in its result,
-            // but it was being dropped here — so on a batch backend a locked override was
-            // silently ignored with no "Server ignored N override(s)" notice on Home/chip.
+            // Surface server-locked decode overrides as the streaming path's `ready` frame does
+            // (the batch POST returns the same list), so a batch backend shows the "Server ignored
+            // N override(s)" notice too.
             if !res.overrides_ignored.is_empty() {
                 // Already bounded by to_batch_result; re-bound through the same helper as a
                 // cheap boundary guard so the count/length ceilings cannot drift.
@@ -1402,8 +1358,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
         Err(e) => {
-            // The streaming path caps its `error` frames; this sibling formatted the transport
-            // error in raw, and that error carries `detail_from(&body)` — up to the 32 MiB body cap.
+            // Capped like the streaming path's `error` frames: the transport error carries
+            // `detail_from(&body)` — up to the 32 MiB body cap.
             let msg = crate::transport::bounded_server_text(
                 &format!("Transcription failed: {e:#}"),
                 crate::transport::MAX_ERROR_TEXT,
@@ -1414,15 +1370,14 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     }
 }
 
-// ── System-audio mute guard ─────────────────────────────────────────────────
-// Optionally silences OTHER apps' audio for the duration of a dictation, so playback /
-// notification sounds don't leak into the mic — while leaving OUR OWN start/stop cues audible.
-// Per-app: snapshot the playback streams (PulseAudio / PipeWire sink-inputs) at session start and
-// mute every one that isn't ours (matched by PID) and isn't already muted, restoring exactly those
-// on drop. There's no mid-session watcher, so audio that STARTS after dictation begins isn't muted.
-// Falls back to muting the whole default sink when pactl can't enumerate streams (no PulseAudio /
-// pipewire-pulse); a no-op where neither exists (e.g. Windows). A hard crash mid-dictation can
-// leave streams muted until the next dictation restores them.
+// System-audio mute guard: optionally silences OTHER apps' audio for the duration of a dictation,
+// so playback / notification sounds don't leak into the mic — while leaving OUR OWN start/stop cues
+// audible. Per-app: snapshot the playback streams (PulseAudio / PipeWire sink-inputs) at session
+// start and mute every one that isn't ours (matched by PID) and isn't already muted, restoring
+// exactly those on drop. There's no mid-session watcher, so audio that STARTS after dictation
+// begins isn't muted. Falls back to muting the whole default sink when pactl can't enumerate
+// streams (no PulseAudio / pipewire-pulse); a no-op where neither exists (e.g. Windows). A hard
+// crash mid-dictation can leave streams muted until the next dictation restores them.
 
 /// What the guard did, so Drop undoes exactly that.
 ///
@@ -1452,10 +1407,9 @@ enum MuteCmd {
 
 /// Apply the system mute (per-app, falling back to whole-sink) and return the mode to restore later.
 ///
-/// PulseAudio/PipeWire only. The module header calls the Windows case a no-op — it was not: the
-/// helpers below spawn `pactl` / `wpctl` by BARE PROGRAM NAME, and Windows process creation
-/// searches the current working directory, so a planted `pactl.exe` next to a shortcut's working
-/// dir would run whenever a dictation started with "mute system audio" on. Make the no-op real.
+/// PulseAudio/PipeWire only; off unix it must stay a real no-op: the helpers below spawn `pactl` /
+/// `wpctl` by BARE PROGRAM NAME, and Windows process creation searches the current working
+/// directory, so a planted `pactl.exe` there would run whenever "mute system audio" is on.
 #[cfg(not(unix))]
 fn apply_mute() -> MuteMode {
     MuteMode::None
@@ -1463,8 +1417,7 @@ fn apply_mute() -> MuteMode {
 
 #[cfg(unix)]
 fn apply_mute() -> MuteMode {
-    // Prefer per-app muting so our own cues stay audible; fall back to the whole-sink mute only
-    // when pactl can't enumerate streams.
+    // Per-app first so our own cues stay audible.
     if let Some(muted) = mute_other_streams() {
         return MuteMode::PerApp(muted);
     }
@@ -1490,13 +1443,11 @@ fn restore_mute(mode: &MuteMode) {
 }
 
 /// A single worker thread that runs the (blocking) pactl/wpctl mute shell-outs OFF the UI thread.
-/// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message — they never block. They run
-/// inside start_stream / start_record (async commands on the blocking pool since d960783) and in
-/// session Drop, which can land on any thread including the GTK/UI one: a wedged PulseAudio/
-/// PipeWire socket must never stall whichever thread holds the guard (aux_windows/overlay.rs
-/// makes the same off-thread move for its KWin shell-outs). FIFO order alone does NOT order one
-/// session's Unmute before the next one's Mute: stop/cancel drop the old session outside the state
-/// lock (after a capture join), so a new session can enqueue its Mute first. See `MuteSlot`.
+/// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message. Session Drop can land on any
+/// thread including the GTK/UI one, and a wedged PulseAudio/PipeWire socket must never stall
+/// whichever thread holds the guard. FIFO order alone does NOT order one session's Unmute before
+/// the next one's Mute: stop/cancel drop the old session outside the state lock (after a capture
+/// join), so a new session can enqueue its Mute first. See `MuteSlot`.
 fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {
     static WORKER: OnceLock<std::sync::mpsc::Sender<MuteCmd>> = OnceLock::new();
     WORKER.get_or_init(|| {
@@ -1560,7 +1511,6 @@ fn flush_mute_worker(timeout: std::time::Duration) -> bool {
 static MUTE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct SystemMuteGuard {
-    /// Some(id) only when muting was enabled.
     id: Option<u64>,
 }
 
@@ -1568,7 +1518,6 @@ impl SystemMuteGuard {
     fn new(enabled: bool) -> Self {
         let id = enabled.then(|| MUTE_SEQ.fetch_add(1, Ordering::SeqCst) + 1);
         if let Some(id) = id {
-            // Non-blocking: the worker thread does the blocking pactl/wpctl work off the UI thread.
             let _ = mute_worker().send(MuteCmd::Mute(id));
         }
         Self { id }
@@ -1848,8 +1797,7 @@ fn run_record_capture(
 
     stream.play().map_err(|e| e.to_string())?;
     crate::audio::publish_levels_with_live(app, "stream://level", &level, &stop, Some(&live));
-    // Stop capture (drop the stream → no more callbacks), then flush the resampler's buffered tail
-    // (< one input block — ~21 ms at 48 kHz) into the recording so the final sliver isn't dropped.
+    // Drop the stream first so no callback pushes after the resampler's tail is flushed in.
     drop(stream);
     if let Ok(mut r) = resampler.lock() {
         let tail = r.flush();
