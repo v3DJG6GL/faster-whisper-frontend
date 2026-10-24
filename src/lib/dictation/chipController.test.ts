@@ -1,6 +1,3 @@
-// The chip's translation-route resolution. Pure, so it can be exercised without the
-// store or the cross-window payload it normally rides in.
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useApp } from "../store";
 import { hideOverlay } from "../api";
@@ -37,9 +34,8 @@ vi.mock("../api", async (orig) => ({
 }));
 
 describe("configuredRouteTargets", () => {
-  // The Backend's translation defaults under the Profile's overrides — the session's merge.
-  // Home and the Profiles row once read the Profile alone, so an inheriting profile read as
-  // "no translation" while the chip and the dictation translated.
+  // The Backend's translation defaults under the Profile's overrides — the session's merge, so
+  // an inheriting profile never reads as "no translation" while dictation translates.
   const backend = { translationOverrides: { translateTo: ["fr", "it"] } };
   it("inherits the backend's targets when the profile sets none", () => {
     expect(configuredRouteTargets({}, backend)).toEqual(["fr", "it"]);
