@@ -102,7 +102,7 @@ function useStuck(): [RefObject<HTMLDivElement | null>, boolean] {
   return [ref, stuck];
 }
 
-/** One value on the condensed rail: eyebrow + value, a button that reopens the full bar. */
+/** One value on the condensed rail; a click toggles the full bar. */
 function RailChip({ label, accent, onClick, children }: { label: string; accent?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
@@ -304,8 +304,6 @@ export function FilterBar({
       )}
       <RailChip label="Measure" accent onClick={toggleBar}>{METRIC_LABEL[metric]}</RailChip>
       {failed ? <Pill>couldn’t load · older data</Pill> : stale && <Pill>updating…</Pill>}
-      {/* Top-right: the resolved span (the pinned full bar's Range row leaves it to the rail)
-          and the one button that opens / closes the full bar. */}
       <span className="ml-auto flex items-center gap-2">
         {/* Clear only while the full bar is open under the rail (its own Clear steps aside
             then), left of Hide: the collapsed rail is a readout, not a place to reset from. */}
