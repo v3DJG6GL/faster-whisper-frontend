@@ -509,9 +509,9 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
     const title = "At the 8-subtitle download limit — switch another subtitle off first";
     for (const r of m.view.rows) {
       for (const b of r.badges) {
-        const mm = b.key ? /^(ex|cand):(.+)$/.exec(b.key) : null;
-        if (!mm || b.state === "active" || m.capped.has(mm[2])) continue;
-        if (run.fetch.includes(mm[2])) continue;
+        const tid = keyTrack(b.key);
+        if (!tid || b.state === "active" || m.capped.has(tid)) continue;
+        if (run.fetch.includes(tid)) continue;
         b.title = title;
         for (const c of m.view.chips) for (const part of c.parts) if (part.key === b.key) part.title = title;
       }
@@ -592,8 +592,8 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // A greyed over-cap badge (the download or the translation limit): switching it on would be
   // greyed again by the same cap, so the click would only flip a preset to Custom with nothing
   // visible changed. Free a slot first.
-  const mm = /^(ex|cand):(.+)$/.exec(key);
-  if ((mm && m.capped.has(mm[2])) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) {
+  const tid = keyTrack(key);
+  if ((tid && m.capped.has(tid)) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) {
     return { state: st, targets: [...input.targets] };
   }
   // Already Custom: the pick under the 8-track cap or the translation limit is the one before
@@ -607,7 +607,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // of its own, so it takes its twin's — but only for the switch-off fallbacks below: a
   // candidate rides along on the Original row, and switching it back on must not make its
   // language a translation target the user removed (off → on stays a round trip).
-  const sib = mm ? (mm[1] === "ex" ? "cand:" : "ex:") + mm[2] : null;
+  const sib = tid ? (key.startsWith("ex:") ? "cand:" : "ex:") + tid : null;
   if (sib && sib in m.snap) next[sib] = next[key];
   const tg = allTargets(m);
   const own = m.codeOf[key];
@@ -617,13 +617,13 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // fetched stays allowed) caps one: itself, greyed again, or a fetched track the cap ranks
   // below it, whose language silently falls back to machine translation. Refuse it; free a slot first.
   const run = m.view.run;
-  if (mm && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(mm[2])) {
+  if (tid && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(tid)) {
     return { state: st, targets: [...input.targets] };
   }
   // Below a full download, ask the cap with the change (and the twin) in place.
-  if (mm && next[key]) {
+  if (tid && next[key]) {
     const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(mm[2])) {
+    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(tid)) {
       return { state: st, targets: [...input.targets] };
     }
   }
