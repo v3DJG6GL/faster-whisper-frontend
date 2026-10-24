@@ -9,10 +9,9 @@ import { ownProp } from "./own";
 
 /** Segments per /v1/text/translations request. Small on purpose: results
  *  merge into the transcript per chunk, so the chunk size IS the "live fill"
- *  granularity — 400 meant a typical file translated as ONE request and
- *  nothing appeared until the very end. 32 keeps rows landing every batch or
- *  two while staying big enough for the server's sentence-merge + context
- *  window to do their job (context = 3 segments, fluent groups span a few). */
+ *  granularity. 32 keeps rows landing every batch or two while staying big
+ *  enough for the server's sentence-merge + context window to do their job
+ *  (context = 3 segments, fluent groups span a few). */
 export const TRANSLATE_CHUNK = 32;
 
 /** Character budget of one /v1/text/translations request, for every chunked caller: the
@@ -201,10 +200,9 @@ function frontierAt(s: TranslateRunUi, progress: number, targetProgress?: number
   return idxs[Math.min(idxs.length - 1, Math.floor(within * idxs.length))];
 }
 
-/** Fold one progress poll into the card state. Defensive throughout: the
- *  backend counterpart is being built in parallel, so EVERY field may be
- *  absent — an empty poll changes nothing but still returns a fresh object
- *  (the card's clock re-renders off it). Terminal phases are sticky.
+/** Fold one progress poll into the card state. Defensive throughout: EVERY
+ *  field may be absent — an empty poll changes nothing but still returns a
+ *  fresh object (the card's clock re-renders off it). Terminal phases are sticky.
  *  `sentAt` = when the poll's request left. Two guards, in this order: a poll sent before
  *  the newest one already folded (`pollAt`) is dropped whole — the card already shows
  *  newer news. One that passes but was sent before the current chunk began (a late answer
