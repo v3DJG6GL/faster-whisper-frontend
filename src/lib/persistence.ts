@@ -149,10 +149,10 @@ export async function initConfig(): Promise<void> {
   }
 
   // An answer that flips the save gate's collapse decision re-checks a save held under the old
-  // one: a status slower than the startup cap (or the 400 ms save after an evdev toggle) froze an
-  // L/R-only profile pair as "used by two bindings", and nothing else re-ran it — the banner, the
-  // stale config.json and the refused sync push stayed until an unrelated edit. A real conflict
-  // just holds again.
+  // one: a status slower than the startup cap (or the 400 ms save after an evdev toggle) can freeze
+  // an L/R-only profile pair as "used by two bindings", and nothing else re-runs that save — the
+  // banner, the stale config.json and the refused sync push would stay until an unrelated edit.
+  // A real conflict just holds again.
   const learnEvdevPermitted = (permitted: boolean) => {
     const before = evdevPermittedFor("save");
     evdevPermitted = permitted;
@@ -167,8 +167,7 @@ export async function initConfig(): Promise<void> {
 
   // The load notice's banner went away (the user dismissed it; the save path below never clears
   // it while a load notice is remembered — it restores it instead) ⇒ forget the load notice.
-  // Dismissing a save failure or a conflict freeze that took the slot does not: the next
-  // successful save puts the load notice back.
+  // Dismissing a banner that took its slot does not (see `loadNotice`).
   useApp.subscribe((state, prev) => {
     if (prev.saveError && !state.saveError && prev.saveErrorKind === "load") loadNotice = null;
   });
