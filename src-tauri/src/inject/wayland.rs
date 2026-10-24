@@ -1734,31 +1734,15 @@ mod imp {
         /// a keypad-digit one has.
         fn us_letters() -> HashMap<char, KeySpec> {
             let digits = ('1'..='9').chain(['0']).enumerate().map(|(i, c)| {
-                let spec = KeySpec {
-                    keycode: 2 + i as i32,
-                    shift: false,
-                    altgr: false,
-                    lock: false,
-                    caps_safe: true,
+                let keeps = KeySpec {
                     caps_keeps: true,
-                    dead: None,
+                    ..spec(2 + i as i32, false, None)
                 };
-                (c, spec)
+                (c, keeps)
             });
             ('a'..='z')
                 .enumerate()
-                .map(|(i, c)| {
-                    let spec = KeySpec {
-                        keycode: 16 + i as i32,
-                        shift: false,
-                        altgr: false,
-                        lock: false,
-                        caps_safe: true,
-                        caps_keeps: false,
-                        dead: None,
-                    };
-                    (c, spec)
-                })
+                .map(|(i, c)| (c, spec(16 + i as i32, false, None)))
                 .chain(digits)
                 .collect()
         }
@@ -1768,18 +1752,7 @@ mod imp {
             ('\u{430}'..='\u{44f}')
                 .chain(['\u{451}', '\u{42f}'])
                 .enumerate()
-                .map(|(i, c)| {
-                    let spec = KeySpec {
-                        keycode: 16 + i as i32,
-                        shift: false,
-                        altgr: false,
-                        lock: false,
-                        caps_safe: true,
-                        caps_keeps: false,
-                        dead: None,
-                    };
-                    (c, spec)
-                })
+                .map(|(i, c)| (c, spec(16 + i as i32, false, None)))
                 .collect()
         }
 
@@ -2308,13 +2281,8 @@ mod imp {
             // ch(de_nodeadkeys)-like: ü is a FOUR_LEVEL key (Shift gives è), so a live Caps Lock
             // can be cancelled only by a Caps tap, which a remapped Caps key cannot give.
             let ue = KeySpec {
-                keycode: 26,
-                shift: false,
-                altgr: false,
-                lock: false,
                 caps_safe: false,
-                caps_keeps: false,
-                dead: None,
+                ..spec(26, false, None)
             };
             let map = latin_with(&[('\u{fc}', ue), ('\u{df}', spec(12, false, None))]);
             let text = "Gr\u{fc}\u{df}e f\u{fc}r J\u{fc}rg";
