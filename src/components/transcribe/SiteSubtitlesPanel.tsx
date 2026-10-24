@@ -1,4 +1,4 @@
-// The link card's "Download existing subtitles" panel (D86, LinkSubs mockup v39): the switch,
+// The link card's "Download existing subtitles" panel: the switch,
 // the Existing-subtitles presets, and the "Subtitles" table — one row per language with its
 // source badges (Whisper / the site's / machine translation; active, idle = greyed, off =
 // struck), a trash button for languages the site lacks, and "Add language" last. Every rule
@@ -19,7 +19,6 @@ import {
 const ROW =
   "grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_2rem] items-center gap-3.5 border-t border-line px-3 py-2 text-[12.5px]";
 
-/** The three badge states: idle greys out, off strikes through. */
 const stateTone = (state: SiteBadge["state"]) =>
   state === "idle" ? "opacity-45 grayscale" : state === "off" ? "opacity-40 line-through" : "";
 
