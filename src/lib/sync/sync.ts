@@ -120,7 +120,7 @@ export const ALL_CATEGORIES: SyncCategory[] = [
   "logging",
 ];
 
-/** Every category set to `on` — the all-included export selection and test fixtures. */
+/** Every category set to `on`. */
 export function categorySelection(on: boolean): Record<SyncCategory, boolean> {
   return Object.fromEntries(ALL_CATEGORIES.map((c) => [c, on])) as Record<SyncCategory, boolean>;
 }
@@ -1421,8 +1421,7 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
       appId: normalizeAppId(r.appId),
       block: r.block === true,
       // The rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
-      // number or object, so one malformed rule unmounts the audit screen. App rules have no
-      // consent gate, so this arrives silently.
+      // number or object, so one malformed rule unmounts the audit screen.
       name: typeof r.name === "string" ? r.name : undefined,
       pasteShortcut:
         r.pasteShortcut == null
@@ -2576,7 +2575,7 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
         },
       ),
       // Chunk i queues behind chunks 0..i-1 on that turn (a wallet-unlock prompt included), so
-      // its bound grows with its place: the 10 s each it had when they ran one after another.
+      // its bound grows with its place: 10 s for each write up to and including its own.
       10_000 * (i + 1),
       false,
     ),
@@ -3250,8 +3249,8 @@ export async function pushNow(manual = false): Promise<void> {
         // nor the merge — and applying the merge would hydrate over that edit, push the old value
         // and adopt it as the base, while the edit's own push then found nothing to send.
         // No base (first contact, or the re-created document's just forgotten) or a fresh category:
-        // the remote is the pass-through (see `composeLive`), as in reconcileRemote — the pre-PUT
-        // compose filled those slots from the dead snapshot or from nothing.
+        // the remote fills the pass-through (see `passThroughFor`), as in reconcileRemote — the
+        // pre-PUT compose filled those slots from the dead snapshot or from nothing.
         // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
         // guarded, and a locked keyring now passes the REMOTE's backends through (marked
         // degraded), which the arms below hold out of the apply and withhold as a base.
@@ -3767,9 +3766,8 @@ export function securityChanges(
       });
     }
     // Only an actual value change counts: an unchanged key rides along in every push. But the
-    // comparison must FAIL CLOSED — `localSecrets` is `{}` whenever the keyring read degraded
-    // (locked wallet: composeBlob's read is a 10s withTimeout that falls back to `{}`), and it is
-    // legitimately empty for a backend that has no key yet. Requiring a known local value there
+    // comparison must FAIL CLOSED — `localSecrets` can be empty because the keyring read degraded
+    // (a locked wallet) or because a backend has no key yet, and requiring a known local value
     // would let an incoming key be written with no review in exactly the cases we can least
     // verify.
     // Own-property reads: an inbound id is whatever the blob chose, and `isReservedBackendId`
@@ -4004,11 +4002,11 @@ export async function approvePendingReview(): Promise<void> {
     if (myGen === gen) inFlight = false;
   }
   if (myGen !== gen) return;
-  // After the release: the push takes the lock itself. Every other arm still re-arms the
-  // debounced push: a store edit made just before the click fired its pushNow into this lock
-  // and was dropped, and nothing else re-sends it (the hash check makes it a no-op otherwise).
-  // Not when the approval put a new prompt up instead: a push then only 409s back into it (the
-  // edit goes out with the answer), re-running the held-back apply for nothing.
+  // After the release: the push takes the lock itself. "done" still re-arms the debounced push:
+  // a store edit made just before the click fired its pushNow into this lock and was dropped,
+  // and nothing else re-sends it (the hash check makes it a no-op otherwise). Not "prompt": a
+  // push then only 409s back into it (the edit goes out with the answer), re-running the
+  // held-back apply for nothing.
   if (outcome === "push") schedulePush(0);
   else if (outcome === "done") schedulePush();
 }
