@@ -531,6 +531,21 @@ pub async fn run<F>(
         }
         None => (None, None),
     };
+    // Every reader event goes through the same save-state; one spelling for the four drains below.
+    macro_rules! forward {
+        ($e:expr) => {
+            forward_saved(
+                $e,
+                save_dir,
+                &detached.discard,
+                &mut saved,
+                &mut clips,
+                &mut transcript_docs,
+                &mut transcript_cur,
+                &on_event,
+            )
+        };
+    }
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
@@ -693,7 +708,7 @@ pub async fn run<F>(
                 match from {
                     Some(FromReader::Event(e)) => {
                         if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
-                        forward_saved(e, save_dir, &detached.discard, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
+                        forward!(e);
                     }
                     Some(FromReader::ServerClose { code, message }) => {
                         on_event(server_close_event(code, message, false));
@@ -837,16 +852,7 @@ pub async fn run<F>(
                 }
                 Ok(Some(FromReader::Event(e))) => {
                     saw_frame = true;
-                    forward_saved(
-                        e,
-                        save_dir,
-                        &detached.discard,
-                        &mut saved,
-                        &mut clips,
-                        &mut transcript_docs,
-                        &mut transcript_cur,
-                        &on_event,
-                    );
+                    forward!(e);
                 }
             }
         };
@@ -883,16 +889,7 @@ pub async fn run<F>(
             match from {
                 Some(FromReader::Event(e)) => {
                     saw_error |= matches!(e, StreamEvent::Error(_));
-                    forward_saved(
-                        e,
-                        save_dir,
-                        &detached.discard,
-                        &mut saved,
-                        &mut clips,
-                        &mut transcript_docs,
-                        &mut transcript_cur,
-                        &on_event,
-                    );
+                    forward!(e);
                 }
                 Some(FromReader::ServerClose { code, message }) => {
                     saw_error = true;
@@ -922,16 +919,7 @@ pub async fn run<F>(
     // last phrase the server finished.
     loop {
         match evt_rx.try_recv() {
-            Ok(FromReader::Event(e)) => forward_saved(
-                e,
-                save_dir,
-                &detached.discard,
-                &mut saved,
-                &mut clips,
-                &mut transcript_docs,
-                &mut transcript_cur,
-                &on_event,
-            ),
+            Ok(FromReader::Event(e)) => forward!(e),
             Ok(FromReader::ServerClose { code, message }) => {
                 on_event(server_close_event(code, message, draining));
             }
