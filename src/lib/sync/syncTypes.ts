@@ -26,32 +26,28 @@ import type {
  *  inbound blob. Apply's spread keeps the device's local value for anything absent. */
 export interface SyncGeneral {
   theme?: ThemeName;
-  /** Signal colour hue, 0–360. Absent in blobs written before it existed (2026-09-02). */
+  /** Signal colour hue, 0–360. */
   accentHue?: number;
-  /** Signal-colour motion. Absent in blobs written before it existed (2026-09-02). */
   accentMotion?: AccentMotion;
   startMinimized?: boolean;
-  /** Absent in blobs/exports written before it became syncable (2026-07-13). */
   openAtLogin?: boolean;
   insertTiming?: InsertTiming;
-  /** Absent in blobs written before it became syncable (2026-09-01). The global default
-   *  every inheriting Profile resolves through; replaced `insertTiming`. */
+  /** The global default every inheriting Profile resolves through; replaced `insertTiming`. */
   typeAsISpeak?: boolean;
   insertMethod?: InsertMethod;
   pasteShortcut?: string[];
   restoreClipboard?: boolean;
-  /** Absent in blobs written before it existed (2026-09). Keep dictated text out of
-   *  clipboard history / cloud clipboard; the device keeps its own value when absent. */
+  /** Keep dictated text out of clipboard history / cloud clipboard. */
   excludeFromClipboardHistory?: boolean;
   soundEffects?: boolean;
   deepFieldDetection?: boolean;
 }
 
 /** The fields of RecordingSettings that belong to the `chip` category — the
- *  overlay chip's look and behaviour, split out of the old catch-all
- *  "Recording & Chip" group so save-recordings/retention (consent-grade) and
- *  chip styling toggle independently. The single classification list the
- *  compose partition, the apply filters, and `migrateBlob` all share. */
+ *  overlay chip's look and behaviour, a category of its own so
+ *  save-recordings/retention (consent-grade) and chip styling toggle
+ *  independently. The single classification list the compose partition, the
+ *  apply filters, and `migrateBlob` all share. */
 export const CHIP_FIELDS = [
   "indicatorPosition",
   "persistentDock",
