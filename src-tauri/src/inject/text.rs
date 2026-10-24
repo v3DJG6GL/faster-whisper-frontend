@@ -155,8 +155,7 @@ pub(crate) async fn inject_text(
     // AND a clipboard-only insert would silently clobber the user's clipboard for an insert they
     // can't even see land. So this guard runs for ALL methods, BEFORE the clipboard-only branch.
     // A Wayland client is always told its own keyboard focus, so this is reliable on KWin —
-    // unlike detecting other apps' focused fields. The click-through "overlay" chip never holds
-    // focus; exclude it. The transcript still shows in the chip.
+    // unlike detecting other apps' focused fields. The transcript still shows in the chip.
     if own_window_focused(&app) {
         tracing::info!("[inject] skipped: our own window holds focus");
         return Ok(InjectOutcome {
@@ -164,9 +163,8 @@ pub(crate) async fn inject_text(
             diverted: false,
         });
     }
-    // Clipboard-only: put the text on the clipboard and inject NO keystrokes, so it can't
-    // fire actions in the wrong window — the user pastes it themselves. No modifier gate needed
-    // since nothing is typed (the own-window guard above already ran).
+    // Clipboard-only types no keystrokes, so it needs no modifier gate (the own-window guard
+    // above already ran).
     if method == "clipboard" {
         // Same check as the mid-function divert below, for the same reason: a cancel landing
         // between the epoch capture and this write (the own-window focus IPC above is an
@@ -311,9 +309,6 @@ pub(crate) async fn inject_text(
     // harmfully — does not steal the latch from the transcript insert that follows it. And placed
     // BELOW the own-window sink skip, so an injection that is going to write nothing and be re-sent
     // does not destroy the latch the re-send needs.
-    //
-    // The TTL covers manufactured-stop → the server returning a final → here, and the untrusted
-    // SERVER owns the middle leg, so it is sized against the longest one (see HELD_CHORD_LATCH_TTL).
     if !text.is_empty() {
         let chord_lost = crate::hotkeys::held_keys::take_lost_if_fresh(HELD_CHORD_LATCH_TTL);
         if chord_lost && !modifiers_stuck {
@@ -495,7 +490,7 @@ pub(crate) async fn inject_text(
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (GNOME, KWin)
-            // or a job fails.
+            // or the job fails before typing any key (see the arm below).
             let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
                 std::sync::Arc::new(own_focused_probe.clone());
             match crate::inject::virtual_keyboard::type_text(
