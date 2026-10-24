@@ -1418,7 +1418,7 @@ mod imp {
             let ev = match deadline {
                 None => match rx.recv() {
                     Ok(e) => Some(e),
-                    Err(_) => break, // sender dropped (shutdown/restart)
+                    Err(_) => break,
                 },
                 Some(dl) => {
                     let wait = dl.saturating_duration_since(std::time::Instant::now());
@@ -1516,7 +1516,8 @@ mod tests {
     // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` +
     // MODIFIER_CODES) MUST map here, or its chord is silently dropped on Windows
     // while still binding fine in the capture UI. Pins the same bindability matrix
-    // as `evdev`'s twin test — keep all three lists in sync.
+    // as `evdev`'s twin test — keep keys.ts, this list, the one in
+    // `vk_ids_are_distinct_per_code` and evdev's in sync.
     #[test]
     fn every_bindable_code_maps_to_a_windows_vk() {
         let mut codes: Vec<String> = [
