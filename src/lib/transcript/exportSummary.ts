@@ -87,8 +87,7 @@ export function contentStates(a: {
   ];
 }
 
-/** Why Subtitle length has nothing to work with: a cue is split only at word timings, and this
- *  run has none — each segment stays one subtitle, only its lines are wrapped (cueSplit). */
+/** Tooltip on Subtitle length's warning mark (cueSplit splits a cue only at word timings). */
 export const NO_WORDS_SPLIT_WHY =
   "This run captured no word timing, so subtitles are not split: each segment stays one subtitle, only its lines are wrapped.";
 
@@ -140,7 +139,7 @@ export function exportSummary(a: {
   trackCodes: string[];
   /** Tracks stacked inside each subtitle (one shared file). */
   stacked: boolean;
-  /** One file per track (LRC, own timing). */
+  /** One file per track (LRC, own timing, a video's sidecars). */
   filePerTrack: boolean;
   /** Text files the export writes: a site track with its own timing gets one of its own
    *  while the rest share one, so two files can hold three tracks. */
