@@ -658,9 +658,7 @@ describe("per-language tracks", () => {
       translationInjected: true,
       translationAttempted: true,
     });
-    const rec = useTranscriptHistory
-      .getState()
-      .records.find((r) => r.id === id) as TranscriptRecord;
+    const rec = saved(id);
 
     // The keyed map is what lets History render one track per language. The
     // injected blob is kept too, because it is what actually reached the
@@ -680,17 +678,13 @@ describe("per-language tracks", () => {
     // So a record written with it off compares equal to one written before the
     // field existed.
     const id = recordDictation({ ...CAPTURE, includeOriginal: false });
-    const rec = useTranscriptHistory
-      .getState()
-      .records.find((r) => r.id === id) as TranscriptRecord;
+    const rec = saved(id);
     expect(rec.includeOriginal).toBeUndefined();
   });
 
   it("an older record simply has no tracks", () => {
     const id = recordDictation({ ...CAPTURE, translatedText: "Hello" });
-    const rec = useTranscriptHistory
-      .getState()
-      .records.find((r) => r.id === id) as TranscriptRecord;
+    const rec = saved(id);
     expect(rec.translations).toBeUndefined();
     expect(rec.translationTargets).toBeUndefined();
   });
