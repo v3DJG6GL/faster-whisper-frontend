@@ -160,6 +160,28 @@ pub struct SyncPush {
     pub error: Option<String>,
 }
 
+impl SyncPull {
+    /// A failed pull: `status` 0 = no answer, else the HTTP status.
+    fn failed(status: u16, error: String) -> Self {
+        Self {
+            status,
+            error: Some(error),
+            ..Default::default()
+        }
+    }
+}
+
+impl SyncPush {
+    /// A failed push: no stored state, no conflict.
+    fn failed(status: u16, error: String) -> Self {
+        Self {
+            status,
+            error: Some(error),
+            ..Default::default()
+        }
+    }
+}
+
 /// DELETE outcome (the "Delete server copy" button).
 #[derive(Debug, Serialize, Default)]
 pub struct SyncDelete {
@@ -192,14 +214,7 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
                 // not surface as "Unexpected response: Timed out…".
                 let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
                     Ok(b) => b,
-                    Err(reason) => {
-                        return SyncPull {
-                            ok: false,
-                            status: code,
-                            state: None,
-                            error: Some(reason),
-                        }
-                    }
+                    Err(reason) => return SyncPull::failed(code, reason),
                 };
                 match accept(
                     serde_json::from_str(&text).map_err(|e| e.to_string()),
@@ -211,32 +226,17 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
                         state: Some(state),
                         error: None,
                     },
-                    Err(e) => SyncPull {
-                        ok: false,
-                        status: code,
-                        state: None,
-                        error: Some(e),
-                    },
+                    Err(e) => SyncPull::failed(code, e),
                 }
             } else {
                 // Pure error arm: the body goes straight into `detail_from` and nothing
                 // else, so the error-body ceiling is enough — buffering 4 MiB to extract
                 // 200 characters is wasted on the unattended startup/focus-change leg.
                 let (_, detail) = super::error_detail(resp).await;
-                SyncPull {
-                    ok: false,
-                    status: code,
-                    state: None,
-                    error: Some(detail),
-                }
+                SyncPull::failed(code, detail)
             }
         }
-        Err(e) => SyncPull {
-            ok: false,
-            status: 0,
-            state: None,
-            error: Some(friendly_err(&e)),
-        },
+        Err(e) => SyncPull::failed(0, friendly_err(&e)),
     }
 }
 
@@ -259,12 +259,7 @@ pub async fn push(
     // pull, on this and every other device, until "Delete server copy".
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
     if over_wire_limit(bytes.len()) {
-        return SyncPush {
-            ok: false,
-            status: 0,
-            error: Some("Your settings are too large to sync.".into()),
-            ..Default::default()
-        };
+        return SyncPush::failed(0, "Your settings are too large to sync.".into());
     }
     // The body is built once; a retry on the old path re-sends the same bytes.
     let bytes = &bytes;
@@ -288,14 +283,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
             // rather than as "Unexpected response: expected value at line 1".
             let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
                 Ok(b) => b,
-                Err(reason) => {
-                    return SyncPush {
-                        ok: false,
-                        status: code,
-                        error: Some(reason),
-                        ..Default::default()
-                    }
-                }
+                Err(reason) => return SyncPush::failed(code, reason),
             };
             if (200..300).contains(&(code as i32)) {
                 match accept(
@@ -309,12 +297,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                         conflict: None,
                         error: None,
                     },
-                    Err(e) => SyncPush {
-                        ok: false,
-                        status: code,
-                        error: Some(e),
-                        ..Default::default()
-                    },
+                    Err(e) => SyncPush::failed(code, e),
                 }
             } else if code == 409 {
                 // The conflict body IS the current server state (+ a detail
@@ -329,28 +312,13 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                         conflict: Some(current),
                         ..Default::default()
                     },
-                    Err(e) => SyncPush {
-                        ok: false,
-                        status: code,
-                        error: Some(e),
-                        ..Default::default()
-                    },
+                    Err(e) => SyncPush::failed(code, e),
                 }
             } else {
-                SyncPush {
-                    ok: false,
-                    status: code,
-                    error: Some(detail_from(&text)),
-                    ..Default::default()
-                }
+                SyncPush::failed(code, detail_from(&text))
             }
         }
-        Err(e) => SyncPush {
-            ok: false,
-            status: 0,
-            error: Some(friendly_err(&e)),
-            ..Default::default()
-        },
+        Err(e) => SyncPush::failed(0, friendly_err(&e)),
     }
 }
 
