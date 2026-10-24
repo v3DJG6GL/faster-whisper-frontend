@@ -1,7 +1,7 @@
 //! The audio base folder (layout, move, open) and the file I/O commands: media reads
 //! for playback, text save/read, opening a source link, reveal in the file manager.
 
-use super::{audio_base_pref, resolve_audio_base, AUDIO_SUBDIRS, HEAL_STAMP};
+use super::{audio_base_pref, require_audio_base, resolve_audio_base, AUDIO_SUBDIRS, HEAL_STAMP};
 use crate::config::Config;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -26,7 +26,7 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
 #[tauri::command]
 pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
     super::blocking(move || -> Result<(), String> {
-        let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
+        let dir = require_audio_base(&app, custom)?;
         crate::audio::create_dir_private(&dir)
             .map_err(|e| format!("could not create the folder: {e}"))?;
         for sub in AUDIO_SUBDIRS {
@@ -380,7 +380,7 @@ pub async fn move_audio_base(
     current: Option<String>,
     next: Option<String>,
 ) -> Result<(), String> {
-    let from = resolve_audio_base(&app, current).ok_or("could not resolve the audio folder")?;
+    let from = require_audio_base(&app, current)?;
     let to = resolve_audio_base(&app, next).ok_or("could not resolve the new folder")?;
     if from == to {
         return Ok(());

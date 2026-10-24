@@ -84,6 +84,15 @@ pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Opt
     app.path().app_data_dir().ok().map(|d| d.join("audio"))
 }
 
+/// `resolve_audio_base` for a command: an unresolvable base rejects with the one message the
+/// webview shows for it.
+pub(crate) fn require_audio_base(
+    app: &AppHandle,
+    custom: Option<String>,
+) -> Result<PathBuf, String> {
+    resolve_audio_base(app, custom).ok_or_else(|| "could not resolve the audio folder".into())
+}
+
 /// The effective base-folder preference from settings: the new key, else the
 /// legacy custom recordings folder (so an existing setup keeps its location).
 pub(crate) fn audio_base_pref(settings: &crate::config::AppSettings) -> Option<String> {

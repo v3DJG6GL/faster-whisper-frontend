@@ -9,6 +9,7 @@
 //! saved recordings (verbatim transcripts of the user's audio), so they get
 //! the same owner-only file/dir permissions.
 
+use crate::commands::require_audio_base;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -182,35 +183,30 @@ pub(crate) fn legacy_media_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("media"))
 }
 
-fn audio_base(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    crate::commands::resolve_audio_base(app, custom)
-        .ok_or_else(|| "could not resolve the audio folder".into())
-}
-
 /// Audio copies of file-transcription inputs: `<base>/files/<id>.<ext>`.
 /// `custom` is the audio-base preference from settings (None = default).
 /// Same opaque contract as the records: Rust never reads the audio.
 pub(crate) fn files_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[1]))
+    require_audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[1]))
 }
 
 /// Downloaded audio of link transcriptions: `<base>/links/<id>.<ext>` — the
 /// only playable source for those records.
 pub(crate) fn links_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[2]))
+    require_audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[2]))
 }
 
 /// Downloaded VIDEO of link transcriptions: `<base>/video/<id>.<ext>` — kept
 /// for export (no in-app video playback yet).
 pub(crate) fn video_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
+    require_audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
 }
 
 /// Every record media folder — files/, links/, video/ — from one base resolution. The
 /// single list cleanup and the storage readout share, so a new media kind cannot be
 /// left out of one of them.
 fn all_media_dirs(app: &AppHandle, custom: Option<String>) -> Result<[PathBuf; 3], String> {
-    let base = audio_base(app, custom)?;
+    let base = require_audio_base(app, custom)?;
     Ok([1, 2, 3].map(|i| base.join(crate::commands::AUDIO_SUBDIRS[i])))
 }
 
