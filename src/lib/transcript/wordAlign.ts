@@ -141,9 +141,10 @@ const clings = (prev: string, c: string): boolean =>
   || /[\u200d\u0e40-\u0e44\u0ec0-\u0ec4\u1039\u17d2]/.test(prev);
 
 /** Align one edited segment's text to its original word timings.
- *  Matched words (longest common subsequence) keep word AND timing verbatim;
- *  each unmatched run of new tokens shares the time span of the old run it
- *  replaces (or the gap it was inserted into), split by character count. */
+ *  Matched words (longest common subsequence of `norm` keys) keep their timing
+ *  and take the edit's spelling; each unmatched run of new tokens shares the time
+ *  span of the old run it replaces (or the gap it was inserted into), split by
+ *  character count. */
 export function alignSegmentWords(
   oldWords: TranscriptWord[],
   newText: string,
