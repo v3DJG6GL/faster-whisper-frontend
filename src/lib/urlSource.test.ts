@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, extractorPill, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, stripMediaUrlNoise, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, rungFacts, stripMediaUrlNoise, tierWords, urlHost, type VideoRung } from "./urlSource";
 import { stripUrlNoise } from "./backends";
 import { MULTI_LANGUAGE } from "./languages";
 import { linkSpoken } from "./transcript/siteSubtitles";
@@ -195,9 +195,8 @@ describe("pickRung (the video ladder pick)", () => {
     { kind: "video", height: 720, container: "mp4" },
     { kind: "video", height: 360, container: "mp4" },
     { kind: "audio", height: null },
-  ] as import("./urlSource").VideoRung[];
-  it("best when uncapped, the highest at or under a cap, the smallest when nothing fits", async () => {
-    const { pickRung } = await import("./urlSource");
+  ] as VideoRung[];
+  it("best when uncapped, the highest at or under a cap, the smallest when nothing fits", () => {
     expect(pickRung(ladder, null)?.height).toBe(1080);
     expect(pickRung(ladder, 720)?.height).toBe(720);
     expect(pickRung(ladder, 900)?.height).toBe(720);
@@ -205,13 +204,12 @@ describe("pickRung (the video ladder pick)", () => {
     expect(pickRung([{ kind: "audio", height: null }], null)).toBeNull();
     expect(pickRung(undefined, null)).toBeNull();
   });
-  it("honours an explicit format id while it is on the ladder, and keeps the ladder's rank order", async () => {
-    const { pickRung } = await import("./urlSource");
+  it("honours an explicit format id while it is on the ladder, and keeps the ladder's rank order", () => {
     const ranked = [
       { kind: "video", height: 1080, format_id: "616", note: "Premium" },
       { kind: "video", height: 1080, format_id: "399" },
       { kind: "video", height: 720, format_id: "398" },
-    ] as import("./urlSource").VideoRung[];
+    ] as VideoRung[];
     // Best = the first rung (the server ranks Premium above plain 1080p).
     expect(pickRung(ranked, null)?.format_id).toBe("616");
     expect(pickRung(ranked, 1080)?.format_id).toBe("616");
@@ -219,14 +217,13 @@ describe("pickRung (the video ladder pick)", () => {
     // A stale id falls back to the height rule.
     expect(pickRung(ranked, 720, "gone")?.format_id).toBe("398");
     // A height-less "Best available" rung is what any pick returns.
-    const best = [{ kind: "video", height: null, format_id: null }] as import("./urlSource").VideoRung[];
+    const best = [{ kind: "video", height: null, format_id: null }] as VideoRung[];
     expect(pickRung(best, 720)).toBe(best[0]);
   });
 });
 
 describe("tierWords (D68: the seven-word scale, collapsed from the middle)", () => {
-  it("never repeats a word and always keeps the ends", async () => {
-    const { tierWords } = await import("./urlSource");
+  it("never repeats a word and always keeps the ends", () => {
     expect(tierWords(1)).toEqual(["Best available"]);
     expect(tierWords(2)).toEqual(["Highest", "Lowest"]);
     expect(tierWords(3)).toEqual(["Highest", "Medium", "Lowest"]);
@@ -241,8 +238,7 @@ describe("tierWords (D68: the seven-word scale, collapsed from the middle)", () 
 });
 
 describe("rungFacts", () => {
-  it("marks estimated bitrates and sizes with ≈ and leaves exact ones bare", async () => {
-    const { rungFacts } = await import("./urlSource");
+  it("marks estimated bitrates and sizes with ≈ and leaves exact ones bare", () => {
     const fmt = { bytes: (n: number) => `${(n / 1e6).toFixed(0)} MB`, bitrate: (k: number) => `${(k / 1000).toFixed(1)} Mbit/s` };
     expect(rungFacts({ kind: "video", height: 1080, label: "1080p", tbr_kbps: 2190, bitrate_approx: true,
       approx_bytes: 340e6, bytes_approx: true, container: "mkv" }, fmt)).toBe("1080p · ≈2.2 Mbit/s · ≈340 MB · mkv");
