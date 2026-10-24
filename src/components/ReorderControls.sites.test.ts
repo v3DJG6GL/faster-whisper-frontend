@@ -1,5 +1,5 @@
-// The reorder arrows outside Profiles and Backends: a row keyed by id with native `disabled` arrows
-// dropped keyboard focus to <body> on every move and at the top/bottom. ReorderControls' own
+// The reorder arrows outside Profiles and Backends: in a row keyed by id, native `disabled` arrows
+// drop keyboard focus to <body> on every move and at the top/bottom. ReorderControls' own
 // aria-disabled + refocus pattern is what keeps it (see the comment in its body).
 import { describe, expect, it } from "vitest";
 import dictionarySrc from "../screens/Dictionary.tsx?raw";
