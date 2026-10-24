@@ -334,8 +334,7 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
             return Ok(());
         }
         std::fs::create_dir_all(dir)?;
-        // Best-effort, deliberately: a failure here must not stop the user recording. It is logged
-        // so a broken ACL is diagnosable rather than silent.
+        // Best-effort, deliberately: a failure here must not stop the user recording.
         if let Err(e) = windows_owner_only_dacl(dir) {
             tracing::warn!(
                 "[audio] could not restrict {} to the current user: {e}",
