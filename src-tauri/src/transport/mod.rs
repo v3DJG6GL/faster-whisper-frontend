@@ -656,8 +656,8 @@ pub fn base_url(server_url: &str) -> String {
 pub fn client() -> reqwest::Client {
     // One process-wide client: a reqwest::Client owns the connection pool + TLS session cache,
     // so every call (incl. the 30s usage poll) reuses keep-alive connections instead of a fresh
-    // TCP/TLS handshake. The config is constant (no per-request timeout/header); clone is cheap
-    // (Arc inside), so callers get an owned client sharing the pool.
+    // TCP/TLS handshake. Per-request timeouts/headers go on the RequestBuilder; clone is cheap
+    // (Arc inside).
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     CLIENT
         .get_or_init(|| {
