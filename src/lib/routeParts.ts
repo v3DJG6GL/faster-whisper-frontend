@@ -13,10 +13,10 @@ export const ROUTE_TARGETS_SHOWN = 3;
 
 /** The pieces of a `source → targets` route, bounded for display.
  *
- *  Pure + exported so it can be tested: every part is user- or peer-authored (a
- *  profile's language, a synced backend's, the translate-to list), and
- *  `languageLabel` passes an unknown code through unchanged — the same unbounded-leaf
- *  hazard the badge's own truncate exists for, except a LIST of them multiplies it. */
+ *  Every part is user- or peer-authored (a profile's language, a synced backend's, the
+ *  translate-to list), and `languageLabel` passes an unknown code through unchanged — the
+ *  same unbounded-leaf hazard the badge's own truncate exists for, except a LIST of them
+ *  multiplies it. */
 export function routeParts(
   source: string,
   targets?: string[] | null,
