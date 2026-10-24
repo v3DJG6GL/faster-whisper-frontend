@@ -1920,6 +1920,18 @@ async function finishLaunch(io: { release: (v: Record<string, string>) => void }
   await init;
 }
 
+/** Import the freshly mocked engine and store, seed sync on against b1, and stub `window` for the
+ *  focus-pull listener. */
+async function importFreshEngine(sync: Partial<NonNullable<AppSettings["sync"]>> = {}) {
+  const engine = await import("./sync");
+  const store = (await import("../store")).useApp;
+  const s = settings();
+  s.sync = { ...s.sync!, enabled: true, backendId: "b1", ...sync };
+  store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+  vi.stubGlobal("window", { addEventListener: () => {} });
+  return { engine, store };
+}
+
 // initSync holds the engine lock across the launch work (the keyring restore parks up to 10 s on a
 // locked wallet), and a manual Push / Pull clicked then must not drop at the gate without a word —
 // the startup pull that follows is an automatic one, so the forced push would never happen. A fresh
@@ -1982,12 +1994,7 @@ describe("a manual Push / Pull clicked during launch", () => {
         return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
       },
     }));
-    const engine = await import("./sync");
-    const store = (await import("../store")).useApp;
-    const s = settings();
-    s.sync = { ...s.sync!, enabled: true, backendId: "b1" };
-    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-    vi.stubGlobal("window", { addEventListener: () => {} }); // the focus-pull listener
+    const { engine, store } = await importFreshEngine();
     const init = engine.initSync();
     await vi.waitFor(() => expect(io.launchRead).toBe(true));
     return { engine, store, init };
@@ -2225,12 +2232,7 @@ describe("a sync edit made during the launch work", () => {
         return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
       },
     }));
-    const engine = await import("./sync");
-    const store = (await import("../store")).useApp;
-    const s = settings();
-    s.sync = { ...s.sync!, enabled: true, backendId: "b1", ...syncAtLaunch };
-    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-    vi.stubGlobal("window", { addEventListener: () => {} });
+    const { engine, store } = await importFreshEngine(syncAtLaunch);
     const init = engine.initSync();
     await vi.waitFor(() => expect(io.launchRead).toBe(true));
     return { engine, store, init };
@@ -2798,12 +2800,7 @@ describe("a push after a failed config save", () => {
       },
     }));
     const persistence = await import("../persistence");
-    const engine = await import("./sync");
-    const store = (await import("../store")).useApp;
-    const s = settings();
-    s.sync = { ...s.sync!, enabled: true, backendId: "b1" };
-    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
-    vi.stubGlobal("window", { addEventListener: () => {} });
+    const { engine, store } = await importFreshEngine();
     await persistence.initConfig();
     await engine.initSync();
     await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
