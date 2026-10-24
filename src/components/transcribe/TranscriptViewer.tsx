@@ -1,7 +1,7 @@
 // The transcript workbench: player + karaoke follow, display toggles, speaker
 // legend, corrections, export panel. Extracted from the Transcribe screen so
 // (a) playback-time updates re-render only this subtree (the playhead ticks at
-// display rate now, not at the webview's timeupdate cadence), (b) the same
+// display rate, not at the webview's timeupdate cadence), (b) the same
 // viewer renders in three shells — stacked card, studio pane, and the
 // full-viewport focus mode (F / Esc) — without remounting, so audio, scroll
 // and edit state survive every layout switch.
@@ -161,7 +161,7 @@ export function TranscriptViewer({
   const [showFullText, setShowFullText] = useState(false);
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  // Read · Edit · Export (D85): Edit corrects the transcript in place,
+  // Read · Edit · Export: Edit corrects the transcript in place,
   // Export replaces the player and the list with the export panel.
   const [mode, setMode] = useState<"read" | "edit" | "export">("read");
   const editMode = mode === "edit";
@@ -202,7 +202,7 @@ export function TranscriptViewer({
   const [focus, setFocus] = useState(false);
   // Entering focus lifts the card out of the page flow (fixed inset-0): the
   // page scroller collapses and the browser CLAMPS its scrollTop toward 0,
-  // so exiting used to land on the config instead of back on the transcript.
+  // so exiting would land on the config instead of back on the transcript.
   // Capture the position at toggle time (before React commits the fixed
   // class — afterwards it's already clamped) and restore it on the way out.
   const preFocusScroll = useRef<{ el: HTMLElement; top: number } | null>(null);
@@ -227,7 +227,6 @@ export function TranscriptViewer({
     });
     return () => cancelAnimationFrame(raf);
   }, [focus]);
-  // Built-in playback with karaoke follow.
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // The <audio>'s ref: keeps audioRef (playhead loop, watchdog, seek) and
   // empties the element when React lets go of it — the key change (blob →
@@ -278,9 +277,9 @@ export function TranscriptViewer({
    *  page, so the toolbar/player above stay put while the karaoke advances. */
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null);
   /** The toolbar above the list — sticky in the stacked card, where it can
-   *  overlap the box's top once the page scrolls. Measured by the padding
-   *  compensation (keeps the rows reachable under the overlap) and by
-   *  follow's visible-strip math. */
+   *  overlap the box's top once the page scrolls. Measured by the sticky-shift
+   *  effect (keeps the rows reachable under the overlap), the `--viewer-bar`
+   *  height and follow's visible-strip math. */
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [audioBroken, setAudioBroken] = useState(false);
   const audioBrokenRef = useRef(audioBroken);
@@ -310,12 +309,10 @@ export function TranscriptViewer({
   // OLD record does not land its result on the NEW record's player.
   const audioGenRef = useRef(0);
   // The "Copied" confirmation timer. Held in a ref so a rapid second Copy click clears the first
-  // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off
-  // early (every other transient timer in the app is cleared the same way).
+  // timer before re-arming — otherwise the stale timer fires mid-window and flips the label off early.
   const copyTimer = useRef<number | undefined>(undefined);
 
 
-  // ── selected-result derivations ──────────────────────────────────────────
   // Site tracks of older records name their site from the link.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
   const result = useMemo(() => withTrackSites(rawResult, path, extractor), [rawResult, path, extractor]);
@@ -349,7 +346,7 @@ export function TranscriptViewer({
   );
   // User-picked palette index first, else first-appearance order — the chips
   // (via theme tokens) and the exported SRT/VTT (via hexes) resolve through
-  // the SAME shared resolver, so they can't disagree again.
+  // the SAME shared resolver, so they can't disagree.
   const colorIdxOf = useCallback(
     (label: string) => speakerColorIndex(speakers, fileColors, label),
     [fileColors, speakers],
@@ -437,8 +434,7 @@ export function TranscriptViewer({
     // the component re-renders at playhead cadence while audio plays.
   }, [editCount, result, effSegments, effWords]);
 
-  // ── tracks (the Subtitles view's lanes; the lines each segment row renders) ──
-  // The dragged track order and typed track names (D92/D89) live on the
+  // The dragged track order and typed track names live on the
   // transcript's record — without one (not saved yet) here. Read's chips and
   // the export share them, so lanes, chips and files keep one order.
   const [localTrackPrefs, setLocalTrackPrefs] = useState<TrackPrefs>({});
@@ -474,7 +470,6 @@ export function TranscriptViewer({
   const visLangs = useMemo(() => segVisible.filter((t) => t !== "orig"), [segVisible]);
   const visLangsKey = visLangs.join(","); // stable string for the row memo
 
-  // ── Subtitles view ───────────────────────────────────────────────────────
   const subtitlesView = view === "subtitles" && !editMode && hasSegments;
   /** The export's cues — memoized on edits, options and tracks, never on the
    *  playhead (the list picks its active cue by binary search). Only Read renders
@@ -508,7 +503,6 @@ export function TranscriptViewer({
     patchTranscribe({ viewTracks: picked });
   };
 
-  // ── re-translate / retro-translate ───────────────────────────────────────
   const backends = useApp((s) => s.backends);
   const historyBackendId = record?.backendId;
   // Retro-translate needs a full backend — a PROVEN-standard server has no
@@ -535,7 +529,6 @@ export function TranscriptViewer({
     // Only an explicit false hides it once caps are known — absent field
     // (older backend) keeps the old kind-only behavior.
     trCaps?.translation_enabled !== false;
-  // ── translate options panel (Export-panel idiom) ─────────────────────────
   const [showTranslate, setShowTranslate] = useState(false);
   // null = not touched yet → prefill from the defaults chain below.
   const [trTargets, setTrTargets] = useState<string[] | null>(null);
@@ -578,11 +571,9 @@ export function TranscriptViewer({
     return () => lease.release();
   }, [showTranslate, trBackend, retroTranslateAvailable, trModel, settings]);
 
-  // ── chunked run + mini progress card state ──────────────────────────────
   // Held in the app store keyed by record: the run loop, its poller, and the
   // card state all outlive this component, so navigating away and back
-  // re-attaches to the live card instead of losing it (the run itself was
-  // never lost — only its UI was).
+  // re-attaches to the live card instead of losing it.
   // The key a LIVE run is found under. Runs start under okey, but okey moves
   // when openRecordId swaps/nulls while the same transcript stays on screen
   // (same-URL records) — a run started under the path key (no record id yet)
@@ -813,13 +804,10 @@ export function TranscriptViewer({
    *  in-flight chunk's results are lost; completed chunks stay merged.
    *
    *  A user's Cancel (this card's, or the other-runs strip's — both through
-   *  cancelTranslateRun) is the ONLY thing that cancels a retro-translate run,
-   *  and that is deliberate: unmounting this component must NOT. The run, its poller and
-   *  its card state all live in the app store keyed by record (see the chunked
-   *  run block above) precisely so navigating away and back re-attaches to the
-   *  live card — cancelling on unmount would kill a long translate every time
-   *  the user looked at another screen. A future "cancel everything on
-   *  teardown" audit must leave this one alone. */
+   *  cancelTranslateRun) is the ONLY thing that cancels a run. Deliberately
+   *  NOT unmount: the run lives in the app store so navigating away and back
+   *  re-attaches to it — cancelling on unmount would kill a long translate
+   *  every time the user looked at another screen. */
   const [, rerenderCancelled] = useReducer((n: number) => n + 1, 0);
   const cancelTranslate = () => {
     // Only the module-scope ctl's flag flips: re-render so the card shows "Cancelling…" at once.
@@ -853,8 +841,7 @@ export function TranscriptViewer({
           const tr = src && stripControlChars(trText(src, lang) ?? "").trim();
           if (!tr) continue;
           // Tag only when the clipboard would otherwise be ambiguous: with
-          // two targets an untagged line says nothing about which language it
-          // is, and `lang` was in scope here all along and simply unused.
+          // two targets an untagged line says nothing about which language it is.
           const tag = visLangs.length > 1 ? `[${lang.toUpperCase()}] ` : "";
           trLines.push(`${tag}${who}${tr}`);
         }
@@ -872,7 +859,6 @@ export function TranscriptViewer({
       .join("\n");
   };
 
-  // ── playback + karaoke follow ────────────────────────────────────────────
   // The picked file plays straight from disk via the asset protocol. A URL
   // run has no local original — `path` IS the link — so playback comes from
   // the app's fetched copy (mediaPath), and with no copy there is simply no
@@ -956,11 +942,9 @@ export function TranscriptViewer({
   }, [setLiveTime]);
 
   // The highlight clock: while playing, sample audio.currentTime every frame.
-  // The <audio> timeupdate event alone ticks every 250-500 ms on WebKitGTK —
-  // words shorter than a tick were never highlighted at all (the search picks
-  // the LAST word started before the sample, so anything between two ticks was
-  // structurally unreachable, twice as often at 2×). timeupdate stays wired
-  // below purely as the paused/seek fallback.
+  // timeupdate alone ticks only every 250-500 ms on WebKitGTK, and the search
+  // picks the LAST word started before the sample, so a word shorter than a
+  // tick was never lit. timeupdate stays wired below as the paused/seek fallback.
   useEffect(() => {
     if (!playing) return;
     // Parked while the window is hidden (closed to the tray), as Waveform's meters are: WebView2
@@ -1109,16 +1093,15 @@ export function TranscriptViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on record/backend switch only
   }, [path, okey, trBackend?.id]);
 
-  /** The <audio> errored on the asset URL — resolve through the fallback
-   *  chain ONCE per step: (1) buffer the original bytes through Rust (asset
-   *  protocol quirks); if the original is gone, the app's stored copy; (2) a
-   *  second error with the blob already loaded means the webview can't
-   *  decode this CODEC (Linux WebKitGTK has no AAC/MP4 without proprietary
-   *  GStreamer plugins — every retained YouTube audio) — decode to WAV in
-   *  Rust and play that; (3) only when the WAV blob errors too is playback
-   *  declared broken. */
   /** `read_media_file`'s over-cap refusal (its exact wording is `MEDIA_TOO_LARGE` in Rust). */
   const isTooLargeToBuffer = (e: unknown) => String(e).includes("too large to buffer");
+  /** The <audio> errored — advance the fallback chain ONCE per step: (1) buffer
+   *  the original bytes through Rust (asset protocol quirks), or the app's stored
+   *  copy if the original is gone; (2) a second error with the blob loaded means
+   *  the webview can't decode the CODEC (Linux WebKitGTK has no AAC/MP4 without
+   *  proprietary GStreamer plugins — every retained YouTube audio) — decode to a
+   *  WAV file in Rust and play that; (3) only when the WAV errors too is playback
+   *  declared broken. */
   const onAudioError = (reason?: string) => {
     // Capture the current generation so async callbacks from a previous record
     // (still in flight after a record switch) are silently discarded.
@@ -1291,16 +1274,13 @@ export function TranscriptViewer({
     if (audioRef.current) audioRef.current.playbackRate = next;
   };
 
-  // Sticky toolbar over a nested scroller: once the page scrolls past the
-  // card top, the pinned toolbar overlaps the box's top edge — and a box
-  // cannot scroll "above its own content", so the rows under that overlap
-  // were unreachable by any scroll. Compensate by SHRINKING the box in step:
-  // translateY moves its top edge down to the toolbar's bottom while the
-  // height gives up the same amount (margin-bottom takes it over, so the
-  // flow below — hint, Recent — never shifts and the page scroll can't
-  // feedback-loop). The box, its content, and crucially its scrollbar then
-  // exactly span what is visible; earlier padding-based compensation left
-  // the element itself 65vh tall with the scrollbar running off-screen.
+  // Sticky toolbar over a nested scroller: once the page scrolls past the card
+  // top, the pinned toolbar overlaps the box's top edge, and a box cannot scroll
+  // "above its own content" — the rows under the overlap would be unreachable.
+  // So the box SHRINKS in step: translateY moves its top edge to the toolbar's
+  // bottom, the height gives up the same amount and margin-bottom takes it over
+  // (the flow below never shifts, so the page scroll can't feedback-loop). The
+  // box and its scrollbar then span exactly what is visible.
   // The sticky toolbar's height as `--viewer-bar` on the card: the export panel's sticky
   // Summary column sits below it instead of under it. 0 where the toolbar isn't sticky.
   const barSticky = !(fill || focus);
@@ -1379,16 +1359,13 @@ export function TranscriptViewer({
     // re-measure on each.
   }, [fill, focus, mode, view, showFullText, hasSegments, result, showTranslate, visLangsKey, showTs, showNames, colorize]);
 
-  // A mode switch swaps what sits under the toolbar (the list ↔ the export
-  // panel) while the page keeps its scrollTop. With the page scrolled into
-  // the card the toolbar is stuck, so the new content's top landed hidden
-  // under it (Export opened mid-panel; Read came back mid-list). When the
-  // content's top isn't in view, bring the card's top to the scroller's top —
-  // the toolbar, then as much of the content as fits. Coming back from
-  // Export the list is a fresh node at scrollTop 0: re-centre the active row
-  // in it, box only. Layout effect + instant: the content swaps in one frame,
-  // so the position lands in that same frame (nothing to ease, nothing for
-  // follow to fight — follow is idle in Export and re-checks after this).
+  // A mode switch swaps what sits under the stuck toolbar (list ↔ export panel)
+  // while the page keeps its scrollTop, so the new content's top would land
+  // hidden under it. When that top isn't in view, bring the card's top to the
+  // scroller's top. Back from Export the list is a fresh node at scrollTop 0:
+  // re-centre the active row in the box. Layout effect + instant: the content
+  // swaps in one frame, so the position lands in that frame (nothing for follow
+  // to fight — it is idle in Export and re-checks after this).
   const prevModeRef = useRef(mode);
   useLayoutEffect(() => {
     const was = prevModeRef.current;
@@ -1469,7 +1446,7 @@ export function TranscriptViewer({
     const visCenter =
       visBottom > visTop
         ? (visTop + visBottom) / 2
-        : boxRect.top + box.clientHeight / 2; // box fully off-screen — old math
+        : boxRect.top + box.clientHeight / 2; // box fully off-screen
     const rowCenter = rowRect.top + row.clientHeight / 2;
     const target = Math.max(
       0,
@@ -1480,14 +1457,11 @@ export function TranscriptViewer({
     );
     const from = box.scrollTop;
     const dist = target - from;
-    // Whatever the clamped box scroll could NOT cover (first lines with the
-    // box top above the viewport, or the tail below the fold) falls to the
-    // page scroller — but the page's job is ONLY to reveal the box's hidden
-    // edge, never to centre a row. Centring the first line would demand the
-    // box top at mid-screen, so an unbounded shift walked the page up past
-    // the whole card, one line at a time. Bounded by how far the box edge
-    // actually sits outside the viewport, the shift is zero once the box is
-    // fully visible — the common case — and can never overshoot.
+    // What the clamped box scroll can't cover falls to the page scroller, but only
+    // to reveal the box's hidden edge, never to centre a row: an unbounded shift
+    // walked the page up past the whole card, one line at a time. Bounded by how far
+    // the box edge sits outside the viewport, it is zero once the box is fully
+    // visible and can never overshoot.
     const shortfall = visCenter - (rowCenter - dist);
     // Measure against the box's untransformed flow position: the sticky-shift
     // compensation pins the visual top at the toolbar's bottom, but the page
@@ -1666,7 +1640,7 @@ export function TranscriptViewer({
   // Clear a still-pending confirmation timer if the viewer unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimer.current), []);
 
-  // ── row callbacks (stable, so SegmentRow's memo holds) ───────────────────
+  // Row callbacks are stable so SegmentRow's memo holds.
   const onToggleReassign = useCallback((i: number) => {
     setReassignRow((r) => (r === i ? null : i));
   }, []);
@@ -1685,10 +1659,10 @@ export function TranscriptViewer({
       // subtitles) never compares equal and a bare focus/blur stores a phantom edit.
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
       // A correction is one logical line, as every export writes it (clean()): a
-      // pasted line break would otherwise show in Read but turn into a space in
-      // the files. Flattened like the subtitle import (no space between two CJK characters when
-      // the text wraps its CJK lines, see cjkWraps; else one space), and compared flattened, so a bare blur on an imported multi-line
-      // line is still "no edit" (and returns `orig` itself, keeping the caret).
+      // pasted line break would show in Read but become a space in the files.
+      // Flattened like the subtitle import (see cjkWraps) and compared flattened, so a
+      // bare blur on an imported multi-line line is still "no edit" (and returns
+      // `orig` itself, keeping the caret).
       const flat = (s: string) => joinLineBreaks(s, cjkWraps(s));
       const edit = t && flat(t) !== flat(orig) ? flat(t) : null;
       setSegmentEdit(okey, i, edit);
@@ -1709,7 +1683,6 @@ export function TranscriptViewer({
     return `${limitsTitle(l)} · ${cueOpts.timing === "own" ? "own timing per language" : "same timing for every language"}`;
   })();
 
-  // ── render ───────────────────────────────────────────────────────────────
   return (
     <div
       data-transcript-viewer=""
@@ -1964,11 +1937,10 @@ export function TranscriptViewer({
                   seekTo(frac * audioLen);
                 }}
                 // The window key handler concedes Space/arrows to a focused slider,
-                // so this one has to own them — a focusable ARIA slider without
-                // keyboard seeking was dead on exactly the control built for it.
+                // so this one has to own them.
                 onKeyDown={(e) => {
                   // Step from the live position: curTime only refreshes every
-                  // ~0.24 s of playback, so a step from it landed off by that much.
+                  // ~0.24 s of playback.
                   const next = seekKeyTarget(
                     e.key,
                     audioRef.current?.currentTime ?? curTime,
@@ -2029,8 +2001,7 @@ export function TranscriptViewer({
               ? "The downloaded audio isn't stored on this device — run the link again to restore playback. The transcript and edits still work."
               : "Playback isn't available — the original file is gone and no copy was kept (it predates audio copies, or “Keep a copy of the audio” was off)."}
           {/* The technical reason — a codec, a missing file, and a media-stack
-              hiccup are different problems; guessing one in prose sent a
-              debugging session down the wrong road. */}
+              hiccup are different problems the prose above can't tell apart. */}
           {brokenDetail && (
             <div className="mt-1 font-mono text-[10.5px] text-faint">
               {stripControlChars(brokenDetail).slice(0, 200)}
@@ -2192,8 +2163,7 @@ export function TranscriptViewer({
               <span key={label} className="inline-flex items-center gap-2">
                 {/* The speaker color OWNS the field: its solid border is
                     the focus indicator (no app-wide accent ring competing
-                    with it) and a dot inside doubles the preview. Picking
-                    a swatch repaints both instantly. */}
+                    with it) and a dot inside doubles the preview. */}
                 <span className="relative inline-flex items-center">
                   <span
                     aria-hidden
@@ -2236,8 +2206,8 @@ export function TranscriptViewer({
                       )}
                       style={{ backgroundColor: `var(--spk-${idx + 1})` }}
                     >
-                      {/* Check on the selected swatch — selection no longer
-                          reads by hue alone. */}
+                      {/* Check on the selected swatch, so selection doesn't
+                          read by hue alone. */}
                       {colorIdxOf(label) === idx && (
                         <Check className="size-2.5 text-black/70" strokeWidth={4} />
                       )}
@@ -2329,7 +2299,7 @@ export function TranscriptViewer({
           )}
         >
           <div
-            // Focus mode is a reading room: a centred ~68ch column with the
+            // Focus mode is a reading room: a centred ~72ch column with the
             // type stepped up — line length stays in the readable band no
             // matter how wide the window is. The Subtitles view sizes its own
             // columns and lanes (SubtitleList widths), so it only gets the room.
