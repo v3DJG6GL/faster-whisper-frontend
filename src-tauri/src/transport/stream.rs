@@ -722,7 +722,6 @@ pub async fn run<F>(
                         break;
                     }
                     Err(_) => {
-                        // Stalled send → the connection is gone. Surface it and close.
                         tracing::warn!("[stream] keepalive timed out — connection lost");
                         on_event(StreamEvent::Error(
                             "stream connection lost (keepalive timed out)".into(),
@@ -854,8 +853,8 @@ pub async fn run<F>(
             }
         };
         if timed_out {
-            // The one silent-transcript-loss path left: the server never sent its
-            // finals (or its close) within the deadline, so log it.
+            // The one transcript-loss path left: the server never sent its finals (or its
+            // close) within the deadline, so log it.
             tracing::warn!(
                 "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
