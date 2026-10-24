@@ -736,6 +736,11 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
 const set = useTranscribeRun.setState;
 const get = useTranscribeRun.getState;
 
+/** The rail's per-file display state, emptied (fresh objects on every call). */
+function railCleared(): Pick<TranscribeRunState, "progress" | "stageTimes" | "stageMeta"> {
+  return { progress: null, stageTimes: {}, stageMeta: {} };
+}
+
 /** Which rail row a server progress stage lights ("waiting"/"unknown" both
  *  belong to the transcribe row — the semaphore queue precedes the decode).
  *
@@ -810,9 +815,7 @@ export function resetForInputChange() {
       openRecordId: settled.some((it) => it.path === s.selectedPath)
         ? s.openRecordId
         : null,
-      progress: null,
-      stageTimes: {},
-      stageMeta: {},
+      ...railCleared(),
     };
   });
 }
@@ -829,9 +832,7 @@ export function closeRecord() {
     queue: [],
     selectedPath: null,
     openRecordId: null,
-    progress: null,
-    stageTimes: {},
-    stageMeta: {},
+    ...railCleared(),
   }));
 }
 
@@ -1518,9 +1519,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     ],
     selectedPath: rec.sourcePath,
     openRecordId: rec.id,
-    progress: null,
-    stageTimes: {},
-    stageMeta: {},
+    ...railCleared(),
     // The record stores its options verbatim (undefined = a run with no stage options) but
     // no decode overrides: an earlier run's set of either must not ride along into a retry
     // (or the rail's stages and VAD line).
@@ -2641,7 +2640,7 @@ async function pump(
         if (pid && !handedOff) void forgetRow(pid);
         if (epoch === get().epoch) {
           if (get().queue.some((it) => it.status === "queued")) {
-            set({ progress: null, stageTimes: {}, stageMeta: {} });
+            set(railCleared());
           } else {
             // Last file of the run: KEEP the rail data — the panel settles
             // into its completed-receipts state until the input changes.
@@ -2793,9 +2792,7 @@ export function cancelRun() {
   abandonActiveRun();
   set((s) => ({
     epoch: s.epoch + 1,
-    progress: null,
-    stageTimes: {},
-    stageMeta: {},
+    ...railCleared(),
     queue: s.queue.map((it) =>
       it.status === "queued" || it.status === "running"
         ? { ...it, status: "cancelled" as const }
