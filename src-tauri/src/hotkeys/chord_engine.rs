@@ -55,7 +55,7 @@ pub enum ChordKind {
 
 /// Allocation-free discriminant for the per-keystroke dispatch: `step` runs for
 /// every key transition system-wide, and cloning `ChordKind` there heap-allocates
-/// a `String` per chord per event (see the `fully` scratch comment).
+/// a `String` per chord per event.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KindTag {
     Hold,
@@ -457,7 +457,6 @@ mod tests {
         ])
     }
 
-    /// Feed a sequence of (held-set, at) pairs, returning all fires flattened.
     fn run(e: &mut Engine, seq: &[(&[u16], Instant)]) -> Vec<Fire> {
         let mut out = Vec::new();
         for (keys, at) in seq {
