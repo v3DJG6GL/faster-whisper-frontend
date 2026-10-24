@@ -1818,8 +1818,7 @@ fn link_refused(e: anyhow::Error) -> anyhow::Error {
     }
 }
 
-/// POST a JSON body to a link route, then read the answer under `cap` — the one
-/// request shape every `/v1/audio/url-*` call shares.
+/// The one request shape every `/v1/audio/url-*` POST shares.
 async fn post_url_json<T: serde::de::DeserializeOwned>(
     server_url: &str,
     api_key: Option<&str>,
