@@ -184,8 +184,6 @@ export function dictate(profileId: string, action: TriggerAction): void {
   );
 
   s.setDictation({ activeProfile: profileId });
-  // startLive resolves the effective language / prompt / decode overrides
-  // (the Profile's set fields win over the Backend's defaults).
   void startLive(backend, s.settings.microphoneId, profile.activation, profile);
 }
 
@@ -478,7 +476,7 @@ export function runOverlayAction(kind: string): void {
     const cur = homeTargetProfile(s.profiles, s.settings.homeProfileId);
     const i = enabled.findIndex((p) => p.id === cur?.id);
     const next = enabled[(i + 1) % enabled.length];
-    s.updateSettings({ homeProfileId: next.id }); // persists; standby tag + next toggle follow
+    s.updateSettings({ homeProfileId: next.id });
     return;
   }
 }
