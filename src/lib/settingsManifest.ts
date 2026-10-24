@@ -4,14 +4,14 @@
 // fields ride in, and whether it is machine-specific (sync default OFF).
 //
 // Both the Settings screens AND the Sync tab's "What this device syncs" list
-// draw from this table, which is what guarantees the two can never disagree
-// on names or nesting. Declaring a setting here IS its sync registration:
-// new settings appear in the Sync list automatically (on by default,
-// `machineSpecific: true` flips them off).
+// take their labels from this table, so the two can never disagree on names.
+// Declaring a setting here IS its sync registration: new settings appear in
+// the Sync list automatically (on by default, `machineSpecific: true` flips
+// them off).
 //
 // Forgetting an entry is a compile error, not a convention: the coverage
-// maps at the bottom are `satisfies`-checked against the store slices' full
-// key sets — add a field to GeneralSettings/RecordingSettings/… without
+// maps below are `satisfies`-checked against the store slices' full key
+// sets — add a field to GeneralSettings/RecordingSettings/… without
 // deciding its sync story and `tsc` fails.
 //
 // Pure data + pure helpers only. Imports types only — never defaults, the
@@ -26,8 +26,6 @@ import type {
   SyncCategory,
   TranscribeSettings,
 } from "./types";
-
-/* ── Types ─────────────────────────────────────────────────────────────── */
 
 /** A store field a setting owns, discriminated by store slice. */
 export type FieldRef =
@@ -104,7 +102,8 @@ export interface SettingDef {
   parent?: string;
   category: WireCategory;
   /** The store fields this one switch governs (one UI row can own several —
-   *  e.g. a visible/hover pair rendered as one control). Empty for `custom`. */
+   *  e.g. a visible/hover pair rendered as one control). Empty for most `custom` arms;
+   *  `homeProfile` and `quickAddPin` name the top-level field their arm carries. */
   fields: readonly FieldRef[];
   /** Machine-specific (paths, chords, display geometry): sync default OFF. */
   machineSpecific?: true;
@@ -117,15 +116,12 @@ export interface SettingDef {
   custom?: CustomArm;
 }
 
-/* ── The registry (display order) ──────────────────────────────────────── */
-
 const g = (key: keyof GeneralSettings): FieldRef => ({ slice: "general", key });
 const r = (key: keyof RecordingSettings): FieldRef => ({ slice: "recording", key });
 const t = (key: keyof TranscribeSettings): FieldRef => ({ slice: "transcribe", key });
 const lg = (key: keyof LoggingSettings): FieldRef => ({ slice: "logging", key });
 
 export const MANIFEST = [
-  // ── General ──────────────────────────────────────────────────────────
   { id: "theme", label: "Theme", group: "appearance", category: "general",
     fields: [{ slice: "settings", key: "theme" }] },
   { id: "accentHue", label: "Signal colour", group: "appearance", category: "general",
@@ -160,7 +156,6 @@ export const MANIFEST = [
   { id: "soundCues", label: "Sound cues", group: "general", category: "general",
     fields: [g("soundEffects")] },
 
-  // ── Recording & history (sections mirror the tab) ────────────────────
   { id: "keepDictationHistory", label: "Save dictations to History",
     group: "recordingHistory", section: "Dictations", category: "recording",
     fields: [t("keepDictationHistory")] },
@@ -207,7 +202,7 @@ export const MANIFEST = [
     group: "dictation", section: "While recording", category: "recording",
     fields: [r("handsFreeAutoStopMin")] },
 
-  // ── Transcribe defaults (controls live on the Transcribe screen) ─────
+  // Transcribe defaults: the controls live on the Transcribe screen, not a Settings tab.
   { id: "diarize", label: "Speaker diarization", group: "transcribeDefaults", category: "transcription",
     fields: [t("diarize")] },
   { id: "speakers", label: "Speakers", parent: "diarize",
@@ -249,7 +244,6 @@ export const MANIFEST = [
     machineSpecific: true,
     fields: [t("backendId"), t("model"), t("language"), t("translationModel")] },
 
-  // ── Chip (labels mirror the Chip tab) ────────────────────────────────
   { id: "chipPosition", label: "Position", group: "chip", category: "chip",
     desc: "Depends on this machine's displays.",
     machineSpecific: true, fields: [r("indicatorPosition")] },
@@ -287,7 +281,7 @@ export const MANIFEST = [
   { id: "quickLaunchButtons", label: "Quick-launch buttons", group: "chip", category: "chip",
     fields: [r("quickLaunch")] },
 
-  // ── Backends (a LIST — switches gate custom arms, not field copies) ──
+  // Backends is a list: its switches gate custom arms, not field copies.
   { id: "backendList", label: "Server list", group: "backends", category: "backends",
     desc: "Names, endpoints, kinds — the servers themselves.",
     custom: "backendList", fields: [] },
@@ -301,7 +295,6 @@ export const MANIFEST = [
     desc: "Model, language, prompt, response format, decode defaults (incl. output prefix/suffix, language detection), live dictation defaults. Needs Server list on.",
     custom: "backendDefaults", fields: [] },
 
-  // ── Profiles ─────────────────────────────────────────────────────────
   { id: "profileList", label: "Profile list & settings", group: "profiles", category: "profiles",
     desc: "Name, backend, activation, chip tag, decode and live dictation overrides.",
     custom: "profileList", fields: [] },
@@ -318,7 +311,6 @@ export const MANIFEST = [
     desc: "Which profile the Home button targets. Needs Profile list & settings on.",
     custom: "homeProfile", fields: [{ slice: "settings", key: "homeProfileId" }] },
 
-  // ── Dictionary ───────────────────────────────────────────────────────
   { id: "quickAddHotkey", label: "Quick-add shortcut", group: "dictionary", category: "dictionary",
     desc: "Off = each machine keeps its own chord.",
     fields: [g("quickAddHotkey")] },
@@ -326,7 +318,6 @@ export const MANIFEST = [
     desc: "Needs Backends → Server list on — the pin points at a server.",
     custom: "quickAddPin", fields: [{ slice: "settings", key: "quickAddList" }] },
 
-  // ── App rules ────────────────────────────────────────────────────────
   { id: "rulesThisOs", label: "Rules for this OS", group: "appRules", category: "appRules",
     desc: "Blocklist and per-app behavior; other-OS rules pass through untouched.",
     custom: "appRulesOs", fields: [] },
@@ -337,7 +328,6 @@ export const MANIFEST = [
     desc: "Chords, like the global paste shortcut. Needs Rules for this OS on.",
     machineSpecific: true, custom: "appPasteShortcuts", fields: [] },
 
-  // ── Logging ──────────────────────────────────────────────────────────
   { id: "logLevel", label: "Log level", group: "logging", category: "logging",
     desc: "Off = each machine keeps its own verbosity.",
     fields: [lg("logLevel")] },
@@ -362,16 +352,13 @@ export const SETTING = Object.fromEntries(DEFS.map((d) => [d.id, d])) as unknown
   SettingDef
 >;
 
-/* ── Coverage maps: the exhaustiveness guarantee ───────────────────────── */
-
 /** Sentinel for fields with no sync switch of their own: machine-local ones that never
  *  reach the wire, and retired ones that still ride their category as a passthrough
  *  (`insertTiming` — see GENERAL_COVERAGE; `autoEnter` is stripped on apply). */
 export const LOCAL = Symbol("machine-local");
 type Covered = SettingId | typeof LOCAL;
 
-/** Every GeneralSettings field → the setting that owns it (or LOCAL).
- *  Adding a field to the interface without deciding here fails tsc. */
+/** Every GeneralSettings field → the setting that owns it (or LOCAL). */
 export const GENERAL_COVERAGE = {
   openAtLogin: "openAtLogin",
   startMinimized: "startMinimized",
@@ -486,10 +473,8 @@ export const TOP_COVERAGE = {
   Covered
 >;
 
-/* ── Derived data ──────────────────────────────────────────────────────── */
-
-/** Sync default per setting: on unless machine-specific. THE single source —
- *  replaces the old duplicated sub-default literals. */
+/** Sync default per setting: on unless machine-specific or local-only. The single
+ *  source of the sync sub-defaults. */
 export const DEFAULT_SETTING_SYNC = Object.fromEntries(
   DEFS.map((d) => [d.id, !d.machineSpecific && !d.localOnly]),
 ) as Record<SettingId, boolean>;
@@ -502,9 +487,7 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
   return DEFS.filter((d) => d.category === cat && !d.localOnly);
 }
 
-/* ── Value access (changed-detection / reset) ──────────────────────────── */
-
-/** The switch that IS each list category (syncGates' catsFromGates reads these). */
+/** The switch that IS each list category (syncGates' catsFromGates hard-codes the same three). */
 const LIST_SWITCH: Partial<Record<WireCategory, SettingId>> = {
   backends: "backendList",
   profiles: "profileList",
