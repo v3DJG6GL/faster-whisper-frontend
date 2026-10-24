@@ -40,6 +40,7 @@ import {
   KIND_LABEL,
   SCOPE_LABEL,
   STAGE_CHIP_LABEL,
+  addKinds,
   bucketMode,
   bucketize,
   densifyKinds,
@@ -78,19 +79,7 @@ import { tileSpecs } from "@/components/stats/tileSpecs";
 
 /** Window totals per kind: the densified series summed. */
 function windowKinds(dense: readonly UsageKinds[]): UsageKinds {
-  const out = zeroKinds();
-  for (const p of dense) {
-    for (const k of ["all", ...KINDS] as const) {
-      const t = safeTotals(p[k]);
-      out[k].sessions += t.sessions;
-      out[k].words += t.words;
-      out[k].audio_s += t.audio_s;
-      out[k].errors += t.errors;
-      out[k].requests += t.requests;
-      out[k].processing_s += t.processing_s;
-    }
-  }
-  return out;
+  return dense.reduce((out, p) => addKinds(out, p), zeroKinds());
 }
 
 function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageStats; dense: readonly UsageKinds[]; scope: UsageScope; withS: readonly UsageStageKey[]; rangeWord: string }) {

@@ -28,6 +28,8 @@ export const KIND_LABEL: Record<UsageKind, string> = {
   text: "Text",
 };
 export const SCOPE_LABEL: Record<UsageScope, string> = { all: "All", ...KIND_LABEL };
+/** Every scope a UsageKinds block carries: the server's `all` sum, then each kind. */
+export const SCOPES: readonly UsageScope[] = ["all", ...KINDS];
 /** The CSS token each kind's series is drawn in (text is hatched in that colour). */
 export const KIND_VAR: Record<UsageKind, string> = {
   dictation: "var(--c-chart-dict)",
@@ -388,6 +390,12 @@ function addTotals(a: UsageKindTotals, b: UsageKindTotals): void {
   a.processing_s += b.processing_s;
 }
 
+/** Adds `add` into `into` for every scope, each counter of `add` coerced (safeTotals). Returns `into`. */
+export function addKinds(into: UsageKinds, add: Partial<UsageKinds> | null | undefined): UsageKinds {
+  for (const k of SCOPES) addTotals(into[k], safeTotals(add?.[k]));
+  return into;
+}
+
 /** Sum a dense day series into columns for the mode. Day mode returns the days as they are. */
 export function bucketize(dense: readonly UsageSeriesPoint[], mode: BucketMode): UsageBucket[] {
   const out: UsageBucket[] = [];
@@ -406,7 +414,7 @@ export function bucketize(dense: readonly UsageSeriesPoint[], mode: BucketMode):
       out.push(cur);
     }
     cur.to = p.day;
-    for (const k of ["all", ...KINDS] as const) addTotals(cur[k], safeTotals(p[k]));
+    addKinds(cur, p);
   }
   return out;
 }
@@ -521,7 +529,7 @@ export function calendarModel(series: readonly UsageSeriesPoint[] | undefined, s
   for (const p of series ?? []) {
     if (!p || !isDay(p.day) || p.day < from || p.day > to) continue;
     const cur = byDay.get(p.day) ?? zeroKinds();
-    for (const k of ["all", ...KINDS] as const) addTotals(cur[k], safeTotals(p[k]));
+    addKinds(cur, p);
     byDay.set(p.day, cur);
   }
   const valueOf = (k: UsageKinds | undefined) => (k ? metricValue(k[scope], metric) : 0);
@@ -682,7 +690,7 @@ export interface RhythmSource {
  *  five measures are nested per-kind splits the backend added for its own busy-hours card. */
 function slotKinds(h: UsageHourCell): UsageKinds {
   const out = zeroKinds();
-  for (const k of ["all", ...KINDS] as const) {
+  for (const k of SCOPES) {
     out[k].words = nonNeg(h[k]);
     out[k].audio_s = nonNeg(h.audio_s?.[k]);
     out[k].processing_s = nonNeg(h.processing_s?.[k]);
@@ -696,7 +704,7 @@ function slotKinds(h: UsageHourCell): UsageKinds {
 /** The per-kind sum of several cells — a side bar's tooltip. */
 export function sumKinds(cells: readonly KindSplit[]): UsageKinds {
   const out = zeroKinds();
-  for (const c of cells) for (const k of ["all", ...KINDS] as const) addTotals(out[k], safeTotals(c.kinds[k]));
+  for (const c of cells) addKinds(out, c.kinds);
   return out;
 }
 
@@ -821,9 +829,7 @@ export function rhythmModel(
   const grid: (UsageKinds | undefined)[] = new Array(N);
   const put = (i: number, add: UsageKinds) => {
     if (i < 0 || i >= N) return;
-    const cur = grid[i] ?? zeroKinds();
-    for (const k of ["all", ...KINDS] as const) addTotals(cur[k], add[k]);
-    grid[i] = cur;
+    grid[i] = addKinds(grid[i] ?? zeroKinds(), add);
   };
   let sent: RhythmSent = "yes";
   if (rhythm === "hours") {
@@ -841,9 +847,7 @@ export function rhythmModel(
     for (const p of src.series ?? []) {
       if (!p || !isDay(p.day) || p.day < f || p.day > t) continue;
       const [y, m] = ymdOf(p.day);
-      const add = zeroKinds();
-      for (const k of ["all", ...KINDS] as const) addTotals(add[k], safeTotals(p[k]));
-      put((y - L.y0) * 12 + m, add);
+      put((y - L.y0) * 12 + m, addKinds(zeroKinds(), p));
     }
   }
   // A words-only server: the slots exist but carry no nested split for this measure.

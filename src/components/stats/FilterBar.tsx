@@ -4,7 +4,7 @@ import { Segmented } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
 import {
-  CHART_METRICS, KINDS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
+  CHART_METRICS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPES, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
   bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
   type RangePreset, type UsagePageQuery, type UsageScope,
 } from "@/lib/usageDerive";
@@ -218,7 +218,7 @@ export function FilterBar({
           value={scope}
           onChange={onScope}
           ariaLabel="Kind"
-          options={(["all", ...KINDS] as UsageScope[]).map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+          options={SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
         />
         <Eyebrow>With</Eyebrow>
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Stages every session must have used">
