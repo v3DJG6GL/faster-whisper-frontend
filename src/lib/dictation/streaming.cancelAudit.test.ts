@@ -7,9 +7,8 @@
 // must cancel it, and the cost of forgetting is invisible on this side of the
 // wire — which is exactly the kind of omission a test has to catch.
 //
-// It reads the SOURCE (the `?raw` idiom settingsManifest.labels.test.ts established —
-// the only cross-file regression mechanism here that needs no Tauri), slices
-// each function body by brace depth, and asserts the call appears in it.
+// It reads the SOURCE (vite `?raw`, so no Tauri is needed), slices each
+// function body by brace depth, and asserts the call appears in it.
 import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
@@ -822,8 +821,8 @@ describe("insertion gates the re-derivations must keep", () => {
 });
 
 describe("work that must wait for the queue or the cancel", () => {
-  // Ordering rules no unit test can reach without Tauri: each one used to run synchronously
-  // against an IPC or a queued task it raced, so pin the order in the source.
+  // Ordering rules no unit test can reach without Tauri: each one, run synchronously, races an
+  // IPC or a queued task, so pin the order in the source.
   const fns = topLevelFunctions(streamingSrc);
 
   it("the stuck-finalize recovery copy waits for cancelLive's cancel before copying", () => {
@@ -968,7 +967,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(
       incompleteFlashMessage("The connection to the server was lost (connection reset) — the last phrase may be missing."),
     ).toBe("The connection to the server was lost (connection reset); nothing was transcribed.");
-    // A notice with no cause of its own keeps the old wording.
+    // A notice with no cause of its own falls back to the slow-server wording.
     expect(incompleteFlashMessage(" — the last phrase may be missing.")).toBe(
       "The server didn’t finish the transcript in time; nothing was transcribed.",
     );
@@ -1069,7 +1068,7 @@ describe("work that must wait for the queue or the cancel", () => {
     const final = mask(finalBody);
     expect(final).toMatch(/const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
     // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
-    // when the two differ (omitted = Rust's old behaviour, the clipboard gets `text`).
+    // when the two differ (omitted = the clipboard gets `text`).
     const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);
     expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
     // Hoisted above the try, so the catch's recovery copy reads the same form.
