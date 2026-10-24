@@ -106,7 +106,7 @@ describe("acquireWarm", () => {
 
   it("a re-acquire keeps the renew clock of the carried send, not its own", () => {
     // The React shape: release + re-acquire at t=RENEW_MS-1s is debounced (no POST), and the
-    // renew must still land at RENEW_MS from the ORIGINAL send — a fresh interval put it at
+    // renew must still land at RENEW_MS from the ORIGINAL send — a fresh interval would put it at
     // ~2×RENEW_MS, past the server's plan lease.
     const a = acquireWarm("k", spec);
     expect(calls).toBe(1);
