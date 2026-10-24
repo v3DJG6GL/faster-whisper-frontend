@@ -39,7 +39,8 @@ const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// Per-request bound on the PATCH (connect, headers and its [`MAX_META_BODY`] reply). Wider than
 /// `META_TIMEOUT` because the server validates every regex entry in a child process (up to 10 s,
 /// possibly queued behind another save), and a save that lands must not read as unsaved; the
-/// shared client's 120 s ceiling left "Saving…" up for two minutes against a black-holed host.
+/// shared client's 120 s ceiling alone would leave "Saving…" up for two minutes against a
+/// black-holed host.
 const RULES_SAVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
