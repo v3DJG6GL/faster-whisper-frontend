@@ -49,9 +49,8 @@ function LiveWaveform(props: Omit<ComponentProps<typeof Waveform>, "level">) {
   return <Waveform level={level} {...props} />;
 }
 
-// After dictation ends, keep the live-transcript card on screen this long so you can
-// read the final result, then it animates out. An empty/cancelled session lingers the
-// same amount, for consistent behaviour.
+// After dictation ends, keep the live-transcript card on screen this long so the final
+// result can be read; an empty or cancelled session lingers the same.
 const TRANSCRIPT_LINGER_MS = 10000;
 
 /** The next dictation's route for one profile, resolved as the chip's and the session's
@@ -90,7 +89,7 @@ function profileRouteShort(p: Profile | undefined, backend: Backend | undefined)
 const DECK_COLS = "grid-cols-[auto_auto_auto_auto_auto_max-content]";
 const ROW_COLS = "col-span-full grid-cols-subgrid";
 
-/** One profile as a row of the dictate card (D46 C): name and activation, hotkey, model,
+/** One profile as a row of the dictate card: name and activation, hotkey, model,
  *  endpoint, language, then edit + enable. Clicking an enabled row makes it the profile the
  *  button dictates with; the chosen row is tinted, the one running a session carries the
  *  state word. A disabled row is dimmed and not selectable — enable it first. */
@@ -159,16 +158,13 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   );
 }
 
-// Subscribes to the live `partial` transcript itself, so the several-times-a-second partial
-// updates re-render ONLY this line — not the whole Home tree (the hero hotkey rows, the
-// profile rows don't depend on the transcript). Mirrors how
-// the 30Hz level meter is isolated inside LiveWaveform.
-// The chip keeps its own 400-char cap; this card needs a cap of its own, because the partial
-// is 100% server-authored and this card is WRAPPING — a multi-megabyte partial becomes
-// millions of line boxes, re-laid-out several times a second, and freezes the main window.
-// Render-only, and a tail slice: only the end of a live partial is of any use while speaking.
-// The slice counts UTF-16 units, so a cut through a surrogate pair drops the lone leading low
-// surrogate rather than render it as U+FFFD (as the Overlay twin does).
+// LiveTranscriptText subscribes to `partial` itself so its several-a-second updates re-render
+// only this line, as LiveWaveform isolates the level.
+// The partial is server-authored and this card WRAPS, so a multi-megabyte partial would become
+// millions of line boxes re-laid-out several times a second and freeze the main window. The cap
+// is render-only and keeps the tail, the only part of use while speaking. The slice counts
+// UTF-16 units, so a cut through a surrogate pair drops the lone leading low surrogate rather
+// than render U+FFFD.
 const MAX_PARTIAL_CHARS = 4000;
 
 function LiveTranscriptText() {
@@ -278,33 +274,26 @@ export default function Dashboard() {
   const updateSettings = useApp((s) => s.updateSettings);
 
   // The hero button has no held chord (you click it), so it always dictates hands-free
-  // style. It targets the profile picked below — falling back to the first enabled
-  // hands-free profile, then any enabled — and uses that profile's backend + overrides.
+  // style, with the target profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
-  // Why the button cannot start ("" when it can): no profile, none enabled, or no backend for the
-  // target — or the hands-free target picker is still open. The chip's dictate button uses the
-  // same helpers, so its reason, this copy and the click gate in toggle() all agree — no
+  // Why the button cannot start ("" when it can). The chip's dictate button uses the same
+  // helpers, so its reason, this copy and the click gate in toggle() all agree — no
   // "Press to dictate" line that a click then refuses.
   const offHint = pickerOffHint(routePending, status) || startOffHint(profiles, target, backends);
   const canStart = offHint === "";
-  // While a session is live, the hero READOUTS (model / endpoint / language) describe the
-  // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if
-  // the profile set changes mid-session (disabling the active profile, reordering, deleting). The
-  // button/start logic + the row choice keep using `target` (the next-dictation pick, a config choice).
-  // activeProfile is null when idle, so this falls back to the home target then.
+  // While a session is live, the "running" row marks the RUNNING profile — like the chip + usage
+  // do — not the home-button target, which can drift if the profile set changes mid-session
+  // (disabling the active profile, reordering, deleting); start logic + the tinted row keep using
+  // `target`. activeProfile is null when idle, so this falls back to the target then.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
 
-  // "Busy" = any non-idle state; the hero button is a stop/cancel while busy. We keep
-  // a graceful stop for "listening" (deliver the last words) but force a hard reset
-  // for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the
-  // stream died on suspend) is recoverable with the same button instead of dead.
+  // While busy the hero button is a stop/cancel: a graceful stop while the mic is open, a hard
+  // reset for the post-speech states — so a wedged "finalizing…"/"inserting…" (e.g. the stream
+  // died on suspend) is recoverable with the same button instead of dead.
   const busy = isActiveDictation(status);
-  // Shared state→colour mapping (same as the chip + sidebar): off=grey, armed=amber,
-  // speaking=green, finalizing=neutral, error=neutral. OFF/idle reads as a recessed
-  // neutral button (press to start) — NOT the old always-amber — and only goes amber
-  // once a session is armed, green while you speak. The waveform has no hollow form,
-  // so its "off" tone maps to grey (dim) rather than amber.
+  // Same state→colour mapping as the chip + sidebar. Off reads as a recessed neutral button
+  // (press to start); amber only once a session is armed, green while you speak.
   const vis = dictationVisual(status, speaking, warming, serverWork);
   const heroFill =
     vis.state === "speaking"
@@ -322,7 +311,7 @@ export default function Dashboard() {
   const waveTone = vis.tone;
   // Mirror the chip (Overlay working = processing || warming): vis.state is "processing" for
   // transcribing/injecting AND cold-mic warm-up, so the bars self-sweep during warm-up instead of
-  // sitting flat at the ~0 level a warming mic delivers — matching heroFill and the chip.
+  // sitting flat at the ~0 level a warming mic delivers.
   const waveProcessing = vis.state === "processing";
 
   // The live-transcript card is shown while a session is live (or on error), then
@@ -357,11 +346,9 @@ export default function Dashboard() {
     // startingSession guard, wedging the just-started hands-free session. Honor it like the hotkey
     // (dictate) and chip (runOverlayAction) toggles do.
     if (requestStopIfStarting()) return;
-    // idle or error → start fresh (startLive clears any prior error).
-    // No enabled profile or no backend → no start: the same canStart predicate the hero copy
-    // below and the chip's hint read, matching the hotkeys (dictate refuses a disabled profile
-    // or one with no Backend). backendForProfile falls back to the first Backend even for no
-    // profile, so the backend check alone let a profile-less session through.
+    // idle or error → start fresh (startLive clears any prior error), gated like the hotkeys
+    // (dictate refuses a disabled profile or one with no Backend). backendForProfile falls back to
+    // the first Backend even for no profile, so a backend check alone lets a profile-less session through.
     if (!canStart || !headerBackend || !target) return;
     // Stamps the active Profile for the chip, honours "Ask for target languages", and
     // resolves effective language / prompt / decode (target over backend).
@@ -384,17 +371,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Usage at a glance — sparkline tiles between the heading and the dictation
-          instrument; the full chart lives on /statistics. */}
       <HomeUsageStrip />
 
       {/* First-run / re-setup checklist — renders only while a backend or all
           profiles are missing (the dictate hero below is inert until then). */}
       <SetupChecklist />
 
-      {/* The dictate card (D46 C, the deck): the control strip on top — button, state word,
-          what pressing does, the meter — then every profile as a row. The tinted row is the
-          one the button dictates with; click another enabled row to switch. */}
+      {/* The dictate card: the control strip on top, then every profile as a row. The tinted
+          row is the one the button dictates with; click another enabled row to switch. */}
       <Card className="mt-8 overflow-hidden p-0">
         <div className="flex items-center gap-6 px-6 py-6">
           <button
@@ -484,9 +468,6 @@ export default function Dashboard() {
         )}
       </Card>
 
-      {/* Live-transcript card: visible while busy/error, then lingers for a few
-          seconds after the session ends (so the final transcript stays readable) and
-          animates in/out by collapsing its height + fading. */}
       <AnimatePresence initial={false}>
         {cardVisible && (
           <motion.div
