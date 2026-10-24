@@ -245,8 +245,8 @@ fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
     // The fix-ups still run when another root failed: the roots that moved now carry the
     // marker and are never looked at again, so it is now or never for them — unless an
     // earlier launch's failed re-point left REPOINT_PENDING, which retries it. A failed
-    // re-point stops the launch like a failed move (see `repoint_fault_stops`), so no session
-    // runs on the vacated folder before that retry.
+    // re-point stops the first launch to hit that fault, like a failed move (see
+    // `repoint_fault_stops`), so a passing hold cannot start a session on the vacated folder.
     let repoint_pending = roots
         .iter()
         .any(|r| r.base.join(NEW_ID).join(REPOINT_PENDING).exists());
@@ -309,7 +309,7 @@ pub fn tell_user(msg: &str) {
 /// Re-point config paths into every moved folder. A root that moved on an EARLIER launch
 /// (one that then stopped on another root's failed move) counts too: the config.json naming a
 /// folder inside it may only arrive now, with the root that failed then. Returns the config.json
-/// files whose re-point failed (each left REPOINT_PENDING for the next launch).
+/// files whose failed re-point stops this launch (see `repoint_fault_stops`).
 fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
     for root in roots.iter().filter(|r| !r.disposable) {
         let pair = (root.base.join(LEGACY_ID), root.base.join(NEW_ID));
@@ -480,9 +480,8 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
             // file from a sudo run). The first launch to see it stops: a lock released a moment
             // later lets the loader start on settings still naming the vacated folder, and the
             // session would record into it where the next launch's re-point cannot follow. A
-            // lasting fault stops only once (`repoint_fault_stops`); the marker clears once a
-            // re-point lands (or finds nothing to re-point). Stopped only with the retry armed:
-            // without the marker no later launch comes back.
+            // lasting fault stops only once (`repoint_fault_stops`). Stopped only with the retry
+            // armed: without the marker no later launch comes back.
             if repoint_fault_stops(config, REPOINT_READ) && pending_fault_is(config, REPOINT_READ) {
                 tracing::warn!(
                     "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
