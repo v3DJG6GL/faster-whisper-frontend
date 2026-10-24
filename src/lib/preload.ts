@@ -5,7 +5,7 @@
 // backend too old to know the endpoint — is swallowed. A server that ignores
 // this must be indistinguishable, to the user, from one that honours it.
 //
-// The server's plan lease expires in 180s and it stages ahead on its own, so a
+// The server's plan lease expires in 180s by default and it stages ahead on its own, so a
 // holder renews on a timer rather than re-POSTing as stages progress. A leaked
 // lease would therefore ping a server every two minutes for the life of the
 // app — which is why every acquire site must release on EVERY exit path.
@@ -32,9 +32,9 @@ export interface WarmLease {
   release(): void;
 }
 
-/** Renew cadence. The server's lease is 180s, so this leaves room for exactly
- *  one lost call before the plan expires — close enough that a dropped request
- *  costs nothing, far enough that we are not chatting every few seconds. */
+/** Renew cadence, inside the server's plan lease (MODEL_PRELOAD_WARM_TTL_S, default 180s) with
+ *  a minute of slack; a lost renew only lets the plan lapse until the next tick, and the
+ *  cadence is far enough apart that we are not chatting every few seconds. */
 export const RENEW_MS = 120_000;
 
 
