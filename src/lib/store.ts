@@ -165,10 +165,8 @@ function wellFormedProfiles(v: unknown): Profile[] {
         // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
         // the debounced save.
         isStringList((p as Profile).hotkey) &&
-        // The activation kind too — the map below explains why the value is load-bearing (an
-        // unknown one is rendered AS A COMPONENT and unmounts the window). Dropped, not
-        // rewritten, matching the shape-only rule: Rust's typed load rejects such a config
-        // anyway; this covers the no-Rust dev path. The legacy spelling survives to the map.
+        // The activation kind too (load-bearing: see the map below). Dropped, not rewritten, per
+        // the shape-only rule; the legacy spelling survives to the map.
         canonicalActivation((p as Profile).activation) !== undefined,
     )
     // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
