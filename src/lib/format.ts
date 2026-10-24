@@ -69,7 +69,7 @@ export function fmtDurationAxis(seconds: number): string {
   return `${(s / 3600).toFixed(1).replace(/\.0$/, "")}h`;
 }
 
-// The series carries `day` = days-since-epoch (server-local calendar day). We
+// The series carries `day` = days-since-epoch in the query's `tz` (the viewer's zone). We
 // format with timeZone:"UTC" so the rendered date matches that integer exactly,
 // independent of the viewer's offset (avoids an off-by-one near midnight).
 const DAY_MS = 86_400_000;
@@ -93,9 +93,8 @@ export function fmtDateFull(day: number): string {
   return _full.format(dayToDate(day));
 }
 
-/** The client's LOCAL day-since-epoch — matches the backend's server-local
- *  `epoch_day_for` for whole-hour timezone offsets (e.g. CET), so it anchors the
- *  chart's right edge ("today") to the same day numbering the series uses. */
+/** The client's LOCAL day-since-epoch — the series is reckoned in the viewer's zone (the
+ *  query's `tz`), so this anchors the chart's right edge ("today") to the same day numbering. */
 export function localTodayDay(): number {
   return Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / DAY_MS);
 }
