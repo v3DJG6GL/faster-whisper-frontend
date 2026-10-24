@@ -669,6 +669,13 @@ mod tests {
         dir
     }
 
+    /// A scratch root and the legacy / new app folder paths under it (neither created).
+    fn app_dirs(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = scratch(tag);
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        (base, old, new)
+    }
+
     /// A config.json naming `audio_base`, with a stray Latin-1 byte (0xE9, "é") in a string value.
     fn latin1_config(audio_base: &Path) -> Vec<u8> {
         let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
@@ -754,8 +761,7 @@ mod tests {
     #[test]
     fn a_failed_move_leaves_the_old_folder_whole_and_creates_no_new_one() {
         use std::os::unix::fs::PermissionsExt;
-        let base = scratch("failed");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (base, old, new) = app_dirs("failed");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("config.json"), "old").unwrap();
         // A read-only parent: neither the rename nor the staging copy can create anything.
@@ -808,8 +814,7 @@ mod tests {
 
     #[test]
     fn an_existing_install_moves_whole_and_only_once() {
-        let base = scratch("move");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("move");
         std::fs::create_dir_all(old.join("audio").join("dictations")).unwrap();
         std::fs::write(old.join("config.json"), "{}").unwrap();
         std::fs::write(old.join("audio").join("dictations").join("a.wav"), b"x").unwrap();
@@ -831,8 +836,7 @@ mod tests {
 
     #[test]
     fn data_already_under_the_new_name_is_never_overwritten() {
-        let base = scratch("conflict");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("conflict");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(old.join("config.json"), "old").unwrap();
@@ -847,8 +851,7 @@ mod tests {
 
     #[test]
     fn an_empty_new_folder_does_not_block_the_move() {
-        let base = scratch("empty");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("empty");
         std::fs::create_dir_all(&old).unwrap();
         std::fs::create_dir_all(&new).unwrap();
         std::fs::write(old.join("config.json"), "old").unwrap();
@@ -861,8 +864,7 @@ mod tests {
 
     #[test]
     fn a_cache_is_dropped_not_moved() {
-        let base = scratch("cache");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("cache");
         std::fs::create_dir_all(old.join("playback")).unwrap();
         assert_eq!(migrate_dir(&old, &new, true), Outcome::Absent);
         assert!(!old.exists() && !new.exists());
@@ -873,8 +875,7 @@ mod tests {
     fn a_cache_root_that_is_the_data_root_never_deletes_the_users_data() {
         // XDG_CACHE_HOME == XDG_DATA_HOME, and the user already started fresh under the new
         // name: the data root leaves the old folder in place, the cache root must not drop it.
-        let base = scratch("cache-is-data");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (base, old, new) = app_dirs("cache-is-data");
         std::fs::create_dir_all(old.join("audio")).unwrap();
         std::fs::write(old.join("audio").join("a.wav"), b"x").unwrap();
         std::fs::create_dir_all(&new).unwrap();
@@ -924,8 +925,7 @@ mod tests {
 
     #[test]
     fn custom_folders_inside_the_old_app_folder_follow_the_move() {
-        let base = scratch("cfg");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (base, old, new) = app_dirs("cfg");
         std::fs::create_dir_all(&new).unwrap();
         let elsewhere = base.join("elsewhere");
         let cfg = serde_json::json!({ "settings": {
@@ -951,8 +951,7 @@ mod tests {
 
     #[test]
     fn a_config_saved_with_a_bom_still_follows_the_move() {
-        let base = scratch("bom");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("bom");
         std::fs::create_dir_all(&new).unwrap();
         let cfg = audio_base_config(&old.join("my-audio"));
         let mut bytes = b"\xEF\xBB\xBF".to_vec();
@@ -973,8 +972,7 @@ mod tests {
 
     #[test]
     fn a_config_that_is_not_valid_utf8_follows_the_move_and_keeps_its_bytes_aside() {
-        let base = scratch("not-utf8");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("not-utf8");
         std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
@@ -1000,8 +998,7 @@ mod tests {
     /// re-point; one holding other bytes is still never overwritten.
     #[test]
     fn a_side_copy_cut_short_is_written_again_so_the_re_point_retry_lands() {
-        let base = scratch("side-partial");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("side-partial");
         std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
@@ -1022,8 +1019,7 @@ mod tests {
 
     #[test]
     fn a_failed_config_write_reports_nothing_re_pointed_and_a_later_launch_still_re_points() {
-        let base = scratch("write-fails");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("write-fails");
         std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
         let config = new.join("config.json");
@@ -1111,8 +1107,7 @@ mod tests {
     /// launch for good.
     #[test]
     fn a_re_point_fault_goes_on_only_when_an_earlier_launch_hit_the_same_one() {
-        let base = scratch("fault-kinds");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (_, old, new) = app_dirs("fault-kinds");
         std::fs::create_dir_all(&new).unwrap();
         let cfg = audio_base_config(&old.join("my-audio"));
         let config = new.join("config.json");
@@ -1144,8 +1139,7 @@ mod tests {
 
     #[test]
     fn a_failed_config_write_stops_the_launch_and_a_launch_with_nothing_left_to_move_re_points() {
-        let base = scratch("write-retry");
-        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        let (base, old, new) = app_dirs("write-retry");
         std::fs::create_dir_all(old.join("my-audio")).unwrap();
         let cfg = audio_base_config(&old.join("my-audio"));
         std::fs::write(old.join("config.json"), cfg).unwrap();
