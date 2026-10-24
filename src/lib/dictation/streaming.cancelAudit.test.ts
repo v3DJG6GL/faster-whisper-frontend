@@ -1541,7 +1541,7 @@ describe("a cancelled translating session's usage outcome", () => {
     const asked = body.split("\n").find((l) => /\basked:/.test(l));
     expect(asked, "deferSessionOutcome must snapshot asked").toBeDefined();
     expect(asked).toContain("sessionTranslation != null");
-    expect(asked).toContain("(bankedDoc + committedDoc).trim()");
+    expect(asked).toContain("sessionTranscript()");
   });
 });
 

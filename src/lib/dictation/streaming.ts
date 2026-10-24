@@ -310,6 +310,14 @@ let bankedDoc = "";
  *  accumulation — see the bank site for why the frontend copy needed its own. The hard-break
  *  carry (`carryText`) accumulates the same way and shares it. */
 const MAX_BANKED_DOC = 8 * 1024 * 1024;
+/** The session's whole transcript: every document banked before a hard break, then the current one. */
+function sessionTranscript(): string {
+  return (bankedDoc + committedDoc).trim();
+}
+/** The stop-timing transcript a teardown with no `closed` still owes (live mode typed it: ""). */
+function owedStopTranscript(): string {
+  return insertCfg && !insertCfg.live ? sessionTranscript() : "";
+}
 // Clipboard-only phrase boundary. committedDoc grows across phrases until the backend's long-silence
 // hard break — which can be many seconds away, far too late to feel like "just my last phrase". So we
 // detect the phrase boundary client-side: `clipBaseline` is the committedDoc text already copied as
@@ -485,7 +493,7 @@ function deferSessionOutcome(): ((delivery: "typed" | "clipboard" | "none", aban
   const snap = {
     skipped: sessionInsertSkipped,
     // A session with no text had nothing to translate: not_asked, like its empty History capture.
-    asked: sessionTranslation != null && (bankedDoc + committedDoc).trim() !== "",
+    asked: sessionTranslation != null && sessionTranscript() !== "",
     translated: sessionTranslatedText != null,
     landed: sessionTyped || sessionClipboard,
   };
@@ -1047,7 +1055,7 @@ function bookOwedUtterances(how: "typed" | "clipboard", ev: OwedEvent): void {
 function captureDictationHistory(): boolean {
   const meta = historyMeta();
   if (!meta || capturedRecordId || utteranceFinalSeen) return false;
-  const text = (bankedDoc + committedDoc).trim();
+  const text = sessionTranscript();
   if (!text) return false;
   // An aborted settle picker skipped the translate along with the insert — no attempt
   // to record, the same "aborted" (not a failure) reportSessionOutcome sends.
@@ -1934,7 +1942,7 @@ function armStuckWatchdog(): void {
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
       // The recovery copy WAITS for cancelLive, so cancelStream(true) and the synchronous idle land
       // before the copy and before the superseded check below.
-      const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+      const pending = owedStopTranscript();
       // With text to recover, the usage outcome waits for the copy's answer: claiming it here makes
       // cancelLive's own report a no-op, and the snapshot keeps the old session's
       // facts, so a new session started in the await window books its own.
@@ -3093,7 +3101,7 @@ async function ensureListeners(): Promise<void> {
         // "stop" (and "live" on a batch profile): insert the whole transcript once, into the
         // window focused NOW (resolved in-queue) — not whatever was focused at start.
         // bankedDoc holds any documents finalized before a hard break this session.
-        const text = (bankedDoc + committedDoc).trim();
+        const text = sessionTranscript();
         if (!text) {
           settleIdle();
           return;
@@ -3272,7 +3280,7 @@ async function ensureListeners(): Promise<void> {
     // before a later cancel / startLive can clear committedDoc/bankedDoc (the error path itself
     // keeps them). Live mode injected per-phrase → "". endInjection above is a no-op in stop mode
     // (nothing snapshotted).
-    const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    const pending = owedStopTranscript();
     // No `closed` settles this session, so book its usage outcome here. Claim it before the teardown:
     // a cancel during the error linger would otherwise book first. With stop-mode text to recover the
     // copy's answer settles it; otherwise what landed already (live phrases) does, right away.
@@ -4141,7 +4149,7 @@ export async function stopLive(): Promise<void> {
     // stop-timing transcript is silently lost (closed also bails on "error"). endInjection above is
     // a no-op in stop mode (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc
     // aren't reset by stopLive.
-    const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    const pending = owedStopTranscript();
     // No `closed` settles this session either: claim its usage outcome before the teardown (as the
     // stream://error handler does) and book the copy's answer, or what already landed.
     const settleOutcome = deferSessionOutcome();
