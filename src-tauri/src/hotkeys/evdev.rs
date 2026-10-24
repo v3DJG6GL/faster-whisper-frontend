@@ -183,12 +183,11 @@ mod imp {
         }
     }
 
-    /// Build chord specs for every enabled Profile whose hotkey maps cleanly,
-    /// plus the quick-add window chord. Equal chords are de-duped (first by config
-    /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
-    /// Nesting is filtered by `chord_engine::registration_conflict` (the twin of the
-    /// Settings screen's hotkeyConflicts.ts): only a hold strictly inside a hands-free chord
-    /// registers; every other nesting is dropped with a WARN, first in config order wins.
+    /// Build chord specs for every enabled Profile whose hotkey maps cleanly, plus the quick-add
+    /// window chord; unmappable / empty ones are skipped. Duplicates and nesting are filtered by
+    /// `chord_engine::registration_conflict` (the twin of the Settings screen's hotkeyConflicts.ts),
+    /// first in config order wins, so one keypress can't fire two actions: only a hold strictly
+    /// inside a hands-free chord registers, and every other clash is dropped with a WARN.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
@@ -202,11 +201,9 @@ mod imp {
                 tracing::warn!("[evdev] chord ceiling {MAX_CHORDS} reached, dropping {what}");
                 return;
             }
-            // The registration filter: duplicates, and every nesting except the designed
-            // hold ⊂ hands-free upgrade, are dropped — first in config order wins. The Settings
-            // UI refuses to save these (`hotkeyConflicts.ts`); this is the same rule for the lists
-            // that never pass through it (a sync pull, an import), because the engine cannot
-            // make sense of them: two nested holds run two sessions at once, and the inner
+            // The Settings UI refuses to save these (`hotkeyConflicts.ts`); this is the same rule
+            // for lists that never pass through it (a sync pull, an import), because the engine
+            // cannot make sense of them: two nested holds run two sessions at once, and the inner
             // hold's release then stops the OUTER session at the wrong key.
             let candidate = ChordSpec { keys, kind };
             let clash = out
@@ -244,9 +241,8 @@ mod imp {
                     profile_id: p.id.clone(),
                 },
             };
-            // `what` is interpolated into the duplicate-chord warning below, so the untrusted id
-            // is defanged here rather than at the log line — same reason as `emit`'s. This one
-            // fires on every `apply_bindings`: startup, resume, and every pull touching profiles.
+            // `what` is interpolated into `push`'s warnings, so the untrusted id is defanged here
+            // rather than at the log line — same reason as `emit`'s.
             push(
                 kind,
                 keys,
@@ -344,13 +340,13 @@ mod imp {
 
     /// `chord_mods` = the firing chord's OWN modifier keycodes, so `inject_text` can tell "the
     /// user has not let go of the dictation chord" (divert to clipboard) from "an unrelated
-    /// modifier is down" (type anyway). This backend feeds `HeldKeys`, so without the snapshot
-    /// the gate was dead here — see `triggers::snapshot_trigger_mods`. `None` for a teardown-
-    /// emitted stop, which is not a user chord release.
+    /// modifier is down" (type anyway); this backend feeds `HeldKeys`, so the gate depends on
+    /// that snapshot (`triggers::snapshot_trigger_mods`). `None` for a teardown-emitted stop,
+    /// which is not a user chord release.
     fn emit(app: &AppHandle, profile_id: &str, action: &str, chord_mods: Option<&[u16]>) {
-        // `None` = a teardown-emitted stop, which is not a user chord release: leave the existing
-        // snapshot alone rather than clearing it, so a stop that follows a real chord press by
-        // milliseconds cannot wipe the very modifiers the gate needs to see.
+        // A teardown stop leaves the existing snapshot alone rather than clearing it, so a stop
+        // that follows a real chord press by milliseconds cannot wipe the very modifiers the gate
+        // needs to see.
         if let Some(mods) = chord_mods {
             crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
@@ -360,7 +356,6 @@ mod imp {
         // string and never clamps it), so it is defanged for the log exactly as the CLI twin in
         // `triggers.rs` is: an embedded newline forges records in the Windows support log users
         // are asked to send, and an unbounded id turns every chord press into a large disk write.
-        // This is the highest-frequency of the four sites — it fires on every trigger.
         let profile_id_log = crate::transport::bounded_server_text(profile_id, 120);
         tracing::info!("[trigger] {profile_id_log}/{action} (evdev)");
         let _ = app.emit(
@@ -487,16 +482,13 @@ mod imp {
             .map(|mut h| std::mem::take(&mut *h))
             .unwrap_or_default();
         for (profile_id, keys) in stuck {
-            // `None` chord mods = a stop we MANUFACTURED, not a user chord release; the loss
-            // latch is armed only when the chord is genuinely still down — see manufactured_stop.
             manufactured_stop(app, &profile_id, &keys);
         }
     }
 
     /// Commit one debounced key transition: update the held-set + the HeldKeys
-    /// mirror, step the engine, dispatch its fires. (The pre-debounce body of the
-    /// run_device loop, factored out so deferred releases commit through the same
-    /// path — the shared engine owns all chord semantics; this just tracks keys.)
+    /// mirror, step the engine, dispatch its fires. Live events, deferred releases and the
+    /// post-loop drain all commit through here; the shared engine owns all chord semantics.
     ///
     /// `teardown`: the post-loop drain of parked releases — a Stop is then emitted only if the
     /// hold is still unclaimed (`take_hold`), since `stop_held_sessions` may already have
@@ -579,14 +571,11 @@ mod imp {
                 Fire::Reclassify(pid) => {
                     // Same rising edge, same reason as Start/Toggle above: the engine fires
                     // Reclassify only on the hands-free chord's own physical completion (`on &&
-                    // !active[i]`), so this press IS in the map and the still-held check works
-                    // normally for it — which makes any pending loss latch a dud. It was the one
-                    // fire of the three that did not clear it, and it CONTINUES a live session
-                    // into hands-free mode, so an injection follows it. Reachable on the ordinary
-                    // multi-keyboard setup: keyboard A's stream dies with a hold active and its
-                    // post-loop arms the latch, keyboard B's separate engine still has that hold,
-                    // and completing the hands-free superset on B otherwise consumed the stale latch
-                    // (TTL 130s) and diverted the phrase to the clipboard.
+                    // !active[i]`), and it CONTINUES a live session, so an injection follows it.
+                    // Multi-keyboard case: keyboard A's stream dies with a hold active and its
+                    // post-loop arms the latch while keyboard B's engine still has that hold;
+                    // completing the hands-free superset on B must not consume that stale latch
+                    // (TTL 130s) and divert the phrase to the clipboard.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
@@ -704,16 +693,13 @@ mod imp {
         // hold-to-talk dictation started here would stay stuck running. Hands-free/quick-add are
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
-            // CLAIM the hold before manufacturing its stop. `stop_held_sessions` drains the same
-            // registry, arms the latch and emits the same stop — and `apply_bindings` (via
-            // `start`, or after `stop()`) and `suspend_shortcuts` call it right after evdev's
-            // abort, as a separate step from it. A reader whose stream errors around that abort
-            // (unplug, dock event, suspend/resume — itself an `apply_bindings` trigger) runs this
-            // post-loop synchronously past the abort point and emitted a SECOND stop for the same profile plus a SECOND `arm_chord_lost`:
-            // a stop delivered onto a session the user re-triggered in between, and an extra
-            // process-global loss latch that the next typing injection drains, silently diverting
-            // that phrase to the clipboard. The Windows arm has had this guard since `take_hold`
-            // was added; this is its missing twin.
+            // CLAIM the hold before manufacturing its stop (as the `windows` twin does).
+            // `stop_held_sessions` drains the same registry right after evdev's abort
+            // (`apply_bindings`, `suspend_shortcuts`), and a reader whose stream errors around that
+            // abort (unplug, dock event, suspend/resume) runs this post-loop past the abort point.
+            // Unclaimed, that is a SECOND stop, delivered onto a session the user re-triggered in
+            // between, and a SECOND `arm_chord_lost` that diverts the next typed phrase to the
+            // clipboard.
             if !take_hold(&pid) {
                 continue;
             }
