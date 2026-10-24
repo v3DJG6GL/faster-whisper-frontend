@@ -47,6 +47,12 @@ const saved = (id: string): TranscriptRecord => {
   return rec;
 };
 
+/** A done record of the file `file` (path "/<file>"), stamped 2026-08-30 12:00Z; `over` sets the rest. */
+const fileRecord = (id: string, file: string, over: Partial<TranscriptRecord> = {}): TranscriptRecord => ({
+  schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
+  sourcePath: `/${file}`, sourceName: file, status: "done", ...over,
+});
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -647,10 +653,7 @@ describe("loadHistory", () => {
     await loadHistory();
     // No screen waits forever on a failed listing.
     expect(useTranscriptHistory.getState().loaded).toBe(true);
-    listTranscriptRecords.mockResolvedValueOnce([{
-      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-    }]);
+    listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory(); // History's mount load after a failed launch-time listing
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["A"]);
     // Once a listing succeeded, a non-forced call is a no-op again.
@@ -661,24 +664,15 @@ describe("loadHistory", () => {
   it("a retry after a failed listing keeps the records this session made (their saves may not be on disk)", async () => {
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     await loadHistory();
-    const made: TranscriptRecord = {
-      schemaVersion: 1, kind: "file", id: "B", createdAt: "2026-08-30T13:00:00Z",
-      sourcePath: "/b.mp3", sourceName: "b.mp3", status: "done",
-    };
+    const made = fileRecord("B", "b.mp3", { createdAt: "2026-08-30T13:00:00Z" });
     useTranscriptHistory.setState({ records: [made] }); // made after the failed listing; its save failed
-    listTranscriptRecords.mockResolvedValueOnce([{
-      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-    }]);
+    listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["B", "A"]);
   });
 
   it("a retry after a failed FORCED listing replaces the mirror (a wipe is not undone)", async () => {
-    listTranscriptRecords.mockResolvedValueOnce([{
-      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-    }]);
+    listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory();
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     await loadHistory(true); // e.g. after "Delete all dictations" wiped A on disk
@@ -708,10 +702,7 @@ describe("loadHistory", () => {
       sourcePath: "", sourceName: "Dictation", status: "done",
     };
     useTranscriptHistory.setState({ records: [made] }); // a dictation before History opened; its save failed
-    listTranscriptRecords.mockResolvedValueOnce([{
-      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-    }]);
+    listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["B", "A"]);
   });
@@ -796,10 +787,7 @@ describe("upsertRecord coalesces the disk write, not the mirror", () => {
   it("writes leading-edge, then once more with the LAST record after the window", () => {
     vi.useFakeTimers();
     saveTranscriptRecord.mockClear();
-    const base: TranscriptRecord = {
-      schemaVersion: 1, kind: "file", id: "co-1", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/c.mp3", sourceName: "c.mp3", status: "done", result: { text: "v0" },
-    };
+    const base = fileRecord("co-1", "c.mp3", { result: { text: "v0" } });
     for (let i = 1; i <= 10; i++) upsertRecord({ ...base, result: { text: `v${i}` } });
     expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
     // The mirror already has the latest version; the file will catch up.
@@ -814,10 +802,7 @@ describe("newest-first ordering", () => {
   // Equal `createdAt` stamps are reachable (two records minted in the same millisecond),
   // and the mirror's order is what History renders — so the tie order has to be pinned.
   it("floats a re-upserted record to the front of its tie group, newest group first", () => {
-    const at = (id: string, createdAt: string): TranscriptRecord => ({
-      schemaVersion: 1, kind: "file", id, createdAt,
-      sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done",
-    });
+    const at = (id: string, createdAt: string) => fileRecord(id, `${id}.mp3`, { createdAt });
     const TIE = "2026-08-30T12:00:00.000Z";
     upsertRecord(at("a", TIE));
     upsertRecord(at("mid", TIE));
@@ -839,10 +824,7 @@ describe("pending writes are droppable and flushable", () => {
     vi.useFakeTimers();
     try {
       saveTranscriptRecord.mockClear();
-      const base: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "drop-1", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/d.mp3", sourceName: "d.mp3", status: "done", result: { text: "v0" },
-      };
+      const base = fileRecord("drop-1", "d.mp3", { result: { text: "v0" } });
       upsertRecord({ ...base, result: { text: "v1" } }); // leading edge → 1 write
       upsertRecord({ ...base, result: { text: "v2" } }); // parked in the window
       expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
@@ -874,10 +856,7 @@ describe("a listing does not revert the parked writes it flushed", () => {
   it("a forced listing that reads the disk before the flushed save lands keeps the edit", async () => {
     vi.useFakeTimers();
     try {
-      const old: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "replay-1", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/r.mp3", sourceName: "r.mp3", status: "done", result: { text: "old" },
-      };
+      const old = fileRecord("replay-1", "r.mp3", { result: { text: "old" } });
       listTranscriptRecords.mockResolvedValueOnce([old]);
       await loadHistory(); // a listing succeeded: the next one replaces the mirror (no seed)
       upsertRecord({ ...old, result: { text: "e1" } }); // leading edge
@@ -926,10 +905,7 @@ describe("listenRetentionSweeps", () => {
     const prev = useApp.getState().settings;
     try {
       saveTranscriptRecord.mockClear();
-      const file: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "sw-file", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "v0" },
-      };
+      const file = fileRecord("sw-file", "s.mp3", { result: { text: "v0" } });
       const dict: TranscriptRecord = { ...file, kind: "dictation", id: "sw-dict" };
       upsertRecord(dict); // leading edge (dictations still on)
       upsertRecord({ ...dict, result: { text: "d1" } }); // parked
@@ -966,10 +942,7 @@ describe("listenRetentionSweeps", () => {
     try {
       listenRetentionSweeps();
       saveTranscriptRecord.mockClear();
-      const dict: TranscriptRecord = {
-        schemaVersion: 1, kind: "dictation", id: "pr-dict", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "d0" },
-      };
+      const dict = fileRecord("pr-dict", "s.mp3", { kind: "dictation", result: { text: "d0" } });
       upsertRecord(dict); // leading edge
       upsertRecord({ ...dict, result: { text: "d1" } }); // parked
       // Off in memory, but the sweep that arrives was queued by an earlier (prune) save.
@@ -990,10 +963,7 @@ describe("listenRetentionSweeps", () => {
     try {
       listenRetentionSweeps();
       saveTranscriptRecord.mockClear();
-      const dict: TranscriptRecord = {
-        schemaVersion: 1, kind: "dictation", id: "ns-dict", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "d0" },
-      };
+      const dict = fileRecord("ns-dict", "s.mp3", { kind: "dictation", result: { text: "d0" } });
       // Off in memory only (a debounced or conflict-held save): Rust wiped nothing yet.
       useApp.setState({ settings: { ...prev, transcribe: { ...prev.transcribe, keepDictationHistory: false } } });
       upsertRecord(dict);
@@ -1010,10 +980,7 @@ describe("dropPendingWrites with a filter", () => {
     vi.useFakeTimers();
     try {
       saveTranscriptRecord.mockClear();
-      const file: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "keep-1", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/k.mp3", sourceName: "k.mp3", status: "done", result: { text: "v0" },
-      };
+      const file = fileRecord("keep-1", "k.mp3", { result: { text: "v0" } });
       const dict: TranscriptRecord = { ...file, kind: "dictation", id: "drop-1" };
       upsertRecord(file); // leading edge
       upsertRecord({ ...file, result: { text: "v1" } }); // parked
@@ -1036,10 +1003,7 @@ describe("flushRecordWrites resolves once the parked writes land", () => {
     vi.useFakeTimers();
     try {
       saveTranscriptRecord.mockClear();
-      const base: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "quit-1", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/q.mp3", sourceName: "q.mp3", status: "done", result: { text: "v0" },
-      };
+      const base = fileRecord("quit-1", "q.mp3", { result: { text: "v0" } });
       upsertRecord({ ...base, result: { text: "v1" } }); // leading edge
       upsertRecord({ ...base, result: { text: "v2" } }); // parked
       let land: () => void = () => {};
@@ -1068,10 +1032,7 @@ describe("flushRecordWrites resolves once the parked writes land", () => {
     vi.useFakeTimers();
     try {
       saveTranscriptRecord.mockClear();
-      const base: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "quit-3", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/q.mp3", sourceName: "q.mp3", status: "done", result: { text: "v0" },
-      };
+      const base = fileRecord("quit-3", "q.mp3", { result: { text: "v0" } });
       let land: () => void = () => {};
       saveTranscriptRecord.mockImplementationOnce(() => new Promise<void>((r) => { land = r; }));
       upsertRecord(base); // leading edge: issued now, nothing parked
@@ -1118,10 +1079,7 @@ describe("loadHistory(force) chains onto an in-flight listing", () => {
     listTranscriptRecords.mockReturnValueOnce(d1.promise).mockReturnValueOnce(d2.promise);
     const first = loadHistory();
     const forced = loadHistory(true); // chains, does NOT adopt the in-flight listing
-    d1.resolve([{
-      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-    }]);
+    d1.resolve([fileRecord("A", "a.mp3")]);
     await first;
     d2.resolve([]); // the caller deleted A before forcing
     await forced;
@@ -1136,10 +1094,7 @@ describe("loadHistory replays mirror changes made while the listing was in fligh
     const promise = new Promise<unknown[]>((r) => { resolve = r; });
     return { promise, resolve };
   };
-  const A: TranscriptRecord = {
-    schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
-    sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
-  };
+  const A = fileRecord("A", "a.mp3");
 
   it("an upsert during the listing survives the snapshot", async () => {
     const d = deferred();
@@ -1168,10 +1123,7 @@ describe("deleteRecord", () => {
     vi.useFakeTimers();
     try {
       saveTranscriptRecord.mockClear();
-      const base: TranscriptRecord = {
-        schemaVersion: 1, kind: "file", id: "del-1", createdAt: "2026-08-30T12:00:00Z",
-        sourcePath: "/x.mp3", sourceName: "x.mp3", status: "done", result: { text: "v0" },
-      };
+      const base = fileRecord("del-1", "x.mp3", { result: { text: "v0" } });
       upsertRecord({ ...base, result: { text: "v1" } });
       upsertRecord({ ...base, result: { text: "v2" } });
       expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
@@ -1185,10 +1137,7 @@ describe("deleteRecord", () => {
   });
 
   it("brings the entry back when the disk delete fails", async () => {
-    const rec: TranscriptRecord = {
-      schemaVersion: 1, kind: "file", id: "del-2", createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: "/y.mp3", sourceName: "y.mp3", status: "done", result: { text: "kept" },
-    };
+    const rec = fileRecord("del-2", "y.mp3", { result: { text: "kept" } });
     listTranscriptRecords.mockResolvedValue([rec]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["del-2"]);
@@ -1207,10 +1156,7 @@ describe("deleteRecord", () => {
     }
   });
   it("a failed delete re-lists only once a second delete in flight has landed", async () => {
-    const rec = (id: string): TranscriptRecord => ({
-      schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
-      sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done", result: { text: id },
-    });
+    const rec = (id: string) => fileRecord(id, `${id}.mp3`, { result: { text: id } });
     const onDisk = [rec("del-a"), rec("del-b")];
     listTranscriptRecords.mockImplementation(async () => [...onDisk]);
     await loadHistory();
