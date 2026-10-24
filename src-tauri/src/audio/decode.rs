@@ -148,17 +148,12 @@ impl Drop for InflightSlot {
 /// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
 /// MB, so ENOSPC mid-write is the realistic case (`save_text_file` has the same shape).
 fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
-    let tmp = cache_tmp_path(out);
-    if let Err(e) = std::fs::write(&tmp, wav) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    crate::audio::restrict_file_private(&tmp); // per-user cache dir; consistency only
-    if let Err(e) = std::fs::rename(&tmp, out) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.to_string());
-    }
-    Ok(())
+    crate::config::replace_via_tmp(&cache_tmp_path(out), out, |t| {
+        std::fs::write(t, wav)?;
+        crate::audio::restrict_file_private(t); // per-user cache dir; consistency only
+        Ok(())
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Tmp-file sequence: the pid alone is shared by every call in this process.
