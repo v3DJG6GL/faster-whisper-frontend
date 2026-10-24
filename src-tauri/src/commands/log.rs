@@ -3,11 +3,9 @@
 /// Longest message `frontend_log` writes.
 const FRONTEND_LOG_MAX: usize = 300;
 
-/// Defang a frontend log line: the tag must be 1–16 lowercase ASCII letters (else "frontend"),
-/// the message keeps printable ASCII only and at most `FRONTEND_LOG_MAX` characters. The webview
-/// is ours, but whatever it logs lands in the support log the user shares — so no control
-/// sequences or terminal escapes, no brackets or spaces smuggled into the tag, and no unbounded
-/// lines.
+/// Defang a frontend log line. The webview is ours, but whatever it logs lands in the support
+/// log the user shares — so no control sequences or terminal escapes, no brackets or spaces
+/// smuggled into the tag, and no unbounded lines.
 fn sanitize_frontend_log(tag: &str, msg: &str) -> (String, String) {
     let tag_ok = (1..=16).contains(&tag.len()) && tag.bytes().all(|b| b.is_ascii_lowercase());
     let tag = if tag_ok { tag } else { "frontend" }.to_string();
