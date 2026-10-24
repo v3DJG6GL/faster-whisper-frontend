@@ -360,7 +360,6 @@ describe("a sync composed with a degraded keyring", () => {
         api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
         await pullNow(true);
         expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
-        // Now add a backend here and lock the wallet before approving.
         const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
         useApp.setState({ backends: [...useApp.getState().backends, added] });
         api.keys = {};
