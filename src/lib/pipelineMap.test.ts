@@ -1,6 +1,8 @@
 // The pipeline payload arrives server-shaped (Rust forwards it opaque), so the leaf values
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
+// Beyond that coercion, the save gates refuse what the server would 422, and applyMap
+// reproduces its matcher.
 import { describe, expect, it } from "vitest";
 import {
   applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem, mapRowTwinProblems,
