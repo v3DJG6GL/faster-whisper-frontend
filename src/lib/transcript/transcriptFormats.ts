@@ -336,7 +336,6 @@ function nameOf(ctx: Ctx, label: string): string {
   return speakerName(ctx.opts.renames, label);
 }
 
-/** The "Name: " a line opens with ("" without a speaker or with names off). */
 function namePrefix(ctx: Ctx, label: string | null | undefined): string {
   return label && ctx.names ? `${nameOf(ctx, label)}: ` : "";
 }
