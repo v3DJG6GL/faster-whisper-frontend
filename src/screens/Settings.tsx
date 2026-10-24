@@ -755,7 +755,6 @@ export default function Settings() {
         {tab === "Recording & history" && (
           <>
           <Card className="px-6 pb-2">
-            {/* Grouped by subject, one retention clock per subject. */}
             <SectionLabel className="mb-1 mt-4">Audio storage</SectionLabel>
             <div className="border-b border-line py-4">
               <div className="flex items-start justify-between gap-4">
