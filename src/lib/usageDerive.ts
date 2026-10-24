@@ -96,6 +96,7 @@ export function scopeTotals(k: UsageKinds, scope: UsageScope): UsageKindTotals {
  *  kind filter — it never changes the fetch. */
 export type ChartMetric = "audio_s" | "words" | "sessions" | "requests" | "processing_s" | "errors";
 export const CHART_METRICS: readonly ChartMetric[] = ["audio_s", "words", "sessions", "requests", "processing_s", "errors"];
+export const DEFAULT_METRIC: ChartMetric = "words";
 export const METRIC_LABEL: Record<ChartMetric, string> = {
   audio_s: "Duration",
   words: "Words",
@@ -116,7 +117,7 @@ export const METRIC_UNIT: Record<ChartMetric, [string, string] | null> = {
 export const isDurationMetric = (m: ChartMetric): boolean => m === "audio_s" || m === "processing_s";
 /** `?metric=` → a measure; anything else is Words. */
 export function parseMetric(v: string | null | undefined): ChartMetric {
-  return (CHART_METRICS as readonly string[]).includes(v ?? "") ? (v as ChartMetric) : "words";
+  return (CHART_METRICS as readonly string[]).includes(v ?? "") ? (v as ChartMetric) : DEFAULT_METRIC;
 }
 
 export function metricValue(t: UsageKindTotals, m: ChartMetric): number {
@@ -254,11 +255,11 @@ export function parsePageQuery(get: (key: string) => string | null): { scope: Us
 
 /** The URL params for a page state — only what differs from the default, so a plain
  *  `/statistics` stays clean. */
-export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: ChartMetric = "words", rhythm: Rhythm = "hours"): Record<string, string> {
+export function pageQueryParams(scope: UsageScope, q: UsagePageQuery, metric: ChartMetric = DEFAULT_METRIC, rhythm: Rhythm = DEFAULT_RHYTHM): Record<string, string> {
   const out: Record<string, string> = {};
   if (scope !== "all") out.kind = scope;
-  if (metric !== "words") out.metric = metric;
-  if (rhythm !== "hours") out.rhythm = rhythm;
+  if (metric !== DEFAULT_METRIC) out.metric = metric;
+  if (rhythm !== DEFAULT_RHYTHM) out.rhythm = rhythm;
   if (q.range !== DEFAULT_RANGE) out.range = q.range;
   if (q.range === "custom" && q.from !== undefined && q.to !== undefined) {
     out.from = String(q.from);
@@ -594,9 +595,10 @@ export function weekColumns(cells: readonly CalendarCell[]): CalendarColumn[] {
 
 export type Rhythm = "hours" | "days" | "months";
 export const RHYTHMS: readonly Rhythm[] = ["hours", "days", "months"];
+export const DEFAULT_RHYTHM: Rhythm = "hours";
 
 export function parseRhythm(v: string | null | undefined): Rhythm {
-  return (RHYTHMS as readonly string[]).includes(v ?? "") ? (v as Rhythm) : "hours";
+  return (RHYTHMS as readonly string[]).includes(v ?? "") ? (v as Rhythm) : DEFAULT_RHYTHM;
 }
 
 /** The count beside the measure in the busy tooltip and peak line: sessions, or
