@@ -29,8 +29,8 @@ pub mod stream_errors;
 /// When `mic_live` (`session::LiveDetect`'s raw-RMS detector) flips true, also emit a one-shot
 /// `stream://mic-live`: the frontend clears its "warming up…" gate on it, because the smoothed
 /// level starts its EMA from 0 and a quiet mic's noise floor only hovers AT the threshold, which
-/// held the chip grey until the user spoke. Ungated by the session epoch like the level emits: the
-/// capture thread is always joined before the next session starts.
+/// would hold the chip grey until the user spoke. Ungated by the session epoch like the level
+/// emits: the capture thread is always joined before the next session starts.
 pub fn publish_levels_with_live(
     app: &AppHandle,
     event: &str,
@@ -89,8 +89,8 @@ pub struct MicTestClip(pub Arc<Mutex<MicClip>>);
 
 /// Generation counter for mic-test playback. Each new replay (and each new capture)
 /// bumps it; a running playback thread stops the instant it sees a newer generation,
-/// so at most one replay is ever audible — no overlapping playbacks. The thread that
-/// finishes while still current emits `audio://test-play-ended`.
+/// so at most one replay is ever audible. The thread that finishes while still current
+/// emits `audio://test-play-ended`.
 #[derive(Default)]
 pub struct MicPlayback(pub Arc<AtomicU64>);
 
