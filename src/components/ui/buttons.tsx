@@ -11,7 +11,6 @@ import { navKey, pickerKeyActsOnce } from "@/lib/listNav";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
-/* ── Button ───────────────────────────────────────────────────────────── */
 type ButtonVariant = "default" | "accent" | "ghost" | "danger";
 type ButtonSize = "sm" | "md";
 
@@ -66,7 +65,6 @@ export function Button({
   );
 }
 
-/* ── SplitButton ──────────────────────────────────────────────────────── */
 /** One on/off option in a SplitButton's menu. */
 export interface MenuCheck {
   label: string;
@@ -234,7 +232,6 @@ export function SplitButton({
   );
 }
 
-/* ── ChipToggle ───────────────────────────────────────────────────────── */
 const CHIP_TOGGLE_SIZE = {
   xs: "h-6 px-2.5 text-[11px]",
   sm: "h-7 px-3 text-[12px]",
@@ -297,7 +294,6 @@ export function ChipToggle({
   );
 }
 
-/* ── CodeChip ─────────────────────────────────────────────────────────── */
 /** A chosen language code that a click removes ("DE ×"). `head` = a CompoundChip's code
  *  segment (the compound draws the outline); `size="md"` = the language picker's route rail. */
 export function CodeChip({
@@ -339,7 +335,6 @@ export function CodeChip({
   );
 }
 
-/* ── FieldTrigger ─────────────────────────────────────────────────────── */
 /** A dropdown's closed face drawn as a form field: the current value and a chevron. `open`
  *  outlines it in the accent while its list is up; `sm` = a table row's compact field;
  *  `muted` dims an md value (a className can't: cn doesn't merge, and text-text wins). */
@@ -374,7 +369,6 @@ export function FieldTrigger({
   );
 }
 
-/* ── IconButton ───────────────────────────────────────────────────────── */
 /** A square outlined button holding one icon; `label` is its accessible name and tooltip.
  *  Hover takes the accent, or the danger tone for a removal. */
 export function IconButton({
