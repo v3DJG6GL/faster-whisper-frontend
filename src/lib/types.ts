@@ -86,7 +86,7 @@ export interface Backend {
    *  which is the harmless direction. Only meaningful while `prompt` is empty. */
   promptCleared?: boolean;
   responseFormat: ResponseFormat;
-  decodeOverrides?: DecodeOverrides; // per-Backend decode defaults
+  decodeOverrides?: DecodeOverrides;
   translationOverrides?: TranslationOverrides; // T2T defaults (absent key = inherit server)
   kind?: BackendKind; // full vs standard server; absent/"auto" = infer from the connection test
   // Server override-profile (full backend only): a profile name to reference,
@@ -128,17 +128,15 @@ export interface Profile {
   model?: string; // override Backend.model; empty/undefined = inherit
   language?: string; // override Backend.language; empty/undefined = inherit
   prompt?: string; // override Backend.prompt; tri-state: undefined = inherit, "" = explicit clear (suppress the inherited prompt, send no initial_prompt), value = override
-  decodeOverrides?: DecodeOverrides; // per-Profile decode overrides
+  decodeOverrides?: DecodeOverrides;
   translationOverrides?: TranslationOverrides; // T2T overrides; for dictation, ALL translateTo targets are injected (blank-line separated)
   /** Insert each phrase as you speak, instead of the whole transcript when the session ends.
    *
-   *  Replaced the global three-way "Auto-insert", which produced a distinct outcome in only
-   *  one of its twelve timing x endpoint x activation combinations. Only meaningful on a
-   *  STREAMING profile run HANDS-FREE: batch has no live phrases to insert, and a held
-   *  push-to-talk chord folds into every injected keystroke. `liveAllowed` is the authority
-   *  — it tests the RUNTIME activation, because the Home button and the chip's quick-launch
-   *  both start a hold profile hands-free. undefined = inherit `general.typeAsISpeak` (resolve
-   *  with `??`). */
+   *  Only meaningful on a STREAMING profile run HANDS-FREE: batch has no live phrases to
+   *  insert, and a held push-to-talk chord folds into every injected keystroke. `liveAllowed`
+   *  is the authority — it tests the RUNTIME activation, because the Home button and the
+   *  chip's quick-launch both start a hold profile hands-free. undefined = inherit
+   *  `general.typeAsISpeak` (resolve with `??`). */
   typeAsISpeak?: boolean;
   /** Ask which languages to translate into at the start of each session, instead of
    *  always using `translationOverrides.translateTo`.
@@ -196,8 +194,8 @@ export interface AppRule {
   // Overrides, all `null`/undefined = inherit. NOTE the sentinel differs from Profile's,
   // which uses plain `undefined`: both are read with `??` so resolution is identical, but
   // changing this one would churn the stored JSON of every existing rule.
-  insertMethod?: InsertMethod | null; // override profile/global; null/undefined = inherit
-  pasteShortcut?: string[] | null; // override profile/global; null/undefined = inherit
+  insertMethod?: InsertMethod | null;
+  pasteShortcut?: string[] | null;
   /** Send Return after inserting, for THIS app. A chat client wants it, an editor does not,
    *  and that is a property of where the text lands — not of the profile that spoke it. */
   autoEnter?: boolean | null;
@@ -290,8 +288,7 @@ export interface GeneralSettings {
    *  source's flags, e.g. a password manager's). Default on. */
   excludeFromClipboardHistory: boolean;
   /** Default for the per-Profile "Type as I speak" — what a Profile inherits when it sets
-   *  no opinion of its own. Replaced the global three-way `insertTiming`, whose "live"
-   *  value this carries forward. Still only ACTS on a streaming, hands-free session; see
+   *  no opinion of its own. Only ACTS on a streaming, hands-free session; see
    *  `liveAllowed`, which is the authority for all three preconditions. */
   typeAsISpeak: boolean;
   soundEffects: boolean;
@@ -410,8 +407,7 @@ export interface SyncSettings {
 /** Persisted defaults for the Transcribe screen's per-run options. */
 export interface TranscribeSettings {
   /** Last-used backend/model/language/translation-model picks, restored when
-   *  the screen mounts (they were plain component state before — reset on
-   *  every tab switch). `model` "" = the Backend's configured model; model,
+   *  the screen mounts. `model` "" = the Backend's configured model; model,
    *  language and translationModel only apply while `backendId` still exists. */
   backendId?: string;
   model?: string;
@@ -501,8 +497,9 @@ export interface TranscribeSettings {
 export type LogLevelSetting = "error" | "warn" | "info" | "debug";
 
 /** In-app logging preferences (Settings → General → Logging). Mirrors Rust
- *  `LoggingSettings`. `logDir` is MACHINE-LOCAL: never shipped in a synced
- *  blob or export (a local filesystem path). */
+ *  `LoggingSettings`. `logDir` is MACHINE-LOCAL (a local filesystem path): it
+ *  syncs only when its own switch is on (off by default), and a one-shot
+ *  restore never applies it (stripMachineFolders). */
 export interface LoggingSettings {
   logLevel: LogLevelSetting;
   /** Delete session log files older than this many days; 0 = keep forever. */
@@ -533,7 +530,7 @@ export interface AppSettings {
   general: GeneralSettings;
   recording: RecordingSettings;
   sync?: SyncSettings; // machine-local sync meta; excluded from blobs/exports
-  logging?: LoggingSettings; // in-app logging preferences (logDir machine-local)
+  logging?: LoggingSettings;
   setupDismissed?: boolean; // "Skip for now" on the first-run gate — fall back to the Home checklist
   /** Most-recently picked translation targets, newest first — the picker's "Recent" group.
    *  A per-machine convenience, not a setting: it has no Settings row and no manifest entry,
@@ -1266,10 +1263,10 @@ export interface VideoProgress {
   error?: string | null;
 }
 
+export type JobState = "running" | "done" | "failed" | "cancelled";
 /** One server job row (`GET /v1/jobs/{id}`) — a batch run the server keeps
  *  after the connection that carried it is gone. Mirrors Rust
  *  `transport::jobs::JobStatus` (camelCase over the IPC). */
-export type JobState = "running" | "done" | "failed" | "cancelled";
 export interface JobStatus {
   jobId?: string;
   kind?: "transcribe" | "translate" | string;
