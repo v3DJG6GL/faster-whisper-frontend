@@ -22,18 +22,15 @@ pub mod pulse;
 pub mod resample;
 pub mod stream_errors;
 
-/// Publish the live RMS meter to `event` at ~30 Hz until `stop` is set, decoding the level from the
-/// atomic f32-bits cell the capture callbacks write. The one cadence + bit-decode shared by all three
-/// capture loops (mic-test "audio://level", plus streaming and batch "stream://level"), so the refresh
-/// rate / decode protocol lives in one place. Runs on the caller's capture thread until stop flips.
+/// Publish the live meter (f32 bits written by the capture callbacks) to `event` at ~30 Hz until
+/// `stop` is set — the one cadence shared by all three capture loops (mic-test "audio://level",
+/// streaming and batch "stream://level").
 ///
-/// Optionally also announces the mic going LIVE: when `mic_live` (fed by the
-/// capture callback's raw-RMS detector, see `session::LiveDetect`) flips true, emit a one-shot
-/// `stream://mic-live`. The frontend clears its "warming up…" gate on it — the smoothed+gained
-/// level it also receives passes through an EMA from 0 and a threshold a quiet mic's noise floor
-/// only hovers AT, so on such mics the level-based gate held the chip grey until the user actually
-/// spoke. Ungated by the session epoch for the same reason level emits are: the capture thread is
-/// always joined before the next session starts, so it can't outlive its session.
+/// When `mic_live` (`session::LiveDetect`'s raw-RMS detector) flips true, also emit a one-shot
+/// `stream://mic-live`: the frontend clears its "warming up…" gate on it, because the smoothed
+/// level starts its EMA from 0 and a quiet mic's noise floor only hovers AT the threshold, which
+/// held the chip grey until the user spoke. Ungated by the session epoch like the level emits: the
+/// capture thread is always joined before the next session starts.
 pub fn publish_levels_with_live(
     app: &AppHandle,
     event: &str,
@@ -174,10 +171,8 @@ pub fn is_dictation_file(name: &str) -> bool {
 }
 
 /// Delete saved recordings and their transcript sidecars older than `days` (0 = keep forever).
-/// Best-effort and silent on I/O errors: retention is housekeeping, and a failure here must
-/// never interrupt a dictation. Only touches the files this app writes — `dictation-*.wav` and
-/// the `.txt` sidecar next to each — so pointing the recordings folder at a shared directory
-/// can't make it delete anything else.
+/// Best-effort and silent on I/O errors: a failure here must never interrupt a dictation. Only
+/// files [`is_dictation_file`] accepts, so a shared recordings folder loses nothing else.
 pub fn prune_recordings(dir: &Path, days: u32) -> usize {
     let removed = prune_older_than(dir, days, |e| {
         is_dictation_file(&e.file_name().to_string_lossy())
@@ -199,9 +194,8 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
 pub const MAX_RETENTION_DAYS: u32 = 3650;
 
 /// Delete the entries of `dir` that `matches` accepts and whose mtime is older than `days`
-/// (0 = keep forever; clamped to [`MAX_RETENTION_DAYS`]). Best-effort and silent on I/O errors —
-/// retention is housekeeping. Returns how many files were removed. The one mtime sweep behind
-/// the recordings, transcript-history and log-file retention windows.
+/// (0 = keep forever; clamped to [`MAX_RETENTION_DAYS`]). Best-effort and silent on I/O errors.
+/// Returns how many files were removed. Behind the recordings and log-file retention windows.
 pub fn prune_older_than(
     dir: &Path,
     days: u32,
@@ -234,19 +228,16 @@ pub fn prune_older_than(
 
 /// Create a file that must not already exist and that only the owner can read.
 ///
-/// The saved recordings are the most sensitive thing this app writes: a `.wav` of everything
-/// dictated and a `.txt` of its verbatim transcript. `std::fs::write` created them `0666 & ~umask`
-/// — typically world-readable 0644 — and the recordings folder is user-chosen, so that mode is
-/// what actually decides who can read the archive when it is not under the app's private dir.
+/// The saved `.wav` and its verbatim `.txt` are the most sensitive thing this app writes, and the
+/// recordings folder is user-chosen, so the file's own mode decides who can read the archive
+/// (`std::fs::write` would give `0666 & ~umask`, typically world-readable).
 ///
-/// `create_new` also closes the gap the `path.exists()` collision loop left open: `exists()`
-/// follows symlinks and is separated from the write by a TOCTOU window, so anyone able to create
-/// entries in that folder could pre-plant a link named for a coming second and have the
-/// server-supplied transcript written through it. `create_new` fails on an existing name of any
-/// kind, symlink included.
+/// `create_new` fails on an existing name of any kind, symlink included: the caller's
+/// `path.exists()` collision loop follows symlinks and races the write, so anyone able to create
+/// entries in the folder could pre-plant a link and have the transcript written through it.
 ///
-/// Takes the content in `parts`, written back to back, so a `.wav` can go out as header + the
-/// caller's PCM without first copying a recording (up to the multi-hundred-MB cap) into one buffer.
+/// `parts` are written back to back, so a `.wav` goes out as header + the caller's PCM without
+/// copying a recording (up to the multi-hundred-MB cap) into one buffer.
 fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = create_new_private(path)?;
@@ -272,10 +263,9 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
         opts.mode(0o600);
     }
     let f = opts.open(path)?;
-    // The Windows half of "owner-only": a file inherits the DACL of its folder, and a folder
-    // that already existed when the user picked it (a synced tree, a restore from backup) kept
-    // whatever permissions it had — nothing on the file itself compensated. Best-effort, like
-    // the directory call.
+    // The Windows half of "owner-only": a file inherits its folder's DACL, and a folder that
+    // already existed when the user picked it (a synced tree, a backup restore) keeps whatever
+    // permissions it had. Best-effort, like the directory call.
     #[cfg(windows)]
     if let Err(e) = windows_owner_only_dacl(path) {
         tracing::warn!(
@@ -311,18 +301,11 @@ pub(crate) fn restrict_file_private(path: &Path) {
 /// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
 /// Windows.
 ///
-/// The files themselves are owner-only since `write_new_private` (0600 on Unix, an owner-only DACL
-/// on Windows), but the containing directory was
-/// still created with `create_dir_all`'s default (0777 & ~umask, typically 0755) — and the folder
-/// is USER-CHOSEN, so it may sit somewhere shared. A listing of it is a per-second timestamped log
-/// of every dictation the user made: when they dictate, how often, and how large the archive is.
-/// A directory that already exists keeps whatever permissions the user gave it.
-///
-/// Both halves used to be `#[cfg(unix)]`, so on Windows the promise this function's name makes was
-/// simply not kept: the directory took its parent's inherited ACL, and so did every `.wav` and its
-/// verbatim `.txt` transcript. A folder outside the user profile — `C:\Users\Public`, a mapped
-/// share, a OneDrive or Dropbox folder — therefore left the recordings readable by other local
-/// accounts and to whatever sync client owns that tree.
+/// The folder is USER-CHOSEN, so it may sit somewhere shared, and a listing of it is a per-second
+/// timestamped log of every dictation (when, how often, how large the archive is). On Windows the
+/// default inherited ACL of a folder outside the profile (`C:\Users\Public`, a mapped share, a
+/// OneDrive/Dropbox tree) would leave the directory and every `.wav`/`.txt` in it readable by other
+/// accounts. A directory that already exists keeps whatever permissions the user gave it.
 pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -330,15 +313,14 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
         if dir.exists() {
             return Ok(());
         }
-        // The LEAF is owner-only; missing ancestors get the default mode. A recursive 0700
-        // builder locked down every intermediate directory it had to create — a parent the
-        // app has no claim on (`~/Nextcloud/Voice` for a base of `~/Nextcloud/Voice/whisper`)
-        // — where the Windows branch below applies its DACL to `dir` alone.
+        // Only the LEAF is owner-only, as on Windows: missing ancestors are parents the app has
+        // no claim on (`~/Nextcloud/Voice` for a base of `~/Nextcloud/Voice/whisper`) and get the
+        // default mode.
         if let Some(parent) = dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        // The recursive builder this replaced was idempotent; a concurrent creator (two media
-        // copies racing for `files/`, a sync client restoring the tree) must not fail the caller.
+        // A concurrent creator (two media copies racing for `files/`, a sync client restoring
+        // the tree) must not fail the caller.
         match std::fs::DirBuilder::new().mode(0o700).create(dir) {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
             r => r,
@@ -366,9 +348,9 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Replace `dir`'s DACL with a single inheritable ACE granting the current user full control, and
-/// mark it PROTECTED so the parent's inherited entries do not apply. New files created inside
-/// inherit that one ACE, which is what carries the guarantee to the `.wav`/`.txt` pairs.
+/// Replace the DACL of `dir` (a folder or a file) with a single inheritable ACE granting the
+/// current user full control, and mark it PROTECTED so the parent's inherited entries do not
+/// apply. On a folder, new files created inside inherit that one ACE.
 #[cfg(windows)]
 pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -487,7 +469,6 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
         path = dir.join(format!("{stem}-{n}.wav"));
         n += 1;
     }
-    // Header + the caller's PCM as two writes (the u32 length as `wav_from_pcm16` writes it).
     let header = wav_header(pcm.len() as u32, sample_rate, 1);
     match write_new_private(&path, &[&header, pcm]) {
         Ok(()) => {
@@ -501,16 +482,13 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
     }
 }
 
-/// Speech gate for the SAVED recording, shared by the streaming save path
-/// (`transport/stream.rs`, fed chunk-by-chunk as audio arrives) and the batch record
-/// save (`trim_silence_16k` below, fed the finished buffer). Keeps only the spans the
-/// chip shows as "speaking" plus a short lead-in, so a long hands-free session doesn't store
-/// hours of silence and the file matches the indicator. Ported from the frontend
-/// detector (`lib/dictation/speaking.ts`): a two-stage smoothed RMS with hysteresis (enter above
-/// `SPEAK_HIGH`, leave below `SPEAK_LOW` after ~900 ms quiet) feeding a 250 ms pre-roll ring
-/// that's flushed on each silence→speech edge (so word onsets aren't clipped; the 900 ms
-/// leave-hold gives the trailing tail for free). The hold/pre-roll are sample-counted, so
-/// only the EMA smoothing is sensitive to the caller's chunk cadence.
+/// Speech gate for the SAVED recording, shared by the streaming save (`transport/stream.rs`,
+/// chunk by chunk) and the batch save ([`trim_silence_16k`]). Keeps only the spans the chip shows
+/// as "speaking", so a hands-free session doesn't store hours of silence and the file matches the
+/// indicator. Ported from `lib/dictation/speaking.ts`: a two-stage smoothed RMS with hysteresis
+/// (enter above `SPEAK_HIGH`, leave below `SPEAK_LOW` after ~900 ms quiet) and a 250 ms pre-roll
+/// flushed on each silence→speech edge so word onsets aren't clipped (the leave-hold keeps the
+/// tail). Hold and pre-roll are sample-counted; only the EMA is sensitive to chunk cadence.
 pub struct SpeechGate {
     sp_stream: f32, // ~ session.rs `stream://level` (0.7/0.3 EMA of rms*6)
     sp_smooth: f32, // ~ speaking.ts memo.smooth (0.8/0.2 EMA)
@@ -587,13 +565,10 @@ fn frame_level_s16le(bytes: &[u8]) -> f32 {
     chip_level((sum / n as f32).sqrt())
 }
 
-/// Trim leading / internal / trailing silence from a COMPLETE 16 kHz s16le mono buffer
-/// using the shared [`SpeechGate`], so the "Trim silence" setting produces the same kind
-/// of saved file on a batch (record-then-POST) backend as it already does on the
-/// streaming path. Processes the buffer in fixed ~64 ms frames (the gate's hold/pre-roll
-/// are sample-counted, so only the EMA smoothing is frame-cadence sensitive — a frame
-/// near the streaming chunk size keeps the trimming close). Returns the spoken-only bytes
-/// (empty if the whole clip was below the speech threshold).
+/// Trim silence from a COMPLETE 16 kHz s16le mono buffer with the shared [`SpeechGate`], so
+/// "Trim silence" saves the same kind of file on a batch backend as on the streaming path. Fixed
+/// ~64 ms frames, near the streaming chunk size, keep the cadence-sensitive EMA close. Returns the
+/// spoken-only bytes (empty if the whole clip was below the speech threshold).
 pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
     const FRAME_BYTES: usize = 2_048; // 1024 samples ≈ 64 ms @ 16 kHz s16le
     let mut gate = SpeechGate::new();
@@ -609,8 +584,7 @@ pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
 /// True when the `.txt` was written — so a discard removes only a sidecar this call created.
 pub fn save_transcript_sidecar(wav_path: &Path, text: &str) -> bool {
     // Sanitize like the injection + Copy paths so the saved .txt matches what was actually typed
-    // (drops control chars, keeps tab/LF) — the server text arrives here raw. A no-op for normal
-    // natural-language transcripts; only strips stray control chars if the server ever emits them.
+    // (drops control chars, keeps tab/LF) — the server text arrives here raw.
     let cleaned = crate::inject::sanitize_injected(text);
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
@@ -640,7 +614,7 @@ mod retention_tests {
         assert_eq!(mode(&leaf), 0o700);
         assert_ne!(mode(&root.join("a")), 0o700);
         assert_ne!(mode(&root.join("a").join("b")), 0o700);
-        // Idempotent, like the recursive builder it replaced: a second (or racing) creator is Ok.
+        // Idempotent: a second (or racing) creator is Ok.
         super::create_dir_private(&leaf).unwrap();
         assert_eq!(mode(&leaf), 0o700);
         let _ = std::fs::remove_dir_all(&root);
@@ -671,7 +645,7 @@ mod retention_tests {
     }
 
     /// The saved `.wav` goes out as header + PCM in two writes; the file must be byte-identical
-    /// to the single-buffer wrapper it replaced.
+    /// to the single-buffer `wav_from_pcm16`.
     #[test]
     fn saved_recording_matches_the_full_wrapper() {
         let dir = std::env::temp_dir().join(format!("fwf-save-wav-{}", std::process::id()));
