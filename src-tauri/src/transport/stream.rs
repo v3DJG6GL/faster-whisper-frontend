@@ -86,7 +86,8 @@ pub enum StreamEvent {
     },
     /// The session ENDED SHORT but not failed: a non-terminal warning the UI shows without
     /// leaving its normal close path (the `Closed` that follows still inserts what was
-    /// committed). Emitted when the drain idle window expires before the server's last final.
+    /// committed). Emitted when the drain ends before the server's last final: its idle window
+    /// expired, or the server restarted / the connection was lost during it.
     /// Never route this through `Error` — the UI treats that as fatal and skips the insert tail.
     Incomplete(String),
     Error(String),
@@ -744,9 +745,8 @@ pub async fn run<F>(
         // The writes get one flat bound so a half-open socket (suspend / dropped link)
         // can't park them; the reads below get an ACTIVITY-based window instead.
         const DRAIN_WRITE_DEADLINE: Duration = Duration::from_secs(10);
-        // Sub-cap on the PCM drain alone: the capture thread closes the channel within ~one
-        // buffer; the cap exists so a cpal Stream drop that stalls (device yanked, wedged audio
-        // service) cannot starve the flush/stop sends below out of the whole write budget.
+        // Sub-cap on the PCM drain alone, so a cpal Stream drop that stalls (device yanked, wedged
+        // audio service) cannot starve the flush/stop sends below out of the whole write budget.
         const PCM_DRAIN_CAP: Duration = Duration::from_secs(2);
         if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Send the PCM still queued when the stop signal won the (non-biased) select, so the
