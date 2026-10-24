@@ -1,6 +1,6 @@
 // The insertion cascade — constraint > app rule > profile > global — plus the two
-// coercion helpers. Pure functions in streaming.ts (no store, no Tauri), so the precedence,
-// the part that has to be right, is testable without running a dictation.
+// coercion helpers and the owed-utterance settle. Pure functions in streaming.ts (no store, no
+// Tauri), so the precedence, the part that has to be right, is testable without running a dictation.
 
 import { describe, expect, it } from "vitest";
 import { holdCoerced, liveAllowed, resolveInjectionTarget, settleOwedUtterances, type OwedUtterance } from "./streaming";
