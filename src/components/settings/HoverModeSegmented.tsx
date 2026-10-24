@@ -20,7 +20,7 @@ export function HoverModeSegmented({
   hoverKey: ChipVisKey;
   disabled?: boolean;
   // Names the role="group" so a screen reader can tell the identical Off/Always/On-hover
-  // triplets apart (SettingRow auto-labels only a direct Toggle/Select child, not this composite).
+  // triplets apart (SettingRow auto-labels only a direct Toggle/Select/Segmented child, not this wrapper).
   ariaLabel?: string;
 }) {
   const visible = useApp((st) => st.settings.recording[visibleKey]);
