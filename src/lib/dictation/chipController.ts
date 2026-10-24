@@ -1,7 +1,7 @@
 // Dictation chip controller (runs in the main window). The chip is a separate
 // webview with its own JS context, so it can't read this window's store; instead
-// we broadcast the assembled `{status, level, partial}` as a `dictation://update`
-// event (the overlay listens for it) and drive the window's show/hide via Rust.
+// we broadcast the fully resolved chip state (chipPayload) as a `dictation://update`
+// event and drive the window's show/hide via Rust.
 //
 // Show/hide is gated by the Recording → indicator-position setting ("top" |
 // "bottom" | "off"). The chip lingers briefly after a session so the final
@@ -86,8 +86,7 @@ export function chipRouteMore(
  *  the store docs). With no session and no pending value, a standby dock previewing a
  *  Profile that ASKS for its targets says "ask": the configured targets are only the picker's
  *  preselection, and previewing them as the route promised what the user had not decided
- *  yet. Everything else is "" — the route (session or configured preview) is the truth.
- *  Pure, so it is unit-tested without the store or the cross-window payload. */
+ *  yet. Everything else is "" — the route (session or configured preview) is the truth. */
 export function chipRoutePending(
   routePending: "undecided" | "choosing" | "original" | null,
   status: string,
@@ -99,12 +98,10 @@ export function chipRoutePending(
 }
 
 /** The chip's whole route slot: the pending stand-in (`chipRoutePending`) plus the targets
- *  and overflow count. An "ask" preview sends NO targets — the configured list is only the
- *  picker's preselection, so showing it would promise a route the user has not chosen yet.
+ *  and overflow count. An "ask" preview sends NO targets (see `chipRoutePending`).
  *  The configured fallback is the IDLE standby preview only: a non-idle status with no
  *  session targets is a failed start's error linger (or the prologue that follows it), where
- *  there is no session and so no route — the same no-fallback rule `trayRoute` keeps.
- *  Pure, so that pairing is unit-tested rather than living only inside `chipPayload`. */
+ *  there is no session and so no route — the same no-fallback rule `trayRoute` keeps. */
 export function chipRoute(
   sessionTargets: string[] | null,
   configured: string[] | undefined,
@@ -201,8 +198,6 @@ export function tailUnits(s: string, n: number): string {
  *  this store — it only ever sees these payloads. */
 function chipPayload(state: ReturnType<typeof useApp.getState>) {
   const rec = state.settings.recording;
-  // Which Profile is dictating, for the chip's identity tag (+ its language /
-  // stream-vs-batch mode). Omitted entirely when the feature is off or no Profile is active.
   let chip: {
     profileTag?: string;
     language?: string;
@@ -222,31 +217,24 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   if (chipProfile && rec.showProfileOnOverlay) {
     chip = {
       profileTag: chipTagFor(chipProfile),
-      // Effective language: a set per-Profile override wins; else the Backend's.
       language: effectiveLanguage(chipProfile.language, chipBackend?.language),
-      // Effective endpoint likewise (a Profile may override stream/batch).
       mode: chipProfile.endpoint ?? chipBackend?.endpoint,
     };
   }
   // The translation ROUTE has its own switch: it is a promise about what will be typed,
   // so it must not disappear with the tag — nor with the Profile: a session whose Profile is
   // deleted or disabled mid-session still translates with the targets it started with
-  // (sessionTargets), and the tray showed that route while the chip did not. See
-  // chipRouteTargets for the resolution order and why both inputs need bounding.
+  // (sessionTargets). See chipRouteTargets for the resolution order and why both inputs
+  // need bounding.
   if (rec.showRouteOnOverlay) {
     const configured = configuredRouteTargets(chipProfile, chipBackend);
-    // What stands in for the route while there is none to promise (see chipRoutePending).
-    // An ask-Profile's standby preview sends NO targets: its configured list is only the
-    // picker's preselection, and "→ FR IT" on the dock promised a route the next chord press
-    // would first ask about — the false promise this field replaces.
     Object.assign(
       chip,
       chipRoute(state.sessionTargets, configured, state.routePending, state.status, chipProfile?.askTranslationTargets),
     );
   }
-  // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
-  // setting. Scoped to the same backend the stats controller tracks; omitted when
-  // off or the backend has no usage yet (standard/old server, not fetched).
+  // The chip's usage readout, scoped to the same backend the stats controller tracks; omitted
+  // when off or the backend has no usage yet (standard/old server, not fetched).
   let statsLine: string | undefined;
   if (rec.showStatsOnOverlay) {
     const sb = activeStatsBackend(state);
@@ -256,16 +244,13 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     const u = sb ? ownProp(state.usage, sb.id) : null;
     if (u) statsLine = chipStatsLine(u, rec.overlayStatsMetric);
   }
-  // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
-  // setting and sent only while a session is active so the standby dock shows no stale target.
+  // The app being injected into, sent only while a session is active so the standby dock
+  // shows no stale target.
   const tgt = rec.showTargetOnOverlay && isActiveDictation(state.status) ? state.targetApp : null;
   // Whether the chip's dictate / cycle-profile quick-launch can do anything while idle: the
-  // same predicates runOverlayAction refuses on, so an idle chip can say why instead of a dead
-  // click. Two flags, not one: the toggle needs a home target AND a Backend for it, while the
-  // cycle only needs an enabled Profile (it persists homeProfileId, it starts nothing).
-  // startOffHint is the Home button's gate + wording too, so the two never disagree.
-  // An open target picker refuses both too (pickerOffHint), so the chip says why instead of
-  // offering two dead buttons.
+  // same predicates runOverlayAction refuses on (and Home's wording), so an idle chip can say
+  // why instead of a dead click. Two flags: the toggle needs a home target AND a Backend for
+  // it, while the cycle only needs an enabled Profile (it persists homeProfileId, starts nothing).
   const pickerHint = pickerOffHint(state.routePending, state.status);
   const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
   const startHint = pickerHint || startOffHint(state.profiles, homeTarget, state.backends);
@@ -301,7 +286,6 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // (a cold translate's download/load/translate + its start time). Written by the
     // store only on transitions, so forwarding it adds no churn to this ~30Hz path.
     phase: state.dictationPhase,
-    // So the chip can pin itself to the correct edge of its window.
     position: rec.indicatorPosition,
     // So the chip can follow the app's dark/light theme.
     theme: state.settings.theme,
@@ -342,10 +326,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // persists and would gate the target on `expanded` (never true while armed-but-silent),
     // so hovering could never reveal it — defeating the user's "On hover" choice.
     targetOnlySpeaking: !rec.showTargetOnHover && rec.showTargetOnlySpeaking,
-    // When on, the chip reveals the target only while hovered (vs. always shown).
     targetOnHover: rec.showTargetOnOverlay && rec.showTargetOnHover,
-    // P19: per-phrase "inserted" pulse + truthful end-of-session done marker. Sent
-    // UNGATED by ACTIVE — the done marker must reach the chip on the idle transition.
+    // Sent UNGATED by ACTIVE — the end-of-session done marker must reach the chip on the
+    // idle transition.
     lastInsert: state.lastInsert,
     sessionOutcome: state.sessionOutcome,
     // "none" that was NOT a cancel: the picker was aborted after release, so the transcript
@@ -354,15 +337,11 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     sessionNote: state.sessionNote,
     // Why the translation didn't land, so the done marker can qualify itself instead of
     // showing an unearned "typed" over text that was inserted in the ORIGINAL language.
-    // Sent ungated by ACTIVE for the same reason as sessionOutcome — it must reach the
-    // chip on the idle transition, which is exactly when the marker is drawn.
+    // Ungated like sessionOutcome.
     translateFailure: state.translateFailure ?? "",
     statsLine: statsLine ?? "",
-    // When on, the chip reveals the readout only while hovered (vs. always shown).
     statsOnHover: rec.showStatsOnOverlay && rec.overlayStatsOnHover,
-    // When on, the chip reveals the Profile tag only while hovered (vs. always shown).
     profileOnHover: rec.showProfileOnOverlay && rec.showProfileOnHover,
-    // Likewise for the route.
     routeOnHover: rec.showRouteOnOverlay && rec.showRouteOnHover,
     ...chip,
   };
@@ -382,15 +361,10 @@ export async function initOverlayController(): Promise<void> {
   };
 
   // Startup handshake. A Tauri emit with no registered listener is DROPPED, never queued,
-  // and the two webviews boot in parallel — so the chip's first update was a race it often
-  // lost: it then sat on its built-in placeholder (a fake "armed" dot, auto-hide off) until
-  // the next incidental re-broadcast (the 30s usage poll on a full server; on Windows with a
-  // standard/idle backend, nothing until the first dictation). Cover both orders:
+  // and the two webviews boot in parallel, so cover both orders:
   //  - the chip's listener came up AFTER our first emits → it sends `overlay://ready`
   //    once registered and we answer with a fresh push;
-  //  - the chip was up BEFORE this controller → the unconditional push below reaches it
-  //    (and if config hydrates later, the settings-identity change re-emits through the
-  //    subscriber's gate as usual).
+  //  - the chip was up BEFORE this controller → the unconditional push below reaches it.
   // Await the registration before the first push: an un-awaited listen leaves a window in
   // which the chip's ready emit is dropped AND our push predates the chip's listener.
   await listen("overlay://ready", pushNow);
@@ -399,12 +373,9 @@ export async function initOverlayController(): Promise<void> {
   useApp.subscribe((state, prev) => {
     const pos = state.settings.recording.indicatorPosition;
     const scale = state.settings.recording.chipScale ?? 1;
-    // Forward the live chip state whenever the relevant fields change — but only when the chip is
-    // actually enabled. With it "off" (tray-only / GNOME) the overlay webview is never shown, so this
-    // ~30Hz level-driven payload rebuild + cross-window broadcast to a hidden window is pure waste
-    // (the churn that bloats the shared WebKitGTK renderer). A position toggle flows through the
-    // `state.settings` change below, so flipping back to an edge re-emits a fresh payload in the same
-    // tick that reveals the chip — no staleness.
+    // Skipped while "off": the ~30Hz payload rebuild + broadcast to a never-shown webview is pure
+    // churn (it bloats the shared WebKitGTK renderer). Flipping back to an edge is a `state.settings`
+    // change, so it re-emits in the same tick that reveals the chip.
     if (
       pos !== "off" &&
       (state.status !== prev.status ||
@@ -427,22 +398,18 @@ export async function initOverlayController(): Promise<void> {
       state.routePending !== prev.routePending || // undecided / choosing / original stand-ins for it
       state.sessionNote !== prev.sessionNote || // end-of-session qualifier (not inserted / incomplete)
       state.translateFailure !== prev.translateFailure || // qualifies the done marker
-      state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
+      state.usage !== prev.usage || // refreshed usage stats → the chip's stats readout
       state.configLoaded !== prev.configLoaded || // the chip latches its size seed on the loaded config
       state.settings !== prev.settings) // theme / position / preview / show-profile toggles
     ) {
       void emit("dictation://update", chipPayload(state)).catch((e) => console.error("overlay emit failed:", e));
     }
 
-    // Reflect status in the tray tooltip — the reliable status cue on chip-less platforms
-    // (GNOME / non-KDE Wayland). Fire on a warming change too so the cold-mic warm-up reads
-    // "warming up…" there like every other surface, instead of falsely claiming "recording…".
-    // Also re-fires on a route change, so a session that resolved its targets after the
-    // status settled still reaches the tray — on a chip-less desktop this tooltip is the
-    // ONLY place the route can appear.
-    // …and on the identity inputs `trayRoute` reads for the SOURCE language: `activeProfile`
-    // is published AFTER status/targets at session start, so without these the tooltip
-    // rendered "AUTO → …" and only self-corrected on the next status flip.
+    // Tray tooltip — the only status and route surface on chip-less platforms (GNOME /
+    // non-KDE Wayland). Also fires on warming (so the warm-up doesn't claim "recording…"), on
+    // a route resolved after the status settled, and on the identity inputs `trayRoute` reads
+    // for the SOURCE language: `activeProfile` is published AFTER status/targets at session
+    // start, so without them the tooltip read "AUTO → …" until the next status flip.
     if (
       state.status !== prev.status ||
       state.warming !== prev.warming ||
@@ -511,18 +478,16 @@ export async function initOverlayController(): Promise<void> {
     // Inactive (and no persistent dock), or the overlay is disabled — hide it (with a
     // linger so the final transcript / error stays readable; immediately if turned off).
     // An error can also arrive while the chip is HIDDEN (a start-failure in the prologue before
-    // status reaches "listening", or a late drain error after the chip already hid) — neither active
-    // nor persistent, so the show gate above skipped it. Show it here first so the error linger below
-    // actually displays it, then let it tear down as usual (the 2400ms error linger is preserved).
-    // Only an error EDGE (a new error status or message) does that: the store keeps "error" for
-    // ERROR_LINGER_MS, longer than the linger, so any unrelated write in that gap would re-show the
-    // error the chip had just hidden.
+    // status reaches "listening", or a late drain error after the chip already hid), which the
+    // show gate above skipped: show it here so the error linger displays it. Only on an error
+    // EDGE (a new error status or message): the store keeps "error" for ERROR_LINGER_MS, longer
+    // than the linger, so any unrelated write in that gap would re-show the error just hidden.
     const errorEdge =
       state.status === "error" && (prev.status !== "error" || state.dictationError !== prev.dictationError);
     if (visible || (pos !== "off" && errorEdge)) {
       // The linger is already armed with the right delay: an unrelated write (a document
       // translation's 1 s progress tick, the level meter) must not re-arm it, or the chip
-      // never hides while that runs. Re-arm only on a status, error or position change.
+      // never hides while that runs. Re-arm only when an input of the delay or the error changes.
       if (
         hideTimer !== undefined &&
         state.status === prev.status &&
