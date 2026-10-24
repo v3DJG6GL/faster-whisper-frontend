@@ -136,8 +136,7 @@ function Editor({
   // Saving the API key to the OS keyring can fail (locked/absent Secret Service): see doSave.
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
-  // Every disclosure starts closed (a manual draft is prefilled with localhost); its header's
-  // "· n set" says whether it holds anything.
+  // Every disclosure starts closed; its header's summary says what it holds.
   const [showConnection, setShowConnection] = useState(false);
   const [showDefaults, setShowDefaults] = useState(false);
   const [showDecode, setShowDecode] = useState(false);
