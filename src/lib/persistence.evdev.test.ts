@@ -101,9 +101,8 @@ describe("evdev permitted bit at startup", () => {
     expect(failed.persistence.evdevPermittedFor("save")).toBe(false);
   });
 
-  // Run #76 F11-1: a save the gate held while the bit was unknown (collapse ⇒ an L/R-only pair
-  // reads as a conflict) is re-checked once the bit is known — before, the false "used by two
-  // bindings" freeze stayed until an unrelated edit.
+  // A save the gate held while the bit was unknown (collapse ⇒ an L/R-only pair reads as a
+  // conflict) is re-checked once the bit is known, not frozen until an unrelated edit.
   const pair = [
     { id: "p1", name: "Left", activation: "hold", enabled: true, hotkey: ["ControlLeft", "Space"], backendId: null },
     { id: "p2", name: "Right", activation: "hold", enabled: true, hotkey: ["ControlRight", "Space"], backendId: null },
@@ -142,8 +141,8 @@ describe("evdev permitted bit at startup", () => {
     expect(persistence.configSaveHeld()).toBe(false);
   });
 
-  // Run #77 F11-1: an OLDER write still in flight when the status flips the collapse — the flush
-  // used to await only that write, and the freeze that held the newer edit stayed.
+  // An OLDER write still in flight when the status flips the collapse must not keep the newer,
+  // held edit frozen.
   it.runIf(!IS_WINDOWS)("a held save re-runs once the status is known even while an older write is in flight", async () => {
     const { persistence, store } = await boot((st) => {
       withEvdev(true)(st);
