@@ -209,9 +209,9 @@ pub fn rule_override(app_id: &str) -> Option<bool> {
 /// characters dropped and the ends trimmed, lowercased. ZWNJ/ZWJ leave the comparison key too
 /// (`appRuleKey` drops them; the stored key keeps them): `"kon\u{200d}sole"` renders as exactly
 /// `konsole` yet would never equal the live id. Whitespace runs fold to one ASCII space, as
-/// `appRuleKey` folds them (`char::is_whitespace` is JS `\s` minus U+0085 and U+FEFF, which both
-/// sides already drop). Both the stored key and the live id go through it, so a rule matches here
-/// exactly when it matches on the paste path.
+/// `appRuleKey` folds them (`char::is_whitespace` differs from JS `\s` only in U+0085 and U+FEFF,
+/// which both sides already drop). Both the stored key and the live id go through it, so a rule
+/// matches here exactly when it matches on the paste path.
 fn rule_key(s: &str) -> String {
     let shown: String = s
         .chars()
