@@ -31,6 +31,13 @@ function reset() {
   useApp.setState({ settings, backends: [backend()], profiles: [], appRules: [], status: "idle" });
 }
 
+/** Turn the "Server addresses" sync gate on or off in the live store. */
+function setServerAddresses(on: boolean): void {
+  const settings = structuredClone(useApp.getState().settings);
+  settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+  useApp.setState({ settings });
+}
+
 // The conflict dialog tags its picks with the id and the remote key: a new remote must get a
 // NEW remote key so the picks start empty — a retained "remote" pick from the previous conflict
 // would silently hand the peer content the user never chose. A re-raise of the same remote over a
@@ -170,11 +177,6 @@ describe("resolveSyncConflicts", () => {
     // Raised with the gate off, the review lists only the new backend (the apply would re-pin
     // b1's address). Turning the gate on does not supersede the review, and applyBlob reads the
     // gates live — so approving as shown would repoint b1 without the user ever seeing it.
-    const setServerAddresses = (on: boolean) => {
-      const settings = structuredClone(useApp.getState().settings);
-      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-      useApp.setState({ settings });
-    };
     setServerAddresses(false);
     raiseConflictForTests({
       categories: ["backends"],
@@ -200,11 +202,6 @@ describe("resolveSyncConflicts", () => {
     // Every raiser composes `local` under the raise-time gates, and with "Server addresses" off
     // composeBlob substitutes the snapshot's (the peer's) address for b1's live one. Re-judging
     // against that stale compose saw no repoint, so approving landed it with no consent row.
-    const setServerAddresses = (on: boolean) => {
-      const settings = structuredClone(useApp.getState().settings);
-      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-      useApp.setState({ settings });
-    };
     setServerAddresses(false);
     const incoming = { backends: { list: [backend({ serverUrl: "http://evil:9" }), backend({ id: "b2", serverUrl: "http://peer:9" })] } };
     raiseConflictForTests({
@@ -225,11 +222,6 @@ describe("resolveSyncConflicts", () => {
     // The conflict's `local` was composed with the gate off (the peer's address substituted for
     // b1's). Turning the gate on does not supersede the conflict, and applyBlob reads it live —
     // judged against the stale compose, the merged repoint compared equal and landed unreviewed.
-    const setServerAddresses = (on: boolean) => {
-      const settings = structuredClone(useApp.getState().settings);
-      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-      useApp.setState({ settings });
-    };
     const evil = { backends: { list: [backend({ serverUrl: "http://evil:9" })] } };
     // The last sync agreed on b1's own address, so the repoint is the peer's alone: the re-merge
     // takes it without a conflict and only the security gate stands between it and the apply.
@@ -243,11 +235,6 @@ describe("resolveSyncConflicts", () => {
   });
 
   it("a 'keep mine' pick keeps this device's live value, not the raise-time compose", async () => {
-    const setServerAddresses = (on: boolean) => {
-      const settings = structuredClone(useApp.getState().settings);
-      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-      useApp.setState({ settings });
-    };
     const evil = { backends: { list: [backend({ serverUrl: "http://evil:9" })] } };
     setServerAddresses(false);
     raiseConflictForTests({ categories: ["backends"], local: evil, remote: evil, merged: evil });

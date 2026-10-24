@@ -1127,21 +1127,16 @@ describe("approving a review after editing a category the peer changed", () => {
 // the same list without the flag and the notice vanished while the dialog stayed up.
 describe("a relisted review", () => {
   it("keeps its notice when the same list is raised again", async () => {
-    const setServerAddresses = (on: boolean) => {
-      const settings = structuredClone(useApp.getState().settings);
-      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-      useApp.setState({ settings });
-    };
     try {
       const base = await seedBase();
-      setServerAddresses(false);
+      setServerAddressesGate(false);
       const remote = structuredClone(base);
       remote.backends = { ...remote.backends!, list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })) };
       remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
-      setServerAddresses(true);
+      setServerAddressesGate(true);
       await approvePendingReview();
       expect(getPendingReview()?.relisted).toBe(true);
       await pullNow(true); // a focus pull re-raises the same review
@@ -1160,16 +1155,11 @@ describe("a relisted review", () => {
 // live compose differ too once the gate is turned on, with no edit: the repoint was never
 // relisted and the follow-up push sent this device's address over the peer's.
 describe("approving a review after turning a sync gate on", () => {
-  const setServerAddresses = (on: boolean) => {
-    const settings = structuredClone(useApp.getState().settings);
-    settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
-    useApp.setState({ settings });
-  };
   /** The peer renames b1 AND repoints it, and lowers the retention (held for review). The
    *  "Server addresses" gate is off here, so the rename applies and the repoint is stripped. */
   async function raise(): Promise<string> {
     const base = await seedBase();
-    setServerAddresses(false);
+    setServerAddressesGate(false);
     const localUrl = useApp.getState().backends[0].serverUrl;
     const remote = structuredClone(base);
     remote.backends = {
@@ -1193,7 +1183,7 @@ describe("approving a review after turning a sync gate on", () => {
   it("relists the repoint instead of pushing this device's address over it", async () => {
     try {
       const localUrl = await raise();
-      setServerAddresses(true);
+      setServerAddressesGate(true);
       const pushesBefore = api.pushes;
       await approvePendingReview();
       expect(getPendingConflict()).toBeNull();
@@ -1215,7 +1205,7 @@ describe("approving a review after turning a sync gate on", () => {
   it("asks when the user also edited that category", async () => {
     try {
       const localUrl = await raise();
-      setServerAddresses(true);
+      setServerAddressesGate(true);
       useApp.setState({ backends: useApp.getState().backends.map((b) => ({ ...b, name: "renamed-here" })) });
       const pushesBefore = api.pushes;
       await approvePendingReview();
@@ -1264,11 +1254,11 @@ describe("a review raised on a push's second 409", () => {
   });
 });
 
-const setServerAddressesGate = (on: boolean) => {
+function setServerAddressesGate(on: boolean): void {
   const settings = structuredClone(useApp.getState().settings);
   settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
   useApp.setState({ settings });
-};
+}
 
 // The edit check compared the store without the keyring: the store's backends carry only
 // `hasApiKey`, so a key rotated while a backends review waited read as "not edited". The approval
