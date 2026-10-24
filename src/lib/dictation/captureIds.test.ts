@@ -67,8 +67,6 @@ describe("newCaptureIdBook", () => {
       await vi.advanceTimersByTimeAsync(CAPTURE_ID_WAIT_MS + 1);
       expect(await p).toBeNull();
       b.resolve(0, "very-late");
-      // It belongs to utterance 0 and to nothing else — utterance 1 must not
-      // inherit it.
       const other = b.take(1);
       await vi.advanceTimersByTimeAsync(CAPTURE_ID_WAIT_MS + 1);
       expect(await other).toBeNull();
