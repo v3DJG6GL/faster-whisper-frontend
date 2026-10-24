@@ -103,11 +103,9 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
             return;
         }
         // An error-abort recovery just put the abandoned transcript on the clipboard for the
-        // user to paste manually. Restoring `prev` 400ms later would erase it — the same
-        // erasure the per-paste restore declines in `inject::text::inject_text` (and
-        // `inject::paste`), on the one path
-        // that guard cannot cover (it needs the job's epoch; this command has none). The
-        // snapshot is consumed either way, so it cannot leak into a later session.
+        // user to paste manually. Restoring `prev` 400ms later would erase it — the erasure the
+        // per-paste restore in `inject::text::inject_text` (and `inject::paste`) declines, on the
+        // one path that guard cannot cover (it needs the job's epoch; this command has none).
         if recovered_on_clipboard {
             tracing::info!(
                 "[clip] end_injection: a recovered transcript is on the clipboard — restore skipped"
@@ -128,10 +126,9 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
             "[clip] end_injection: restore {} bytes (delayed)",
             prev.len()
         );
-        // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
-        // is why the clipboard was "never restored". Serve it from a live owner — and after a
-        // short delay, so the last phrase's in-flight Ctrl+V consumes the transcript BEFORE we
-        // swap the original back (else the final phrase can paste the original instead).
+        // Served from a live owner (on Wayland a plain set_text that drops immediately doesn't
+        // stick) and after a short delay, so the last phrase's in-flight Ctrl+V consumes the
+        // transcript BEFORE we swap the original back (else it can paste the original instead).
         crate::inject::restore_clipboard_later(Some(prev));
     }
 }
@@ -205,8 +202,7 @@ pub async fn get_focused_app(
 ) -> Result<Option<crate::focus::FocusedApp>, String> {
     // Authoritative own-window check (same as inject_text's guard): a Wayland client always
     // knows its own keyboard focus. Dictation won't type into our own UI, so surface that
-    // truthfully instead of letting AT-SPI report whatever was focused before us. The
-    // click-through "overlay" chip never holds focus; exclude it.
+    // truthfully instead of letting AT-SPI report whatever was focused before us.
     if own_window_focused(&app) {
         // Through the same change-only dedup as the line below, so a return to the app focused
         // before this window (Konsole → this app → Konsole) still logs that it left and came back.
@@ -309,9 +305,8 @@ pub async fn get_quickadd_seed(
         .ok()
         .flatten();
         let seed = raw.as_deref().and_then(sanitize_seed);
-        // `None` and `Some("")` used to both print "0 chars", which made "the grab found
-        // nothing" indistinguishable from "the reader aborted (window closed) / timed out"
-        // in exactly the field reports this line exists for.
+        // `None` and `Some("")` log differently: "the grab found nothing" must stay
+        // distinguishable from "the reader aborted (window closed) / timed out" in field reports.
         match &raw {
             None => tracing::info!(
                 "[quickadd-seed] windows copy grab returned no text (no copy landed, summon superseded, or wait timed out)"
