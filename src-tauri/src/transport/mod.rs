@@ -887,8 +887,8 @@ pub fn clean_text(s: &str, n: usize) -> String {
         .collect()
 }
 
-/// Target-language codes are short ISO-ish tags ("de", "pt-BR") — screened before they join
-/// a form field or a JSON body. Shared by the batch form and the T2T text route.
+/// Language codes are short ISO-ish tags ("de", "pt-BR") — screened before one joins a request
+/// and before one is kept from a server answer.
 pub(crate) fn is_lang_code(s: &str) -> bool {
     (2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
