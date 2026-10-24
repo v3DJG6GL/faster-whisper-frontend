@@ -1,7 +1,8 @@
 // Parsers for text/subtitle sources (SRT / VTT / LRC / plain text / our own
 // JSON export) — the inverse of transcriptFormats, reduced to what a
-// translate-only run needs: ordered segments with optional timing/speaker.
-// Pure, no Tauri imports; unit-tested round-trip against generateExport.
+// translate-only run and a link's site subtitles need: ordered segments with
+// optional timing/speaker. Pure, no Tauri imports; unit-tested round-trip
+// against generateExport.
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
