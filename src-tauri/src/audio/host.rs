@@ -28,7 +28,8 @@ pub fn input_by_id(id: &DeviceId) -> Option<Device> {
         let host = alsa_host()?;
         // Exact id first: cpal's `device_by_id` canonicalizes "sysdefault:CARD=X" to
         // "sysdefault:CARD=X,DEV=0", which ALSA's hint list never contains — so every sysdefault
-        // pin (the Shared path, and every mic row when no sound server runs) read as unplugged.
+        // pin (the Shared path, and every mic row when no sound server runs) would read as
+        // unplugged.
         if let Some(d) = exact_id(host.input_devices().ok()?, id, |d| d.id().ok()) {
             return Some(d);
         }
