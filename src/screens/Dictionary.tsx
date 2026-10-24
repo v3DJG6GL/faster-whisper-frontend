@@ -258,7 +258,6 @@ function RuleCard({
     [recentWords, usedKeys],
   );
 
-  // cb:map: show the newest N (mapCollapseAfter); collapse the rest behind a toggle.
   const entriesTotal = edit.entries?.length ?? 0;
   const shownEntries = (edit.entries ?? []).slice(0, MAX_REGEX_ENTRIES);
   const mapPairs = edit.pairs ?? [];
@@ -360,7 +359,6 @@ function RuleCard({
                   setEntries((rows) => rows.map((r) => (r.id === row.id ? { ...r, ...patch } : r)));
                 return (
                   <div key={row.id} className="flex overflow-hidden rounded-xl border border-line-strong bg-surface/50">
-                    {/* rail: order badge + reorder (far-left; arrows are keyboard-accessible) */}
                     <div className="flex shrink-0 flex-col items-center gap-2 border-r border-line bg-surface-2/50 px-2 py-3">
                       <span className="grid size-5 place-items-center rounded-full bg-accent-soft font-mono text-[10.5px] font-semibold text-accent">
                         {i + 1}
@@ -488,7 +486,7 @@ function RuleCard({
                 </Button>
               )}
               {mapShown.map((row) => {
-                // Own-property read: `map_meta` is an unvalidated server object and `row.k` is
+                // Own-property read: `map_meta` is a plain (prototyped) object and `row.k` is
                 // server-authored, so a key like `constructor`/`toString` would resolve to an inherited
                 // function — truthy, so the formatters' falsy guard passes and "Added" prints a
                 // fabricated date.
