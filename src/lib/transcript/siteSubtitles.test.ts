@@ -634,8 +634,8 @@ describe("tracks and switches", () => {
     expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["de", "fr"]));
   });
   it("a language Custom promoted is yours once the Translation switch writes the targets again: a later preset keeps it", () => {
-    // Off, then on with the seed bringing en back: still counted as promoted, a preset would cut
-    // it from the saved list and the switch (targets.length > 0) would turn itself off.
+    // Off, then on with the seed bringing en back: were it still counted as promoted, a preset would
+    // cut it from the saved list and the switch (targets.length > 0) would turn itself off.
     const inp = input({ tracks: [tr("de", "de"), tr("en", "en")], spoken: "de", targets: ["ja"], maxTargets: 3 });
     let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
     expect(i.targets).toEqual(["ja", "en"]);
