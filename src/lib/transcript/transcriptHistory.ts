@@ -61,7 +61,7 @@ export interface TranscriptRecord {
   /** The export panel's dragged track order and typed track names
    *  (lib/transcript/exportTracks TrackPrefs; read through readTrackPrefs). */
   exportTracks?: { order?: string[]; names?: Record<string, string> };
-  // ── dictation-only metadata ──
+  // Dictation records only, from here on.
   /** Focused app id at session start (also the filter facet). */
   appId?: string;
   profileName?: string;
@@ -706,8 +706,8 @@ export function recordDictation(cap: DictationCapture): string {
     translationFailure: cap.translationFailure,
     translations: cap.translations,
     translationTargets: cap.translationTargets,
-    // Normalized to absent when false, matching how TranslationFields stores
-    // the flag, so old and new records compare the same way.
+    // Normalized to absent when false, so a record written with it off compares
+    // the same as one written before the field existed.
     includeOriginal: cap.includeOriginal || undefined,
   };
   upsertRecord(rec);
