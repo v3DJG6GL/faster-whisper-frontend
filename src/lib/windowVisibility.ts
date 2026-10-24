@@ -11,8 +11,9 @@
 //
 // Runs once per document from main.tsx, outside React (StrictMode cannot double it).
 //
-// The same two reasons also answer `isWindowHidden()` for the rest of the page: the main
-// window's usage poll (usage.ts) slows down while nobody can see it.
+// The same two reasons also answer `isWindowHidden()` / `onWindowHiddenChange()` for the rest of
+// the page: polls and timers (usage.ts, logViewer.ts, transcribeRun.ts, `everyWhileVisible`…)
+// slow down or skip while nobody can see it.
 
 import { setAccentDriftPaused } from "./theme";
 
