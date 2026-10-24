@@ -58,12 +58,12 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
   }
 
   it("re-syncs after a save to a pinned list the server no longer has (deleted or hidden)", () => {
-    // Was "error": every summon re-PATCHed the same refused map and never showed "re-pin one".
+    // As "error", every summon would re-PATCH the same refused map and never show "re-pin one".
     expect(quickAddSaveOutcome(reply({ status: 400, detail: "unknown rule slug: 'x' (adding rules is not allowed)" }))).toBe("refused");
   });
 
   it("re-syncs after a save the server refuses for good: rule type changed, or quick-config access revoked", () => {
-    // Was "error": every summon re-PATCHed a map the server can never take from this caller.
+    // As "error", every summon would re-PATCH a map the server can never take from this caller.
     expect(quickAddSaveOutcome(reply({ status: 400, detail: "field 'map' is not editable on rule 'x' (type=regex-list)" }))).toBe("refused");
     expect(quickAddSaveOutcome(reply({ status: 403, detail: "no access to /quick-config" }))).toBe("refused");
     expect(quickAddSaveOutcome(reply({ status: 403 }))).toBe("error");
@@ -75,8 +75,8 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
   });
 
   it("does not retry a 422 forever: the server's schema refuses the rows, and says why", () => {
-    // Was "error": every summon re-PATCHed the same rows (one key outside the word-list pattern)
-    // and got the same 422, so every later mapping never reached the server, behind a bare "retry".
+    // As "error", every summon would re-PATCH the same rows (one key outside the word-list pattern)
+    // and get the same 422, so no later mapping would reach the server, behind a bare "retry".
     const res = reply({
       status: 422,
       errors: [{ loc: "body.rules_patch.my-words.map.don't.[key]", msg: "String should match pattern '^[\\w \\-.,!?ßẞÄÖÜäöü]{1,64}$'" }],
@@ -88,7 +88,8 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
   });
 
   it("does not retry a full dictionary: the server's cap refuses the rows, and its reason is shown", () => {
-    // Was "error": a bare "retry" with no reason, and every summon re-PATCHed the same over-cap map.
+    // As "error", it would show a bare "retry" with no reason, and every summon would re-PATCH
+    // the same over-cap map.
     const full = reply({ status: 400, detail: "this dictionary is full (server cap: 10000 entries) — delete some entries before adding new ones" });
     expect(quickAddSaveOutcome(full)).toBe("rejected");
     expect(quickAddRejectReason(full)).toMatch(/^this dictionary is full .* delete some entries/);
@@ -119,7 +120,7 @@ describe("selectionEdges (correct-on-close edge whitespace)", () => {
   }
 
   it("a 64K selection with a long blank run inside is read in linear time", () => {
-    // Was quadratic: `/\s*$/` retried at every position of the run — seconds of a frozen window.
+    // `/\s*$/` retries at every position of the run — quadratic, seconds of a frozen window.
     const current = "a" + " ".repeat(64 * 1024 - 2) + "b";
     for (const typed of [false, true]) {
       const t0 = performance.now();
