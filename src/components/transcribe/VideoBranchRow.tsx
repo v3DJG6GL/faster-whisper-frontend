@@ -25,7 +25,6 @@ export function VideoBranchRow({
   onRetry?: () => void;
 }) {
   const terminal = videoTerminal(v.state);
-  // A finished copy's clock stops at its end, not at the still-running transcription's now.
   const elapsed = dlStart ? Math.max(0, (terminal && dlEnd ? dlEnd : now) - dlStart) : 0;
   const total = v.totalBytes ?? null;
   const got = v.downloadedBytes ?? 0;
