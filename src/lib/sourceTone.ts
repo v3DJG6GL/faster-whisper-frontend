@@ -1,8 +1,6 @@
-// A source's colour: transcribe = the fixed Whisper amber (identity, so never the drifting
-// accent), existing = ok, auto-generated = warn,
-// hearing-impaired = the diarize lilac, machine translation = think blue. One table so a
-// source reads the same in the link card's subtitles table, the compound translation chips
-// and the export's tracks.
+// A source's colour, in one table so a source reads the same in the link card's subtitles table,
+// the compound translation chips and the export's tracks. Transcribe is the fixed Whisper amber
+// (an identity, so never the drifting accent).
 
 import { sourceKind, type TrackInfo } from "./transcript/exportTracks";
 import type { SiteBadge } from "./transcript/siteSubtitles";
