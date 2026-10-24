@@ -1,8 +1,7 @@
 // The models a backend's server advertised on its last connection test. The
 // connections map is session memory fed only by explicit tests — so this hook
 // probes once per backend per session when the cache is empty, in the
-// background, letting model pickers fill without a manual "Test connection"
-// (the pattern the Transcribe screen introduced, now shared with Profiles).
+// background, letting model pickers fill without a manual "Test connection".
 
 import { useEffect } from "react";
 import { useApp } from "@/lib/store";
@@ -18,9 +17,9 @@ const MAX_ROTATION_REPROBES = 3;
 export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   const conn = useApp((s) => (backend ? ownProp(s.connections, backend.id) : undefined));
   const id = backend?.id;
-  // Reactive, through the store: a corrected address (or a per-device URL override) must
-  // re-run the probe — keyed on `[id, conn]` alone, a failed probe (conn stays undefined)
-  // left the model picker empty for the rest of the mount after the user fixed the URL.
+  // Reactive, through the store: after a failed probe `conn` stays undefined, so only `url`
+  // in the deps re-runs the probe once the user corrects the address (or a per-device URL
+  // override changes it).
   const url = useApp((s) => (backend ? effectiveServerUrl(backend, s.settings) : ""));
   // Key presence too: a sync pull that adds a key to a keyless backend (or removes one) moves no
   // credential generation, and `conn` is already undefined — keyed on it, the probe re-runs as
@@ -29,13 +28,11 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   useEffect(() => {
     if (!backend || !isTauri || conn) return;
     let stale = false;
-    // A key rotated and saved mid-probe empties `conn` again (already undefined here, so the deps
-    // don't change and this run isn't cancelled): the old key's verdict must not land. A key
-    // added or removed re-runs the effect (`hasKey`) and is checked against the store as well,
-    // since the cleanup may not have run yet when the old probe answers. Nothing
-    // else re-runs this effect then, so re-probe with the current credential instead of dropping
-    // the answer — once per generation move, capped so a credential that keeps rotating can't
-    // keep the probe looping for the life of the mount.
+    // A key rotated mid-probe leaves `conn` undefined, so the deps don't change and nothing re-runs
+    // this effect: instead of landing the old key's verdict, re-probe with the current credential,
+    // capped so a credential that keeps rotating can't loop for the life of the mount. A key added
+    // or removed does re-run it (`hasKey`) but is also checked against the store, since the cleanup
+    // may not have run yet when the old probe answers.
     let retries = 0;
     const probe = () => {
       const gen = credentialGeneration(backend.id);
