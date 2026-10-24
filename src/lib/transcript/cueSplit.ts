@@ -377,10 +377,12 @@ const CAP_INITIALS = /^(?:\p{Lu}\.){2,}$/u;
 const PLACE_INITIALS = new Set(["U.S.", "U.S.A.", "U.K.", "D.C.", "N.Y.", "N.Y.C.", "L.A.", "E.U.", "U.N.", "U.A.E.", "U.S.S.R."]);
 /** A name's initial ("F.") or compact initials ("J.K.", "R.R."), as written: not a place initialism. */
 const nameInitials = (raw: string): boolean => INITIAL.test(raw) || (CAP_INITIALS.test(raw) && !PLACE_INITIALS.has(raw));
+/** `w` past the opening brackets and quotes glued to its front: "(Dr." is judged as "Dr.", "“3." as "3.". */
+const unopened = (w: string): string => w.replace(/^[^\p{L}\p{N}]+/u, "");
 /** An I, V or X and its stop right after another initial is a name's ("J. V. Stalin", "Lisa M. I.
  *  Brown"): a Roman numeral follows a word ("World War I.", "Henry V."). `prev` = the word before. */
 const initialAfter = (raw: string, prev?: string): boolean =>
-  /^[IVX]\.$/.test(raw) && INITIAL.test((prev ?? "").replace(/^[^\p{L}\p{N}]+/u, ""));
+  /^[IVX]\.$/.test(raw) && INITIAL.test(unopened(prev ?? ""));
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
@@ -437,7 +439,7 @@ const ELIDED: Record<string, string[]> = {
  *  text-initial "F. Scott" hold, "Answer: A. How" and a text-initial "B. Then" or "B. Dann" end
  *  one. */
 function nameBefore(before: string, after: string, lang?: string): boolean {
-  const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
+  const b = unopened(before);
   if (INITIAL.test(b)) return true;
   if (b !== "" && !CLAUSE.test(b) && !SENT_END.test(b) && !/^\p{Lu}/u.test(b)) return false;
   const base = primarySubtag(lang);
@@ -485,7 +487,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
   // abbreviations, "(3." an ordinal, as their bare spellings are.
-  const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
+  const raw = unopened(word);
   const w = raw.toLowerCase();
   // Only the capitalised "M." and "Ms." are titles: "300 m." and "5 ms." are units, which end
   // one only before a capital or the end of the text, as a dotted initialism does below.
@@ -510,7 +512,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
  *  does ("the U.S. government"). */
 function heldAbbrev(word: string, cut: SentenceCut): boolean {
   if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
-  const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
+  const raw = unopened(word);
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
   return (TITLE_ABBREV.has(w) && !isUnit(raw)) || ORDINAL.test(w) || INITIAL.test(raw) ||
@@ -523,7 +525,7 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
  *  nor a place initialism, which is no name's ("Washington | D.C. Today").
  *  `after` = the text after the initials, `lang` the track's. */
 const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean => {
-  const x = next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "");
+  const x = unopened(next.split(/\s/)[0]);
   return !SENT_END.test(prev) && !CLAUSE.test(prev) && nameInitials(x) && nameBefore(prev, after, lang);
 };
 
@@ -1033,12 +1035,12 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       const sp = back.lastIndexOf(" ");
       // Past any opening brackets and quotes, so "(Dr." dangles as "Dr." does. Its case kept for
       // isSentenceEnd, which tells the title "M." from the unit "m.".
-      const prevCased = sp >= 0 || i <= 9 ? back.slice(sp + 1).replace(/^[^\p{L}\p{N}]+/u, "") : "";
+      const prevCased = sp >= 0 || i <= 9 ? unopened(back.slice(sp + 1)) : "";
       const prevWord = prevCased.toLowerCase();
       // A first name or a number may outrun that window ("Christopher | F. Kennedy", "1,000,000 |
       // m."): the name and unit tests read the whole word, from the wider look-back, as the cue
       // split and the wrap do — an empty word held nothing there.
-      const prevWhole = prevCased || (i <= 9 ? "" : wordBefore(text, i).replace(/^[^\p{L}\p{N}]+/u, ""));
+      const prevWhole = prevCased || (i <= 9 ? "" : unopened(wordBefore(text, i)));
       // The next 24 chars: the initial of beforeInitial and the word after it ("B. Danach").
       const cut = { next: text.slice(i, i + 24).trimStart(), lang, prev: prevWord ? wordBefore(text, i - back.length + sp + 1) : undefined };
       const s =
