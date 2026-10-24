@@ -30,8 +30,8 @@ const LP_TITLE: &str = "fwf-translate-to";
 ///
 /// `seed` is opaque JSON (source language, preselected targets, recents) — Rust forwards
 /// it to the webview and never interprets it, the same contract `quick_launch` has in the
-/// config. It rides the show call rather than a separate fetch so the window cannot paint
-/// an empty list first and fill it a frame later.
+/// config. It rides the show call (emitted right after the window maps) rather than a
+/// separate fetch, so the picker needs no round-trip before it can fill its list.
 #[tauri::command]
 pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
     let handle = app.clone();
