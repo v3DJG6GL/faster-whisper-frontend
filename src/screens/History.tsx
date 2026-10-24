@@ -355,7 +355,7 @@ export default function History() {
   // Per-mount haystack cache, filled lazily: browsing without searching builds none.
   const [haystackCache] = useState(() => new WeakMap<TranscriptRecord, Haystack>());
 
-  // Search first (global — both kinds, names AND text), THEN the segment/app
+  // Search first (global — every kind, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
