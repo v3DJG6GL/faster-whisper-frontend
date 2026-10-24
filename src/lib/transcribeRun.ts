@@ -233,7 +233,7 @@ export type StepState = "pending" | "active" | "done" | "skipped" | "failed";
  *  server plan's skipped stages; else the progress payload's `skipped` list
  *  (newer backends name the stages they declined the moment they decline them);
  *  else inference — a genuine pipeline stage past them has been observed while
- *  they never were. "waiting" convicts nothing in the inference: the semaphore
+ *  they never got a clock. "waiting" convicts nothing in the inference: the semaphore
  *  queue runs both before separation and before the decode, so it maps onto the
  *  transcribe row without proving the earlier stage won't still happen. */
 export function skippedStages(s: {
@@ -795,8 +795,8 @@ export function patchItem(path: string, patch: Partial<QueueItem>) {
  *  completion can't land), but SETTLED results stay on view — they are in
  *  the history already. */
 export function resetForInputChange() {
-  // Also reached mid-run: stop the running file's server job rather than leave the server
-  // transcribing for a queue we already threw away.
+  // Defensive (every caller is gated off during a run): a handle still armed here would
+  // leave the server transcribing for a queue we already threw away.
   abandonActiveRun();
   set((s) => {
     const settled = s.queue.filter(
@@ -2254,10 +2254,9 @@ function attachFetched(
   return attachSiteTracks(res, timed, got.warnings);
 }
 
-/** A transcription result + the link's site tracks. Shared by the run and
- *  by a job result ingested after a restart. Only a link whose site transcript
- *  fell back to the audio is ever ledgered with a transcript track named, so that
- *  track never rides along as an extra site track (it may download fine now) and
+/** A job result ingested after a restart + the link's site tracks. Only a link whose
+ *  site transcript fell back to the audio is ever ledgered with a transcript track named,
+ *  so that track never rides along as an extra site track (it may download fine now) and
  *  the result always carries the fallback warning, as the live run's does. */
 export async function withSiteTracks(
   res: BatchResult,
@@ -2702,9 +2701,9 @@ export function runBadgeFraction(s: TranscribeRunState): number | null {
   return overallOf({ queue: s.queue, progress: chunkedProgress(s.progress, s.textChunk) });
 }
 
-/** The item the completed run panel describes: the file the PUMP ran last (it stamps
- *  `selectedPath` when a file succeeds), not the last row in queue order — a retry of a
- *  non-final file makes those diverge, and the rail's clocks belong to the retried one. */
+/** The item the completed run panel describes: the file the PUMP ran last (the caller passes
+ *  `lastRunPath`), not the last row in queue order — a retry of a non-final file makes those
+ *  diverge, and the rail's clocks belong to the retried one. */
 export function settledPanelItem(queue: QueueItem[], selectedPath: string | null): QueueItem | null {
   const settled = (it: QueueItem) => it.status === "done" || it.status === "failed";
   return (
