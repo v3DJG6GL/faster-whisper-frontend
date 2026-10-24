@@ -271,7 +271,7 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
                     continue;
                 };
                 // Only the app's own files: the legacy folder is a free user pick (~/Music,
-                // a shared Documents folder…), and relocating every .wav/.txt in it moved
+                // a shared Documents folder…), and relocating every .wav/.txt in it would move
                 // foreign files under a folder "Delete all dictations" then wipes.
                 if !src.is_file() || !crate::audio::is_dictation_file(&name.to_string_lossy()) {
                     continue;
@@ -485,7 +485,7 @@ pub fn open_source_url(app: AppHandle, url: String) -> Result<(), String> {
     crate::open_external(&app, u)
 }
 
-/// The longest path `reveal_in_folder` accepts (bytes) — past every OS's own limit.
+/// The longest path `reveal_in_folder` accepts (bytes): Linux's PATH_MAX, past any real export path.
 const REVEAL_PATH_MAX: usize = 4096;
 
 /// A path `reveal_in_folder` may show: non-empty, bounded, free of control
@@ -615,9 +615,9 @@ const CP1252_HIGH: [char; 32] = [
 ];
 
 /// Decode a subtitle/text source. Subtitle files in the wild are not all UTF-8: Windows
-/// "Unicode" saves are UTF-16 with a BOM, and older files are Windows-1252. Decoding those as
-/// lossy UTF-8 turned UTF-16's NUL bytes into extra line breaks (every cue split apart) and
-/// every umlaut into U+FFFD.
+/// "Unicode" saves are UTF-16 with a BOM, and older files are Windows-1252. Decoded as lossy
+/// UTF-8, UTF-16's NUL bytes become extra line breaks (every cue split apart) and every umlaut
+/// becomes U+FFFD.
 fn decode_text_source(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
         return String::from_utf8_lossy(rest).into_owned();
@@ -798,7 +798,6 @@ mod tests {
         std::fs::write(&file, b"1").unwrap();
         let ok = file.to_string_lossy().into_owned();
         assert_eq!(reveal_target(&ok).unwrap(), file);
-        // Relative, empty, over-long, control characters, missing: all refused.
         // Each refusal is asserted by its message: the paths below do not exist either,
         // so a bare is_err() would pass on the final missing-file gate alone.
         assert_eq!(
