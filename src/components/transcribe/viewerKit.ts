@@ -30,7 +30,7 @@ export function speakerRenameValue(draft: string): string {
  *  maxLength counts UTF-16 units, halving the cap for an emoji or CJK Ext-B name). An edit that
  *  grows the draft past the cap keeps only as much of the inserted run as fits — a paste fills
  *  the field to the cap, a keystroke at the cap inserts nothing — rather than cutting the tail,
- *  which deleted the name's end on a mid-string typo fix. `insertEnd` is the caret after the
+ *  which would delete the name's end on a mid-string typo fix. `insertEnd` is the caret after the
  *  input (UTF-16 index into `typed`): the text after it was already there, which a prefix/suffix
  *  diff alone cannot tell for a paste that starts with the characters after the caret. Without a
  *  usable caret the run is what lies between the common prefix and suffix of `prev` and `typed`.
