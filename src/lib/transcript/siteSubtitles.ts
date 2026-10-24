@@ -3,7 +3,7 @@
 // and the compound translation chips show it. Pure, so every rule is tested without a DOM.
 //
 // Words: a language is WANTED when it is a translation target, or — under a preset — a
-// language the site brings that you did not remove. A wanted language gets its SOURCES from
+// language the site brings that you did not switch off. A wanted language gets its SOURCES from
 // the preset: Prefer = existing subtitles, else machine translation; Side by side = both;
 // Generate = machine translation only (nothing existing is used). Every badge shows one of
 // three states: active (used), idle (chosen but not needed — greyed), off (not chosen — struck).
