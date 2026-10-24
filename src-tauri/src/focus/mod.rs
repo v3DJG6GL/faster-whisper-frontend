@@ -273,7 +273,6 @@ pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
     }
 }
 
-// Exe-name rules of the Windows tracker; not gated, so their tests run on every platform.
 mod exe_name;
 
 // The Windows tracker lives in its own file but stays a CHILD of this module so
