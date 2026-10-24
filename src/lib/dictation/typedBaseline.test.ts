@@ -17,7 +17,6 @@ describe("commonPrefixLen", () => {
   it("never splits a surrogate pair", () => {
     // U+1F600 and U+1F601 share their high surrogate; the split backs off to the character start.
     expect(commonPrefixLen("a\u{1F600}", "a\u{1F601}")).toBe(1);
-    // An equal pair is still kept.
     expect(commonPrefixLen("a\u{1F600}b", "a\u{1F600}c")).toBe(3);
   });
 });
