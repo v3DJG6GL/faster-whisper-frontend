@@ -1,9 +1,9 @@
 // The screen Language picker must not prune the translation chips by the SCREEN's source while
 // the site-subtitle panel holds them: their source is then the link's spoken language
-// (chipSource), and the prune silently dropped (and saved the loss of) a target valid for the
-// link — e.g. German on an English link, after the screen was switched to German. Only for a link
+// (chipSource), and the prune would silently drop (and save the loss of) a target valid for the
+// link — e.g. German on an English link, after the screen is switched to German. Only for a link
 // with its OWN spoken language, though: one that follows the screen speaks the new screen
-// language, and skipping the prune there left it as a hidden target (a de→de copy track).
+// language, and skipping the prune there would leave it as a hidden target (a de→de copy track).
 import { describe, expect, it } from "vitest";
 // Raw source (vite `?raw`): there is no DOM environment to render the screen in.
 import src from "./Transcribe.tsx?raw";
@@ -65,7 +65,8 @@ describe("screen Language picker vs the site-subtitle panel's chips", () => {
 
 // The skipped prune leaves the screen's spoken language in translateTo while the panel holds the
 // chips, and the re-prune effect waits for the panel to let go — but Run is not gated on that, and
-// translateTo is also what every queued file is sent: a German file got translate_to ["de"].
+// translateTo is also what every queued file is sent: unpruned, a German file would get
+// translate_to ["de"].
 describe("a run while the panel holds the chips", () => {
   it("sends the queued files the chips less the screen's known source", () => {
     // Screen German, chips ["de"] (kept for an English link): nothing to translate a German file into.
