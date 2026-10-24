@@ -239,9 +239,7 @@ export default function Transcribe() {
     void loadHistory();
   }, []);
 
-  // Picks persist in settings.transcribe so leaving the screen keeps them. The saved pick only
-  // applies while that backend still exists; model/language (and the translation model below)
-  // ride on it (savedBackendOf).
+  // Picks persist in settings.transcribe so leaving the screen keeps them (seedTranscribe).
   const [seed] = useState(() => seedTranscribe(settings.transcribe, backends));
   const [backendId, setBackendId] = useState(seed.backendId);
   // Coded at ingress the way dictation codes it (effectiveLanguage: trimmed, a word as its code,
@@ -250,7 +248,7 @@ export default function Transcribe() {
   // match raw.
   const [language, setLanguage] = useState(seed.language);
   // "" = use the Backend's configured model; anything else is a per-run pick
-  // from the models the server advertised on the last connection test. Trimmed at the seed (the
+  // from the models the server advertises. Trimmed at the seed (the
   // persisted pick may be synced): a whitespace-only one is no pick, so the overridden dot, the
   // reset and the default-model label agree with the run, which sends the Backend's model.
   const [model, setModel] = useState(seed.model);
@@ -2168,8 +2166,6 @@ export default function Transcribe() {
         const speakerCount = panelResult ? speakersOf(panelResult).length : 0;
         const doneItems = queue.filter((it) => it.status === "done");
         const queuedCount = queue.filter((it) => it.status === "queued").length;
-        // Whole-run estimate: the current file's projection plus the average
-        // measured wall time of the finished files for each queued one.
         const etaS = complete ? null : etaSecOf(progress);
         const curLeft = etaS !== null ? etaS * 1000 : null;
         const tooks = doneItems.map((it) => it.tookMs).filter((t): t is number => !!t);
@@ -2280,9 +2276,9 @@ export default function Transcribe() {
                   }}
                 >
                   {e.state !== "pending" && e.lanes ? (
-                    // One lane per target language, each filling on its own:
-                    // the segment's shape says "three things" before any
-                    // label does.
+                    // One lane per unit (target language, diarization step), each
+                    // filling on its own: the segment's shape says "three things"
+                    // before any label does.
                     <div className="flex h-full gap-px">
                       {e.lanes.map((lane) => (
                         <div
