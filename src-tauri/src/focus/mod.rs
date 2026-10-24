@@ -150,8 +150,8 @@ fn is_noise(app_id: &str) -> bool {
     a.starts_with("kwin") || a == "ksmserver" || a == "plasmashell" || a.contains("plasma-desktop")
 }
 
-/// Start the focus listener once (idempotent). Spawns on Tauri's async runtime so it can
-/// be called from `setup` (eager warm-up) as well as from the async commands.
+/// Start the focus listener once (idempotent). On Linux it spawns on Tauri's async runtime so
+/// it can be called from `setup` (eager warm-up) as well as from the async commands.
 pub fn start(g: &AtspiGuard) {
     #[cfg(target_os = "linux")]
     {
