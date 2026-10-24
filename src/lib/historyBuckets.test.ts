@@ -27,7 +27,8 @@ describe("dayBuckets", () => {
   it("keeps one group per day when a foreign stamp splits it", () => {
     const a = new Date(2026, 9, 13, 12, 0).toISOString();
     const b = new Date(2026, 9, 12, 12, 0).toISOString();
-    // Today, written with a foreign offset: a raw string sort can put it below yesterday's Z stamp.
+    // Today with a foreign offset, listed after yesterday's stamp: an offset stamp can sort out of
+    // place among Z stamps, so a day's records need not be adjacent.
     const c = withOffset(new Date(2026, 9, 13, 9, 0), 120);
     const groups = dayBuckets([rec("a", a), rec("b", b), rec("c", c)], todayStart);
     expect(groups.map((g) => g.label)).toEqual(["Today", "Yesterday"]);
