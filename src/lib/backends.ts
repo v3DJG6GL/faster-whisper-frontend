@@ -117,9 +117,9 @@ function isSchemelessAddress(t: string): boolean {
   return !m || /^\d+(\/|$)/.test(m[1]);
 }
 
-/** May this address be STORED as a backend's `serverUrl`? Applied where an address arrives from
- *  somewhere other than the user's own keyboard (a sync pull, an imported file), because those
- *  paths keep the string verbatim and hand it straight to the transport. */
+/** May this address be STORED as a backend's `serverUrl`? The gate `serverUrlFromPeer` applies to
+ *  addresses that did not come from the user's keyboard (a sync pull, an imported file, an older
+ *  build's config), which would otherwise reach the transport unchecked. */
 export function isStorableServerUrl(raw: string): boolean {
   const t = stripUrlNoise(raw);
   return t === "" || /^https?:\/\//i.test(t) || isSchemelessAddress(t);
