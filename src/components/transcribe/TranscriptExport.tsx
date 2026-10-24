@@ -310,9 +310,7 @@ export function TranscriptExport({
     [cueOpts, fileRenames, showNames],
   );
   /** One cue split shared by the summary, the reading-speed scan and the
-   *  preview, rather than each re-splitting the whole transcript. Cue
-   *  splitting does not depend on srt vs vtt. Null unless a subtitle format
-   *  shows in an open panel. */
+   *  preview. Null unless a subtitle format shows in an open panel. */
   const subGrid = useMemo(
     () => (open && subs ? cueGrid(editedResult, gridOpts, gridTracks) : null),
     [open, subs, editedResult, gridOpts, gridTracks],
