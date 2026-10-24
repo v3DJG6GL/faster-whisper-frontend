@@ -1,6 +1,3 @@
-// Guards the invariant every Logs.tsx memo keyed on `visibleLines()` depends on:
-// a NEW array on every version bump (see visibleLines()'s doc).
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogLine } from "./api";
 
