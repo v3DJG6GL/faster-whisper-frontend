@@ -66,8 +66,7 @@ function profileRoute(p: Profile | undefined, backend: Backend | undefined): str
 
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
  *  the row's narrow column; the full names ride on the cell's tooltip. The source follows
- *  routeSourceCode, the tray's rule, except that auto-detect reads lower-case "auto" as in the
- *  long-form route tooltip. */
+ *  routeSourceCode, the tray's rule, except that auto-detect reads lower-case "auto". */
 function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
   // Sanitized BEFORE the empty check: a synced code of format characters only (U+200F) passes a
   // raw trim, then shows as a blank slot or a dangling comma.
@@ -284,8 +283,9 @@ export default function Dashboard() {
   const canStart = offHint === "";
   // While a session is live, the "running" row marks the RUNNING profile — like the chip + usage
   // do — not the home-button target, which can drift if the profile set changes mid-session
-  // (disabling the active profile, reordering, deleting); start logic + the tinted row keep using
-  // `target`. activeProfile is null when idle, so this falls back to the target then.
+  // (disabling the active profile, reordering); start logic + the tinted row keep using
+  // `target`. Falls back to the target when idle (activeProfile is null) or when the running
+  // profile was deleted.
   const shown = (activeProfile ? profiles.find((p) => p.id === activeProfile) : undefined) ?? target;
 
   // While busy the hero button is a stop/cancel: a graceful stop while the mic is open, a hard
