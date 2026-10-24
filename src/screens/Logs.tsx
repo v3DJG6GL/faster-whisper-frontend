@@ -166,10 +166,10 @@ export default function Logs() {
   const version = useLogs((s) => s.version);
   const sessionSeq = useLogs((s) => s.status.seq);
   const [threshold, setThreshold] = useState<LevelThreshold>("all");
-  // The doorway's "View logs" pre-filter, consumed in an effect keyed on the store value:
-  // reading it in the useState initializer only worked on MOUNT, so a click while already
-  // on /logs (the banner is app-wide) changed nothing and left the flag armed for the next
-  // unrelated visit — and StrictMode's double-invoked initializer consumed it in dev.
+  // The doorway's "View logs" pre-filter, consumed in an effect keyed on the store value, not
+  // a useState initializer: that runs only on MOUNT, so a click while already on /logs (the
+  // banner is app-wide) would change nothing and leave the flag armed for the next unrelated
+  // visit — and StrictMode double-invokes the initializer in dev.
   const prefilter = useLogs((s) => s.prefilter);
   useEffect(() => {
     if (!prefilter) return;
@@ -274,7 +274,7 @@ export default function Logs() {
       tags.size ? `tags: ${[...tags].join(", ")}` : null,
       text.trim() ? `text: ${text.trim()}` : null,
       // "Clear view" hides earlier lines from the report too; without this line the
-      // header claimed the paste WAS the session tail.
+      // header would claim the paste IS the session tail.
       cleared > 0 ? `${plural(cleared, "earlier line")} cleared from view` : null,
     ].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
@@ -286,20 +286,18 @@ export default function Logs() {
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 22,
     overscan: 10,
-    // Height measurements must follow the LINE, not the list position —
+    // Height measurements must follow the run (rowKey), not the list position —
     // filters/clear shift which line sits at an index, and a stale by-index
-    // height makes wrapped rows overlap their neighbors.
-    // Keyed on the run's FIRST seq, not `line.seq`: a merged row's `line` is its newest
-    // occurrence and changes on every repeat, which remounted the row (dropping focus from
-    // its ×N button) and invalidated its measured height on every live duplicate.
-    // The top row's run also loses its first seq to front eviction at buffer cap: rowKey.
+    // height makes wrapped rows overlap their neighbors. Not `line.seq` either: a merged
+    // row's `line` is its newest occurrence, so every live repeat would remount the row
+    // (dropping focus from its ×N button) and invalidate its measured height.
     getItemKey: rowKey,
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
   // re-measure); when unlatched, count what arrived for the pill.
-  // Counted by seq watermark, not by length: a loosened filter grew the array without
-  // anything arriving, and at buffer cap each batch evicted as many lines as it added.
+  // Counted by seq watermark, not by length: a loosened filter grows the array without
+  // anything arriving, and at buffer cap each batch evicts as many lines as it adds.
   const prevSeq = useRef(-1);
   useEffect(() => {
     const last = lines.length ? lines[lines.length - 1].seq : -1;
