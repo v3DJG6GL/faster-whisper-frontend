@@ -1,4 +1,6 @@
-//! Batch transcription: `POST /v1/audio/transcriptions` (multipart).
+//! Batch transcription: `POST /v1/audio/transcriptions` (or `/translations`, multipart) with
+//! its progress / cancel calls, plus the link flow around it (preview, subtitles, language
+//! check, audio/video download) and the download of a run's retained media.
 
 use super::{
     base_url, client, friendly_err, gate_media_id, is_progress_id, json_capped_to, send_json,
@@ -63,7 +65,7 @@ pub struct Word {
 /// TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server (it clamps too).
 const MAX_CONTEXT_SEGMENTS: u32 = 10;
 
-/// Per-run stage options for the Transcribe screen (dictation passes None).
+/// Per-run stage options for the Transcribe screen (batch dictation sets only `standard`).
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BatchOptions {
@@ -1774,7 +1776,8 @@ fn bound_rung(r: VideoRung) -> VideoRung {
 /// The preview probe is interactive (debounced keystrokes) — cap it well
 /// under the shared client's 120 s default so a slow site fails visibly fast.
 const URL_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
-/// A 512 KB thumbnail cap server-side; anything bigger here is hostile.
+/// The server caps the raw thumbnail at 512 KB (~683 KB once base64'd into the data: URI);
+/// anything past this ceiling is hostile.
 const MAX_THUMBNAIL_DATA_URI: usize = 1024 * 1024;
 
 /// A link preview the server refused under its link policy, which the run's own probe
