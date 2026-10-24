@@ -132,10 +132,7 @@ pub(crate) async fn inject_text(
     // copy back from its own snapshot.
     withhold_on_divert: bool,
 ) -> Result<InjectOutcome, String> {
-    // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
-    // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
-    // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
-    // into a paste. (The Wayland direct-typing paths already drop controls; this matches them.)
+    // Sanitized before ANY injection path, the clipboard-only one included (see `sanitize_injected`).
     let text = crate::inject::sanitize_injected(&text);
     // Same sanitising, same posture: this string reaches the clipboard too.
     let clip_text = clipboard_form(&text, clipboard_text);
