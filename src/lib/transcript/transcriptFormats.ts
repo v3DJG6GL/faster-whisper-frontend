@@ -57,7 +57,7 @@ export interface ExportOptions {
 /** Default per-speaker colors, cycled by first-appearance order. Eight
  *  hue-separated tones at matched brightness so neighbours stay tellable
  *  apart on the dark theme. Coral stays reserved for the live-recording
- *  pulse. Shared with the speaker chips on the Transcribe screen.
+ *  pulse.
  *
  *  The same hexes app.css fixes for the dark theme's --spk-1…8 (light darkens
  *  the same hues): the Signal colour tints chrome only and never the speaker
@@ -340,10 +340,9 @@ function namePrefix(ctx: Ctx, label: string | null | undefined): string {
 }
 
 function colorOf(ctx: Ctx, label: string): string {
-  // `opts.colors` is the wire format: explicit hexes, built FROM the user's
-  // palette picks by callers (the viewer maps its pick indexes through
-  // DEFAULT_SPEAKER_COLORS — i.e. speakerHex). Absent/invalid entries fall
-  // through to the shared first-appearance resolver.
+  // `opts.colors` is the wire format: explicit hexes, which exportOptionsFor
+  // builds FROM the user's palette picks (speakerHex). Absent/invalid entries
+  // fall through to the shared first-appearance resolver.
   const explicit = ctx.opts.colors?.[label];
   if (explicit && /^#[0-9a-fA-F]{6}$/.test(explicit)) return explicit;
   return speakerHex(ctx.order, undefined, label);
@@ -542,7 +541,8 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     out.push("::cue(.mt) { color: #4dd0c4; }");
     // ...plus a per-language class when more than one target is present, so
     // a player or downstream tool can tell an EN line from an FR one. The
-    // classes are generated from the language code, never user text.
+    // classes are sanitized from the language code (vttClass), never
+    // transcript text.
     if (ambiguous(ctx)) {
       for (const lang of mtLangs) {
         out.push(`::cue(.mt-${vttClass(lang)}) { color: #4dd0c4; }`);
