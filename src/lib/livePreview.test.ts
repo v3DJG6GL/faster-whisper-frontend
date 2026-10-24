@@ -11,7 +11,7 @@ import {
   type PreviewToken,
 } from "./livePreview";
 
-/** The tokens as plain text, pauses as [kind], for readable assertions. */
+/** The tokens as plain text — pauses as [kind], glued words as <text>, separators as {text} — for readable assertions. */
 const flat = (ts: PreviewToken[]) =>
   ts
     .map((t) =>
