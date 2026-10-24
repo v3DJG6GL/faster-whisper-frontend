@@ -11,7 +11,7 @@ import {
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { UsageStageKey } from "@/lib/types";
 import { BUCKET_WORD, fmtDateRange, fmtSpanDate } from "@/components/stats/chartKit";
-import { Eyebrow, Pill, StageDot } from "@/components/stats/primitives";
+import { Eyebrow, Pill, StageDot, TextButton } from "@/components/stats/primitives";
 
 /** The draft dates live in FilterBar, not here: the popover sits inside the full bar, which
  *  remounts whenever the bar pins or un-pins, and a local draft would reset mid-edit. */
@@ -181,11 +181,7 @@ export function FilterBar({
       ? `${fmtDateRange(win.from, win.to)} · ${plural(win.days, "day")} · since the first session`
       : `${fmtDateRange(win.from, win.to)} · ${plural(win.days, "day")}${query.range === "custom" ? " · custom" : ""}`;
   const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? fmtDateRange(win.from, win.to) : RANGE_LABEL[query.range];
-  const clearButton = (
-    <button type="button" onClick={clearAll} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
-      Clear
-    </button>
-  );
+  const clearButton = <TextButton onClick={clearAll}>Clear</TextButton>;
   const row = "flex flex-wrap items-center gap-x-3.5 gap-y-2.5";
   const full = (
     <>

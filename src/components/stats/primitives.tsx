@@ -35,6 +35,15 @@ export function Eyebrow({ children, className }: { children: ReactNode; classNam
   return <span className={cn("font-mono text-[11px] uppercase tracking-label text-faint", className)}>{children}</span>;
 }
 
+/** An underlined text button (Clear, show / hide). `className` sets its size and colour. */
+export function TextButton({ onClick, className = "text-[12px] text-faint", children }: { onClick: () => void; className?: string; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={cn("ring-signal rounded-md px-1 underline underline-offset-4 hover:text-text", className)}>
+      {children}
+    </button>
+  );
+}
+
 export function Pill({ children }: { children: ReactNode }) {
   return (
     <span className="rounded-pill border border-line px-2.5 py-0.5 font-mono text-[11px] text-dim">{children}</span>

@@ -75,7 +75,7 @@ import { FilterBar } from "@/components/stats/FilterBar";
 import { StackedChart } from "@/components/stats/StackedChart";
 import { StatTile } from "@/components/stats/StatTiles";
 import { fmtDateRange, fmtSpanDate, kindFill } from "@/components/stats/chartKit";
-import { Eyebrow, HatchDef, Num, Panel, Pill, StageDot, Swatch } from "@/components/stats/primitives";
+import { Eyebrow, HatchDef, Num, Panel, Pill, StageDot, Swatch, TextButton } from "@/components/stats/primitives";
 import { tileSpecs } from "@/components/stats/tileSpecs";
 
 /** Window totals per kind: the densified series summed. */
@@ -206,9 +206,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
       <Card className="mt-3.5 flex flex-wrap items-center gap-2.5 px-4 py-3">
         <Eyebrow>Dictation</Eyebrow>
         <span className="text-[12.5px] text-faint">Dictation details apply to dictation sessions.</span>
-        <button type="button" onClick={() => setOpen(true)} className="ring-signal rounded-md px-1 text-[12.5px] text-dim underline underline-offset-4 hover:text-text">
-          show
-        </button>
+        <TextButton onClick={() => setOpen(true)} className="text-[12.5px] text-dim">show</TextButton>
       </Card>
     );
   }
@@ -228,9 +226,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
           <Pill>{plural(Math.round(d?.sessions ?? 0), "session")}</Pill>
           <Pill>counts sessions</Pill>
           {collapsible && (
-            <button type="button" onClick={() => setOpen(false)} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
-              hide
-            </button>
+            <TextButton onClick={() => setOpen(false)}>hide</TextButton>
           )}
         </>
       }
