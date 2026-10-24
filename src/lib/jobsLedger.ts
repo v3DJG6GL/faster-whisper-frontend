@@ -119,8 +119,7 @@ export function boundLedger(rows: LedgerRow[]): Ledger {
   return { v: 1, rows };
 }
 
-/** Append (replacing a row of the same id), prune, and bound (boundLedger) — never dropping
- *  the new row. */
+/** Append, replacing a row of the same id; the prune and bound never drop the new row. */
 export function addRow(l: Ledger, row: LedgerRow, now: number): Ledger {
   const rows = pruneLedger(l, now).rows.filter((r) => r.jobId !== row.jobId);
   rows.push(row);
