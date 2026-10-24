@@ -89,7 +89,7 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("\u2800".repeat(20000) + "a\u200d")).toBe("a\u200d");
     const t0 = performance.now();
     // Interior blanks (and U+2800, which the defang turns into spaces) before a later joiner:
-    // the old `\s*` form restarted at every blank offset and backtracked, seconds on this input.
+    // a `\s*` pattern restarts at every blank offset and backtracks, seconds on this input.
     expect(safeIdentityText("a" + " ".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
     expect(safeIdentityText("a" + "\u2800".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
     expect(performance.now() - t0).toBeLessThan(1000);
