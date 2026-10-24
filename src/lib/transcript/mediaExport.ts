@@ -100,9 +100,10 @@ function trackSubtitle(result: BatchResult, opts: ExportOptions, track: string, 
 const hasCue = (content: string) => content.includes(" --> ");
 
 /** A track's language as the packager accepts it (Rust `is_package_lang`: a lowercase 2–3 letter
- *  primary, at most one 2–8 alnum subtag). Site-track langs only pass the looser `is_lang_code`
- *  ("en-x-autogen", "zh-Hant-TW"), and one bad tag would fail the whole save: fall back to the
- *  primary subtag, else "und". The track's label keeps the full name. */
+ *  primary, at most one 2–8 alnum subtag). A lang may only pass the looser `is_lang_code`
+ *  ("en-x-autogen", "zh-Hant-TW": the spoken language, a site track from an older server), and
+ *  one bad tag would fail the whole save: fall back to the primary subtag, else "und". The
+ *  track's label keeps the full name. */
 export function packageLang(lang: string): string {
   if (/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(lang)) return lang;
   const primary = primarySubtag(lang);
@@ -110,11 +111,10 @@ export function packageLang(lang: string): string {
 }
 
 /** The spoken language as the audio stream's tag, read exactly the way the original subtitle
- *  track is filed (trackLang, then packageLang): "EN" is "en", "pt_BR" and "zh-Hant-TW" their
- *  primary — the raw value failed Rust's `is_package_lang` and left the audio with the uploader's
- *  tag while its Original subtitle said the right one. Null when unknown (blank, only format
- *  marks, a word): the source file's tag is kept then. `spoken` is the trimmed value, for the
- *  stream's title (its full name, like the subtitle titles). */
+ *  track is filed (trackLang, then packageLang), so the audio and its Original subtitle carry
+ *  the same tag: "EN" is "en", "pt_BR" and "zh-Hant-TW" their primary. Null when unknown (blank,
+ *  only format marks, a word): the source file's tag is kept then. `spoken` is the trimmed
+ *  value, for the stream's title (its full name, like the subtitle titles). */
 export function audioPackageLang(result: Pick<BatchResult, "language">): { lang: string; spoken: string } | null {
   const spoken = trackLang({ language: result.language }, "orig");
   const lang = packageLang(spoken);
@@ -170,7 +170,7 @@ export function sidecarSource(
 
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
- *  colouring included), so the embedded tracks match the sidecars byte for
+ *  colouring included), so the embedded tracks match SRT sidecars byte for
  *  byte. `names` = the user's track titles by track id. A cue-less track is
  *  dropped BEFORE planning: its language's next track is then the plain one
  *  (default flag, bare title). */
@@ -205,7 +205,7 @@ export function oversizedEmbeddedTrack(tracks: readonly EmbeddedTrack[]): Embedd
 }
 
 /** The wire's legacy indices (servers before the per-track flags): the
- *  first original track, and the default = that one, else the first. */
+ *  spoken language's plain track, and the default = that one, else the first. */
 export function legacyTrackIndices(tracks: readonly EmbeddedTrack[]): { defaultTrack: number | null; originalTrack: number | null } {
   const orig = tracks.findIndex((t) => t.original && t.default);
   const originalTrack = orig >= 0 ? orig : null;
@@ -222,11 +222,10 @@ export function sidecarNames(
   return trackFileSuffixes(planTracks(result, tracks), format).map((suffix) => (stem) => stem + suffix);
 }
 
-/** One sidecar file per chosen track, in track order, in the panel's
- *  subtitle format — the same per-language content the embedded tracks
- *  carry, so "both" writes the same subtitles twice, once inside and once
- *  beside the video (from the same result and tracks: sidecarSource). Named over the cue-bearing tracks only (cueTracks): a
- *  language whose first track is empty still gets its plain `stem.fr.srt`. */
+/** One sidecar file per chosen track, in track order, in the panel's subtitle format — the
+ *  same per-language content the embedded tracks carry (from the same result and tracks:
+ *  sidecarSource). Named over the cue-bearing tracks only: a language whose first track is
+ *  empty still gets its plain `stem.fr.srt`. */
 export function sidecarFiles(
   result: BatchResult,
   opts: ExportOptions,
@@ -421,9 +420,8 @@ const SITE_DISPLAY: Record<string, string> = {
   francetv: "France TV", dailymotion: "Dailymotion", vimeo: "Vimeo", twitch: "Twitch",
 };
 
-/** The site's name as people write it — the source word of its subtitles (D88): YouTube,
- *  SRF, RTVE, arte, Vimeo; any other site capitalised ("Example"); "" when the link names
- *  none. */
+/** The site's name as people write it — the source word of its subtitles: YouTube, SRF,
+ *  RTVE, arte, Vimeo; any other site capitalised ("Example"); "" when the link names none. */
 export function siteDisplayName(url: string, extractor?: string | null): string {
   const name = linkSiteName(url, extractor);
   return ownProp(SITE_DISPLAY, name) ?? name.charAt(0).toUpperCase() + name.slice(1);
@@ -462,8 +460,7 @@ export interface LinkStemInfo {
  *
  *  A local file: the record's title, else the file's own name (records of
  *  local files carry no title), either cleaned and bounded for every file
- *  system — a long source name plus a track suffix and ".tmp" overran the
- *  255-byte name cap.
+ *  system so a track suffix plus ".tmp" still fits the 255-byte name cap.
  *
  *  A link (`path` is its URL): `<YYYY.MM.DD>_<HH.MM>_<site>___<title>` — the
  *  fetch date/time and the site lead so a folder of saved links sorts by
@@ -495,7 +492,7 @@ export function exportStem(title: string | null | undefined, path: string, link?
  *  language tag) only a trailing `.fallbackExt` is stripped and the first
  *  file's name is re-derived from the stem like its siblings' — "/out/talk"
  *  for ".mkv" saves "/out/talk.mkv", "/out/renamed.lrc" for ".de.lrc" saves
- *  "/out/renamed.de.lrc". Extracted from the viewer's and History's exports. */
+ *  "/out/renamed.de.lrc". */
 export function derivePickedStem(
   target: string,
   firstSuffix: string,
@@ -531,7 +528,6 @@ export function withoutCopyPath<T extends { [K in KeptCopyField]?: string }>(r: 
   return n;
 }
 
-/** withoutCopyPath for the video copy. */
 export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
   return withoutCopyPath(r, "videoPath");
 }
@@ -632,7 +628,6 @@ export interface MediaExportProgress {
   total: number | null;
 }
 
-// ── The export queue ──────────────────────────────────────────────────────────
 // The server packages one video per user at a time (MEDIA_PACKAGE_MAX_INFLIGHT_PER_USER),
 // and `cancel_media_export` aborts whatever export is running. So exports run one after
 // another on a module-level chain (like streaming's injectChain): a second Save waits here
