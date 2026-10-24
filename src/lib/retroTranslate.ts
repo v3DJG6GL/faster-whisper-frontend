@@ -1,4 +1,4 @@
-// The viewer's chunked retro-translate run ("Job Signals"): a pure progress
+// The viewer's chunked retro-translate run: a pure progress
 // state machine for the mini progress card plus the chunk-loop driver that
 // feeds mergeSegmentTranslations per chunk. Kept free of React/IPC imports so
 // vitest can exercise the chunk math and the poll folding directly — the
@@ -16,8 +16,8 @@ export const TRANSLATE_CHUNK = 32;
 
 /** Character budget of one /v1/text/translations request, for every chunked caller: the
  *  server answers 413 for a request whose segment texts total over 200,000 characters
- *  (_TEXT_TRANSLATE_MAX_CHARS, backend translation/routes.py), so a run of long .txt
- *  paragraphs failed whole. UTF-16 length never undercounts its code points. */
+ *  (_TEXT_TRANSLATE_MAX_CHARS, backend translation/routes.py), which would fail a run of
+ *  long .txt paragraphs whole. UTF-16 length never undercounts its code points. */
 export const TRANSLATE_CHUNK_CHARS = 180_000;
 
 /** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
@@ -73,7 +73,7 @@ export interface TranslateRunUi {
    *  surfaces (sidebar badge, other-runs strip) name the run when its
    *  transcript is not the one on screen. */
   title?: string;
-  /** Total segments across the run / how many chunks-worth are merged. */
+  /** Total segments across the run / how many of them earlier chunks already answered. */
   total: number;
   done: number;
   /** In-flight chunk length (scales the server's per-chunk 0..1 progress). */
@@ -153,8 +153,8 @@ export function beginChunk(
   return {
     ...s,
     // A chunk request leaving IS the run translating: against a server with no shared
-    // progress entry (every poll 404s, which the viewer swallows) nothing else ever left
-    // "starting", so the card read "Starting…" for the whole run while rows landed.
+    // progress entry (every poll 404s, which the viewer swallows) nothing else ever leaves
+    // "starting", so the card would read "Starting…" for the whole run while rows land.
     // On the first chunk a later poll still corrects to downloading/loading.
     // Past it, any chunk having answered proves the model is up (and the network back):
     // whatever the card read — "loading"/"downloading" from a model phase no translating
@@ -287,8 +287,8 @@ export interface ChunkedTranslateArgs {
    *  index of `texts[k]` — sent as the request's ids, so the server's "segment N"
    *  warnings name the row in the whole transcript, not a position in this chunk. */
   translate: (texts: string[], idxs: number[]) => Promise<TextTranslationResult>;
-  /** A chunk request is about to leave: its segment indexes and how many
-   *  segments are already merged. */
+  /** A chunk request is about to leave: its segment indexes and how many of
+   *  `indexes` earlier chunks already answered (merged or not). */
   onChunkStart?: (chunkIdxs: number[], done: number) => void;
   /** A chunk answered: per-segment-index translation maps (empty results are
    *  dropped) + accumulated provenance. `firstChunk` = first merge of the run
