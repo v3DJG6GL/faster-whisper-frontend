@@ -38,8 +38,8 @@ describe("dayBuckets", () => {
   it("orders days newest first and records newest first by instant, whatever their offset", () => {
     const t1 = new Date(2026, 9, 13, 14, 0).toISOString();
     const t2 = new Date(2026, 9, 13, 8, 0).toISOString();
-    // Yesterday late evening, written with a far-east offset: its wall clock reads today and
-    // its raw string sorts above today's Z stamps.
+    // Yesterday late evening, written with a far-east offset so its wall clock reads today;
+    // listed first, above today's records.
     const y = withOffset(new Date(2026, 9, 12, 21, 30), 14 * 60);
     // Today 11:00 with a far-west offset: its wall clock reads an earlier time than t2's Z one.
     const t3 = withOffset(new Date(2026, 9, 13, 11, 0), -12 * 60);
