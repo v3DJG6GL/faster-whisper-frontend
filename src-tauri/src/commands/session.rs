@@ -255,7 +255,7 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// session (capture death) do NOT spawn the transcribe POST — a cancel should discard the clip, not
 /// fire a wasted server transcription. The one exception is a recovery cancel (below), which
 /// finishes a live session whose recording is kept.
-/// `discard_recording: false` (a recovery cancel: wake from sleep) leaves a transcription already
+/// `discard_recording: false` (a recovery cancel: stuck finalize, wake from sleep) leaves a transcription already
 /// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule. That
 /// holds for a LIVE session too when "Keep recordings" is on: it is `finish`ed, not discarded, so
 /// its clip is transcribed and saved like `cancel_stream`'s drain (its events are already silenced
