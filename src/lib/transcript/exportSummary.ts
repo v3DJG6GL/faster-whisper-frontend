@@ -172,6 +172,8 @@ export function exportSummary(a: {
   const sub = isSubtitleFormat(a.format);
   const item = (k: ContentItem["key"]) => a.content.find((c) => c.key === k)!;
   const rows: SummaryRow[] = [];
+  /** A row whose state branches share one label (the row's identity and React key). */
+  const row = (label: string, body: Omit<SummaryRow, "label">): SummaryRow => ({ label, ...body });
   const timing: SummaryRow =
     sub ? { label: "Cue timings", state: "on", why: "start and end of every subtitle" }
       : a.format === "lrc" ? { label: "Line timings", state: "on", why: "a time tag on every line" }
@@ -192,13 +194,13 @@ export function exportSummary(a: {
             : (a.fileCount ?? 0) > 1 ? ` — in ${a.fileCount} files, each site track on its own` : ""
         : ""),
   });
-  rows.push(
-    !sub ? { label: "Subtitle length", state: "na", why: "not part of this format" }
-      : a.ownOnly ? { label: "Subtitle length", state: a.split ? "on" : "off", why: "each track has its own count" }
-        : a.site ? { label: "Subtitle length", state: "na", why: `${plural(a.written, "subtitle")} — the site's own cues, never split` }
-        : !a.split ? { label: "Subtitle length", state: "off", why: `as transcribed — ${plural(a.written, "subtitle")}` }
-          : { label: "Subtitle length", state: "on", why: `${plural(a.written, "subtitle")} from ${plural(a.segCount, "segment")}` },
-  );
+  rows.push(row("Subtitle length",
+    !sub ? { state: "na", why: "not part of this format" }
+      : a.ownOnly ? { state: a.split ? "on" : "off", why: "each track has its own count" }
+        : a.site ? { state: "na", why: `${plural(a.written, "subtitle")} — the site's own cues, never split` }
+        : !a.split ? { state: "off", why: `as transcribed — ${plural(a.written, "subtitle")}` }
+          : { state: "on", why: `${plural(a.written, "subtitle")} from ${plural(a.segCount, "segment")}` },
+  ));
   if (a.hasSpeakers) {
     const names = item("names");
     rows.push({
@@ -220,25 +222,25 @@ export function exportSummary(a: {
       why: colors.state === "off" ? "off" : colors.why,
     });
   }
-  rows.push(
-    !sub ? { label: "Reading speed", state: "na", why: "not part of this format" }
-      : a.timingSynthesized ? { label: "Reading speed", state: "na", why: "not checked — the source has no timing" }
-        : a.cpsCount ? { label: "Reading speed", state: "warn", why: `${plural(a.cpsCount, "subtitle")} faster than ${a.cpsLimit}` }
-          : { label: "Reading speed", state: "on", why: `every subtitle at or under ${a.cpsLimit}` },
-  );
+  rows.push(row("Reading speed",
+    !sub ? { state: "na", why: "not part of this format" }
+      : a.timingSynthesized ? { state: "na", why: "not checked — the source has no timing" }
+        : a.cpsCount ? { state: "warn", why: `${plural(a.cpsCount, "subtitle")} faster than ${a.cpsLimit}` }
+          : { state: "on", why: `every subtitle at or under ${a.cpsLimit}` },
+  ));
   rows.push({ label: "Corrections", state: a.editCount ? "on" : "off", why: a.editCount ? `${a.editCount} included` : "none" });
   if (a.media) {
     const m = a.media;
-    rows.push(
+    rows.push(row("Media",
       m.choice === "video"
         ? {
-            label: "Media", state: "on",
+            state: "on",
             why: `video in ${m.container.toUpperCase()}, subtitles ${
               m.subtitleMode === "embedded" ? "embedded" : m.subtitleMode === "sidecar" ? "as separate files" : "embedded and as files"}`,
           }
-        : m.choice === "audio" ? { label: "Media", state: "on", why: `audio copy as ${m.audioExt ?? "m4a"}` }
-          : { label: "Media", state: "off", why: "text file only" },
-    );
+        : m.choice === "audio" ? { state: "on", why: `audio copy as ${m.audioExt ?? "m4a"}` }
+          : { state: "off", why: "text file only" },
+    ));
   }
   return rows;
 }
