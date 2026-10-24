@@ -25,7 +25,6 @@ export function useOverrideContext(args: {
   backendId?: string | null;
   apiKey?: string | null;
   serverKind: ServerKind;
-  /** Bumped by a fresh successful connection test of the same target: re-probe. */
   refresh?: number;
 }): {
   caps: Capabilities | null;
