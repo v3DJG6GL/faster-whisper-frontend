@@ -1,4 +1,5 @@
-// Round-trip guards: what generateExport writes, parseImportedText reads back.
+// Subtitle import: round-trips of what generateExport writes, cue cleanup (CJK line joins,
+// broadcaster hyphenation, rolling captions, markup) and which source paths are accepted.
 import { describe, expect, it } from "vitest";
 import { generateExport } from "./transcriptFormats";
 import {
@@ -694,7 +695,7 @@ describe("site subtitle cleanup", () => {
     expect(srt("<i>Ein- </i>", "<i>und Ausgang</i>")).toBe("Ein- und Ausgang");
   });
   it("a hyphen followed by many ambiguous tags and a later hyphen rejoins in linear time", () => {
-    // `<br class=x/>` parses two ways; 30 of them before " b-" took 2^30 backtracking steps.
+    // `<br class=x/>` parses two ways: a backtracking match over 30 of them before " b-" takes 2^30 steps.
     const line = "a-" + "<br class=x/>".repeat(30) + " b-";
     const t0 = performance.now();
     expect(parseImportedText("srt", `1\n00:00:01,000 --> 00:00:03,000\n${line}\nc\n`).segments[0].text).toBe("a- bc");
