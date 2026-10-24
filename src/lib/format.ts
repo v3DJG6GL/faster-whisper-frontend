@@ -69,7 +69,6 @@ export function fmtDurationAxis(seconds: number): string {
   return `${(s / 3600).toFixed(1).replace(/\.0$/, "")}h`;
 }
 
-// ── usage-chart dates ──────────────────────────────────────────────────────
 // The series carries `day` = days-since-epoch (server-local calendar day). We
 // format with timeZone:"UTC" so the rendered date matches that integer exactly,
 // independent of the viewer's offset (avoids an off-by-one near midnight).
@@ -101,7 +100,7 @@ export function localTodayDay(): number {
   return Math.floor((Date.now() - new Date().getTimezoneOffset() * 60_000) / DAY_MS);
 }
 
-/** Human byte size for download progress readouts ("41.2 MB", "980 KB"). */
+/** Human byte size, decimal units ("41.2 MB", "980 KB"). */
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "";
   // Decimal units (1 MB = 1 000 000 B): what yt-dlp's tables, the server
