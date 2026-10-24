@@ -65,8 +65,8 @@ export const SYNC_GROUP_LABEL: Record<SyncGroup, string> = {
   logging: "Logging",
 };
 
-/** List-category behaviors: switches that gate a bespoke compose/apply arm
- *  (element-wise substitution etc.) instead of plain field copying. */
+/** Switches that gate a bespoke compose/apply arm (element-wise substitution
+ *  etc.) instead of plain field copying. */
 export type CustomArm =
   | "backendList"
   | "backendUrls"
@@ -112,7 +112,6 @@ export interface SettingDef {
    *  Return), so a sync switch would advertise a choice the user does not have. No sync
    *  row, no gate, no wire field. */
   localOnly?: true;
-  /** List-category arm this switch gates instead of field copying. */
   custom?: CustomArm;
 }
 
@@ -353,8 +352,8 @@ export const SETTING = Object.fromEntries(DEFS.map((d) => [d.id, d])) as unknown
 >;
 
 /** Sentinel for fields with no sync switch of their own: machine-local ones that never
- *  reach the wire, and retired ones that still ride their category as a passthrough
- *  (`insertTiming` — see GENERAL_COVERAGE; `autoEnter` is stripped on apply). */
+ *  reach the wire (`autoEnter`, also stripped on apply), and retired ones that still ride
+ *  their category as a passthrough (`insertTiming` — see GENERAL_COVERAGE). */
 export const LOCAL = Symbol("machine-local");
 type Covered = SettingId | typeof LOCAL;
 
