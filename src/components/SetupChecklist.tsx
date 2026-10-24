@@ -5,7 +5,7 @@
 // app's geography; quick add is an explicitly optional third row that never
 // blocks the done state (the counter reads n/2 on purpose).
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card } from "@/components/ui";
 import { pickAndImportSettings } from "@/lib/api";
@@ -13,7 +13,9 @@ import { useApp } from "@/lib/store";
 import type { ImportResult } from "@/lib/sync/syncTypes";
 import { ImportPreview } from "@/components/sync/SettingsSync";
 
-function StepBullet({ state, n }: { state: "done" | "now" | "off"; n: number }) {
+type StepState = "done" | "now" | "off";
+
+function StepBullet({ state, n }: { state: StepState; n: number }) {
   return (
     <span
       className={
@@ -27,6 +29,19 @@ function StepBullet({ state, n }: { state: "done" | "now" | "off"; n: number }) 
     >
       {state === "done" ? "✓" : n}
     </span>
+  );
+}
+
+function StepRow({ state, n, title, desc, children }: { state: StepState; n: number; title: ReactNode; desc: string; children?: ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 py-3">
+      <StepBullet state={state} n={n} />
+      <div className="min-w-0 flex-1">
+        <div className={"text-[13px] font-semibold " + (state === "now" ? "text-text" : "text-dim")}>{title}</div>
+        <div className="mt-0.5 text-[12px] text-dim">{desc}</div>
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -57,59 +72,39 @@ export function SetupChecklist() {
       </div>
 
       <div className="mt-1 divide-y divide-line">
-        <div className="flex items-start gap-3 py-3">
-          <StepBullet state={backends > 0 ? "done" : "now"} n={1} />
-          <div className="min-w-0 flex-1">
-            <div className={"text-[13px] font-semibold " + (backends > 0 ? "text-dim" : "text-text")}>
-              Connect a backend
-            </div>
-            <div className="mt-0.5 text-[12px] text-dim">
-              Point the app at your faster-whisper server and test the connection.
-            </div>
-          </div>
+        <StepRow state={backends > 0 ? "done" : "now"} n={1} title="Connect a backend"
+          desc="Point the app at your faster-whisper server and test the connection.">
           {backends === 0 && (
             <Button variant="accent" size="sm" onClick={() => navigate("/backends?add=1")}>
               Add backend
             </Button>
           )}
-        </div>
+        </StepRow>
 
-        <div className="flex items-start gap-3 py-3">
-          <StepBullet state={profiles > 0 ? "done" : backends > 0 ? "now" : "off"} n={2} />
-          <div className="min-w-0 flex-1">
-            <div className={"text-[13px] font-semibold " + (backends > 0 && profiles === 0 ? "text-text" : "text-dim")}>
-              Confirm your hotkeys
-            </div>
-            <div className="mt-0.5 text-[12px] text-dim">
-              Two starter profiles are ready — confirm or change their key combos.
-            </div>
-          </div>
+        <StepRow state={profiles > 0 ? "done" : backends > 0 ? "now" : "off"} n={2} title="Confirm your hotkeys"
+          desc="Two starter profiles are ready — confirm or change their key combos.">
           {profiles === 0 && (
             <Button variant={backends > 0 ? "accent" : "ghost"} size="sm" onClick={() => navigate("/profiles")} disabled={backends === 0}>
               Review
             </Button>
           )}
-        </div>
+        </StepRow>
 
-        <div className="flex items-start gap-3 py-3">
-          <StepBullet state={quickAdd ? "done" : "off"} n={3} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-dim">
+        <StepRow state={quickAdd ? "done" : "off"} n={3} title={
+            <span className="flex items-center gap-2">
               Set up quick add
               <span className="rounded-pill border border-dashed border-line-strong px-2 py-px font-mono text-[9px] uppercase tracking-label text-faint">
                 optional
               </span>
-            </div>
-            <div className="mt-0.5 text-[12px] text-dim">
-              Fix misheard words from anywhere with a hotkey — needs a full faster-whisper-backend.
-            </div>
-          </div>
+            </span>
+          }
+          desc="Fix misheard words from anywhere with a hotkey — needs a full faster-whisper-backend.">
           {!quickAdd && (
             <Button variant="ghost" size="sm" onClick={() => navigate("/dictionary")} disabled={backends === 0}>
               Set up
             </Button>
           )}
-        </div>
+        </StepRow>
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-3 text-[12px] text-dim">
