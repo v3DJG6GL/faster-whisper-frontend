@@ -194,7 +194,7 @@ fn run(
     let sample_rate = config.sample_rate;
     let cap = MAX_CLIP_SECS * sample_rate as usize;
 
-    // Device opened — stamp its rate for playback (samples were cleared above).
+    // Stamp the device's rate for playback (samples were cleared above).
     if let Ok(mut c) = clip.lock() {
         c.sample_rate = sample_rate;
     }
