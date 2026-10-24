@@ -137,6 +137,10 @@ function joinLines(lines: string[], wraps: boolean): string {
   return parts.join("");
 }
 
+/** A `<v Name>` voice tag's longest content: the strip (MARKUP_TAG) and the speaker read
+ *  (VOICE_SPANS / VOICE_CUE) agree on it. */
+const VOICE_MAX = 200;
+
 /** A subtitle tag: a known name, then what that name can carry. Only `<v Name>` (as long as
  *  the voice regexes read it), `<lang en>`, `<font color=…>` and `<span class=…>` take a
  *  space-separated annotation; the rest take a `.class` list (`<c.mt>`), `name=value`
@@ -144,7 +148,7 @@ function joinLines(lines: string[], wraps: boolean): string {
  *  bare word, so "if a<b and c>d" or "x <i and y> z" is text, not a tag. */
 const MARKUP_TAG = new RegExp(
   [
-    String.raw`<\/?v(?=[\s.>/])[^<>\n]{0,200}>`,
+    String.raw`<\/?v(?=[\s.>/])[^<>\n]{0,${VOICE_MAX}}>`,
     String.raw`<\/?(?:lang|font|span)(?=[\s.>/])[^<>\n]{0,64}>`,
     String.raw`<\/?(?:b|i|u|s|c|ruby|rt|rb|rp|br|em|strong|sub|sup)(?:\.[^\s<>]{1,64})?` +
       String.raw`(?:[^\S\n]+[a-z][\w:-]{0,31}=(?:"[^"<>\n]{0,64}"|'[^'<>\n]{0,64}'|[^\s<>"']{1,64})){0,8}[^\S\n]*\/?>`,
@@ -410,6 +414,11 @@ export function fixBroadcasterText(lines: string[]): string[] {
  *  the run at every character, and a long run of spaces took quadratic time. */
 const CUE_TIMES = /^(\s|.*?\S)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
 
+/** Every voice span of a multi-voice cue, from one `<v Name>` to the next. */
+const VOICE_SPANS = new RegExp(String.raw`<v(?:\.[^\s>]*)?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?=<v[\s.]|$)`, "g");
+/** A cue that is one voice span, optionally closed. */
+const VOICE_CUE = new RegExp(String.raw`^<v(?:\.[^\s>]*)?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?:<\/v>)?$`);
+
 /** Raw cues → segments, after the rolling-caption and broadcaster cleanup every SRT/VTT
  *  import gets. `<v Name>` voice tags (VTT) carry the speaker; cueText handles the rest. */
 function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
@@ -427,7 +436,7 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
       // Only a dash right before a tag goes — an interrupted "I was going to—" keeps its own.
       const dj = joined.replace(/(^|\s)[-–—]\s*(?=<v[\s.])/g, "$1");
       const first = dj.search(/<v[\s.]/);
-      const spans = [...dj.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,200})>([\s\S]*?)(?=<v[\s.]|$)/g)];
+      const spans = [...dj.slice(first).matchAll(VOICE_SPANS)];
       // A tag the span regex rejects (a name over 200 characters) would drop its text: take
       // the whole cue as plain text instead, as the single-voice path does.
       if (spans.length === tags) {
@@ -440,7 +449,7 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
         continue;
       }
     }
-    const v = tags > 1 ? null : /^<v(?:\.[^\s>]*)?\s+([^>]{1,200})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
+    const v = tags > 1 ? null : VOICE_CUE.exec(joined);
     if (v) {
       const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
