@@ -292,7 +292,6 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
             }
         }
     }
-    // Legacy media store: split by record kind (url → links, else files).
     if let Ok(legacy_media) = crate::store::transcripts::legacy_media_dir(app) {
         if let Ok(entries) = std::fs::read_dir(&legacy_media) {
             for entry in entries.flatten() {
@@ -337,21 +336,16 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
         );
         rewrite_media_paths(app, &map);
     }
-    // Repair records a past (incomplete) rewrite left pointing at moved files. One
-    // full read+parse of every record, so NOT every launch: after a migration that
-    // moved something, and once per install (the stamp); `move_audio_base` heals
-    // directly through its own rewrite.
-    // A fresh install with no records skips the scan entirely and only stamps; the expensive
-    // read+parse is reserved for a base that actually has history to heal.
-    // The stamp is written only once the heal reached every record (and dropped when it did
-    // not, even if a past heal left one), so a record a sync client or antivirus held, or an
-    // unlistable history folder, is retried on the next launch; a permanently unreadable
-    // record re-runs the scan each launch while it exists — the same read+parse the History
-    // listing does, accepted.
-    // A base that is no folder (an unplugged drive, an offline share, a broken link) can heal
-    // nothing — every candidate lives under it — and cannot take the stamp either, so the scan
-    // would repeat on every offline launch; skip it and leave the heal armed for when it is back.
-    // (A migration that moved something moved it INTO the base, so it is a folder then.)
+    // Repair records a past incomplete rewrite left pointing at moved files. A full read+parse
+    // of every record, so only after a migration that moved something or while the base lacks
+    // the stamp (a fresh install with no records just stamps); `move_audio_base` heals through
+    // its own rewrite. The stamp is written only once the heal reached every record (dropped
+    // otherwise), so a record a sync client or antivirus held, or an unlistable history folder,
+    // is retried next launch; a permanently unreadable record re-runs the scan each launch — the
+    // same read+parse the History listing does, accepted.
+    // A base that is no folder (unplugged drive, offline share, broken link) can heal nothing and
+    // cannot take the stamp, so the scan would repeat every offline launch: skip it and leave the
+    // heal armed. (A migration that moved something moved it INTO the base, so it is a folder.)
     if !base.is_dir() {
         tracing::info!(
             "[audio] audio folder {} unavailable; media-path repair left for a later launch",
@@ -456,12 +450,9 @@ pub async fn move_audio_base(
 /// The exact refusal text the viewer matches on to fall back to the decode path.
 pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
 
-/// Read a media file the user picked into memory for in-card playback. The
-/// asset-protocol path is preferred, but Linux WebKitGTK's media stack is
-/// unreliable over custom URI schemes — when the <audio> element errors, the
-/// webview falls back to this and plays from a blob URL. Raw IPC response
-/// (no base64/JSON round-trip); capped so a mispicked multi-GB video can't
-/// balloon the webview.
+/// Read a media file into memory for in-card playback from a blob URL: Linux WebKitGTK's
+/// media stack is unreliable over custom URI schemes (the asset protocol). Raw IPC response
+/// (no base64/JSON round-trip); capped so a mispicked multi-GB video can't balloon the webview.
 #[tauri::command]
 pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, String> {
     // Below the ~240 MB at which handing the bytes over IPC froze the web process (see
@@ -561,11 +552,11 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
         .map_err(|e| e.to_string())?
 }
 
-/// The body of `save_text_file`. The predictable `<path>.tmp` is opened without following a
-/// symlink at its last component, as `config::write_private` does for the same reason: the
-/// export folder may be shared, and a planted `<name>.tmp` link would otherwise have this
-/// truncate and overwrite whatever it points at. Such a link fails the export, and the cleanup
-/// below removes the link itself (never its target), so a retry goes through.
+/// The body of `save_text_file`. On Linux the predictable `<path>.tmp` is opened without
+/// following a symlink at its last component, as `config::write_private` does for the same
+/// reason: the export folder may be shared, and a planted `<name>.tmp` link would otherwise have
+/// this truncate and overwrite whatever it points at. Such a link fails the export, and the
+/// cleanup below removes the link itself (never its target), so a retry goes through.
 fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
     use std::io::Write as _;
     let tmp = crate::transport::media::tmp_sibling(path);
