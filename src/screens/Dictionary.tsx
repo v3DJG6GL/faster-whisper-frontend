@@ -812,8 +812,8 @@ export default function Dictionary() {
           setRecentMax(rw.max ?? undefined);
         })
         .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
-      // Keep whichever rule cards are open across a save-triggered reload (and the conflict
-      // auto-reload) — both go through load(). A rule that vanished server-side drops out.
+      // Keep whichever rule cards are open across a save-triggered or manual reload — both go
+      // through load(). A rule that vanished server-side drops out.
       // Switching Backend resets expansion separately (the load-on-change effect below).
       setExpanded((prev) => new Set([...prev].filter((name) => list.some((r) => r.name === name))));
       setLoading(false);
@@ -1410,9 +1410,7 @@ function SaveBanner({
       {conflicts > 0 && (
         <Notice>
           {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
-          {/* In the fetch-error view the reload is what failed, so "Reload again" is not offered.
-              FetchError draws its own Retry only for a retryable failure (fetchRetryable); for any
-              other the clause points at the header's Refresh instead (retryBelow says which). */}
+          {/* In the fetch-error view the reload is what failed, so "Reload again" is not offered. */}
           {dictionaryConflictText(result.savedTo ?? null, result.shownFrom ?? null, reloadFailed, retryBelow, savedShown)}
           {!reloadFailed && (
             <>
