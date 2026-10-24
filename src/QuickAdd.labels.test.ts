@@ -1,5 +1,5 @@
 // The Quick-Add capture row's captions are sibling <label>s with no htmlFor, so they tie to
-// nothing: without a name of their own the find field was announced as its placeholder
+// nothing: without a name of their own the find field is announced as its placeholder
 // "say a word…" and the Insert field as "comma, edit".
 import { describe, expect, it } from "vitest";
 import quickAddSrc from "./QuickAdd.tsx?raw";
