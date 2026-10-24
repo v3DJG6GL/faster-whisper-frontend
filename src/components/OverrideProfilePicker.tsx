@@ -72,7 +72,7 @@ export function OverrideProfilePicker({
         // Render cap, matching the MAX_SHOWN_* ceilings the Dictionary/QuickAdd siblings use: the
         // list is server-authored and every entry becomes an <option>. De-duplicated first
         // (options are keyed on the value). A name past the cap stays reachable through the
-        // "Custom name…" row, which the dropdown branch offers too.
+        // "Custom name…" row.
         if (!cancelled) setNames([...new Set(n)].slice(0, MAX_SHOWN_PROFILES));
       })
       .catch(() => {
