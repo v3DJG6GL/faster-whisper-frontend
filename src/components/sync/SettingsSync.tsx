@@ -776,9 +776,8 @@ function SecurityReviewDialog() {
         <Button variant="ghost" disabled={busy} onClick={rejectPendingReview}>
           Reject
         </Button>
-        {/* Both buttons stay live across the await otherwise: approve nulls the pending review and
-            only then awaits applyBlob's keyring writes, so a click on Reject during that window
-            closes the modal as "rejected" after the change has already been committed. */}
+        {/* Before approve takes the review (and this modal) down, it waits for the engine lock and
+            composes this device, so `busy` locks both buttons for that wait. */}
         <Button
           disabled={busy || dictating}
           onClick={() => {
