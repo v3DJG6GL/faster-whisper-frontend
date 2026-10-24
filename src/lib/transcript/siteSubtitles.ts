@@ -1,14 +1,13 @@
-// The link card's "Download existing subtitles" model (D86): which of a link's own subtitle
-// tracks a run uses, which languages it transcribes or machine-translates, and how the
-// Subtitles table and the compound translation chips show it. A pure port of the approved
-// mockup's state model (LinkSubs.dc.html `renderVals`), so every rule is tested without a DOM.
+// The link card's "Download existing subtitles" model: which of a link's own subtitle tracks a
+// run uses, which languages it transcribes or machine-translates, and how the Subtitles table
+// and the compound translation chips show it. Pure, so every rule is tested without a DOM.
 //
 // Words: a language is WANTED when it is a translation target, or — under a preset — a
 // language the site brings that you did not remove. A wanted language gets its SOURCES from
 // the preset: Prefer = existing subtitles, else machine translation; Side by side = both;
-// Generate = machine translation only (nothing existing is used, v31). Every badge shows one of
+// Generate = machine translation only (nothing existing is used). Every badge shows one of
 // three states: active (used), idle (chosen but not needed — greyed), off (not chosen — struck).
-// Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
+// Any badge click flips used ↔ not used and snapshots everything into Custom.
 
 import type { UrlLanguageCheck } from "../api";
 import { MULTI_LANGUAGE, languageLabel, namedLanguage, primarySubtag, spokenLabel } from "../languages";
@@ -60,12 +59,12 @@ export interface SiteSubsState {
   /** Languages whose row was deleted (only those the site has no subtitles for). */
   removed: string[];
   /** The translation targets when the link appeared — the first rows, in that order, so a
-   *  row never moves or vanishes while you work (v25). */
+   *  row never moves or vanishes while you work. */
   initial: string[];
   /** The languages entering Custom wrote into the targets only because the preset wanted them
    *  (the site brings them) — not ones you picked. A preset takes them back out: kept as targets
-   *  they outranked the site's other languages at the translation limit, and one past it stayed
-   *  a chip with no source instead of dropping out. Picking one yourself (toggleTarget) keeps it. */
+   *  they would outrank the site's other languages at the translation limit, and one past it
+   *  would stay a chip with no source instead of dropping out. Picking one yourself (toggleTarget) keeps it. */
   promoted: string[];
 }
 
@@ -95,7 +94,7 @@ export interface SiteRow {
   label: string;
   sub: string;
   badges: SiteBadge[];
-  /** Only languages the site has no subtitles for can be deleted (v37). */
+  /** Only languages the site has no subtitles for can be deleted. */
   deletable: boolean;
 }
 
@@ -135,8 +134,8 @@ const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 /** The site track an ex:/cand: badge key names, else null. */
 const keyTrack = (key: string | undefined): string | null => (key ? /^(?:ex|cand):(.+)$/.exec(key)?.[1] ?? null : null);
 
-/** The source words every place uses for a subtitle (D88): our transcript, a machine
- *  translation, and the site's own — by the site's name. */
+/** The source words every place uses for a subtitle: our transcript, a machine translation,
+ *  and the site's own — by the site's name. */
 export const WHISPER_WORD = "Whisper";
 export const MT_WORD = "Machine translation";
 
@@ -162,9 +161,9 @@ export function siteWord(
   return t.kind === "auto" ? `${site} auto` : t.hoh ? `${site} SDH` : site;
 }
 
-/** The targets as the mockup's map: true = wanted, false = explicitly not wanted. A site
- *  track's language is any short code (`constructor` included), so the map is read own-only:
- *  an inherited `Object.prototype` member is neither wanted nor off. */
+/** The targets as a map: true = wanted, false = explicitly not wanted. A site track's
+ *  language is any short code (`constructor` included), so the map is read own-only: an
+ *  inherited `Object.prototype` member is neither wanted nor off. */
 function targetMap(input: SiteSubsInput, st: SiteSubsState): Record<string, boolean> {
   const m: Record<string, boolean> = {};
   for (const c of input.targets) m[c] = true;
@@ -212,7 +211,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     if (!custom || !key) return preset;
     if (st.sel && key in st.sel) return st.sel[key] ? "active" : "off";
     // A candidate the snapshot never saw (the spoken language was known then) stays off when its
-    // twin on the language's row was picked off: lit, it downloaded the track that row left out.
+    // twin on the language's row was picked off: lit, it would download the track that row left out.
     if (st.sel && key.startsWith("cand:") && st.sel["ex:" + key.slice(5)] === false) return "off";
     return preset === "active" ? "active" : "off";
   };
@@ -269,7 +268,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
         : `Click to stop translating into ${name}`;
     const mtB = mk({ key: "mt:" + code, kind: "mt", text: MT_WORD, title: mtTitle }, mtState);
     if (custom && !isTarget && mtB.state === "active") setMt(mtB, code, false);
-    // A wanted language never ends up without a source: machine translation fills in (v28/v30).
+    // A wanted language never ends up without a source: machine translation fills in.
     if (isTarget && mtB.state !== "active" && !used) setMt(mtB, code, true);
     const out = { badges: [mtB, ...exBadges], isTarget };
     sourcesCache.set(code, out);
@@ -301,9 +300,9 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     }
   } else {
     // Unknown spoken language: every plain human subtitle is a candidate. Nothing replaces the
-    // transcript then — Prefer behaves like Side by side (decision), the candidates ride along.
+    // transcript then — Prefer behaves like Side by side, the candidates ride along.
     // A candidate whose language you switched off is off, as its twin on that language's row:
-    // lit, it kept downloading the track while its own row showed it struck.
+    // lit, it would keep downloading the track while its own row showed it struck.
     const cands = avail.filter((t) => t.kind === "manual" && use(t) && !t.hoh);
     const candState = (t: T): BadgeState =>
       ownProp(tmap, t.code) === false ? "off" : st.policy === "generate" ? "idle" : "active";
@@ -320,7 +319,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     deletable: false,
   }];
   // Every other language: rows never vanish, badges grey out; a switched-off language keeps its
-  // row, only a language the site doesn't have can be deleted (v37). A deleted language that is
+  // row, only a language the site doesn't have can be deleted. A deleted language that is
   // a translation target again (re-added through the chips' picker while the panel was off) is
   // back: hidden, it would still be machine-translated with no row or chip to stop it.
   const codes = order.filter((c) => c !== sp && (!st.removed.includes(c) || tmap[c] === true));
@@ -330,7 +329,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       code,
       label: languageLabel(code),
       // A language the run still downloads a track for is no "off": without machine translation
-      // the panel's targets stay empty, and every Custom row read "off" beside a lit site badge.
+      // the panel's targets stay empty, so a Custom row would read "off" beside a lit site badge.
       sub: !src.isTarget
         ? src.badges.some((b) => b.kind !== "mt" && b.state === "active") ? "from the site" : "off"
         : tmap[code] === true ? "translation target" : "from the site",
@@ -342,8 +341,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   for (const c of targets) langSources(c);
   // A run downloads at most 8 tracks — the transcript's own track always (cut off, the run would
   // transcribe after all), then the original language's and those of the languages you translate
-  // into, then what the site brings besides, each in the site's order: kept by site order alone,
-  // a site with many languages filled the cap with unasked ones and machine-translated yours.
+  // into, then what the site brings besides, each in the site's order: by site order alone, a
+  // site with many languages would fill the cap with unasked ones and machine-translate yours.
   const ids = avail.filter((t) => shown.has(t.id)).map((t) => t.id);
   const asked = new Set(avail.filter((t) => t.code === sp || tmap[t.code] === true).map((t) => t.id));
   const kept = new Set(uniq([
@@ -351,8 +350,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   ]).slice(0, 8));
   const fetch = ids.filter((id) => kept.has(id));
   // A lit badge over the cap would claim a track the run never downloads: it greys out. A
-  // language you translate into that it leaves without a source gets machine translation (the
-  // v28/v30 fill-in); a language wanted only because the site brings it drops out of the wanted
+  // language you translate into that it leaves without a source gets machine translation (as in
+  // langSources); a language wanted only because the site brings it drops out of the wanted
   // set instead — Prefer means existing subtitles, not machine translation nobody asked for.
   // Rows share these badge objects; the chips, the counter and mtTargets are built after this.
   const capped = new Set(ids.filter((id) => !kept.has(id)));
@@ -392,7 +391,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       setMt(mtB, code, false);
     }
     // A row that read "from the site" for tracks the cap now greys is cut out too: under
-    // Custom without machine translation no row is a target, and it kept claiming the site.
+    // Custom without machine translation no row is a target, so it would keep claiming the site.
     else if (!src.isTarget && !left) cutOut.add(code);
   }
   for (const r of rows) if (r.code && cutOut.has(r.code)) r.sub = "over the download limit";
@@ -527,7 +526,7 @@ export function mtUsed(v: SiteSubsView): number {
   return v.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length;
 }
 
-/** Every wanted language written into the targets — what entering Custom does (v32). */
+/** Every wanted language written into the targets — what entering Custom does. */
 function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
   const tg = { ...m.tmap };
   for (const c of m.targets) tg[c] = true;
@@ -559,10 +558,10 @@ function strands(
     && !a.view.rows.find((r) => r.code === x)?.badges.some((b) => b.state === "active"));
 }
 
-/** A badge click: flip used ↔ not used, snapshot into Custom (v25/v27). A language you
+/** A badge click: flip used ↔ not used, snapshot into Custom. A language you
  *  translate into always keeps a source: switching off its last one lets machine translation
  *  take over (an existing subtitle went, unless the translation limit greys it) or drops the
- *  language (machine translation went, or cannot take over; v28). */
+ *  language (machine translation went, or cannot take over). */
 export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
   return flipWith(input, st, model(input, st), key);
 }
@@ -618,7 +617,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   // A site track switched on while the download is full would land past the 8-track cap and
   // grey again — and the language it made wanted would get machine translation instead of the
   // subtitle asked for. At a full download any track not already fetched (a twin already
-  // fetched stays allowed) caps one: itself or, earlier in site order, the last fetched one,
+  // fetched stays allowed) caps one: itself or a fetched track the cap ranks below it,
   // whose language silently falls back to machine translation. Refuse it; free a slot first.
   const run = m.view.run;
   if (mm && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(mm[2])) {
@@ -678,7 +677,7 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
 }
 
 /** A preset resets every pick — and takes out the targets entering Custom only promoted, so it
- *  ranks those like any other site language; Custom starts from a snapshot of what is on screen (v27). */
+ *  ranks those like any other site language; Custom starts from a snapshot of what is on screen. */
 export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: SitePolicy): SiteChange {
   if (policy !== "custom") {
     return {
@@ -864,8 +863,6 @@ export function attachSiteTracks(res: BatchResult, timed: readonly TimedTrack[],
     ...(warnings.length ? { warnings: [...(res.warnings ?? []), ...warnings] } : {}),
   };
 }
-
-// ── The link's spoken language (the link card's "Spoken language" row) ──────────────────────
 
 /** The language check of one link, as the row shows it. */
 export interface LinkLanguageCheck {
