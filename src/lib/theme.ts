@@ -169,9 +169,8 @@ export const MOTION_MAX_PERIOD = 604800;
 /** Where an arc goes when no second colour was chosen (Rose, the last preset). */
 export const DEFAULT_ARC_HUE = 350;
 
-/** Is this a motion the engine will actually run? Period 0 is Still; anything else must
- *  be a finite number of seconds inside the slider's span, the range one of the two, and
- *  each arc hue absent or within 0–360. */
+/** Is this a motion the engine will actually run? Period 0 (Still) is the one value
+ *  allowed outside the slider's span. */
 export function isValidAccentMotion(m: unknown): m is AccentMotion {
   if (!m || typeof m !== "object") return false;
   const { period, range, arcHue, arcFrom } = m as Record<string, unknown>;
@@ -402,10 +401,8 @@ function tick(): void {
 }
 
 /** (Re)arm the tick for the effective motion: Still stamps the base once and idles;
- *  anything else restamps every `driftTickMs`. Called whenever the motion, the reduced-
- *  motion preference, a pause or the driver's own lifetime changes. A paused window still
- *  gets the one stamp (so a theme flip or a new motion is right the moment it is shown) but
- *  no timer. */
+ *  anything else restamps every `driftTickMs`. A paused window still gets the one stamp
+ *  (so a theme flip or a new motion is right the moment it is shown) but no timer. */
 function schedule(): void {
   if (timer !== null) {
     clearInterval(timer);
