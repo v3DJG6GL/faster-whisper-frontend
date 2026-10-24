@@ -182,8 +182,7 @@ export function translationLanguages(caps: Capabilities | null | undefined, mode
 /** How many translation targets one run may carry on this server: the app's own ceiling
  *  (TRANSLATION_MAX_TARGETS), lowered to the server's TRANSLATION_MAX_TARGETS for this caller
  *  when it says one (`server_info.limits`). Unknown (no caps, an older server, a value that is
- *  not a number ≥ 1) = the app's ceiling — an absent capability never narrows a choice. The
- *  text route refuses a request over the server's cap, so dictation clamps to this too. */
+ *  not a number ≥ 1) = the app's ceiling — an absent capability never narrows a choice. */
 export function maxTranslationTargets(caps: Capabilities | null | undefined): number {
   return targetCap(caps?.server_info?.limits?.translation_max_targets);
 }
