@@ -15,6 +15,10 @@ import { canonicalActivation, type BatchResult, type TranscribeOptions } from ".
 import { joinSegmentTexts } from "./transcriptFormats";
 import { applyTextEdits } from "./wordAlign";
 
+/** What happened to a dictation's text (streaming's endOutcome). */
+const INSERT_METHODS = ["typed", "clipboard", "none"] as const;
+type InsertMethod = (typeof INSERT_METHODS)[number];
+
 export interface TranscriptRecord {
   schemaVersion: 1;
   /** Absent (older records) = "file". Dictation records reuse the same
@@ -68,7 +72,7 @@ export interface TranscriptRecord {
   profileTag?: string;
   activation?: "hold" | "handsfree";
   /** What actually happened to the text (endOutcome). */
-  insertMethod?: "typed" | "clipboard" | "none";
+  insertMethod?: InsertMethod;
   wordCount?: number;
   /** T2T dictation: the translated text that was injected (the record's
    *  `result.text` stays the ORIGINAL transcript), its target language, and
@@ -186,7 +190,7 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   }
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
   const im = r.insertMethod as unknown;
-  if (im != null && im !== "typed" && im !== "clipboard" && im !== "none") out = { ...out, insertMethod: undefined };
+  if (im != null && !(INSERT_METHODS as readonly unknown[]).includes(im)) out = { ...out, insertMethod: undefined };
   const act = r.activation as unknown;
   if (act != null) {
     const canon = canonicalActivation(act);
@@ -651,7 +655,7 @@ export interface DictationCapture {
   profileName?: string;
   profileTag?: string;
   activation?: "hold" | "handsfree";
-  insertMethod: "typed" | "clipboard" | "none";
+  insertMethod: InsertMethod;
   recordingPath?: string;
   translatedText?: string;
   translationTarget?: string;
