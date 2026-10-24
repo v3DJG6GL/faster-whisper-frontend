@@ -1,8 +1,8 @@
 // Per-Backend capability cache (GET /v1/me) — the on-demand sibling of usage.ts.
 //
 // Unlike usage.ts there is NO polling loop: capabilities move only when the server
-// is restarted or reconfigured, and the values we care about
-// (translation_models[].loaded) are read at the moment a job starts, so a refresh is
+// is restarted or reconfigured, and the one value that must be fresh
+// (translation_models[].loaded) is read at the moment a job starts, so a refresh is
 // triggered by a caller about to act (or by a fresh connection verdict). It is a module,
 // not a hook, because streaming.ts and transcribeRun.ts have no hook to hang a fetch off.
 
