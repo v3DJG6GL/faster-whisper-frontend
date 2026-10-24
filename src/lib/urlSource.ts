@@ -69,6 +69,15 @@ export function pastesSeveralLinks(raw: string): boolean {
   );
 }
 
+/** `new URL(s)`, or null when it does not parse. */
+function parseUrl(s: string): URL | null {
+  try {
+    return new URL(s);
+  } catch {
+    return null;
+  }
+}
+
 /** The longest media link normalizeMediaUrl accepts, in and out (the Rust transport's matching cap). */
 export const MEDIA_URL_MAX_CHARS = 2048;
 
@@ -92,13 +101,8 @@ export function normalizeMediaUrl(raw: string): string | null {
   if (!isSourceUrl(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.
   if (pastesSeveralLinks(raw)) return null;
-  let url: URL;
-  try {
-    url = new URL(t);
-  } catch {
-    return null;
-  }
-  if (!url.hostname) return null;
+  const url = parseUrl(t);
+  if (!url?.hostname) return null;
   // The cap belongs on the value we hand out, not just the input: WHATWG
   // serialization percent-encodes non-ASCII 1→6 chars, so a passing input
   // could return a queue key ~6× over the bound, which this function would
@@ -118,14 +122,11 @@ export function displayLabel(key: string, title?: string | null): string {
   // all-whitespace remote title is truthy and would render a blank row.
   const t = safeDisplayText(title, 120).trim();
   if (t) return t;
-  try {
-    const u = new URL(key);
-    const path = u.pathname === "/" && !u.search ? "" : u.pathname + u.search;
-    const short = path.length > 40 ? `${path.slice(0, 37)}…` : path;
-    return `${u.hostname}${short}`;
-  } catch {
-    return safeDisplayText(key, 120) || key;
-  }
+  const u = parseUrl(key);
+  if (!u) return safeDisplayText(key, 120) || key;
+  const path = u.pathname === "/" && !u.search ? "" : u.pathname + u.search;
+  const short = path.length > 40 ? `${path.slice(0, 37)}…` : path;
+  return `${u.hostname}${short}`;
 }
 
 /** The source pill for a link's extractor: yt-dlp's "Generic" reads as
@@ -137,11 +138,7 @@ export function extractorPill(extractor: unknown): string {
 
 /** Hostname of a URL key, for secondary lines in queue rows and history. */
 export function urlHost(key: string): string {
-  try {
-    return new URL(key).hostname;
-  } catch {
-    return "";
-  }
+  return parseUrl(key)?.hostname ?? "";
 }
 
 /** The spoken language Add link freezes on a link, or undefined to keep following the screen's
