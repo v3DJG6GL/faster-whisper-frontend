@@ -269,7 +269,7 @@ pub async fn get_streams(
     Ok(Some(bound_streams(parsed)))
 }
 
-/// The 422 body of the package route: `{"detail": {"code", "message"}}` or a plain string.
+/// A package-route error body: `{"detail": {"code", "message"}}` (422) or a plain string.
 /// A 429 names the refusing limit in `error.param` (`{"error": {"param", …}, "detail": "…"}`),
 /// returned as the code.
 fn error_code(body: &str) -> (Option<String>, String) {
