@@ -417,7 +417,6 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().running).toBe(true);
     getJob.mockClear();
     cancelRun();
-    // Routed to the server and job the run was re-attached to.
     expect(cancelBackendTranscription).toHaveBeenCalledWith(expect.objectContaining({
       progressId: JOB_A, serverUrl: "http://localhost:8000", backendId: "b1" }));
     expect(useTranscribeRun.getState().running).toBe(false);
