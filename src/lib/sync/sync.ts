@@ -917,6 +917,10 @@ function isReservedBackendId(id: unknown): boolean {
 /** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
 const CONTEXT_SEGMENTS_MAX = 10;
 
+/** The longest window (days) a synced retention setting accepts: the apply clamps and
+ *  securityChanges' consent mirror share it. */
+const MAX_RETENTION_DAYS = 3650;
+
 /** A finite number clamped to [lo, hi]; anything else is `undefined` (= drop, keep local). */
 function clampedIn(v: unknown, lo: number, hi: number): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined;
@@ -1260,8 +1264,8 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
     const n = roundedIn(ownProp(v, k), lo, hi);
     if (n !== undefined) out[k] = n;
   };
-  int("historyRetentionDays", 0, 3650);
-  int("dictationRetentionDays", 0, 3650);
+  int("historyRetentionDays", 0, MAX_RETENTION_DAYS);
+  int("dictationRetentionDays", 0, MAX_RETENTION_DAYS);
   int("numSpeakers", 0, 32);
   int("minSpeakers", 1, 32);
   int("maxSpeakers", 1, 32);
@@ -1853,7 +1857,7 @@ export async function applyBlob(
           ...typedLike(lg as Partial<typeof cur>, cur),
           logLevel: oneOf(lg.logLevel, LOG_LEVELS, cur.logLevel),
           keepDays: ((d) => (d === undefined ? cur.keepDays : Math.floor(d)))(
-            clampedIn(lg.keepDays, 0, 3650),
+            clampedIn(lg.keepDays, 0, MAX_RETENTION_DAYS),
           ),
           logDir:
             gates.logFolder && (typeof lg.logDir === "string" || lg.logDir === null)
@@ -3594,9 +3598,9 @@ export function securityChanges(
   // Typed reads, because the merged blob reaches here before applyBlob's typedLike pass. `norm`
   // mirrors what the apply does to an incoming value: the u32 key drops anything that is not a
   // whole non-negative number (typedLike's U32_KEYS), the two transcription-settings keys round
-  // and clamp to 0..3650 (sanitizeTranscription). So a window the apply can never land (`"3"`,
-  // -1, 0.3, 2.5) raises no review and parks no category. `undefined` from `norm` is "dropped":
-  // the apply keeps the local days, so it reads as no change.
+  // and clamp to 0..MAX_RETENTION_DAYS (sanitizeTranscription). So a window the apply can never
+  // land (`"3"`, -1, 0.3, 2.5) raises no review and parks no category. `undefined` from `norm` is
+  // "dropped": the apply keeps the local days, so it reads as no change.
   const days = (
     container: unknown,
     key: string,
@@ -3612,7 +3616,7 @@ export function securityChanges(
     return norm ? (norm(v) ?? fallback) : v;
   };
   const asU32 = (v: number) => (Number.isInteger(v) && v >= 0 && v <= 0xff_ff_ff_ff ? v : undefined);
-  const clamp3650 = (v: number) => roundedIn(v, 0, 3650);
+  const clampRetention = (v: number) => roundedIn(v, 0, MAX_RETENTION_DAYS);
   const pushIfSooner = (hereDays: number, nextDays: number, what: string, kind: SecurityChange["kind"]) => {
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
       out.push({
@@ -3674,7 +3678,7 @@ export function securityChanges(
       effDays(localA, localR),
       effDays(
         days(incoming.recording, "recordingsRetentionDays", localA, asU32),
-        days(incoming.recording, "dictationRetentionDays", localR, clamp3650),
+        days(incoming.recording, "dictationRetentionDays", localR, clampRetention),
       ),
       "dictations (text and audio)",
       "dictation-retention",
@@ -3684,7 +3688,7 @@ export function securityChanges(
     const here = days(local.fileTranscriptions, "historyRetentionDays", 0);
     pushIfSooner(
       here,
-      days(incoming.fileTranscriptions, "historyRetentionDays", here, clamp3650),
+      days(incoming.fileTranscriptions, "historyRetentionDays", here, clampRetention),
       "file transcriptions",
       "history-retention",
     );
