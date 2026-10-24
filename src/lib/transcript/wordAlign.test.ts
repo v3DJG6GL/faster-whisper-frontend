@@ -27,7 +27,6 @@ describe("alignSegmentWords", () => {
     expect(out[0]).toEqual(LINE[0]);
     expect(out[3]).toEqual(LINE[3]);
     expect(out[7]).toEqual(LINE[7]);
-    // The correction inherits the replaced word's slot.
     expect(out[5].word).toBe(" Velo-Navi-Test");
     expect(out[5].start).toBe(LINE[5].start);
     expect(out[5].end).toBe(LINE[5].end);
