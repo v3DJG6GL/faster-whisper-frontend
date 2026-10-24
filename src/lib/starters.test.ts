@@ -18,8 +18,8 @@ describe("starter profiles vs quick-add chord", () => {
   });
 });
 
-// Onboarding's starter step seeded these chords with no quick-add check before Confirm; both
-// commit sites now take the starters through startersClearOf.
+// Both starter commit sites (Profiles' card, Onboarding's starter step) take the starters
+// through startersClearOf.
 describe("startersClearOf", () => {
   it("unbinds only the starter whose chord is the quick-add chord", () => {
     const [hold, handsfree] = starterProfiles("b1");
