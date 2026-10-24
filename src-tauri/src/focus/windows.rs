@@ -129,7 +129,7 @@ fn fold_foreground() {
     LAST_HWND.store(hwnd as isize, Relaxed);
     let mut s = snap.lock();
     if s.current.as_ref().is_some_and(|c| c.app_id == app_id) {
-        return; // unchanged (where the 1 s poll usually lands)
+        return; // another window of the same app
     }
     tracing::debug!("[winfocus] foreground: {app_id}");
     if super::is_noise(&app_id) {
