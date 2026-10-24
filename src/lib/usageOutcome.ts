@@ -7,7 +7,7 @@
 // `duplicate`, which counts as success). The queue is persisted through Rust
 // (`usage-outcomes.json`) so a session that ends while the server is down still
 // lands on the next poll after it comes back — or after an app restart. Flushed on
-// enqueue, on the 30 s usage poll (lib/usage.ts) and at launch.
+// enqueue, on every usage poll (lib/usage.ts) and at launch.
 //
 // The state machine (`enqueue` / `nextBatch` / `verdictFor` / `applyPost` /
 // `pruneQueue`) is pure and unit-tested; the runtime wrapper at the bottom owns the
