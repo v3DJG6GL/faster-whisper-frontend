@@ -1,9 +1,7 @@
-// Drift guard for manifest labels that render as STRING LITERALS on screens
-// which keep their own bespoke controls (Transcribe.tsx / TranscriptViewer /
-// TranscriptExport / the Audio-storage block). Settings.tsx rows reference
-// `SETTING.x.label` directly, so they can't drift; these literals could — this
-// test pins each one to the manifest by reading the source. Renaming either
-// side without the other fails here.
+// Drift guard for manifest labels that render as STRING LITERALS in bespoke
+// controls. Rows that reference `SETTING.x.label` can't drift; these literals
+// could — this test pins each one to the manifest by reading the source.
+// Renaming either side without the other fails here.
 
 import { describe, expect, it } from "vitest";
 import { SETTING } from "./settingsManifest";
@@ -46,8 +44,8 @@ describe("manifest labels match the screens' literal labels", () => {
   for (const [file, id] of cases) {
     it(`${String(id)} ↔ ${file}`, () => {
       const label = SETTING[id].label;
-      // Control-shaped occurrences only: a bare `includes("Translation")` also matched an
-      // unrelated status-phrase map, so a renamed row title passed on the wrong string.
+      // Control-shaped occurrences only: a bare `includes(label)` can hit an unrelated string
+      // (e.g. "Translation" in a status-phrase map) and pass a renamed control.
       const pats = [
         `title="${label}"`,
         `label="${label}"`,
