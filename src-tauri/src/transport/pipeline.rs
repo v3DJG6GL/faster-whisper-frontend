@@ -72,6 +72,17 @@ pub struct PipelineFetch {
     pub error: Option<String>,
 }
 
+impl PipelineFetch {
+    /// A failed GET: `status` 0 = no usable answer (transport / body read), else the HTTP status.
+    fn failed(status: u16, error: String) -> Self {
+        Self {
+            status,
+            error: Some(error),
+            ..Default::default()
+        }
+    }
+}
+
 /// PATCH outcome. `ok` ⇒ HTTP 2xx with a readable reply (then inspect `conflicts` /
 /// `requires_restart`). A 2xx `status` with `ok: false` means the change LANDED but the
 /// reply couldn't be read or parsed, so the caller must reload rather than treat it as
@@ -136,12 +147,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                         tracing::warn!(
                             "[pipeline] rules GET: HTTP {code} body read failed: {reason}"
                         );
-                        return PipelineFetch {
-                            ok: false,
-                            status: 0,
-                            state: None,
-                            error: Some(reason),
-                        };
+                        return PipelineFetch::failed(0, reason);
                     }
                 };
                 match serde_json::from_str::<PipelineRulesState>(&text)
@@ -162,12 +168,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                         tracing::warn!(
                             "[pipeline] rules GET: HTTP {code} but unparsable body: {e}"
                         );
-                        PipelineFetch {
-                            ok: false,
-                            status: code,
-                            state: None,
-                            error: Some(format!("Unexpected response: {e}")),
-                        }
+                        PipelineFetch::failed(code, format!("Unexpected response: {e}"))
                     }
                 }
             } else {
@@ -178,22 +179,12 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     Err(_) => super::TIMED_OUT.to_string(),
                 };
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
-                PipelineFetch {
-                    ok: false,
-                    status: code,
-                    state: None,
-                    error: Some(detail),
-                }
+                PipelineFetch::failed(code, detail)
             }
         }
         Err(msg) => {
             tracing::warn!("[pipeline] rules GET failed: {msg}");
-            PipelineFetch {
-                ok: false,
-                status: 0,
-                state: None,
-                error: Some(msg),
-            }
+            PipelineFetch::failed(0, msg)
         }
     }
 }
