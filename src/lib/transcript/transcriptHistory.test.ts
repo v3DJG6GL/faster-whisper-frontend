@@ -1517,8 +1517,6 @@ describe("history record display", () => {
     });
 
     it("returns null rather than throwing on a hand-edited record", () => {
-      // Records are read back from hand-editable FILES: recordTracks must not
-      // trust an optional field's shape.
       expect(recordTracks(rec({ translations: "nope" as never }))).toBeNull();
       expect(recordTracks(rec({ translations: {} }))).toBeNull();
       // A string where the target list belongs, a number where a track belongs.
