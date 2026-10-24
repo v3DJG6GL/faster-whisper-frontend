@@ -28,6 +28,9 @@ export function Swatch({ kind }: { kind: UsageKind }) {
   );
 }
 
+/** A stage's colour dot (filter chips, the rail, Stages panel rows). */
+export const StageDot = ({ color }: { color: string }) => <i className="inline-block size-2 rounded-full" style={{ background: color }} />;
+
 export function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={cn("font-mono text-[11px] uppercase tracking-label text-faint", className)}>{children}</span>;
 }

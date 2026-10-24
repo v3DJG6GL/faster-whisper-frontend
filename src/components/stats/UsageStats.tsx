@@ -74,7 +74,7 @@ import { FilterBar } from "@/components/stats/FilterBar";
 import { StackedChart } from "@/components/stats/StackedChart";
 import { StatTile } from "@/components/stats/StatTiles";
 import { fmtDateRange, fmtSpanDate, kindFill } from "@/components/stats/chartKit";
-import { Eyebrow, HatchDef, Num, Panel, Pill, Swatch } from "@/components/stats/primitives";
+import { Eyebrow, HatchDef, Num, Panel, Pill, StageDot, Swatch } from "@/components/stats/primitives";
 import { tileSpecs } from "@/components/stats/tileSpecs";
 
 /** Window totals per kind: the densified series summed. */
@@ -100,7 +100,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
             return (
               <div key={row.key} className="grid grid-cols-[160px_1fr] items-center gap-3.5 border-t border-line py-2.5 text-[12.5px]">
                 <div className="flex items-center gap-2 text-dim">
-                  <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
+                  <StageDot color="var(--c-line-strong)" />
                   {row.label}
                 </div>
                 <div className="text-faint">Files and links only — {SCOPE_LABEL[scope].toLowerCase()} sessions never use it.</div>
@@ -112,7 +112,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
             return (
               <div key={row.key} className="grid grid-cols-[160px_1fr] items-center gap-3.5 border-t border-line py-2.5 text-[12.5px]">
                 <div className="flex items-center gap-2 text-dim">
-                  <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
+                  <StageDot color="var(--c-line-strong)" />
                   {row.label}
                 </div>
                 <div className="text-faint">Not used {rangeWord.startsWith("since ") ? rangeWord : `in ${rangeWord}`}. {row.emptyCopy}</div>
@@ -137,7 +137,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
           return (
             <div key={row.key} className="grid grid-cols-[160px_1fr_110px_150px] items-center gap-3.5 border-t border-line py-2.5 text-[12.5px] max-[820px]:grid-cols-2">
               <div className="flex items-center gap-2 font-semibold text-text">
-                <i className="inline-block size-2 rounded-full" style={{ background: row.colorVar }} />
+                <StageDot color={row.colorVar} />
                 {row.label}
                 {pinned && <span className="rounded-pill border border-line px-1.5 font-mono text-[9.5px] font-normal uppercase tracking-label text-faint">filter</span>}
               </div>

@@ -11,7 +11,7 @@ import {
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { UsageStageKey } from "@/lib/types";
 import { BUCKET_WORD, fmtDateRange, fmtSpanDate } from "@/components/stats/chartKit";
-import { Eyebrow, Pill } from "@/components/stats/primitives";
+import { Eyebrow, Pill, StageDot } from "@/components/stats/primitives";
 
 const STAGE_DOT: Record<UsageStageKey, string> = {
   translating: "var(--c-translate)",
@@ -235,7 +235,7 @@ export function FilterBar({
                   on ? "border-solid border-line-strong bg-surface-2 text-text" : "border-dashed border-line-strong text-dim hover:text-text",
                 )}
               >
-                <i className="inline-block size-2 rounded-full" style={{ background: STAGE_DOT[k] }} />
+                <StageDot color={STAGE_DOT[k]} />
                 {STAGE_CHIP_LABEL[k]}
               </button>
             );
@@ -296,7 +296,7 @@ export function FilterBar({
         <RailChip label="With" onClick={toggleBar}>
           {query.with.map((k) => (
             <span key={k} className="inline-flex items-center gap-1">
-              <i className="inline-block size-2 rounded-full" style={{ background: STAGE_DOT[k] }} />
+              <StageDot color={STAGE_DOT[k]} />
               {STAGE_CHIP_LABEL[k]}
             </span>
           ))}
