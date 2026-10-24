@@ -159,9 +159,9 @@ fn build_request_body<'a>(
 /// N-th id it was sent, so `position + 1` makes a warning read the cue number the user
 /// sees (an SRT cue number, the viewer's "segment i+1", the batch route's own count).
 /// Explicit ids rather than a chunk offset because the viewer sends sparse rows (only
-/// the untranslated / stale / flagged ones): with per-request ids every chunk's
-/// warnings named a cue in the first chunk, and two chunks' identical warnings
-/// collapsed into one. A list that does not match `texts` one-to-one is refused —
+/// the untranslated / stale / flagged ones): per-request ids would make every chunk's
+/// warnings name a cue in the first chunk, and collapse two chunks' identical warnings
+/// into one. A list that does not match `texts` one-to-one is refused —
 /// a guessed alignment would put translations on the wrong rows.
 fn wire_ids(ids: Option<&[usize]>, len: usize) -> anyhow::Result<Vec<usize>> {
     let Some(ids) = ids else {
@@ -267,9 +267,8 @@ pub async fn translate_texts(
         client_job,
     );
     let base = base_url(server_url);
-    // Per-request override of the shared client's 120 s default (reqwest's
-    // RequestBuilder::timeout replaces the client-level timeout for this
-    // request only) — see TEXT_TRANSLATE_TIMEOUT for why.
+    // reqwest's RequestBuilder::timeout replaces the shared client's 120 s timeout
+    // for this request only, rather than capping under it.
     let resp = with_auth(
         client().post(format!("{base}/v1/text/translations")),
         api_key,
