@@ -52,23 +52,18 @@ use std::time::Duration;
 /// to a NEWLY selected server for the whole 120 s. Keep failures prompt.
 const SYNC_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Ceiling on an inbound sync payload — the aggregate the per-category caps never bounded.
+/// Ceiling on a sync payload, inbound and (less [`SYNC_RESPONSE_MARGIN`]) outbound.
 ///
-/// Every existing bound on this data sits on a CONSUMER: `MAX_SYNCED_ENTRIES` (500) caps the
-/// entry COUNT per category, the render caps bound what is shown, and the per-field caps bound
-/// individual leaves. Nothing bounded the BLOB, so this route inherited the transcription-sized
-/// [`MAX_BODY`] (32 MiB) — while `SYNC_TIMEOUT` documented payloads as ≤512 KB.
+/// The other bounds on this data sit on CONSUMERS (`MAX_SYNCED_ENTRIES` = 500 entries per
+/// category, the render caps, the per-field caps), never on the blob, which would otherwise take
+/// the transcription-sized [`MAX_BODY`] (32 MiB). A sanitizer-passing blob of that size (500
+/// backends × 60 KB prompt ≈ 29 MiB) costs ~1.5-2 s of main-thread block per pull, on a route that
+/// runs UNATTENDED at startup and on every window focus, and is persisted to `sync-state.json` as
+/// the 3-way merge base, re-read and re-hashed at every launch.
 ///
-/// That gap is reachable and measurable: a blob that passes every existing sanitizer (500 backends
-/// each carrying a 60 KB prompt ≈ 29 MiB) costs ~1.5-2 s of hard main-thread block per pull, in a
-/// webview, on a route that runs UNATTENDED at startup and on every window focus. It is then
-/// persisted verbatim to `sync-state.json` as the 3-way merge base, so it is re-read and re-hashed
-/// at every launch for the life of the install.
-///
-/// 4 MiB: the worst-case LEGITIMATE blob computed from the caps
-/// above is ~1.5 MB (500 backends ≈750 KB + 500 profiles ≈500 KB + appRules ≈100 KB + secrets
-/// ≈50 KB), and a typical one is under 50 KB. 512 KB would reject a real max-config user and brick
-/// their sync; 4 MiB keeps ~2.5x headroom over worst-case-legit while cutting the surface 8x.
+/// 4 MiB: the worst-case LEGITIMATE blob from those caps is ~1.5 MB (500 backends ≈750 KB + 500
+/// profiles ≈500 KB + appRules ≈100 KB + secrets ≈50 KB), a typical one under 50 KB. 512 KB would
+/// reject a real max-config user; 4 MiB keeps ~2.5x headroom.
 ///
 /// Applied BEFORE the JSON parse, so an oversized payload fails as a transport error and is never
 /// merged, never rendered, and never persisted.
@@ -89,11 +84,10 @@ pub struct SyncRemoteState {
 }
 
 impl SyncRemoteState {
-    /// `device` is a server-supplied label rendered in the conflict dialog, as a Segmented option
-    /// LABEL the user clicks, on the always-visible sync status line, and on the restore consent
-    /// card — but unlike its `username` / `boot_id` / `server_version` siblings it was never
-    /// routed through the bounding helper, so it reached those surfaces with no cap and no
-    /// defanging at all. Bound it once, here, rather than at each render.
+    /// `device` is a server-supplied label rendered in the conflict dialog (as a Segmented option
+    /// LABEL the user clicks), on the always-visible sync status line and on the restore consent
+    /// card, so it is capped and defanged like its `username` / `boot_id` / `server_version`
+    /// siblings — once, here, rather than at each render.
     fn bounded(mut self) -> Self {
         self.device = self
             .device
@@ -106,8 +100,7 @@ impl SyncRemoteState {
     /// past 2^53 round-trips as something else and the `sync_push` invoke fails to deserialize
     /// before any Rust code runs, rejecting into a `void pushNow()` with no catch. The device
     /// then pulls forever and can never push again, and because the bad value is on disk it
-    /// survives restarts. The TS pull path already refuses such a version; the PUSH path (200 and
-    /// 409 alike) did not, and the push path is the one that writes it down.
+    /// survives restarts.
     fn version_representable(&self) -> bool {
         // A range test, not `abs()`: `i64::MIN.abs()` overflows (a panic in debug, a wrap back
         // to i64::MIN in release — which then PASSES `<= MAX_SAFE_VERSION`).
@@ -126,7 +119,7 @@ const VERSION_ERR: &str = "The server sent a settings version this app cannot re
 
 /// Accept one parsed server state: version-checked, then bounded; a parse error is prefixed
 /// with `what`. The ONE gate for all three response arms (pull, push 2xx, push 409), so the
-/// version guard cannot go missing from one of them again (see `version_representable`).
+/// version guard cannot go missing from one of them (see `version_representable`).
 fn accept(parsed: Result<SyncRemoteState, String>, what: &str) -> Result<SyncRemoteState, String> {
     match parsed {
         Ok(state) if state.version_representable() => Ok(state.bounded()),
@@ -262,9 +255,8 @@ pub async fn push(
         "base_version": base_version,
         "device": device,
     });
-    // SYNC_MAX_BODY bounds BOTH directions. Only the inbound side was capped, so a blob past
-    // 4 MiB pushed fine and then failed every pull, on this and every other device, forever
-    // (the version never advanced; the only recovery was "Delete server copy").
+    // SYNC_MAX_BODY bounds BOTH directions: a blob past it would push fine and then fail every
+    // pull, on this and every other device, until "Delete server copy".
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
     if over_wire_limit(bytes.len()) {
         return SyncPush {
@@ -292,10 +284,8 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
     {
         Ok(resp) => {
             let code = resp.status().as_u16();
-            // Keep the body read outcome separate: folding the transport error
-            // into `text` meant a size/timeout error was JSON-parsed and surfaced
-            // as "Unexpected response: expected value at line 1" instead of the
-            // real cause.
+            // Keep the body read outcome separate, so a size/timeout error surfaces as itself
+            // rather than as "Unexpected response: expected value at line 1".
             let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
                 Ok(b) => b,
                 Err(reason) => {
