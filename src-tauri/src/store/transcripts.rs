@@ -332,7 +332,7 @@ fn fix_records_in(
                 continue;
             };
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            if !is_record_file(&path) {
                 continue;
             }
             // A folder (or a link to one) named `*.json` is no record: reading it fails on every
@@ -550,6 +550,11 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
 /// is skipped (the record keeps playing from the original while it exists).
 pub(crate) const MAX_MEDIA_BYTES: u64 = 10 * 1024 * 1024 * 1024;
 
+/// Is `path` named like a stored record (`<id>.json`)?
+fn is_record_file(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("json")
+}
+
 /// A record file parsed as JSON; `None` when it cannot be read or does not parse.
 fn read_json_value(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
@@ -675,11 +680,9 @@ pub fn has_any_records(app: &AppHandle) -> bool {
 /// folder incomplete instead of the fast path stamping it healed.
 fn any_records_in(dirs: &[PathBuf]) -> bool {
     dirs.iter().any(|d| match list_dir(d, "history") {
-        Ok(Some(entries)) => entries.into_iter().any(|e| {
-            e.map_or(true, |x| {
-                x.path().extension().and_then(|s| s.to_str()) == Some("json")
-            })
-        }),
+        Ok(Some(entries)) => entries
+            .into_iter()
+            .any(|e| e.map_or(true, |x| is_record_file(&x.path()))),
         Ok(None) => false,
         Err(_) => true,
     })
@@ -770,7 +773,7 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(),
         // A folder-level readdir failure would otherwise truncate the listing silently.
         let entry = entry.map_err(|e| format!("could not list the history folder: {e}"))?;
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if !is_record_file(&path) {
             continue;
         }
         if entry
@@ -1000,11 +1003,7 @@ pub async fn transcript_store_stats(
     crate::commands::blocking(move || -> Result<serde_json::Value, String> {
         fn count_json(dir: &Path) -> u32 {
             std::fs::read_dir(dir)
-                .map(|e| {
-                    e.flatten()
-                        .filter(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
-                        .count() as u32
-                })
+                .map(|e| e.flatten().filter(|x| is_record_file(&x.path())).count() as u32)
                 .unwrap_or(0)
         }
         let [files, links, video] = all_media_dirs(&app, audio_base.clone())?;
@@ -1235,7 +1234,7 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+        if !is_record_file(&path) {
             continue;
         }
         let _io = record_io_lock();
@@ -1337,7 +1336,7 @@ fn wipe_records(dir: &Path) -> Result<usize, String> {
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        if !is_record_file(&path) {
             continue;
         }
         let _io = record_io_lock();
