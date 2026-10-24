@@ -22,7 +22,7 @@ import { listOwnsKey } from "@/lib/comboboxKeys";
 const MAX_SHOWN = 50; // popover DOM cap; typing narrows a longer pool
 
 /** Prefix matches first, then substring matches; case-insensitive. Empty query
- *  → the list as-is (newest-first from the server). */
+ *  → the caller's order as-is (recent words arrive newest-first). */
 function rank(suggestions: string[], query: string): string[] {
   const q = query.trim().toLowerCase();
   if (!q) return suggestions.slice(0, MAX_SHOWN);
