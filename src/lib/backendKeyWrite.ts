@@ -1,6 +1,6 @@
 // What the backend editor's Save does once its keyring write has landed. The write can sit behind a
-// wallet prompt for as long as the user likes; meanwhile the editor may have been left (sidebar →
-// Discard, back arrow) or the key field retyped. Either way the draft must not be saved.
+// wallet prompt for as long as the user likes; meanwhile the editor may have been left (sidebar or
+// a history Back → Discard) or the key field retyped. Either way the draft must not be saved.
 
 import type { Backend } from "./types";
 
