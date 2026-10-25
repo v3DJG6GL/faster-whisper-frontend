@@ -24,12 +24,12 @@
 //! (default 300) is the pre-chord settle for remote targets, so the user can measure with 0.
 //!
 //! **Structure.** The bookkeeping ([`OfferLedger`]) is pure and compiled on every platform so it is
-//! unit-tested on Linux; only the Win32 owner thread (`imp`) is Windows-only. The owner thread
-//! follows `hotkeys::windows::input_thread`: a message-only window, a ready handshake, commands over an
-//! mpsc channel woken by `PostMessageW`. Every clipboard call that can RE-ENTER the window
-//! procedure (`EmptyClipboard` sends `WM_DESTROYCLIPBOARD` to the current owner — us —
-//! synchronously; `DestroyWindow` sends `WM_RENDERALLFORMATS`) is made with no `RefCell` borrow
-//! held, and the window procedure never lets a panic cross the FFI boundary.
+//! unit-tested on Linux; only the Win32 owner thread (`imp`) is Windows-only. Like
+//! `hotkeys::windows::input_thread`, the owner thread has a message-only window and a ready
+//! handshake; commands reach it over an mpsc channel woken by `PostMessageW`. Every clipboard
+//! call that can RE-ENTER the window procedure (`EmptyClipboard` sends `WM_DESTROYCLIPBOARD` to
+//! the current owner — us — synchronously; `DestroyWindow` sends `WM_RENDERALLFORMATS`) is made
+//! with no `RefCell` borrow held, and the window procedure never lets a panic cross the FFI boundary.
 #![cfg_attr(not(windows), allow(dead_code))] // the ledger is exercised by tests off Windows
 
 use std::sync::OnceLock;
@@ -504,7 +504,7 @@ mod imp {
     }
 
     /// Run `f` on the owner state if it is free. A failed borrow means a re-entry we did not
-    /// expect; skipping is always safe here (the worst case is one missing log line).
+    /// expect; skipping it costs that one step (a render, an offer, a log line) but never panics.
     fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
         ST.with(|s| match s.try_borrow_mut() {
             Ok(mut g) => g.as_mut().map(f),
