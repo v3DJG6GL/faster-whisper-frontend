@@ -269,7 +269,7 @@ export function sitePanelState(ch: SiteChange, prev: SiteSubsState | null, mt: b
 }
 
 export default function Transcribe() {
-  // History's "Save audio…/Save video…" open the workbench straight onto the
+  // History's "Save the audio…/Save the video…" open the workbench straight onto the
   // export panel: the choice rides in router state and is consumed once.
   const location = useLocation();
   const navigate = useNavigate();
@@ -1092,8 +1092,6 @@ export default function Transcribe() {
       language: effectiveLanguage(undefined, language),
       prompt: backendPrompt(backend),
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
-      // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
-      // verbatim (it forces "no profile" server-side).
       overrideProfile: effectiveOverrideProfile(runOverrideProfile, backend.overrideProfile),
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
