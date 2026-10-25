@@ -692,6 +692,13 @@ mod tests {
             .to_string()
     }
 
+    /// The `audioBaseDir` setting a config.json holds now, read as the app's loader reads it.
+    fn audio_base(config: &Path) -> serde_json::Value {
+        let text = crate::config::read_config_text(config).unwrap().unwrap();
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        out["settings"]["recording"]["audioBaseDir"].clone()
+    }
+
     #[test]
     fn the_new_id_is_the_configured_identifier() {
         let conf: serde_json::Value =
@@ -793,11 +800,8 @@ mod tests {
         std::fs::write(cfg_new.join("config.json"), cfg).unwrap();
         let roots = [root(&cfg_root), root(&data_root)];
         rewrite_moved_paths(&roots, vec![(cfg_old, cfg_new.clone())]);
-        let out: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
-                .unwrap();
         assert_eq!(
-            out["settings"]["recording"]["audioBaseDir"],
+            audio_base(&cfg_new.join("config.json")),
             serde_json::json!(data_new.join("audio-x"))
         );
     }
@@ -960,12 +964,8 @@ mod tests {
         let rebased =
             rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]).unwrap();
         assert_eq!(rebased, vec![new.join("my-audio")]);
-        let text = crate::config::read_config_text(&new.join("config.json"))
-            .unwrap()
-            .unwrap();
-        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
-            out["settings"]["recording"]["audioBaseDir"],
+            audio_base(&new.join("config.json")),
             serde_json::json!(new.join("my-audio"))
         );
     }
@@ -980,12 +980,7 @@ mod tests {
         let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
         // Re-pointed: the loader reads the file lossily anyway, and the move never retries.
         assert_eq!(rebased, vec![new.join("my-audio")]);
-        let text = crate::config::read_config_text(&config).unwrap().unwrap();
-        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(
-            out["settings"]["recording"]["audioBaseDir"],
-            serde_json::json!(new.join("my-audio"))
-        );
+        assert_eq!(audio_base(&config), serde_json::json!(new.join("my-audio")));
         // The original bytes survive in a side copy — not config.json.bak, the reset banner's.
         assert_eq!(
             std::fs::read(new.join("config.json.invalid-utf8.bak")).unwrap(),
@@ -1155,11 +1150,6 @@ mod tests {
             Verdict::Stop(m) => assert!(m.contains(&config.display().to_string()), "{m}"),
             Verdict::Proceed => panic!("a failed re-point must stop the launch"),
         }
-        let audio_base = |cfg: &Path| -> serde_json::Value {
-            let out: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(cfg).unwrap()).unwrap();
-            out["settings"]["recording"]["audioBaseDir"].clone()
-        };
         assert_eq!(audio_base(&config), serde_json::json!(old.join("my-audio")));
         assert!(new.join(REPOINT_PENDING).exists());
         // The next launch: every root already moved, yet the setting is re-pointed.
