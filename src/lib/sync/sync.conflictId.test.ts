@@ -154,7 +154,7 @@ describe("resolveSyncConflicts", () => {
   });
 
   it("adopting a resolution records the device that wrote it", async () => {
-    // The three adopt sites all record the writer of the version being adopted; this one
+    // Every adopt site records the writer of the version being adopted; this one
     // kept naming the PREVIOUS sync's device under "Last synced just now · from X".
     useApp.getState().setSyncRuntime({ lastSyncDevice: "laptop-a" });
     raiseConflictForTests({ remoteDevice: "laptop-b" });
