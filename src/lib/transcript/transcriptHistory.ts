@@ -642,7 +642,8 @@ export function patchRecord(id: string, fn: (r: TranscriptRecord) => TranscriptR
   if (next !== latest) upsertRecord(next);
 }
 
-/** Everything a finished dictation session hands over (streaming.ts). */
+/** Everything a dictation hands over for one record (streaming.ts): a finished session, or
+ *  one utterance of a per-utterance session. */
 export interface DictationCapture {
   text: string;
   startedAt: number; // Date.now() at session start
@@ -673,8 +674,9 @@ export interface DictationCapture {
 /** A dictation's sourceName when the session named no app (appLabel reads it as "no title"). */
 const DICTATION_NAME = "Dictation";
 
-/** Save a finished dictation session as a history record; returns its id so
- *  the recording path can be attached when it arrives after the fact. */
+/** Save a dictation (a finished session, or an utterance on its first final) as a history
+ *  record; returns its id so later facts (the recording path, an utterance's appended text
+ *  and insert method) can be attached after the fact. */
 export function recordDictation(cap: DictationCapture): string {
   const rec: TranscriptRecord = {
     schemaVersion: 1,
@@ -773,8 +775,8 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
  *  from `segments[].translations` (the viewer's Translate / Re-translate writes only those), one
  *  text per language, each at most `max` chars. A record whose segments hold none falls back to
  *  the whole-text `result.translations` snapshot (records from before per-segment tracks; on a
- *  newer one that snapshot is the run's FIRST translation, stale after a re-translate). File-
- *  borne and unvalidated on load: every value is type-guarded. */
+ *  newer one that snapshot is the run's FIRST translation, stale after a re-translate). That
+ *  snapshot is file-borne and not repaired on load: every value is type-guarded. */
 export function recordTranslationTexts(rec: TranscriptRecord, max = Infinity): string[] {
   const segs: unknown = rec.result?.segments;
   const byLang = new Map<string, string[]>();
@@ -815,8 +817,8 @@ export function recordTracks(
 ): { lang: string; text: string; orig?: boolean }[] | null {
   const tr = rec.translations;
   if (!tr || typeof tr !== "object") return null;
-  // Both fields are file-borne and unvalidated on load: a string where the
-  // target list belongs, or a number where a track belongs, must not throw.
+  // `translations` is file-borne and unvalidated on load (repairRecord repairs only the
+  // target list): a number where a track belongs must not throw.
   const targets = Array.isArray(rec.translationTargets) ? rec.translationTargets : Object.keys(tr);
   const map = tr as Record<string, unknown>;
   const langs = targets.filter(
