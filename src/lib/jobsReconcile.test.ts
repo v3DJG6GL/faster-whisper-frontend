@@ -1081,12 +1081,7 @@ describe("reconcileJobs", () => {
   });
 
   it("deleting a lost request's failed record stops its watcher, so the finished job can't re-add it", async () => {
-    const r = row(JOB_A, Date.now());
-    await persistRow(r);
-    const rec = lostFailedRecord(r);
-    useTranscriptHistory.setState({ records: [rec] });
-    await watchRunningLost();
-    deleteJob.mockClear();
+    await watchLostFailed(false);
     deleteRecord(JOB_A);
     expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
