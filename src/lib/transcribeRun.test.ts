@@ -2510,7 +2510,15 @@ describe("lostContact (which failures leave a job the server may still finish)",
 });
 
 describe("translateParsed joins a text source like the TXT export", () => {
-  afterEach(() => translateText.mockReset());
+  // The caps before each test: the limit tests seed b1's and this puts them back.
+  let capsBefore = useApp.getState().caps;
+  beforeEach(() => {
+    capsBefore = useApp.getState().caps;
+  });
+  afterEach(() => {
+    translateText.mockReset();
+    useApp.setState({ caps: capsBefore });
+  });
 
   it("no seam space inside CJK, one space between Latin cues", async () => {
     const ja = await translateParsed({ segments: [{ text: "こんにちは。" }, { text: " 元気ですか。" }] }, {}, RUN_CTX);
@@ -2569,28 +2577,22 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("a list over the server's limit sends the first ones and names the rest", async () => {
     // The text route rejects an over-limit list whole (a link's frozen site plan, a list kept
     // from a higher-limit backend): cut it here, in the audio route's own warning words.
-    const before = useApp.getState().caps;
     useApp.setState({
-      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
+      caps: { ...capsBefore, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
     });
-    try {
-      translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
-      const r = await translateParsed(
-        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, RUN_CTX,
-      );
-      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
-      expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
-    } finally {
-      useApp.setState({ caps: before });
-    }
+    translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
+    const r = await translateParsed(
+      { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, RUN_CTX,
+    );
+    expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+    expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
   });
 
   it("caps never fetched for this backend are fetched once, then the list is cut to the server's limit", async () => {
     // A retry against a backend whose caps were never loaded: the text route would 422 the
     // whole list, so the caps are fetched here first, then the cap is read from them.
-    const before = useApp.getState().caps;
     const prevBackends = useApp.getState().backends;
-    const { b1: _b1, ...rest } = before as Record<string, unknown>;
+    const { b1: _b1, ...rest } = capsBefore as Record<string, unknown>;
     useApp.setState({
       caps: rest as never,
       backends: [...prevBackends, { id: "b1", name: "B1", serverUrl: "http://x" } as never],
@@ -2611,25 +2613,20 @@ describe("translateParsed joins a text source like the TXT export", () => {
       expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es");
     } finally {
       refreshCaps.mockReset();
-      useApp.setState({ caps: before, backends: prevBackends });
+      useApp.setState({ backends: prevBackends });
     }
   });
 
   it("a saved target the wire refuses is neither sent nor recorded", async () => {
-    const before = useApp.getState().caps;
     useApp.setState({
-      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 1 } } } as never },
+      caps: { ...capsBefore, b1: { server_info: { limits: { translation_max_targets: 1 } } } as never },
     });
-    try {
-      translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
-      const r = await translateParsed({ segments: [{ text: "Hi." }] }, { translateTo: ["de_CH", "fr"] }, RUN_CTX);
-      // Within the limit of one once the refused code is gone: no dropped-targets warning.
-      expect(translateText.mock.calls[0][0].targets).toEqual(["fr"]);
-      expect(Object.keys(r.translations ?? {})).toEqual(["fr"]);
-      expect(r.warnings ?? []).toEqual([]);
-    } finally {
-      useApp.setState({ caps: before });
-    }
+    translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
+    const r = await translateParsed({ segments: [{ text: "Hi." }] }, { translateTo: ["de_CH", "fr"] }, RUN_CTX);
+    // Within the limit of one once the refused code is gone: no dropped-targets warning.
+    expect(translateText.mock.calls[0][0].targets).toEqual(["fr"]);
+    expect(Object.keys(r.translations ?? {})).toEqual(["fr"]);
+    expect(r.warnings ?? []).toEqual([]);
   });
 
   it("a language named as a word is not sent as the source (the route 422s it); a code is", async () => {
@@ -2647,26 +2644,21 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {
-    const before = useApp.getState().caps;
     translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
-    try {
-      for (const max of [2, undefined]) {
-        const rest: Record<string, unknown> = { ...before };
-        delete rest.b1;
-        useApp.setState({
-          caps: (max === undefined
-            ? rest
-            : { ...rest, b1: { server_info: { limits: { translation_max_targets: max } } } }) as never,
-        });
-        translateText.mockClear();
-        const r = await translateParsed(
-          { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, RUN_CTX,
-        );
-        expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
-        expect(r.warnings ?? []).toEqual([]);
-      }
-    } finally {
-      useApp.setState({ caps: before });
+    for (const max of [2, undefined]) {
+      const rest: Record<string, unknown> = { ...capsBefore };
+      delete rest.b1;
+      useApp.setState({
+        caps: (max === undefined
+          ? rest
+          : { ...rest, b1: { server_info: { limits: { translation_max_targets: max } } } }) as never,
+      });
+      translateText.mockClear();
+      const r = await translateParsed(
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, RUN_CTX,
+      );
+      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+      expect(r.warnings ?? []).toEqual([]);
     }
   });
 });
