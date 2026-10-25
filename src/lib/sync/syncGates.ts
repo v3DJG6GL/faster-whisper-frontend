@@ -180,7 +180,7 @@ function gateSyncs(gates: Gates, cats: Record<string, boolean>, d: SettingDef): 
 /** The settings whose sync came on between `prev` and `now` inside a category that already
  *  synced in `prev` — one more setting of a synced group. While it was off, every base passed the
  *  server's value of it through, so a 3-way merge would read this device's own value as an edit
- *  and push it over the peer's. A category coming on whole is `catsFromGates`' business. */
+ *  and push it over the peer's. A category coming on whole is sync.ts's `freshCats` business. */
 export function gatesTurnedOn(prev: Gates, now: Gates): SettingId[] {
   const before = catsFromGates(prev);
   const after = catsFromGates(now);
