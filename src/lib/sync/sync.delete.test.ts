@@ -631,6 +631,14 @@ async function pullRetentionDrop(remote: SyncBlob): Promise<void> {
   await pullNow(true);
 }
 
+/** Seed a v1 base, then a peer's retention drop on a copy of it raises a review; returns the base. */
+async function raiseRetentionReview(): Promise<SyncBlob> {
+  const base = await seedBase();
+  await pullRetentionDrop(structuredClone(base));
+  expect(getPendingReview()).not.toBeNull();
+  return base;
+}
+
 /** Flip this device's startMinimized (an ordinary general edit) and return the new value. */
 function toggleStartMinimized(): boolean {
   const s = useApp.getState().settings;
@@ -1002,10 +1010,7 @@ describe("an edit made while a sync prompt waits", () => {
 
   it("survives approving the review", async () => {
     try {
-      const base = await seedBase();
-      const remote = structuredClone(base);
-      await pullRetentionDrop(remote);
-      expect(getPendingReview()).not.toBeNull();
+      await raiseRetentionReview();
       const scale = bumpChipScale();
       await approvePendingReview();
       expect(getPendingReview()).toBeNull();
@@ -1485,10 +1490,7 @@ describe("approving a backends review after turning the server-list gate off", (
 describe("a no-op push while a sync prompt waits", () => {
   it("keeps the review's notice", async () => {
     try {
-      const base = await seedBase();
-      const remote = structuredClone(base);
-      await pullRetentionDrop(remote);
-      expect(getPendingReview()).not.toBeNull();
+      await raiseRetentionReview();
       const pushesBefore = api.pushes;
       await pushNow();
       expect(api.pushes).toBe(pushesBefore); // the hash shortcut, not a 409 re-raise
@@ -1505,10 +1507,7 @@ describe("a no-op push while a sync prompt waits", () => {
   // bare "ok" said "Synced" next to the still-open review.
   it("keeps the review's notice through a pull refused while dictating", async () => {
     try {
-      const base = await seedBase();
-      const remote = structuredClone(base);
-      await pullRetentionDrop(remote);
-      expect(getPendingReview()).not.toBeNull();
+      const base = await raiseRetentionReview();
       // The peer reverted the retention and changed something ordinary: nothing to review, but
       // the apply is refused while a session runs.
       const next = structuredClone(base);
@@ -1533,10 +1532,7 @@ describe("a no-op push while a sync prompt waits", () => {
   // A push 409ing next to a review raises a conflict at the review's own version, so both wait:
   // closing one wrote a blank status over the other's notice while its dialog stayed up.
   async function raiseBoth(): Promise<void> {
-    const base = await seedBase();
-    const remote = structuredClone(base);
-    await pullRetentionDrop(remote);
-    expect(getPendingReview()).not.toBeNull();
+    await raiseRetentionReview();
     raiseConflictForTests({ remoteVersion: 2 });
     expect(getPendingReview()).not.toBeNull();
     expect(getPendingConflict()).not.toBeNull();
