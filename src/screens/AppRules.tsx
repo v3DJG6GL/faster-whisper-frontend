@@ -39,6 +39,14 @@ export function typedAppId(raw: string): string {
   return normalizeAppId(visible.replace(/\.exe$/i, ""));
 }
 
+/** The id a rule keys and saves under. `known` is already in the detector's form (the rule's
+ *  stored id, or what "Use current" filled in), so only typed text goes through typedAppId: the
+ *  detector strips ONE `.exe` (`Setup.exe.exe` reports `setup.exe`), and stripping again would
+ *  arm a rule that never matches. */
+export function ruleAppId(raw: string, known: string): string {
+  return raw === known ? normalizeAppId(raw) : typedAppId(raw);
+}
+
 function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };
 }
@@ -88,6 +96,8 @@ function Editor({
   // The label we last auto-filled from "Use current", so a later capture can refresh the label
   // unless the user hand-typed a custom one (then we leave it). See captureCurrent.
   const lastAutoName = useRef<string | undefined>(undefined);
+  // The id last seen in the detector's form (see ruleAppId).
+  const knownId = useRef(initial.appId);
   const set = (patch: Partial<AppRule>) => setR((x) => ({ ...x, ...patch }));
 
   // What "Auto" resolves to for the id as typed: Rust's built-in exe list (the window-class
@@ -96,7 +106,7 @@ function Editor({
   // a slow reply for "mstsc" can't label "mstsc2". `null` = not asked yet / no id. Asked about
   // the comparison key the rule matches by (appRuleKey: joiners dropped), so "ms\u200dtsc" is
   // judged as the "mstsc" it matches; a joiner-only id keys to "" and is not asked.
-  const detectId = appRuleKey(typedAppId(r.appId));
+  const detectId = appRuleKey(ruleAppId(r.appId, knownId.current));
   const [autoRemote, setAutoRemote] = useState<boolean | null>(null);
   useEffect(() => {
     // Reset first: a previous id's answer must not label this one while its reply is in flight.
@@ -130,6 +140,7 @@ function Editor({
           name: !x.name?.trim() || x.name === prevAuto ? autoLabel : x.name,
         }));
         lastAutoName.current = autoLabel;
+        knownId.current = app.appId;
         setSaveError(null); // the id it complained about is filled in now
       } else {
         setCaptureMsg(DETECT_FAILED_MSG);
@@ -158,7 +169,7 @@ function Editor({
       return false; // nothing persisted — "Save and leave" must stay
     }
     setSaveError(null);
-    onSave({ ...r, appId: typedAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
+    onSave({ ...r, appId: ruleAppId(r.appId, knownId.current), name: r.name?.trim() ? r.name.trim() : undefined });
     return true;
   };
 

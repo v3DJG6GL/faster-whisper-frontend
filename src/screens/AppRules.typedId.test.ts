@@ -4,11 +4,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { appRuleKey } from "@/lib/sanitize";
 
-const load = async (windows: boolean) => {
+const loadModule = async (windows: boolean) => {
   vi.resetModules();
   vi.doMock("@/lib/platform", () => ({ IS_LINUX: !windows, IS_WINDOWS: windows }));
-  return (await import("./AppRules")).typedAppId;
+  return import("./AppRules");
 };
+const load = async (windows: boolean) => (await loadModule(windows)).typedAppId;
 
 afterEach(() => {
   vi.doUnmock("@/lib/platform");
@@ -43,5 +44,16 @@ describe("typedAppId", () => {
     const typedAppId = await load(false);
     expect(typedAppId(" org.kde.konsole ")).toBe("org.kde.konsole");
     expect(typedAppId("chrome.exe")).toBe("chrome.exe");
+  });
+});
+
+describe("ruleAppId", () => {
+  it("keeps a Windows id the detector reported instead of stripping a second .exe", async () => {
+    const { ruleAppId } = await loadModule(true);
+    // An image `Setup.exe.exe` reports `setup.exe`: captured or stored, it must save as that.
+    expect(ruleAppId("setup.exe", "setup.exe")).toBe("setup.exe");
+    // Text the user typed over it is still keyed as typed.
+    expect(appRuleKey(ruleAppId("C:\\x\\Setup.exe.exe", "setup.exe"))).toBe("setup.exe");
+    expect(appRuleKey(ruleAppId("Chrome.exe", "setup.exe"))).toBe("chrome");
   });
 });
