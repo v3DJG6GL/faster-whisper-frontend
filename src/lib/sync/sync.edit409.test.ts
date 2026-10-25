@@ -149,6 +149,29 @@ it("a setting edited while an approval's compose waits on the keyring survives t
   expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
 });
 
+// A review's held-back apply that an edit dropped (made during the apply's keyring wait) landed
+// nothing, so the store it signs must be the one the merge was composed from: signed after the
+// drop, the edit is in the signature, the approval counts the category as unedited and puts the
+// reviewed (pre-edit) value back over it.
+it("a setting edited while a review's apply waits on the keyring survives the approval", async () => {
+  const { edited, remote } = await seed();
+  // The peer changes another chip field (no conflict with the store yet) and lowers the
+  // retention (held for review), so the raise applies everything else, backends included.
+  remote.chip = { ...remote.chip, dotScale: 2 } as never;
+  remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+  api.pull = { version: 5, updated_ts: 5, device: "peer", blob: remote };
+  // The first keyring read is the compose's; the edit lands in the apply's.
+  api.onKeyRead = () => {
+    api.onKeyRead = () => editChipScale(edited);
+  };
+  await pullNow(true);
+  expect(getPendingReview()).not.toBeNull();
+  expect(useApp.getState().settings.recording.dotScale).not.toBe(2); // the apply dropped
+  await approvePendingReview();
+  expect(useApp.getState().settings.recording.chipScale).toBe(edited);
+  expect(getPendingConflict()?.categories).toContain("chip");
+});
+
 // The Sync tab shows `syncError` only while `syncUnsupported` is clear: a flag cleared by nothing
 // but a pull's or a push's 200 would leave a push's conflict notice, after an old server's 404
 // and a backend update, hidden behind "doesn't support settings sync".

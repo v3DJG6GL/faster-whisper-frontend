@@ -2850,8 +2850,7 @@ const keyPrint = (key: string): string => hashBlob(["k1", key]) + hashBlob(["k2"
  *  is invisible in the list — `backends.secrets` holds a fingerprint per key read back instead
  *  (never the key; this lives in the PendingReview), or `KEYS_UNREAD` when the read failed or
  *  came back partial. */
-async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
-  const s = useApp.getState();
+async function storeSignature(cats: Record<SyncCategory, boolean>, s = useApp.getState()): Promise<SyncBlob> {
   const sig = await composeBlob(
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     cats,
@@ -3865,10 +3864,14 @@ async function applyAndRaiseReview(
   r: Pick<PendingReview, "changes" | "blob" | "cats" | "remote" | "version" | "updatedAt" | "device" | "degraded">,
 ): Promise<boolean> {
   const applyNow = heldBack(r.cats, r.changes);
+  const st0 = useApp.getState();
   const landed = await applyBlob(r.blob, applyNow);
   if (myGen !== gen) return false;
   const gatesSig = gatesSignature();
-  const storeSig = await storeSignature(r.cats);
+  // An apply that landed nothing (an edit during its keyring wait dropped it) signs the store
+  // the apply read before that wait: signed after the drop, the edit is in the signature, and the
+  // approval would count its category as unedited and put the reviewed, pre-edit value back.
+  const storeSig = await storeSignature(r.cats, landed ? undefined : st0);
   if (myGen !== gen) return false;
   raiseReview({
     ...r,
