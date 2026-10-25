@@ -1,9 +1,10 @@
 //! Crate layout: `commands/` holds most Tauri commands, one file per domain, all re-exported so
 //! the handler list below names them `commands::x`; a command that belongs to one feature (the
 //! aux windows, tray, log viewer, transcript store, cues, memwatch) registers from that module.
-//! The logic they call lives in the feature modules: `audio/`, `aux_windows/` (dictation chip, quick-add, language picker), `focus/`
-//! (focused-app detection), `hotkeys/`, `inject/` (text insertion), `store/` (local data files),
-//! `transport/` (the server protocol) and `config/` (settings model + keyring).
+//! The logic they call lives in the feature modules: `audio/`, `aux_windows/` (dictation chip,
+//! quick-add, language picker), `focus/` (focused-app detection), `hotkeys/`, `inject/` (text
+//! insertion), `store/` (local data files), `transport/` (the server protocol) and `config/`
+//! (settings model + keyring).
 //!
 //! Platform convention. A module that only exists for one OS is cfg-gated on its `mod` line and
 //! its few call sites carry the same cfg: `win_session_end` here, and `aux_windows::{kwin,
