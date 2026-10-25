@@ -13,8 +13,8 @@ export const fmtMonthYear = (day: number) => _monthYear.format(dayToDate(day));
 export const fmtDateRange = (from: number, to: number) => `${fmtSpanDate(from)} – ${fmtSpanDate(to)}`;
 
 /** Column label for a bucket's start: `12.06.` per day/week, `Juni` per month — and "today" on
- *  the column that is today (`today` = localTodayDay()), never merely the last one: a custom span
- *  ending in the past ends on a date. */
+ *  the day column that is today (`today` = localTodayDay()), never merely the last one: a custom
+ *  span ending in the past ends on a date. */
 export function bucketTick(b: { from: number }, mode: BucketMode, today: number): string {
   if (mode === "day" && b.from === today) return "today";
   return fmtDateTick(b.from, mode === "month");
