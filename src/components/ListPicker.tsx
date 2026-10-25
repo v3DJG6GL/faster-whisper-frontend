@@ -48,7 +48,7 @@ export interface TriggerProps {
   type: "button";
   /** Native: off while the trigger is open or holds focus (see below). */
   disabled?: boolean;
-  /** The caller's `disabled`, always — what a trigger shows and AT announces. */
+  /** The caller's `disabled`, except while open — what a trigger shows and AT announces. */
   "aria-disabled"?: true;
   "aria-haspopup": "listbox";
   "aria-expanded": boolean;
@@ -198,7 +198,7 @@ export function ListPicker<R>({
 }: {
   /** The list's accessible name ("Spoken language"). */
   label: string;
-  /** The rows for a search query (pure; called only while open). */
+  /** The rows for a search query (pure; called while open, and once on opening). */
   sections: (query: string) => PickerSection<R>[];
   multi?: boolean;
   rowKey: (r: R) => string;
