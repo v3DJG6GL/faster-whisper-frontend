@@ -40,6 +40,12 @@ const lastUpdate = <T,>(): T | undefined => {
   const u = updates<T>();
   return u[u.length - 1];
 };
+/** Writes `over` with the chip shown (indicator "top") in the same store write, then starts the controller. */
+const showChip = async (over: Partial<ReturnType<typeof useApp.getState>> = {}) => {
+  const s = useApp.getState().settings;
+  useApp.setState({ ...over, settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
+  await initOverlayController();
+};
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge, so
@@ -272,9 +278,7 @@ describe("chipStatsLine", () => {
 
 describe("initOverlayController — configLoaded reaches the chip", () => {
   it("sends configLoaded and re-emits when the config finishes loading", async () => {
-    const s = useApp.getState().settings;
-    useApp.setState({ configLoaded: false, settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
-    await initOverlayController();
+    await showChip({ configLoaded: false });
     const last = () => lastUpdate<{ configLoaded?: boolean }>();
     // The startup push carries the not-yet-loaded flag, so the chip keeps re-seeding its sizes.
     expect(last()?.configLoaded).toBe(false);
@@ -292,13 +296,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
     const profile = { id: "p1", name: "p1", activation: "handsfree", enabled: false, hotkey: [], backendId: "b1" } as unknown as Profile;
     const backend = { id: "b1", name: "b1" } as unknown as Backend;
     try {
-      useApp.setState({
-        status: "idle",
-        profiles: [],
-        backends: [backend],
-        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
-      });
-      await initOverlayController();
+      await showChip({ status: "idle", profiles: [], backends: [backend] });
       const last = () => lastUpdate<{ canStart?: boolean; startHint?: string }>();
       expect(last()).toMatchObject({ canStart: false, startHint: "Add a profile to begin" });
       useApp.setState({ profiles: [profile] });
@@ -315,13 +313,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
     const p1 = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: null } as unknown as Profile;
     const p2 = { ...p1, id: "p2", name: "p2" } as unknown as Profile;
     try {
-      useApp.setState({
-        status: "idle",
-        profiles: [p1, p2],
-        backends: [],
-        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
-      });
-      await initOverlayController();
+      await showChip({ status: "idle", profiles: [p1, p2], backends: [] });
       const last = () => lastUpdate<{ canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string }>();
       useApp.setState({ backends: [] }); // force an emit from this state
       expect(last()).toMatchObject({ canStart: false, startHint: "Add a backend to begin", canCycle: true, cycleHint: "" });
@@ -340,14 +332,7 @@ describe("initOverlayController — canStart tells the chip whether its start bu
     const profile = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: "b1" } as unknown as Profile;
     const backend = { id: "b1", name: "b1" } as unknown as Backend;
     try {
-      useApp.setState({
-        status: "idle",
-        profiles: [profile],
-        backends: [backend],
-        routePending: null,
-        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
-      });
-      await initOverlayController();
+      await showChip({ status: "idle", profiles: [profile], backends: [backend], routePending: null });
       const last = () => lastUpdate<{ canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string }>();
       // The picker's stamp: status stays "idle", only routePending says it is open.
       useApp.setState({ routePending: "choosing" });
@@ -520,12 +505,10 @@ describe("initOverlayController — the chip's speaking state follows every leve
     // A noise-suppressed / muted mic sends exact zeros between phrases. The store steps its
     // detector on every sample; the chip only hears a level CHANGE — so it must be handed the
     // store's verdict, or one step toward 0 then a freeze leaves it green through the silence.
-    const s = useApp.getState().settings;
     let now = 1_000_000;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
     try {
-      useApp.setState({ settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
-      await initOverlayController();
+      await showChip();
       const set = useApp.getState().setDictation;
       set({ status: "listening", level: 0 });
       const last = () => lastUpdate<{ speaking?: boolean }>();
