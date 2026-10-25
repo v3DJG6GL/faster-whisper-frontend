@@ -63,6 +63,11 @@ const storedDictation = (id: string, createdAt: string, over: Record<string, unk
   schemaVersion: 1, kind: "dictation", id, createdAt, sourcePath: "", sourceName: "Dictation", status: "done", ...over,
 });
 
+/** A done link record of `https://example.com/<name>` as the listing reads it from disk: untyped, so a repair test can damage any field. */
+const storedUrl = (id: string, name: string, createdAt: string, over: Record<string, unknown> = {}) => ({
+  schemaVersion: 1, kind: "url", id, createdAt, sourcePath: `https://example.com/${name}`, sourceName: name, status: "done", ...over,
+});
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -343,17 +348,7 @@ describe("loadHistory", () => {
 
   it("keeps a failed record with a non-string error and title, dropping only those fields", async () => {
     listTranscriptRecords.mockResolvedValue([
-      {
-        schemaVersion: 1,
-        kind: "url",
-        id: "bad-error",
-        createdAt: "2026-01-02T03:04:05.000Z",
-        sourcePath: "https://example.com/v",
-        sourceName: "v",
-        status: "failed",
-        error: 123,
-        title: {},
-      },
+      storedUrl("bad-error", "v", "2026-01-02T03:04:05.000Z", { status: "failed", error: 123, title: {} }),
     ]);
     await loadHistory(true);
     const r = saved("bad-error");
@@ -446,29 +441,10 @@ describe("loadHistory", () => {
     const cue = (text: unknown, start: unknown = 0, end: unknown = 1) => ({ start, end, text });
     const track = (id: string, cues: unknown) => ({ id, lang: "en", source: "site", kind: "manual", cues });
     const cleanTracks = [track("t-clean", [cue("Hello"), cue("there", 1, 2)])];
-    const clean = {
-      schemaVersion: 1,
-      kind: "url",
-      id: "tt-clean",
-      createdAt: "2026-01-02T03:04:08.000Z",
-      sourcePath: "https://example.com/c",
-      sourceName: "c",
-      status: "done",
-      result: { text: "hi", timedTracks: cleanTracks },
-    };
-    const base = {
-      schemaVersion: 1,
-      kind: "url",
-      sourcePath: "https://example.com/v",
-      sourceName: "v",
-      status: "done",
-    };
+    const clean = storedUrl("tt-clean", "c", "2026-01-02T03:04:08.000Z", { result: { text: "hi", timedTracks: cleanTracks } });
     listTranscriptRecords.mockResolvedValue([
-      { ...base, id: "tt-obj", createdAt: "2026-01-02T03:04:05.000Z", result: { text: "a", timedTracks: {} } },
-      {
-        ...base,
-        id: "tt-mixed",
-        createdAt: "2026-01-02T03:04:06.000Z",
+      storedUrl("tt-obj", "v", "2026-01-02T03:04:05.000Z", { result: { text: "a", timedTracks: {} } }),
+      storedUrl("tt-mixed", "v", "2026-01-02T03:04:06.000Z", {
         result: {
           text: "b",
           timedTracks: [
@@ -481,13 +457,8 @@ describe("loadHistory", () => {
             { ...track("t-label", [cue("x")]), label: 5, site: {} },
           ],
         },
-      },
-      {
-        ...base,
-        id: "tt-only-empty",
-        createdAt: "2026-01-02T03:04:07.000Z",
-        result: { text: "e", timedTracks: [track("t-empty", [])] },
-      },
+      }),
+      storedUrl("tt-only-empty", "v", "2026-01-02T03:04:07.000Z", { result: { text: "e", timedTracks: [track("t-empty", [])] } }),
       clean,
     ]);
     await loadHistory(true);
