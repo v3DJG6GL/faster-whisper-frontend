@@ -148,8 +148,21 @@ fn is_noise(app_id: &str) -> bool {
         return true;
     }
     let a = app_id.to_lowercase();
-    a.starts_with("kwin") || a == "ksmserver" || a == "plasmashell" || a.contains("plasma-desktop")
+    SHELL_APP_IDS.contains(&a.as_str())
 }
+
+/// The shell's a11y app names, matched EXACTLY: the name is self-asserted, so a prefix/substring
+/// match let any window calling itself `kwin-helper` pass as shell and have `focused_app_now`
+/// report the app focused before it. KWin's name follows its binary (`kwin_wayland`/`kwin_x11`,
+/// plain `kwin` in builds keyed on the project name); `plasma-desktop` is the KDE 4 shell binary.
+const SHELL_APP_IDS: &[&str] = &[
+    "kwin",
+    "kwin_wayland",
+    "kwin_x11",
+    "ksmserver",
+    "plasmashell",
+    "plasma-desktop",
+];
 
 /// Start the focus listener once (idempotent). On Linux it spawns on Tauri's async runtime so
 /// it can be called from `setup` (eager warm-up) as well as from the async commands.
@@ -295,6 +308,33 @@ mod tests {
         assert!(super::is_self("Faster_Whisper_Frontend"));
         assert!(super::is_self("org.fasterwhisper.frontend"));
         assert!(!super::is_self("org.kde.kate"));
+    }
+
+    #[test]
+    fn only_the_real_shell_names_are_noise() {
+        for id in [
+            "kwin",
+            "KWin",
+            "kwin_wayland",
+            "kwin_x11",
+            "ksmserver",
+            "plasmashell",
+            "plasma-desktop",
+        ] {
+            assert!(super::is_noise(id), "{id} is a shell name");
+        }
+        // Self-named lookalikes: an app picks its own a11y name, so these must stay targets.
+        for id in [
+            "kwin-helper",
+            "kwin_wayland_helper",
+            "evil-plasma-desktop-x",
+            "plasma-desktop-x",
+            "plasmashell2",
+            "org.kde.kate",
+            "",
+        ] {
+            assert!(!super::is_noise(id), "{id} is not the shell");
+        }
     }
 
     #[test]
