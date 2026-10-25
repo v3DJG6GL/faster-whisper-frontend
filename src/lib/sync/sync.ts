@@ -3256,21 +3256,10 @@ export async function pushNow(manual = false): Promise<void> {
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
         const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
         if (riskyPush.length > 0) {
-          const applyNow = heldBack(pushCats, riskyPush);
-          const landed = await applyBlob(merged, applyNow);
-          if (myGen !== gen) return; // superseded during the apply wait
-          // The gates the apply ran under, then the keyring read — which parks up to 10 s, so the
-          // epoch is checked AGAIN after it: a supersede meanwhile dropped every pending prompt on
-          // purpose, and raising this one would revive the old server's review in the new state.
-          const gatesSig = gatesSignature();
-          const storeSig = await storeSignature(pushCats);
-          if (myGen !== gen) return;
-          raiseReview({
+          await applyAndRaiseReview(myGen, {
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
-            applied: landed ? appliedAt(pushCats, applyNow) : categorySelection(false),
-            storeSig, gatesSig,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
-            pushAfter: true, degraded,
+            degraded,
           });
           return;
         }
@@ -3331,19 +3320,10 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // Everything else still applies — only the categories with a held-back change wait.
     // Deliberately no persistState here: adopting the server's version as the new base would
     // drop the held-back change, so the next pull re-offers it until the user decides.
-    const applyNow = heldBack(applyCats, risky);
-    const landed = await applyBlob(merged, applyNow);
-    if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
-    // Same re-check after the keyring read as pushNow's 409 twin.
-    const gatesSig = gatesSignature();
-    const storeSig = await storeSignature(applyCats);
-    if (myGen !== gen) return;
-    raiseReview({
+    await applyAndRaiseReview(myGen, {
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
-      applied: landed ? appliedAt(applyCats, applyNow) : categorySelection(false),
-      storeSig, gatesSig,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
-      device: remote.device ?? null, pushAfter: true, degraded,
+      device: remote.device ?? null, degraded,
     });
     return;
   }
@@ -3848,6 +3828,31 @@ function raiseReview(r: PendingReview): void {
   reviewStatus();
 }
 
+/** Apply everything but the categories with a held-back change, then raise the review over them
+ *  (it pushes after approval). The gates the apply ran under, then the keyring read — which parks
+ *  up to 10 s, so the epoch is checked AGAIN after it: a supersede meanwhile dropped every pending
+ *  prompt on purpose, and raising this one would revive the old server's review in the new state.
+ *  False when superseded during either wait (nothing raised). */
+async function applyAndRaiseReview(
+  myGen: number,
+  r: Pick<PendingReview, "changes" | "blob" | "cats" | "remote" | "version" | "updatedAt" | "device" | "degraded">,
+): Promise<boolean> {
+  const applyNow = heldBack(r.cats, r.changes);
+  const landed = await applyBlob(r.blob, applyNow);
+  if (myGen !== gen) return false;
+  const gatesSig = gatesSignature();
+  const storeSig = await storeSignature(r.cats);
+  if (myGen !== gen) return false;
+  raiseReview({
+    ...r,
+    applied: landed ? appliedAt(r.cats, applyNow) : categorySelection(false),
+    storeSig,
+    gatesSig,
+    pushAfter: true,
+  });
+  return true;
+}
+
 /** The status a pending review shows, at the raise and wherever another notice clears while the review still waits. */
 function reviewStatus(): void {
   setRuntime({
@@ -4319,28 +4324,17 @@ async function resolveLocked(
   // base so a rejection is re-offered on the next pull.
   const risky = gatedSecurityCheck(final, localNow, applyCats);
   if (risky.length > 0) {
-    const applyNow = heldBack(applyCats, risky);
-    const landed = await applyBlob(final, applyNow);
-    if (myGen !== gen) return "done";
-    // Same re-check after the keyring read as pushNow's 409 twin.
-    const gatesSig = gatesSignature();
-    const storeSig = await storeSignature(applyCats);
-    if (myGen !== gen) return "done";
-    raiseReview({
+    const raised = await applyAndRaiseReview(myGen, {
       changes: risky,
       blob: final,
       cats: applyCats,
       remote: c.remote,
-      applied: landed ? appliedAt(applyCats, applyNow) : categorySelection(false),
-      storeSig,
-      gatesSig,
       version: c.remoteVersion,
       updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,
-      pushAfter: true,
       degraded,
     });
-    return "prompt";
+    return raised ? "prompt" : "done";
   }
   const applied = await applyBlob(final, applyCats);
   if (myGen !== gen) return "done";
