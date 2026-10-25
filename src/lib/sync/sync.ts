@@ -3105,7 +3105,13 @@ export async function pushNow(manual = false): Promise<void> {
     }
   }
   let backend = syncBackend();
-  if (!backend || !canSync() || inFlight) return;
+  if (!backend || !canSync() || inFlight) {
+    // An automatic push that hit another sync's lock retries (debounced, so never more than one
+    // waits): the lock holder may adopt a blob composed before the edit that armed this push, and
+    // nothing else re-sends it. A retry with nothing new is a hash-match no-op.
+    if (inFlight && !manual) schedulePush();
+    return;
+  }
   // Don't propagate a state the local save-gate froze (hotkey conflict) or
   // couldn't persist — sync ships what config.json holds, not a maybe. Read from persistence,
   // not the save banner: dismissing the banner leaves the change just as unsaved.
@@ -3123,7 +3129,10 @@ export async function pushNow(manual = false): Promise<void> {
     }
     // The wait let anything change: re-check, with no await between this and the take below.
     backend = syncBackend();
-    if (!backend || !canSync() || inFlight) return;
+    if (!backend || !canSync() || inFlight) {
+      if (inFlight && !manual) schedulePush(); // as at the gate above
+      return;
+    }
   }
   // A category turned on since the last base (`freshCats`) is reconciled with the server first —
   // equal values merge, different ones ask — instead of this device's value going up over the
@@ -4419,8 +4428,9 @@ export async function initSync(): Promise<void> {
   // Hold the engine lock across the launch work: until loadSyncState and the keyring restore
   // (up to 10 s on a locked wallet) land, the base has no keys, so a "Push now" clicked meanwhile
   // composed a pass-through push against it and shipped a keyless backends list over the server's
-  // keys. An automatic trigger dropped at the gate loses nothing — the startup pull below runs
-  // after release; a manual Push / Pull clicked meanwhile waits for launch and that pull, then runs.
+  // keys. An automatic trigger dropped at the gate loses nothing — a push retries itself, and the
+  // startup pull below runs after release; a manual Push / Pull clicked meanwhile waits for
+  // launch and that pull, then runs.
   const myGen = gen;
   inFlight = true;
   let launchEnded!: () => void;

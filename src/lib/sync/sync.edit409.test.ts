@@ -172,6 +172,28 @@ it("a setting edited while a review's apply waits on the keyring survives the ap
   expect(getPendingConflict()?.categories).toContain("chip");
 });
 
+// An edit's debounced push that fires while another sync holds the lock (a slow PUT, a wallet
+// prompt) must retry: the lock holder's 200 adopts the blob it composed BEFORE the edit, and
+// nothing else re-sends the edit until an unrelated trigger.
+it("an automatic push that fires while a push is on the wire retries after it", async () => {
+  const { edited } = await seed();
+  api.onPush = () => {
+    editChipScale(edited);
+    void pushNow(); // the edit's debounced push, hitting the in-flight push's lock
+  };
+  vi.useFakeTimers();
+  try {
+    const pushesBefore = api.pushes;
+    await pushNow(true);
+    expect(api.pushes).toBe(pushesBefore + 1);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api.pushes).toBe(pushesBefore + 2);
+  } finally {
+    vi.useRealTimers();
+  }
+  expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
+});
+
 // The Sync tab shows `syncError` only while `syncUnsupported` is clear: a flag cleared by nothing
 // but a pull's or a push's 200 would leave a push's conflict notice, after an old server's 404
 // and a backend update, hidden behind "doesn't support settings sync".
