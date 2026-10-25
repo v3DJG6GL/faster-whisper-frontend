@@ -533,8 +533,7 @@ describe("wrapLines", () => {
     const lines = wrapLines(de, 42, 2);
     for (const l of lines) expect(l.length).toBeLessThanOrEqual(42);
     expect(lines.join("").replace(/\s/g, "")).toBe(de.replace(/\s/g, ""));
-    // A word over the cap by itself: its line ends right after it (and wraps), never at a
-    // better break further on.
+    // A word over the cap by itself wraps per character: no line runs over the cap for it.
     const x = "x".repeat(50);
     for (const l of wrapLines(`a ${x} is. Then we go`, 42, 2)) expect(l.length).toBeLessThanOrEqual(42);
   });
@@ -924,8 +923,7 @@ describe("wrapLines", () => {
     // The closing quote still joins what it closes, and an apostrophe (it's) is no quote.
     expect(cutByShare('我说"好"，他说"不"。', [1, 1])).toEqual(['我说"好"，', '他说"不"。']);
     expect(cutByShare("我觉得it's很好，他说'好'然后走了", [1, 1, 1])).toEqual(["我觉得it's很好，", "他说", "'好'然后走了"]);
-    // With no later quote of its kind it closes: the quotation opened in the previous segment,
-    // or a stray inch mark before it flipped the count.
+    // With no later quote of its kind it closes: the quotation opened in the previous segment.
     expect(cutByShare('去北京"然后回家', [1, 1])).toEqual(['去北京"', "然后回家"]);
     expect(cutByShare("去北京'然后回家", [1, 1])).toEqual(["去北京'", "然后回家"]);
     expect(wrapLines('我们明天去北京看看"然后回家吧', 6, 2)).toEqual(["我们明天去", '北京看看"', "然后回家吧"]);
@@ -1202,7 +1200,7 @@ describe("wrapLines", () => {
     expect(q28.some((l) => l.endsWith("n“,"))).toBe(true);
     expect(wrapLines("Go to „Rechtsschutzversicherungsgesellschaften“,, then click.", 14, 2, 6)
       .some((l) => /^[\p{P}]+$/u.test(l))).toBe(false);
-    // Even after three stops on the last letter, which cap what else rides along.
+    // Even after three stops on the last letter, which cap only further stops.
     for (const stops of ["...", "!?!"]) {
       const s = `Please look at „Rechtsschutzversicherungsgesellschaften${stops}“, before the meeting starts`;
       for (const cpl of [13, 14, 28, 30, 31, 42]) {
@@ -1217,7 +1215,7 @@ describe("wrapLines", () => {
     const v28 = wrapLines(verband, 28, 3);
     expect(v28.some((l) => l.startsWith("“")), v28.join(" | ")).toBe(false);
     expect(v28.join(" ").replace(/ /g, "")).toBe(verband.replace(/ /g, ""));
-    // A closing ” » ) or ' rides past the three-stop cap as „…...“ does.
+    // A closing ” » ) or ' after three stops rides along too, as „…...“ does.
     for (const [t, cpl] of [
       ["He said “Supercalifragilisticexpialidocious...” and left", 10],
       ["Il a dit «anticonstitutionnellementxyzabc...» et partit", 11],
