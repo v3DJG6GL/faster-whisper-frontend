@@ -174,7 +174,7 @@ fn note_injected(text: &str) -> Option<String> {
 /// and stays. Otherwise the slot names a string that never reached the clipboard while what IS
 /// there (a divert's pasted text, say) is no longer recognised as ours, and the next capture
 /// adopts our own transcript as the user's clipboard. A parameter, not the global, so it can be
-/// tested without touching `LAST_INJECTED` (see `own_injected_matches_last_set_modulo_crlf`).
+/// tested without touching `LAST_INJECTED` (see `a_failed_persist_takes_its_injected_note_back`).
 fn unnote_injected(slot: &Mutex<Option<String>>, prev: Option<String>, text: &str) {
     if let Ok(mut g) = slot.lock() {
         if g.as_deref() == Some(text) {
@@ -1370,10 +1370,10 @@ fn paste(
     // before its write, and a settle sleep before its chord, so it checks again at each.
     epoch: u64,
     own_window_focused: OwnWindowFocused<'_>,
-    // Nothing here is worth leaving on the clipboard (the hard-break separator): every arm that
-    // would keep the pasted text there for the user — the chord-time divert, a failed paste, an
-    // error abort's cancel — schedules the restore a pasted one gets instead, never a persistent
-    // owner.
+    // Nothing here is worth leaving on the clipboard (the hard-break separator, a whitespace-only
+    // live phrase): every arm that would keep the pasted text there for the user — the chord-time
+    // divert, a failed paste, an error abort's cancel — schedules the restore a pasted one gets
+    // instead, never a persistent owner.
     withhold_on_divert: bool,
 ) -> Result<Landed, String> {
     use arboard::Clipboard;
