@@ -55,7 +55,7 @@ interface ChipState {
   dictationError: string;
   // What the machine is doing right now, when there is more to say than the one-word
   // status (today: a cold translate's download/load/translate stages + its elapsed
-  // clock). ONE field, not four flat ones: chipPayload's change-detect list runs on the
+  // clock). ONE field, not four flat ones: chipController's change-detect list runs on the
   // ~30Hz level path, and the store writes this only on transitions.
   phase?: DictationPhase | null;
   position: "top" | "bottom" | "off";
@@ -619,7 +619,7 @@ export default function Overlay() {
     </span>
   ) : null;
   // Target readout: chipController.ts only sends `targetTitle` while a session is active AND the
-  // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
+  // "Show injection target" setting is on, so its presence stands in for that setting here.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
   const showTarget =
     !!state.targetTitle && (!state.targetOnlySpeaking || expanded) && (!state.targetOnHover || hoverReveal);
