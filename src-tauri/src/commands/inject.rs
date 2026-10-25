@@ -6,9 +6,9 @@ use crate::inject::text::InjectOutcome;
 use crate::inject::wayland::WaylandTyper;
 use tauri::{AppHandle, State};
 
-/// Snapshot of the clipboard taken before a live (per-segment) paste dictation, so
-/// the user's original clipboard is restored once at the end rather than after
-/// every segment (which would race + churn the clipboard manager).
+/// The user's clipboard during a live paste dictation, held here so it is put back at a phrase-end
+/// pause (`restore_clipboard_snapshot`) and at session end (`end_injection`) rather than after
+/// every pasted segment (which would race + churn the clipboard manager).
 #[derive(Default)]
 pub struct ClipboardSnapshot(pub std::sync::Mutex<Option<String>>);
 
@@ -173,11 +173,12 @@ pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
     }
 }
 
-/// Clear the `begin_injection` snapshot WITHOUT restoring it. Used when a live paste session
-/// ENDS on a clipboard-only phrase: the clipboard then deliberately holds the transcript the
-/// user wants to paste, so the end-of-session restore must NOT clobber it — but we still drop
-/// the snapshot so it can't leak a stale value into a later session (e.g. a future
-/// begin_injection that times out and keeps the prior snapshot).
+/// Clear the `begin_injection` snapshot WITHOUT restoring it, when a live paste session ends
+/// owing no restore: the last phrase was clipboard-only (the clipboard deliberately holds the
+/// transcript the user wants to paste, so a restore must NOT clobber it), the clipboard is the
+/// user's again, or a fatal inject failure tore the session down. Dropping the snapshot keeps it
+/// from leaking a stale value into a later session (e.g. a future begin_injection that times out
+/// and keeps the prior snapshot).
 #[tauri::command]
 pub fn discard_injection_snapshot(snap: State<ClipboardSnapshot>) {
     if let Ok(mut g) = snap.0.lock() {
@@ -425,8 +426,9 @@ fn logged_seed(source: &str, raw: &str) -> Option<String> {
     seed
 }
 
-/// Toggle the opt-in AT-SPI "deep field detection" (a11y flag + Chromium/Electron poke),
-/// which lets the focused-element editability read correctly for browser/Electron apps.
+/// Toggle the opt-in AT-SPI "deep field detection" (the Chromium/Electron poke; the a11y
+/// flag is set either way), which lets the focused-element editability read correctly for
+/// browser/Electron apps.
 #[tauri::command]
 pub fn set_deep_field_detection(
     guard: State<'_, crate::focus::AtspiGuard>,
