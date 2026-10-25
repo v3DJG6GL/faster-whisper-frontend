@@ -68,6 +68,12 @@ const storedUrl = (id: string, name: string, createdAt: string, over: Record<str
   schemaVersion: 1, kind: "url", id, createdAt, sourcePath: `https://example.com/${name}`, sourceName: name, status: "done", ...over,
 });
 
+/** Seeds the disk listing with `records` and runs a forced load of it. */
+const listAndLoad = async (records: unknown[]): Promise<void> => {
+  listTranscriptRecords.mockResolvedValue(records);
+  await loadHistory(true);
+};
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -121,7 +127,7 @@ describe("recordDictation", () => {
 describe("loadHistory", () => {
   it("keeps the listing alive when a file on disk is malformed", async () => {
     const good = storedDictation("keep-me", "2026-01-02T03:04:05.000Z", { sourceName: "Kate" });
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       good,
       null,
       "not an object",
@@ -131,7 +137,6 @@ describe("loadHistory", () => {
       { schemaVersion: 1, id: "no-name", createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "", status: "done" },
       { schemaVersion: 1, id: "num-name", createdAt: "2026-01-01T00:00:00.000Z", sourcePath: "", sourceName: 3, status: "done" },
     ]);
-    await loadHistory(true);
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["keep-me"]);
     expect(useTranscriptHistory.getState().loaded).toBe(true);
   });
@@ -140,7 +145,7 @@ describe("loadHistory", () => {
     const rec = (id: string, createdAt: string): TranscriptRecord => ({
       schemaVersion: 1, kind: "file", id, createdAt, sourcePath: "", sourceName: id, status: "done",
     });
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       rec("damaged", "garbage"),
       // 09:30Z: older than both noon records, though its string sorts above them.
       rec("offset", "2026-10-13T23:30:00+14:00"),
@@ -148,19 +153,16 @@ describe("loadHistory", () => {
       rec("eleven", "2026-10-13T11:00:00.000Z"),
       rec("noon-twin", "2026-10-13T12:00:00.000Z"),
     ]);
-    await loadHistory(true);
     // Transcribe's recent strip takes the first three of this list.
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["noon", "noon-twin", "eleven", "offset", "damaged"]);
 
     // Plain app-written Z stamps still sort newest first.
-    listTranscriptRecords.mockResolvedValue([rec("a", "2026-10-12T08:00:00.000Z"), rec("c", "2026-10-14T08:00:00.000Z"), rec("b", "2026-10-13T08:00:00.000Z")]);
-    await loadHistory(true);
+    await listAndLoad([rec("a", "2026-10-12T08:00:00.000Z"), rec("c", "2026-10-14T08:00:00.000Z"), rec("b", "2026-10-13T08:00:00.000Z")]);
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["c", "b", "a"]);
   });
 
   it("keeps a record with a non-string appId, dropping only that field", async () => {
-    listTranscriptRecords.mockResolvedValue([storedDictation("bad-app", "2026-01-02T03:04:05.000Z", { appId: 123 })]);
-    await loadHistory(true);
+    await listAndLoad([storedDictation("bad-app", "2026-01-02T03:04:05.000Z", { appId: 123 })]);
     const [r] = useTranscriptHistory.getState().records;
     expect(r?.id).toBe("bad-app");
     expect(r?.appId).toBeUndefined();
@@ -169,11 +171,10 @@ describe("loadHistory", () => {
   });
 
   it("keeps a record with non-array target lists, repairing only those fields", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedDictation("str-targets", "2026-01-02T03:04:05.000Z", { translationTargets: "de", result: { text: "x", translation: { targets: "de", model: "m" } } }),
       storedDictation("mixed-targets", "2026-01-02T03:04:05.000Z", { translationTargets: ["fr", 7, null], result: { text: "x", translation: { targets: ["it", {}] } } }),
     ]);
-    await loadHistory(true);
     const s = saved("str-targets");
     expect(s.translationTargets).toBeUndefined();
     expect(s.result?.translation).toEqual({ targets: [], model: "m" });
@@ -184,14 +185,13 @@ describe("loadHistory", () => {
   });
 
   it("repairs a string translateTo and non-string texts so the bug report and the snippet cannot throw", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("bad-texts", "a.wav", "2026-01-02T03:04:05.000Z", {
         options: { translateTo: "de", diarize: true },
         translatedText: 5,
         result: { text: 7, translation: { targets: "de" } },
       }),
     ]);
-    await loadHistory(true);
     const s = saved("bad-texts");
     expect(s.options?.translateTo).toBeUndefined();
     expect(s.options?.diarize).toBe(true);
@@ -202,7 +202,7 @@ describe("loadHistory", () => {
   });
 
   it("repairs a damaged segment list and correction map so the snippet cannot throw", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("bad-segs", "a.wav", "2026-01-02T03:04:05.000Z", {
         edits: { 0: "gone", 1: 9, 2: "TWO", "2.0": "junk", "": "x" },
         speakerEdits: { 2: "Ana" },
@@ -216,7 +216,6 @@ describe("loadHistory", () => {
         result: { text: "plain", segments: "abc" },
       }),
     ]);
-    await loadHistory(true);
     const a = saved("bad-segs");
     // The bad entries go and the corrections move with their segments: the one on "two"
     // (index 2) now sits on index 0, the bad slot's key is gone.
@@ -240,14 +239,13 @@ describe("loadHistory", () => {
     const clean = storedFile("keys-clean", "a.wav", "2026-01-02T03:04:07.000Z", {
       result: segs, edits: { 1: "Zwei." }, speakerEdits: { 0: "Ana" }, translationsStale: { 1: true },
     });
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("keys-mixed", "a.wav", "2026-01-02T03:04:05.000Z", {
         result: segs, edits: { "01": "x", 5: "y", 1: "ok" }, speakerEdits: { "": "A" }, translationsStale: { x: true, 0: true },
       }),
       storedFile("keys-only-bad", "a.wav", "2026-01-02T03:04:06.000Z", { result: segs, edits: { "01": "x" } }),
       clean,
     ]);
-    await loadHistory(true);
     const a = saved("keys-mixed");
     expect(a.edits).toEqual({ 1: "ok" });
     expect(a.speakerEdits).toEqual({});
@@ -261,7 +259,7 @@ describe("loadHistory", () => {
   });
 
   it("drops non-string speaker names so the viewer's speaker-name sanitizer cannot throw", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("bad-speakers", "a.wav", "2026-01-02T03:04:05.000Z", {
         speakerEdits: { 0: 5, 1: "Ana" },
         renames: { A: 1, B: "Bo" },
@@ -280,7 +278,6 @@ describe("loadHistory", () => {
         result: { text: "x", speakers: "A" },
       }),
     ]);
-    await loadHistory(true);
     const a = saved("bad-speakers");
     expect(a.speakerEdits).toEqual({ 1: "Ana" });
     expect(a.renames).toEqual({ B: "Bo" });
@@ -299,7 +296,7 @@ describe("loadHistory", () => {
     const clean = storedFile("clean-tr", "b.wav", "2026-01-02T03:04:06.000Z", {
       result: { text: "hi", segments: [seg("hi", { translations: { de: "Hallo" }, translationsKept: ["fr"] })] },
     });
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("bad-tr", "a.wav", "2026-01-02T03:04:05.000Z", {
         result: {
           text: "a b c d",
@@ -313,7 +310,6 @@ describe("loadHistory", () => {
       }),
       clean,
     ]);
-    await loadHistory(true);
     const a = saved("bad-tr");
     const segs = a.result?.segments ?? [];
     expect(segs.map((s) => s.text)).toEqual(["a", "b", "c", "d"]);
@@ -331,11 +327,10 @@ describe("loadHistory", () => {
 
   it("drops corrections with no segment to land on: an empty or missing list", async () => {
     const fix = { edits: { 0: "x" }, speakerEdits: { 0: "Ana" }, translationsStale: { 0: true } };
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("empty-segs", "a.wav", "2026-01-02T03:04:05.000Z", { ...fix, result: { text: "plain", segments: [] } }),
       storedFile("no-segs", "a.wav", "2026-01-02T03:04:06.000Z", { ...fix, result: { text: "plain" } }),
     ]);
-    await loadHistory(true);
     for (const id of ["empty-segs", "no-segs"]) {
       const r = saved(id);
       expect(r.edits).toBeUndefined();
@@ -347,10 +342,9 @@ describe("loadHistory", () => {
   });
 
   it("keeps a failed record with a non-string error and title, dropping only those fields", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedUrl("bad-error", "v", "2026-01-02T03:04:05.000Z", { status: "failed", error: 123, title: {} }),
     ]);
-    await loadHistory(true);
     const r = saved("bad-error");
     expect(r.status).toBe("failed");
     expect(r.error).toBeUndefined();
@@ -359,12 +353,11 @@ describe("loadHistory", () => {
 
   it("drops an unknown or non-string insertMethod so the expanded row cannot render an object", async () => {
     const hi = { result: { text: "hi" } };
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedDictation("im-obj", "2026-01-02T03:04:05.000Z", { ...hi, insertMethod: {} }),
       storedDictation("im-str", "2026-01-02T03:04:06.000Z", { ...hi, insertMethod: "x".repeat(500) }),
       storedDictation("im-ok", "2026-01-02T03:04:07.000Z", { ...hi, insertMethod: "clipboard" }),
     ]);
-    await loadHistory(true);
     for (const id of ["im-obj", "im-str"]) {
       const r = saved(id);
       expect(r.insertMethod).toBeUndefined();
@@ -376,13 +369,12 @@ describe("loadHistory", () => {
 
   it("maps the legacy \"latch\" activation to handsfree and drops an unknown one", async () => {
     const hi = { result: { text: "hi" } };
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedDictation("act-obj", "2026-01-02T03:04:05.000Z", { ...hi, activation: {} }),
       storedDictation("act-str", "2026-01-02T03:04:06.000Z", { ...hi, activation: "x".repeat(500) }),
       storedDictation("act-latch", "2026-01-02T03:04:07.000Z", { ...hi, activation: "latch" }),
       storedDictation("act-hold", "2026-01-02T03:04:08.000Z", { ...hi, activation: "hold" }),
     ]);
-    await loadHistory(true);
     for (const id of ["act-obj", "act-str"]) {
       const r = saved(id);
       expect(r.activation).toBeUndefined();
@@ -393,11 +385,10 @@ describe("loadHistory", () => {
   });
 
   it("drops a non-number result.duration so the viewer's meta line cannot throw", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("dur-str", "a.wav", "2026-01-02T03:04:05.000Z", { result: { text: "hi", duration: "12.5", language: "en" } }),
       storedFile("dur-ok", "b.wav", "2026-01-02T03:04:06.000Z", { result: { text: "ok", duration: 12.5 } }),
     ]);
-    await loadHistory(true);
     const r = saved("dur-str");
     expect(r.result?.duration).toBeUndefined();
     expect(r.result?.text).toBe("hi");
@@ -406,7 +397,7 @@ describe("loadHistory", () => {
   });
 
   it("drops a non-string result.language / language so the track readers cannot throw", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("lang-bad", "c.wav", "2026-01-02T03:04:07.000Z", {
         language: {},
         result: { text: "hi", language: 5 },
@@ -416,7 +407,6 @@ describe("loadHistory", () => {
         result: { text: "ok", language: "de" },
       }),
     ]);
-    await loadHistory(true);
     const r = saved("lang-bad");
     expect(r.result?.language).toBeUndefined();
     expect(r.language).toBeUndefined();
@@ -426,13 +416,12 @@ describe("loadHistory", () => {
   });
 
   it("files a stored standard server's word language by its code", async () => {
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedFile("lang-word", "e.wav", "2026-01-02T03:04:08.000Z", {
         language: "english",
         result: { text: "hi", language: "english" },
       }),
     ]);
-    await loadHistory(true);
     expect(saved("lang-word").result?.language).toBe("en");
     expect(saved("lang-word").language).toBe("en");
   });
@@ -442,7 +431,7 @@ describe("loadHistory", () => {
     const track = (id: string, cues: unknown) => ({ id, lang: "en", source: "site", kind: "manual", cues });
     const cleanTracks = [track("t-clean", [cue("Hello"), cue("there", 1, 2)])];
     const clean = storedUrl("tt-clean", "c", "2026-01-02T03:04:08.000Z", { result: { text: "hi", timedTracks: cleanTracks } });
-    listTranscriptRecords.mockResolvedValue([
+    await listAndLoad([
       storedUrl("tt-obj", "v", "2026-01-02T03:04:05.000Z", { result: { text: "a", timedTracks: {} } }),
       storedUrl("tt-mixed", "v", "2026-01-02T03:04:06.000Z", {
         result: {
@@ -461,7 +450,6 @@ describe("loadHistory", () => {
       storedUrl("tt-only-empty", "v", "2026-01-02T03:04:07.000Z", { result: { text: "e", timedTracks: [track("t-empty", [])] } }),
       clean,
     ]);
-    await loadHistory(true);
     const o = saved("tt-obj");
     expect(o.result?.timedTracks).toBeUndefined();
     expect(o.result?.text).toBe("a");
