@@ -326,8 +326,7 @@ pub fn register_hold_then(
 
 impl Engine {
     /// Advance the machine after a key event. `held` is the full set of
-    /// currently-down key codes; `now` stamps a new hold's `started_at`
-    /// (injected so tests can order holds deterministically).
+    /// currently-down key codes; `now` stamps a new hold's `started_at`.
     pub fn step(&mut self, held: &HashSet<u16>, now: Instant) -> Vec<Fire> {
         let n = self.chords.len();
         for i in 0..n {
@@ -703,8 +702,7 @@ mod tests {
         );
     }
 
-    /// Every branch of the shared latch predicate: fully held / fully released / a staggered
-    /// release with one modifier still down / only the plain key down / the empty chord.
+    /// Every branch of the shared latch predicate.
     #[test]
     fn the_teardown_latch_arms_on_any_modifier_still_down_and_never_on_a_plain_key() {
         let is_mod = |k: u16| k == 1 || k == 2;
