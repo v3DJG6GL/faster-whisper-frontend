@@ -852,8 +852,6 @@ mod kwin {
         static PLACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = PLACE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Need both tools; if we can't read existing rules we must not rewrite the
-        // `rules=` list, or we'd silently drop the user's other window rules.
         let Some((writer, reader)) = config_tools() else {
             return;
         };
