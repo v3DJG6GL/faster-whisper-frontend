@@ -61,9 +61,7 @@ mod tests {
 
     #[test]
     fn round_trips_an_object_and_rejects_the_rest() {
-        let dir = std::env::temp_dir().join(format!("fwf-jobs-ledger-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("jobs-ledger");
         assert!(load(&dir).unwrap().is_none());
         let doc = serde_json::json!({"v": 1, "rows": [{"jobId": "ab"}]});
         save(&dir, &doc).unwrap();
@@ -80,10 +78,7 @@ mod tests {
     #[test]
     fn an_unreadable_ledger_is_an_error_not_an_empty_ledger() {
         use std::os::unix::fs::PermissionsExt;
-        let dir =
-            std::env::temp_dir().join(format!("fwf-jobs-ledger-unreadable-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::config::fresh_test_dir("jobs-ledger-unreadable");
         let path = dir.join("jobs-ledger.json");
         let original = r#"{"v":1,"rows":[{"jobId":"ab"}]}"#;
         std::fs::write(&path, original).unwrap();
