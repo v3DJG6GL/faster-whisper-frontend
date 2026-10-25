@@ -205,7 +205,7 @@ export function Waveform({
       // distinct gait from the audio-reactive listening bars.
       const span = bars + 2;
       const sweep = t % (span * 2);
-      const center = (sweep < span ? sweep : span * 2 - sweep) - 1; // bounce -1 … bars
+      const center = (sweep < span ? sweep : span * 2 - sweep) - 1; // bounce -1 … bars + 1
 
       let maxStep = 0; // largest bar movement this frame → lets the loop detect "settled"
       for (let i = 0; i < bars; i++) {
