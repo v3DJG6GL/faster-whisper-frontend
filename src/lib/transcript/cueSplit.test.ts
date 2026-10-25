@@ -42,6 +42,14 @@ function spacedCues(t: string, lang = "", cpl = 32): string[] {
     .cues.map((c) => c.text);
 }
 
+/** Checks the translation cut, the line wrap and the cue split of `t` (each joined with " | ") under every language in `langs`. */
+function expectThreeWays(t: string, langs: (string | undefined)[], cpl: number, want: string[]): void {
+  for (const l of langs) {
+    const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
+    expect(got, `${t} (${l ?? "no language"})`).toEqual(want);
+  }
+}
+
 /** Whisper-style words (no space before a CJK word; a quote glued to the word before it). */
 function resOf(ws: string[], language: string, pauses: Record<number, number> = {}): BatchResult {
   let t = 0;
@@ -2172,12 +2180,7 @@ describe("cutByShare", () => {
         "Yesterday we met Christopher F. Kennedy | at the old airport", "Yesterday we met Christopher F. Kennedy | at the old airport",
         "Yesterday we met | Christopher F. Kennedy | at the old airport"],
     ];
-    for (const [t, lang, cpl, cut, wrap, cue] of ROWS) {
-      for (const l of [lang, undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
-        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
-      }
-    }
+    for (const [t, lang, cpl, cut, wrap, cue] of ROWS) expectThreeWays(t, [lang, undefined], cpl, [cut, wrap, cue]);
   });
   it("a letter after a capitalised noun ends a sentence before a contracted or elided opener; a name's apostrophe surname stays held", () => {
     const ROWS: [text: string, lang: string, cut: string, wrap: string][] = [
@@ -2344,12 +2347,7 @@ describe("cutByShare", () => {
         "Officials in the U.S. | government said on Tuesday | that the new rules apply",
         "Officials in the U.S. | government said on Tuesday | that the new rules apply"],
     ];
-    for (const [t, cpl, cut, wrap, cue] of ROWS) {
-      for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
-        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
-      }
-    }
+    for (const [t, cpl, cut, wrap, cue] of ROWS) expectThreeWays(t, ["en", undefined], cpl, [cut, wrap, cue]);
   });
   it("a capital initialism after a lowercase word ends a sentence before any capital, a name's compact initials after a capitalised word or at the start do not", () => {
     // Any capital, not only the closed opener list: "These", "Most", "Seine".
@@ -2372,12 +2370,7 @@ describe("cutByShare", () => {
       ["Author J.K. Rowling wrote it in a cafe", ["en", undefined], 20,
         "Author J.K. Rowling | wrote it in a cafe", "Author J.K. Rowling | wrote it in a cafe", "Author J.K. Rowling wrote | it in a cafe"],
     ];
-    for (const [t, langs, cpl, cut, wrap, cue] of ROWS) {
-      for (const l of langs) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
-        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
-      }
-    }
+    for (const [t, langs, cpl, cut, wrap, cue] of ROWS) expectThreeWays(t, langs, cpl, [cut, wrap, cue]);
   });
   it("the seam between a first name and its compact initials is held as the one before a single initial is", () => {
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
@@ -2392,12 +2385,7 @@ describe("cutByShare", () => {
         "He served in the U.S. | Army for many years", "He served in the U.S. | Army for many years",
         "He served in the U.S. | Army for many years"],
     ];
-    for (const [t, cpl, cut, wrap, cue] of ROWS) {
-      for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
-        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
-      }
-    }
+    for (const [t, cpl, cut, wrap, cue] of ROWS) expectThreeWays(t, ["en", undefined], cpl, [cut, wrap, cue]);
   });
   it("a place initialism after a place name or a comma ends a sentence before any capital, as no name's initials", () => {
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
@@ -2415,12 +2403,7 @@ describe("cutByShare", () => {
         "He works in Washington D.C. | Officials there said nothing", "He works in Washington D.C. | Officials there said nothing",
         "He works in Washington D.C. | Officials there said nothing"],
     ];
-    for (const [t, cpl, cut, wrap, cue] of ROWS) {
-      for (const l of ["en", undefined]) {
-        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), spacedCues(t, l)].map((p) => p.join(" | "));
-        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
-      }
-    }
+    for (const [t, cpl, cut, wrap, cue] of ROWS) expectThreeWays(t, ["en", undefined], cpl, [cut, wrap, cue]);
   });
   it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
     const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
