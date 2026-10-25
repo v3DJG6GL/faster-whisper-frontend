@@ -86,11 +86,13 @@ import {
   assembleTranslatedSegments,
   cancelRun, clearWipedRowMediaPaths, lostContact, translateParsed, reconcileRetryOptions, refreshRowMediaPaths, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
   SITE_TRANSCRIPT_FALLBACK,
+  addFiles, stageFiles, reattachRun, ingestJobResult,
 } from "./transcribeRun";
 import { MULTI_LANGUAGE } from "./languages";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
-import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/transcriptHistory";
+import { currentRecord, deleteRecord, flushRecordWrites, patchRecord, useTranscriptHistory, type TranscriptRecord } from "./transcript/transcriptHistory";
+import { useApp } from "./store";
 
 // One macrotask: lets a poll's promise chain settle.
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -731,7 +733,6 @@ describe("selectPath keeps a same-path open record", () => {
 
 describe("mergeSegmentTranslations kept-original marks", () => {
   it("sets translationsKept per merged segment; a clean re-merge clears it", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     const rec = recordOf("kept-1", "/k.mp3", {
       result: {
         text: "a b",
@@ -775,7 +776,6 @@ describe("dropping a correction a re-translate was made from", () => {
   const stale = (id: string) => useTranscribeRun.getState().translationsStale[id] ?? {};
 
   it("Discard marks the segment stale: the restored original was never translated", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(recOf("fromedit-1"));
     setSegmentEdit("fromedit-1", 0, "I read the book");
     mergeSegmentTranslations("fromedit-1", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
@@ -796,7 +796,6 @@ describe("dropping a correction a re-translate was made from", () => {
   });
 
   it("the marker survives a reopen of the record", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(recOf("fromedit-3"));
     setSegmentEdit("fromedit-3", 0, "I read the book");
     mergeSegmentTranslations("fromedit-3", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
@@ -813,7 +812,6 @@ describe("dropping a correction a re-translate was made from", () => {
     // then the click re-opens the record from its pre-edit mirror copy.
     vi.useFakeTimers();
     try {
-      const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
       const saved = () => useTranscriptHistory.getState().records.find((r) => r.id === "reopen-1")!;
       openHistoryRecord(recOf("reopen-1"));
       const stale = saved();
@@ -985,7 +983,6 @@ describe("dropping a correction a re-translate was made from", () => {
 
 describe("refreshRowMediaPaths after a storage move", () => {
   it("points the open link's queue row at its record's moved copy", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     const rec = recordOf("moved-1", "https://host/v", {
       kind: "url", createdAt: "2026-10-13T12:00:00Z", mediaPath: "/old/links/moved-1.m4a", result: oneLine("x"),
     });
@@ -1003,7 +1000,6 @@ describe("refreshRowMediaPaths after a storage move", () => {
   // A chunk merged around the move keeps the mirror on the old path past the reload, so
   // refreshRowMediaPaths has nothing to re-point: the row follows the moved path the save hands back.
   it("a row follows a save Rust re-pointed after the reload", async () => {
-    const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
     const rec = recordOf("moved-2", "https://host/w", {
       kind: "url", createdAt: "2026-10-23T12:00:00Z", mediaPath: "/old/links/moved-2.m4a", result: oneLine("x"),
     });
@@ -1051,7 +1047,6 @@ describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'"
 
 describe("mergeSegmentTranslations keeps a known translation source", () => {
   it("an auto-detect answer's empty source never overwrites the record's code", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(recordOf("src-1", "/s.json", {
       createdAt: "2026-10-11T12:00:00Z",
       result: {
@@ -1068,7 +1063,6 @@ describe("mergeSegmentTranslations keeps a known translation source", () => {
 
 describe("mergeSegmentTranslations respects the OPEN record", () => {
   it("a background merge of record A never repaints the open record B of the same source", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     // The SAME source: the queue row is keyed by path, so both records share it.
     const of = (id: string, text: string) => recordOf(id, "/same.mp3", { result: oneLine(text) });
     const a = of("open-a", "a");
@@ -1104,7 +1098,6 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
 describe("a run's late audio copy respects the OPEN record", () => {
   // Runs /late.mp3 to done with its audio copy held open; returns the copy's resolver.
   async function runHeldCopy() {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     useTranscriptHistory.setState({ records: [], loaded: true });
     let land!: (p: string) => void;
     saveTranscriptMedia.mockImplementation(() => new Promise<string | null>((r) => { land = r; }));
@@ -1364,7 +1357,6 @@ describe("runBadgeFraction (the sidebar badge)", () => {
 
 describe("forgetRecord (a deleted record must stay deleted)", () => {
   it("a later overlay edit cannot re-save a forgotten record", async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
     // The workbench's persist debounce runs on window timers (it lives in a webview);
     // the test env is `node`, so point `window` at the (faked) globals.
@@ -1398,7 +1390,6 @@ describe("forgetRecord(null) without deleted (the records stay; pending edits ar
     result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
   });
   beforeEach(async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     useTranscriptHistory.setState({ records: [rec], loaded: true });
@@ -1410,7 +1401,6 @@ describe("forgetRecord(null) without deleted (the records stay; pending edits ar
   });
 
   it("the open record keeps its overlays, and a later rename saves onto the moved copy", async () => {
-    const { currentRecord, useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     setRename(rec.id, "SPEAKER_00", "Bob"); // pending when the move lands
     forgetRecord(null);
@@ -1428,7 +1418,6 @@ describe("forgetRecord(null) without deleted (the records stay; pending edits ar
   });
 
   it("with deleted, the registry and the open record still go", async () => {
-    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     forgetRecord(null, { deleted: true });
     expect(useTranscribeRun.getState().openRecordId).toBeNull();
@@ -1451,7 +1440,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   const saves = () => saveTranscriptRecord.mock.calls.filter(([id]) => id === rec.id);
 
   beforeEach(async () => {
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     useTranscriptHistory.setState({ records: [rec], loaded: true });
@@ -1464,7 +1452,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a viewer write, then a rename, keeps the viewer's fields", async () => {
-    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     // The export panel's writes go straight to the history, not through the workbench.
     patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
@@ -1488,7 +1475,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("flushPersistEdits lands a pending edit without waiting out the debounce", async () => {
-    const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     setRename(rec.id, "SPEAKER_00", "Kate"); // parked in the 800 ms persist debounce
     expect(currentRecord(rec.id)?.renames).toBeUndefined();
@@ -1506,7 +1492,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a record deleted during the edit debounce is not re-saved", async () => {
-    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     setRename(rec.id, "SPEAKER_00", "Kate");
     deleteRecord(rec.id);
@@ -1517,7 +1502,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a record gone from the mirror (a wipe's reload) resolves to nothing", async () => {
-    const { currentRecord, useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     // The forced listing after a wipe no longer lists it; nothing told the registry.
     useTranscriptHistory.setState({ records: [] });
@@ -1530,7 +1514,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a translation merge lands on the latest copy too", async () => {
-    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
     mergeSegmentTranslations(rec.id, { 0: { de: "A-de" } }, { targets: ["de"] });
@@ -1542,7 +1525,6 @@ describe("one current copy per record (the registries hold ids, never copies)", 
 
 describe("stageFiles: a pick that lands while a run is live waits for the next run", () => {
   it("appends to the list without touching the running queue", async () => {
-    const { addFiles, stageFiles } = await import("./transcribeRun");
     const queue: QueueItem[] = [{ path: "/a.wav", status: "running", kind: "file" }];
     useTranscribeRun.setState({ files: ["/a.wav", "https://youtu.be/q"], queue, running: true, progress: null, stageTimes: {}, stageMeta: {} });
     const before = useTranscribeRun.getState();
@@ -1563,7 +1545,6 @@ describe("stageFiles: a pick that lands while a run is live waits for the next r
 
 describe("reattachRun: a run found in the ledger takes the rail back", () => {
   it("seeds the first stage clock from the row's start and routes Cancel to the job id", async () => {
-    const { reattachRun } = await import("./transcribeRun");
     useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
     const before = useTranscribeRun.getState().epoch;
     const epoch = reattachRun({
@@ -1588,7 +1569,6 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
   });
 
   it("a reattached link planned on the site's transcript is the fallback transcription", async () => {
-    const { reattachRun } = await import("./transcribeRun");
     useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
     reattachRun({
       v: 1, jobId: "d".repeat(32), backendId: "b1", serverUrl: "http://x", path: "https://youtu.be/f",
@@ -2209,7 +2189,6 @@ describe("a run's pending video whose progress entry closed between two polls", 
       ? { stage: "done", progress: 1, video: { state: "downloading", progress: 0.6 } }
       : { stage: "unknown" }) as import("./types").BatchProgress));
     fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/entry-gone.mp4"));
-    const { reattachRun, ingestJobResult } = await import("./transcribeRun");
     reattachRun(row, () => "http://x");
     ingestJobResult(row, { text: "hi", sourceVideoPending: true }, 10, { attached: true });
   });
@@ -2441,8 +2420,6 @@ describe("a ledgered file whose request lost contact", () => {
   const ctx = { ...RUN_CTX, jobsEnabled: true };
   async function run(error: string) {
     const { ledgerRows, _resetLedgerForTests } = await import("./jobsLedger");
-    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
-    const { useApp } = await import("./store");
     _resetLedgerForTests();
     useTranscriptHistory.setState({ records: [], loaded: true });
     useApp.setState({ logsDoorway: null });
@@ -2592,7 +2569,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("a list over the server's limit sends the first ones and names the rest", async () => {
     // The text route rejects an over-limit list whole (a link's frozen site plan, a list kept
     // from a higher-limit backend): cut it here, in the audio route's own warning words.
-    const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     useApp.setState({
       caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
@@ -2612,7 +2588,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("caps never fetched for this backend are fetched once, then the list is cut to the server's limit", async () => {
     // A retry against a backend whose caps were never loaded: the text route would 422 the
     // whole list, so the caps are fetched here first, then the cap is read from them.
-    const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     const prevBackends = useApp.getState().backends;
     const { b1: _b1, ...rest } = before as Record<string, unknown>;
@@ -2641,7 +2616,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("a saved target the wire refuses is neither sent nor recorded", async () => {
-    const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     useApp.setState({
       caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 1 } } } as never },
@@ -2673,7 +2647,6 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {
-    const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
     try {
