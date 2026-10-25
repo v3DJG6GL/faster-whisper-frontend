@@ -803,13 +803,16 @@ function splitsUnit(text: string, i: number): boolean {
   for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
   return n % 2 === 1;
 }
-/** Length of the whitespace-free run around index `i` of `t`, counted only up to 7 — a
- *  long run is all cutByShare needs to know, and it must not cost a scan per candidate. */
+/** The longest whitespace-free run of spaced text that is still a short word ("東京", "Tokyo"):
+ *  a seam inside one is a fallback (cutByShare, wrapTokens); a longer run is a sentence. */
+const SHORT_RUN = 6;
+/** Length of the whitespace-free run around index `i` of `t`, counted only up to SHORT_RUN + 1 —
+ *  a long run is all cutByShare needs to know, and it must not cost a scan per candidate. */
 function runAt(t: string, i: number): number {
   let a = i;
-  while (a > 0 && i - a < 7 && !/\s/.test(t[a - 1])) a--;
+  while (a > 0 && i - a < SHORT_RUN + 1 && !/\s/.test(t[a - 1])) a--;
   let b = i;
-  while (b < t.length && b - a < 7 && !/\s/.test(t[b])) b++;
+  while (b < t.length && b - a < SHORT_RUN + 1 && !/\s/.test(t[b])) b++;
   return b - a;
 }
 
@@ -1066,7 +1069,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
             : CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && BREAK_SPACE.test(text[i]) ? 9 : 0) -
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
-        (spaced && !sylSpaced && !BREAK_SPACE.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
+        (spaced && !sylSpaced && !BREAK_SPACE.test(text[i]) && runAt(text, i) <= SHORT_RUN ? 9 : 0) -
         // A space right before a lone closing mark or after a lone opening one (French
         // « bonjour », "Ça va ?", Thai "บ่อย ๆ"): the mark stays with its word.
         (BREAK_SPACE.test(text[i])
@@ -1536,7 +1539,7 @@ function wrapTokens(
         // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
         // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
         // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.
-        if (mixed && a <= cpl && b <= cpl * (n - 1) && Math.min(runR[i - 1], width(lo, i)) > 6 && runL[i] > 6) {
+        if (mixed && a <= cpl && b <= cpl * (n - 1) && Math.min(runR[i - 1], width(lo, i)) > SHORT_RUN && runL[i] > SHORT_RUN) {
           s += 5;
         }
       }
@@ -1545,7 +1548,7 @@ function wrapTokens(
       // balance or break score); when no space fits, every space seam already carries -1000.
       // A longer CJK run is a sentence, and its seams balance against the spaces (only a
       // phrase space between two longer runs gets the small bonus above).
-      else if (gaps.length && (runL[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
+      else if (gaps.length && (runL[i] <= SHORT_RUN || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       // Right after a compound's hyphen (tokenUnits keeps it on the line it ends): the seam a
       // compound longer than a line wraps at, rather than one inside its parts. Not on a line
       // under a third of the target: the bonus would leave a stub ("s-") alone on one.
