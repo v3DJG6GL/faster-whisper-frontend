@@ -11,7 +11,7 @@ import siteSubtitlesSrc from "../lib/transcript/siteSubtitles.ts?raw";
 import { runTargets } from "../lib/translationTargets";
 import { initialSiteState, pickPolicy, resetSiteTargets, type SiteSubsInput } from "../lib/transcript/siteSubtitles";
 import type { SiteTrackInfo } from "../lib/urlSource";
-import { sitePanelState, targetsOnLeave } from "./Transcribe";
+import { sitePanelState, targetsOnLeave, targetsOnRelease } from "./Transcribe";
 
 /** The body of the screen Language picker's onChange. */
 const languageOnChange = () => {
@@ -142,5 +142,25 @@ describe("the site panel's promoted languages across a backend switch", () => {
     // A promotion recorded while translation was on is kept: those codes were saved.
     const saved = { ...prev, promoted: ["es"] };
     expect(sitePanelState(custom, saved, false).promoted).toEqual(["es"]);
+  });
+});
+
+// Add link, an edit of the link field or a backend switch clears the preview: the preview-reset
+// effect writes the promoted drop, and the re-prune effect — the panel letting go in the same
+// commit — writes after it from the same render's targets. Its cut must not bring promoted codes back.
+describe("the panel's release in the commit its preview goes", () => {
+  it("keeps the preview reset's promoted drop under the over-limit cut", () => {
+    const panel = { ...initialSiteState(["en"]), promoted: ["es", "fr", "it"] };
+    // Limit 2, the panel took ["en"]: the cut alone would keep "es" as your own pick.
+    expect(targetsOnRelease(["en", "es", "fr", "it"], panel, true, undefined, 2, true, 1)).toEqual(["en"]);
+    // The known-source prune starts from the drop too.
+    expect(targetsOnRelease(["en", "de", "es"], { ...initialSiteState(["en", "de"]), promoted: ["es"] }, true, "de", null, false, 2))
+      .toEqual(["en"]);
+  });
+
+  it("cuts as before when the preview stays (the panel's subtitles switched off)", () => {
+    const panel = { ...initialSiteState(["en"]), promoted: ["es", "fr", "it"] };
+    expect(targetsOnRelease(["en", "es", "fr", "it"], panel, false, undefined, 2, true, 1)).toEqual(["en", "es"]);
+    expect(targetsOnRelease(["en", "de", "fr"], panel, false, "de", null, true, 1)).toEqual(["en", "fr"]);
   });
 });

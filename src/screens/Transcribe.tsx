@@ -244,6 +244,20 @@ export function targetsOnLeave(
   return next.length !== stored.length ? next : null;
 }
 
+/** The targets after the re-prune effect: pruned by the known source and, on a held release,
+ *  cut like targetsOnLeave. `previewGone`: the panel let go because its preview went in this
+ *  same commit — the preview-reset effect already wrote the promoted drop, and this write lands
+ *  after it, so it starts from that drop too or the cut restores promoted codes. */
+export function targetsOnRelease(
+  stored: readonly string[], panel: SiteSubsState | null, previewGone: boolean,
+  knownSource: string | undefined, cap: number | null, held: boolean, base: number,
+): string[] {
+  let next = previewGone ? resetSiteTargets(panel, stored) : [...stored];
+  if (knownSource) next = pruneTargets(next, knownSource);
+  if (held && cap !== null) next = next.slice(0, Math.max(cap, base));
+  return next;
+}
+
 /** The site panel's state after a change. Without translation the change writes no targets, so
  *  the languages its Custom promoted were never saved: the previous promoted list stays, and
  *  every promoted code is one the panel really saved — the resets drop them whatever the backend
@@ -947,13 +961,13 @@ export default function Transcribe() {
       panelBase.current = translateTo.length;
     }
     if (busy || siteChips) return;
-    let next = knownSource ? pruneTargets(translateTo, knownSource) : translateTo;
-    if (panelHeldChips.current) {
-      // Cleared on every release, also on a server without translation (where the panel never
-      // wrote the list): a stale latch would cut on a later backend's re-prune or the unmount.
-      if (translationAvailable) next = next.slice(0, Math.max(maxTranslationTargets(caps), panelBase.current));
-      panelHeldChips.current = false;
-    }
+    const next = targetsOnRelease(
+      translateTo, siteState, !siteTracks?.length, knownSource,
+      translationAvailable ? maxTranslationTargets(caps) : null, panelHeldChips.current, panelBase.current,
+    );
+    // Cleared on every release, also on a server without translation (where the panel never
+    // wrote the list): a stale latch would cut on a later backend's re-prune or the unmount.
+    panelHeldChips.current = false;
     if (next.length !== translateTo.length) {
       setTranslateTo(next);
       persistOptions({ translateTo: next });
