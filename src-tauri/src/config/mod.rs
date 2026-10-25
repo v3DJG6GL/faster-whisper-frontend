@@ -12,18 +12,26 @@ use std::sync::Mutex;
 
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 
-/// Write a file only the owner can read (Unix `0600`; a no-op refinement on Windows, where the
-/// per-user profile ACL already does this). `std::fs::write` would create it `0666 & ~umask` —
-/// typically world-readable 0644, which is the wrong default for anything under the config dir:
-/// sync-state.json carries the sync snapshot, config.json carries server URLs, and the Wayland
-/// restore token is a capability that re-acquires input-injection rights without a consent prompt.
+/// Write a file only the owner can read (Unix `0600`). `std::fs::write` would create it
+/// `0666 & ~umask` — typically world-readable 0644, which is the wrong default for anything under
+/// the config dir: sync-state.json carries the sync snapshot, config.json carries server URLs, and
+/// the Wayland restore token is a capability that re-acquires input-injection rights without a
+/// consent prompt.
+///
+/// No Windows ACL here: the config-dir callers write under %APPDATA%, inside the profile, whose
+/// inherited ACL already shuts other accounts out. A path outside it (the settings export) goes
+/// through [`write_export_atomic`].
 ///
 /// On Linux the open does not follow a symlink at the final component. `export_settings_file`
 /// writes to `<user-picked-path>.tmp`, which can land in a world-writable directory (a save
 /// dialog pointed at /tmp) — without `O_NOFOLLOW` a pre-planted symlink there would have this
 /// truncate and overwrite whatever it pointed at, with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
-    use std::io::Write;
+    fill_private(open_private(path)?, contents)
+}
+
+/// The open half of `write_private`: created or truncated, 0600, final symlink not followed.
+fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -38,12 +46,17 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     }
     // An existing file keeps its old mode through OpenOptions, so restate it after the open.
     // Tolerate fchmod failure (e.g. FAT/exFAT, some FUSE mounts).
-    let mut f = opts.open(path)?;
+    let f = opts.open(path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
+    Ok(f)
+}
+
+fn fill_private(mut f: std::fs::File, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
     f.write_all(contents.as_bytes())?;
     f.sync_all()
 }
@@ -55,6 +68,27 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
     replace_via_tmp(&tmp, path, |t| write_private(t, contents))
+}
+
+/// `write_private_atomic` for a path OUTSIDE the config dir — the settings export, at a
+/// save-dialog path that may carry a folder's permissive inherited ACL. On Windows the tmp also
+/// gets an owner-only DACL before the contents land; the rename keeps it.
+///
+/// A DACL failure only warns, like the Unix fchmod above: FAT/exFAT sticks hold no ACL and are
+/// exactly where an export is carried to another machine, and failing would block the export.
+pub fn write_export_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let tmp = crate::transport::media::tmp_sibling(path);
+    replace_via_tmp(&tmp, path, |t| {
+        let f = open_private(t)?;
+        #[cfg(windows)]
+        if let Err(e) = crate::audio::windows_owner_only_dacl(t) {
+            tracing::warn!(
+                "[config] could not restrict {} to the current user: {e}",
+                t.display()
+            );
+        }
+        fill_private(f, contents)
+    })
 }
 
 /// Fill `tmp` with `fill`, then rename it over `dest`. `tmp` is removed when the fill OR the
@@ -1432,6 +1466,21 @@ pub(crate) fn set_test_mtime(path: &Path, when: std::time::SystemTime) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn an_export_replaces_a_permissive_file_owner_only_and_leaves_no_tmp() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fresh_test_dir("cfg-export");
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_export_atomic(&path, "{}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
 
     #[test]
     fn a_config_saved_with_a_byte_order_mark_parses() {

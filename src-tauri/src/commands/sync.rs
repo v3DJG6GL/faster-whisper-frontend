@@ -145,8 +145,9 @@ pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> 
         // holds the raw keyring secrets. A write failing on a nearly-full USB stick or share would
         // otherwise leave a partial plaintext-credential file where the user pointed the dialog, and
         // the 0600 does not protect it there (FAT/exFAT and most SMB mounts carry no Unix mode).
-        // `write_private_atomic` removes `<path>.tmp` on both the write and the rename failure.
-        config::write_private_atomic(&path, &text).map_err(|e| e.to_string())
+        // `write_export_atomic` removes `<path>.tmp` on both the write and the rename failure, and
+        // on Windows gives it the owner-only DACL the save folder's inherited ACL may not.
+        config::write_export_atomic(&path, &text).map_err(|e| e.to_string())
     })
     .await
 }
@@ -389,6 +390,21 @@ mod tests {
         });
         assert_eq!(got.keys, [("found".to_string(), "sk-1".to_string())].into());
         assert_eq!(got.unreadable, vec!["locked".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_settings_export_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::config::fresh_test_dir("export-mode");
+        let path = dir.join("settings.json");
+        tauri::async_runtime::block_on(super::export_settings_file(
+            path.to_string_lossy().into_owned(),
+            serde_json::json!({ "formatVersion": 1 }),
+        ))
+        .unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
