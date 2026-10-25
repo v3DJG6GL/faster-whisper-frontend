@@ -218,9 +218,7 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
 
 /// An extractor name as yt-dlp spells them ("youtube", "Vimeo:album", "generic").
 fn is_extractor_name(s: &str) -> bool {
-    (1..=64).contains(&s.len())
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'.' | b'-'))
+    super::is_ascii_token(s, 1..=64, b"_:.-")
 }
 
 /// `server_info` is shown as-is in the Backends ⓘ panel and caps the translation picker: every
@@ -408,11 +406,7 @@ impl UsageQuery {
 /// pasting it raw into the query could break URL parsing — so it is simply omitted (the
 /// server then falls back to its local zone, as it does when the param is absent).
 fn iana_zone_ok(tz: &str) -> bool {
-    !tz.is_empty()
-        && tz.len() <= 64
-        && tz
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'+'))
+    super::is_ascii_token(tz, 1..=64, b"/_-+")
 }
 
 /// The caller's own usage document (`GET /v1/usage`, full backend only). Best-effort: any
@@ -492,11 +486,7 @@ const LEGACY_DEFAULTS_PATH: &str = "/v1/decode-defaults";
 const SERVER_TEXT_MAX: usize = 2048;
 
 fn is_profile_slug(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= MAX_NAME
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    super::is_ascii_token(name, 1..=MAX_NAME, b"-_")
 }
 
 /// `{base}{path}?model=…&override_profile=…`. Model ids carry `/` and `:`, so both

@@ -890,7 +890,14 @@ pub fn clean_text(s: &str, n: usize) -> String {
 /// Language codes are short ISO-ish tags ("de", "pt-BR") — screened before one joins a request
 /// and before one is kept from a server answer.
 pub(crate) fn is_lang_code(s: &str) -> bool {
-    (2..=16).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    is_ascii_token(s, 2..=16, b"-")
+}
+
+/// An ASCII token: byte length within `len`, every byte alphanumeric or one of `extra`.
+pub(crate) fn is_ascii_token(s: &str, len: std::ops::RangeInclusive<usize>, extra: &[u8]) -> bool {
+    len.contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
 }
 
 /// Progress ids are client-generated lowercase hex (a UUID without dashes) —
