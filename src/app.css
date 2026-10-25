@@ -273,14 +273,11 @@ html.accent-tick .transition-colors {
   background-clip: padding-box;
 }
 
-/* Page width system. Width is not one number: it depends on what the content IS.
-   Prose has a reading measure; a label-plus-control row has none, it just wants its
-   description to stop wrapping; a queue wants everything it can get. Screens set
-   `.page` plus ONE width class; padding scales with the window. */
+/* Page width system: screens set `.page` plus ONE width class; padding scales with the
+   window. Every screen fills a wide window except the label + control forms, where a wider
+   row would just stretch the gap between a label and its control. */
 :root {
   --page-pad: clamp(20px, 3vw, 48px);
-  /* Every screen fills a wide window except the label + control forms, where a wider row
-     would just stretch the gap between a label and its control. */
   --w-prose: 1760px; /* History, Dictionary — lists and tables, they fill the window */
   --w-cards: 1760px; /* card layouts — Dashboard */
   --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings */
