@@ -1,4 +1,4 @@
-// The transcript viewer's shared non-component bits (the viewer and SegmentRow both use them).
+// The transcript viewer's shared non-component bits (the viewer, SegmentRow and SubtitleList use them).
 
 import { capCodePoints, stripControlChars } from "@/lib/sanitize";
 
