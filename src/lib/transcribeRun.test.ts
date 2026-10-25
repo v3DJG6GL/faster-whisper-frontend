@@ -1108,7 +1108,7 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
 });
 
 describe("a run's late audio copy respects the OPEN record", () => {
-  // Runs /late.mp3 to done with its audio copy held open; returns the copy's resolver.
+  // Runs /late.mp3 to done with its audio copy held open; returns the copy's resolver, the run's record and its saved-copy getter.
   async function runHeldCopy() {
     useTranscriptHistory.setState({ records: [], loaded: true });
     let land!: (p: string) => void;
