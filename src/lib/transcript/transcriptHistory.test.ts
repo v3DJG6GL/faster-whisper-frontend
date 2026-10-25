@@ -565,10 +565,7 @@ describe("loadHistory", () => {
   it("a retry after a failed FORCED listing replaces the mirror even when none ever succeeded", async () => {
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     await loadHistory();
-    const stale: TranscriptRecord = {
-      schemaVersion: 1, kind: "dictation", id: "D", createdAt: "2026-08-30T13:00:00Z",
-      sourcePath: "", sourceName: "Dictation", status: "done",
-    };
+    const stale = fileRecord("D", "Dictation", { kind: "dictation", sourcePath: "", createdAt: "2026-08-30T13:00:00Z" });
     useTranscriptHistory.setState({ records: [stale] });
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
     await loadHistory(true); // "Delete all dictations" wiped D on disk, then the listing failed
@@ -578,10 +575,7 @@ describe("loadHistory", () => {
   });
 
   it("the first listing keeps the records this session made (their saves may not be on disk)", async () => {
-    const made: TranscriptRecord = {
-      schemaVersion: 1, kind: "dictation", id: "B", createdAt: "2026-08-30T13:00:00Z",
-      sourcePath: "", sourceName: "Dictation", status: "done",
-    };
+    const made = fileRecord("B", "Dictation", { kind: "dictation", sourcePath: "", createdAt: "2026-08-30T13:00:00Z" });
     useTranscriptHistory.setState({ records: [made] }); // a dictation before History opened; its save failed
     listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory();
@@ -589,10 +583,7 @@ describe("loadHistory", () => {
   });
 
   it("a forced call before any listing replaces the mirror (a forced caller changed the disk)", async () => {
-    useTranscriptHistory.setState({ records: [{
-      schemaVersion: 1, kind: "dictation", id: "D", createdAt: "2026-08-30T13:00:00Z",
-      sourcePath: "", sourceName: "Dictation", status: "done",
-    }] });
+    useTranscriptHistory.setState({ records: [fileRecord("D", "Dictation", { kind: "dictation", sourcePath: "", createdAt: "2026-08-30T13:00:00Z" })] });
     listTranscriptRecords.mockResolvedValueOnce([]);
     await loadHistory(true);
     expect(useTranscriptHistory.getState().records).toEqual([]);
