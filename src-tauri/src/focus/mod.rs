@@ -7,7 +7,7 @@
 //!     don't type into a button / list / the desktop.
 //!
 //! Model (what screen readers do): a background task subscribes to AT-SPI focus events
-//! and caches the last focused `{app, role, editable}`. Qt/GTK/WebKit apps bridge
+//! and caches the last focused `{app, editable}`. Qt/GTK/WebKit apps bridge
 //! natively (`QT_ACCESSIBILITY=1`, a KDE default). Chromium/Electron/Gecko build their
 //! a11y tree on-demand — only the opt-in "deep detection" reaches them, by actively poking
 //! their tree (`GetAttributes` / `GetRelationSet` — the "Orca signal"); the listener flips
