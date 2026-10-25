@@ -245,9 +245,11 @@ export function targetsOnLeave(
 }
 
 /** The targets after the re-prune effect: pruned by the known source and, on a held release,
- *  cut like targetsOnLeave. `previewGone`: the panel let go because its preview went in this
- *  same commit — the preview-reset effect already wrote the promoted drop, and this write lands
- *  after it, so it starts from that drop too or the cut restores promoted codes. */
+ *  cut like targetsOnLeave. `previewGone`: the panel let go because its input went — its preview
+ *  went in this same commit (the preview-reset effect already wrote the promoted drop, and this
+ *  write lands after it), or a backend switch took the server's link subtitles first (the
+ *  preview, and its reset, go a commit later). Either way the cut starts from the drop, or it
+ *  restores promoted codes or keeps them over your own picks. */
 export function targetsOnRelease(
   stored: readonly string[], panel: SiteSubsState | null, previewGone: boolean,
   knownSource: string | undefined, cap: number | null, held: boolean, base: number,
@@ -962,7 +964,7 @@ export default function Transcribe() {
     }
     if (busy || siteChips) return;
     const next = targetsOnRelease(
-      translateTo, siteState, !siteTracks?.length, knownSource,
+      translateTo, siteState, !siteInput, knownSource,
       translationAvailable ? maxTranslationTargets(caps) : null, panelHeldChips.current, panelBase.current,
     );
     // Cleared on every release, also on a server without translation (where the panel never

@@ -163,4 +163,16 @@ describe("the panel's release in the commit its preview goes", () => {
     expect(targetsOnRelease(["en", "es", "fr", "it"], panel, false, undefined, 2, true, 1)).toEqual(["en", "es"]);
     expect(targetsOnRelease(["en", "de", "fr"], panel, false, "de", null, true, 1)).toEqual(["en", "fr"]);
   });
+
+  // A backend switch to a server without link subtitles (caps cached) drops the panel's input in
+  // the switch render, while the preview — and with it the preview reset — goes a commit later.
+  it("drops the promoted languages before the cut when a backend switch takes the link subtitles", () => {
+    // The release counts the panel's input, not only the preview's tracks, as gone.
+    expect(src).toContain("translateTo, siteState, !siteInput, knownSource,");
+    // Your own ["en"], the panel's Custom promoted "es", then you picked "fr" on a chip; limit 2.
+    const panel = { ...initialSiteState(["en"]), promoted: ["es"] };
+    const released = targetsOnRelease(["en", "es", "fr"], panel, true, undefined, 2, true, 1);
+    // The preview reset a commit later then has nothing left to drop: your "fr" survives.
+    expect(resetSiteTargets(panel, released)).toEqual(["en", "fr"]);
+  });
 });
