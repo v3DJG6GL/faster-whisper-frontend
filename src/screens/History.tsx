@@ -1,7 +1,7 @@
-// History: one day-bucketed timeline for BOTH record kinds — file
-// transcriptions and dictation sessions — filtered by an All/Files/Links/Text/Dictations
-// segment (the call-log pattern) plus "dictated into" app chips. File rows
-// open the full workbench; dictation rows expand INLINE: full text, the saved
+// History: one day-bucketed timeline for every record kind — file, link and
+// text transcriptions and dictation sessions — filtered by an All/Files/Links/Text/Dictations
+// segment (the call-log pattern) plus "dictated into" app chips. File, link and text
+// rows open the full workbench; dictation rows expand INLINE: full text, the saved
 // recording playable in place, Copy as the main action, and "Open in
 // workbench" to re-run the recording through batch transcription (word
 // timestamps → karaoke). Search is global; when the active segment hides
@@ -288,7 +288,6 @@ export default function History() {
   const running = useTranscribeRun((s) => s.running);
   /** A run-gated button's title: while a run is busy (the button is disabled) it says why. */
   const runGatedTitle = (idle: string) => (running ? "Wait for the current run to finish" : idle);
-  /** A run-gated icon-only row action: disabled while a run is busy, its title saying why. */
   const gatedIconButton = (idleTitle: string, onClick: () => void, icon: ReactNode) => (
     <Button variant="ghost" size="sm" disabled={running} title={runGatedTitle(idleTitle)} onClick={onClick}>
       {icon}
