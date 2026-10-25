@@ -3128,11 +3128,12 @@ export async function pushNow(manual = false): Promise<void> {
       return;
     }
     // The wait let anything change: re-check, with no await between this and the take below.
+    // Only a click gets here (an automatic push has no await, so it returned at the held arm).
+    // A click that lost the lock to another sync loses nothing the gate owed: the save that
+    // lifted the hold re-sent the refused push (onConfigSaveHoldCleared → schedulePush(0)), and
+    // that push retries at the gate above.
     backend = syncBackend();
-    if (!backend || !canSync() || inFlight) {
-      if (inFlight && !manual) schedulePush(); // as at the gate above
-      return;
-    }
+    if (!backend || !canSync() || inFlight) return;
   }
   // A category turned on since the last base (`freshCats`) is reconciled with the server first —
   // equal values merge, different ones ask — instead of this device's value going up over the
