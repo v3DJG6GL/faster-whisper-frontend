@@ -1247,11 +1247,11 @@ mod imp {
     /// aliasing (an Enter-bound chord reading "down" because the OTHER Enter is held) never
     /// reaches an arm/don't-arm decision.
     ///
-    /// Physical ids (letters re-keyed by position, `PHYSICAL_SCAN_TAG | scan`) are NOT layout VKs:
-    /// on QWERTZ the id VK_Y is the US-Y position, which the OS knows as VK_Z. They are
-    /// mapped back through the foreground thread's layout (the one the key events were
-    /// translated with) before the OS is asked. A letter id is ALSO down if its plain VK
-    /// reads down — a scan-less VK-only SendInput keeps the layout VK as its id. An id
+    /// Physical ids (letters re-keyed by position, the numpad "=", `PHYSICAL_SCAN_TAG | scan`)
+    /// are NOT layout VKs: on QWERTZ the id VK_Y is the US-Y position, which the OS knows as
+    /// VK_Z. They are mapped back through the foreground thread's layout (the one the key
+    /// events were translated with) before the OS is asked. An untagged id is ALSO down if its
+    /// plain VK reads down — a scan-less VK-only SendInput keeps the layout VK as its id. An id
     /// the layout cannot map reads DOWN: unknown is never grounds to force-release.
     fn physically_down(id: u16) -> bool {
         let vk_down = |vk: u16| unsafe { GetAsyncKeyState(i32::from(vk)) as u16 & 0x8000 != 0 };
