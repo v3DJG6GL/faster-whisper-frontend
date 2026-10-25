@@ -60,7 +60,8 @@ impl Drop for CaptureHandle {
 }
 
 /// Smooths instantaneous RMS and publishes it as f32 bits in an atomic. Shared by the mic test
-/// and both dictation capture loops, so the 0.7/0.3 coefficients live in one place.
+/// and both dictation capture loops; `SpeechGate::push` (audio/mod.rs) mirrors the same 0.7/0.3
+/// EMA, so keep the two in step.
 pub(crate) struct Meter {
     smoothed: f32,
     out: Arc<AtomicU32>,
