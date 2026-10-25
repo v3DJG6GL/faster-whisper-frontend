@@ -20,7 +20,7 @@ import type { SyncBlob } from "./syncTypes";
 /** pushNow runs only "in Tauri". `onPush` runs once, inside the next PUT (the user editing while
  *  it is on the wire); `onKeyRead` once, inside the next keyring read (the user editing while a
  *  compose waits on the wallet); `fail` answers the next PUT with that status; `conflicts` answers
- *  PUTs (once each, in order) with a 409; `pull` answers the next GET. */
+ *  PUTs (once each, in order) with a 409; `pull` answers every GET. */
 const api = vi.hoisted(() => ({
   pushes: 0,
   pushed: null as unknown,
