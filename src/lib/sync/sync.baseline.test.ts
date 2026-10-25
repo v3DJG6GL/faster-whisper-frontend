@@ -98,6 +98,8 @@ const LEGACY_SUB: SyncSubSettings = {
   quickAddHotkey: true,
   transcribePicks: false,
 };
+/** composeBlob's options for the legacy sub-gates with no secrets (composeBlob only reads them). */
+const LEGACY_OPTS = { includeSecrets: false, sub: LEGACY_SUB };
 
 function settings(): AppSettings {
   return structuredClone(DEFAULT_SETTINGS);
@@ -133,10 +135,7 @@ describe("composeBlob passthrough (baseline)", () => {
     const snapshot: SyncBlob = {
       recording: { audioBaseDir: "/peer/audio", recordingsDir: null } as never,
     };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: LEGACY_SUB,
-    });
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, LEGACY_OPTS);
     expect(blob.recording?.audioBaseDir).toBe("/peer/audio");
     expect(blob.recording?.recordingsDir).toBe(null);
   });
@@ -144,10 +143,7 @@ describe("composeBlob passthrough (baseline)", () => {
   it("audio-folder gate off + no snapshot: paths omitted (absent ≠ delete)", async () => {
     const cfg = slice();
     cfg.settings.recording.audioBaseDir = "/home/me/local-audio";
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, {
-      includeSecrets: false,
-      sub: LEGACY_SUB,
-    });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.recording).toBeTruthy();
     expect("audioBaseDir" in (blob.recording as object)).toBe(false);
   });
@@ -156,10 +152,7 @@ describe("composeBlob passthrough (baseline)", () => {
     const cfg = slice();
     cfg.settings.transcribe = { backendId: "bX", model: "small", diarize: true };
     const snapshot: SyncBlob = { transcription: { backendId: "bS", model: "medium" } };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: LEGACY_SUB,
-    });
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, LEGACY_OPTS);
     expect(blob.transcription?.backendId).toBe("bS");
     expect(blob.transcription?.model).toBe("medium");
     expect(blob.transcription?.diarize).toBe(true);
@@ -171,10 +164,7 @@ describe("composeBlob passthrough (baseline)", () => {
     const cfg = slice();
     cfg.settings.transcribe = { backendId: "bX", translationModel: "local-m", translationMode: "faithful" };
     const snapshot: SyncBlob = { transcription: { backendId: "bS", translationModel: "snap-m" } };
-    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
-      includeSecrets: false,
-      sub: LEGACY_SUB,
-    });
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, LEGACY_OPTS);
     expect(blob.transcription?.translationModel).toBe("snap-m");
     expect(blob.transcription?.translationMode).toBe("faithful");
   });
@@ -197,22 +187,12 @@ describe("composeBlob passthrough (baseline)", () => {
 
   it("a category toggled OFF passes through whole from the snapshot", async () => {
     const snapshot: SyncBlob = { chip: { indicatorPosition: "bottom" } as never };
-    const blob = await composeBlob(
-      slice(),
-      { ...CATS_ALL, chip: false },
-      snapshot,
-      { includeSecrets: false, sub: LEGACY_SUB },
-    );
+    const blob = await composeBlob(slice(), { ...CATS_ALL, chip: false }, snapshot, LEGACY_OPTS);
     expect(blob.chip).toEqual(snapshot.chip);
   });
 
   it("absent categories are dropped, not nulled", async () => {
-    const blob = await composeBlob(
-      slice(),
-      { ...CATS_ALL, appRules: false },
-      undefined,
-      { includeSecrets: false, sub: LEGACY_SUB },
-    );
+    const blob = await composeBlob(slice(), { ...CATS_ALL, appRules: false }, undefined, LEGACY_OPTS);
     expect("appRules" in blob).toBe(false);
   });
 
@@ -608,7 +588,7 @@ describe("applyBlob keep-local (baseline)", () => {
   it("translationMode travels in the transcription block and is clamped on apply", async () => {
     const cfg = slice();
     cfg.settings.transcribe = { ...cfg.settings.transcribe, translationMode: "faithful" };
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.transcription?.translationMode).toBe("faithful");
     useApp.setState({ settings: settings() });
     await applyBlob({ transcription: { translationMode: "faithful" } as never }, { ...CATS_ALL, backends: false });
@@ -623,7 +603,7 @@ describe("applyBlob keep-local (baseline)", () => {
       ...cfg.settings.transcribe, subtitleLength: "custom", translationTiming: "own",
       subtitleCustom: { cpl: 37, lines: 2, maxDur: 6, cps: 15 },
     };
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.transcription).toMatchObject({ subtitleLength: "custom", translationTiming: "own" });
     useApp.setState({ settings: settings() });
     await applyBlob(
@@ -642,7 +622,7 @@ describe("applyBlob keep-local (baseline)", () => {
   it("revealAfterSave travels in the transcription block; a non-boolean is dropped on apply", async () => {
     const cfg = slice();
     cfg.settings.transcribe = { ...cfg.settings.transcribe, revealAfterSave: false };
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.transcription?.revealAfterSave).toBe(false);
     useApp.setState({ settings: settings() });
     await applyBlob({ transcription: { revealAfterSave: false } }, { ...CATS_ALL, backends: false });
@@ -660,7 +640,7 @@ describe("applyBlob keep-local (baseline)", () => {
       exportMedia: "video", exportContainer: "mp4", exportSubtitleMode: "both",
       keepUrlVideoCopies: false, urlVideoMaxHeight: 720,
     };
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.transcription).toMatchObject({ exportMedia: "video", exportContainer: "mp4", exportSubtitleMode: "both" });
     expect(blob.fileTranscriptions).toMatchObject({ keepUrlVideoCopies: false, urlVideoMaxHeight: 720 });
     useApp.setState({ settings: settings() });
@@ -877,7 +857,7 @@ describe("applyBlob keep-local (baseline)", () => {
     // through; the manifest offers a sync switch for it, so the wire must carry it.
     const cfg = slice();
     cfg.settings.general.typeAsISpeak = false;
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.general?.typeAsISpeak).toBe(false);
   });
 
@@ -906,7 +886,7 @@ describe("applyBlob keep-local (baseline)", () => {
     // on every device, so it composes like restoreClipboard and applies like it.
     const cfg = slice();
     cfg.settings.general.excludeFromClipboardHistory = false;
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     expect(blob.general?.excludeFromClipboardHistory).toBe(false);
 
     useApp.setState({ settings: settings(), appRules: [] });
@@ -952,7 +932,7 @@ describe("applyBlob keep-local (baseline)", () => {
       ...slice(),
       appRules: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }] as never[],
     };
-    const blob = await composeBlob(cfg, CATS_ALL, undefined, { includeSecrets: false, sub: LEGACY_SUB });
+    const blob = await composeBlob(cfg, CATS_ALL, undefined, LEGACY_OPTS);
     const mine = blob.appRules![IS_WINDOWS ? "windows" : "linux"][0] as unknown as Record<string, unknown>;
     expect(mine.remoteDesktop).toBe(false);
   });
