@@ -833,6 +833,20 @@ function ProfileRow({
   );
 }
 
+/** One starter's chord as the checklist card names it: the chord "Keep these" commits
+ *  (startersClearOf), so a starter the quick-add chord took reads unbound instead of promising a
+ *  shortcut that is never created. */
+export function StarterChord({ kept, id, verb, tail = "" }: { kept: Profile[]; id: string; verb: string; tail?: string }) {
+  const hotkey = kept.find((p) => p.id === id)?.hotkey ?? [];
+  if (hotkey.length === 0) return <>no shortcut yet — Quick add uses that chord; set one after keeping</>;
+  return (
+    <>
+      {verb} <HotkeyChips codes={hotkey} />
+      {tail}
+    </>
+  );
+}
+
 export default function Profiles() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
@@ -898,8 +912,9 @@ export default function Profiles() {
   };
   // What the checklist card's "Keep these" commits: the suggestion's chords are fixed, the
   // quick-add chord is not, so a colliding starter goes in UNBOUND (startersClearOf) rather than
-  // writing a conflict that freezes every save on the persistence gate. The evdev note judges
-  // these chords, not the fixed suggestion: with both starters cleared it has nothing to warn of.
+  // writing a conflict that freezes every save on the persistence gate. The card's chord text and
+  // the evdev note judge these chords, not the fixed suggestion: with both starters cleared the
+  // note has nothing to warn of.
   const keptStarters = startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive);
 
   const startAdd = () => setDraft(blankProfile(backends[0]?.id ?? null));
@@ -965,9 +980,9 @@ export default function Profiles() {
               <Card edge="accent" className="p-5">
                 <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
                 <div className="mt-0.5 text-[12.5px] text-dim">
-                  Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Hands-free
-                  (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> to start and stop). Keep them,
-                  then edit anything.
+                  Push-to-talk (<StarterChord kept={keptStarters} id="hold" verb="hold" />) and Hands-free
+                  (<StarterChord kept={keptStarters} id="handsfree" verb="tap" tail=" to start and stop" />). Keep
+                  them, then edit anything.
                 </div>
                 {startersNeedLowLevelNote(
                   IS_LINUX,
