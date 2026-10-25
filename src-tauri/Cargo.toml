@@ -73,7 +73,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
-# Human-readable local timestamps for saved-recording filenames.
+# Human-readable local timestamps: saved-recording and log-file names, log-line stamps (logging.rs).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 anyhow = "1"
