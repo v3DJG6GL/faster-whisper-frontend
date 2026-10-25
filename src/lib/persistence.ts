@@ -110,7 +110,7 @@ export async function initConfig(): Promise<void> {
   // Run once: React StrictMode double-invokes the App effect in dev, and a second run would arm a
   // second auto-save subscriber (doubled saveConfig + reregisterShortcuts on every change). The
   // re-entry must NOT resolve configReady — the FIRST call does, after hydration + arming (else
-  // initSync starts against seeded defaults).
+  // initSync starts against the empty boot state).
   if (started) return;
   started = true;
 
