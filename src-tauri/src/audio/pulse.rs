@@ -105,7 +105,8 @@ fn clear_stuck(helper: u64) {
 }
 
 /// Is a timeout's hold (or its one post-back-off retry) in force? Then a None from [`snapshot`]
-/// means "the server is not answering", not "no server": callers must not fall back to raw ALSA.
+/// means "the server is not answering", not "no server": callers must not act as if raw ALSA were
+/// the only path (list the ALSA inventory, persist an ALSA pin); recording may go through ALSA.
 /// A refused connect never raises the hold. Untimed on purpose: a caller that can't go through
 /// [`snapshot`]'s timed path (`host::with_host`) probes with [`snapshot`] itself to lift it.
 pub fn held() -> bool {
