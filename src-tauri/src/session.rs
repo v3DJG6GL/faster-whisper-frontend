@@ -875,8 +875,8 @@ impl RecordSession {
     /// arm already fired, the flag is too late and only the epoch can reach the spawned work.
     /// Marking `self.epoch` rather than "whatever is currently detached" is what makes this safe
     /// to do unconditionally: epochs are strictly monotonic, so this can never match an earlier
-    /// session's still-in-flight transcription (the hazard `cancel_record`'s no-live-session gate
-    /// exists for — leave that gate exactly as it is).
+    /// session's still-in-flight transcription (the hazard the no-live-session gate in
+    /// [`settle_detached_batch_on_cancel`] exists for — leave that gate exactly as it is).
     pub fn discard(self) {
         self.discard.store(true, Ordering::SeqCst);
         mark_batch_cancelled(self.epoch);
