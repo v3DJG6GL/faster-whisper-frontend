@@ -342,8 +342,6 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     }
     a.onChunkStart?.(slice, at);
     const r = await a.translate(texts, slice);
-    // Cancelled while this chunk was in flight: its results are lost by
-    // design (the approved copy says so); everything merged before stays.
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
     model = model ?? r.model;
     source = source ?? r.source;
