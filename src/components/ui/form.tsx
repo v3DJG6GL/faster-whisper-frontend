@@ -12,10 +12,10 @@ import { Badge } from "@/components/ui/feedback";
 
 /** A form field with a small dim label above its control. */
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  // The caption is a sibling <label> with no htmlFor that doesn't wrap the child, so a direct
-  // Select/TextInput child would have NO accessible name (a screen reader announces only
-  // "combobox" + value): auto-label it from `label` unless one is set. Composite children (an
-  // API-key input + reveal button in a div) fail the type check and pass through untouched.
+  // The caption is a sibling <label> with no htmlFor that doesn't wrap the child, so it names
+  // nothing: a direct Select would be named only by its current value and a TextInput not at all.
+  // Auto-label it from `label` unless one is set. Composite children (an API-key input + reveal
+  // button in a div) fail the type check and pass through untouched.
   let control: ReactNode = children;
   if (isValidElement(children)) {
     if (children.type === Select) {
