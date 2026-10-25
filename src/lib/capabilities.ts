@@ -84,11 +84,12 @@ export function stillRoutesTo(backend: Backend, target: string, gen: number): bo
 }
 
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a server
- *  known to be standard stores null ("fetched and unsupported"); any other null answer
- *  (an older server without /v1/me, a transient error) leaves the cache entry absent so
- *  the next trigger re-probes instead of latching a stale negative. `force` skips the
- *  min-interval floor (used when a job is starting and the freshness of `loaded` is the
- *  whole point); a matching in-flight request is still shared. */
+ *  known to be standard stores null ("fetched and unsupported") when nothing is cached yet; any
+ *  other null answer (an older server without /v1/me, a transient error) writes nothing, so an
+ *  absent entry stays absent and the next trigger re-probes instead of latching a stale negative
+ *  (an earlier answer stays cached). `force` skips the min-interval floor (used when a job is
+ *  starting and the freshness of `loaded` is the whole point); a matching in-flight request is
+ *  still shared. */
 export async function refreshCaps(backend: Backend, opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
   const target = effectiveServerUrl(backend, useApp.getState().settings);
