@@ -354,11 +354,11 @@ export default function QuickAdd() {
         return false;
       }
       const newest = mySeq === saveSeq.current;
-      // quickAddSaveOutcome keeps three cases out of "error" (which skips the summon re-sync and
+      // quickAddSaveOutcome keeps four cases out of "error" (which skips the summon re-sync and
       // auto-retries): a 2xx the server's environment pins ("pinned", like Dictionary's notice), a
-      // 2xx whose reply couldn't be read (it LANDED), and a refusal the server names. Retrying them
-      // would PATCH on every summon, never re-sync, and once a pin is lifted push these stale rows
-      // over the stored rule unasked.
+      // 2xx whose reply couldn't be read (it LANDED), and a refusal the server names, of the list
+      // ("refused") or of the rows ("rejected"). Retrying them would PATCH on every summon, never
+      // re-sync, and once a pin is lifted push these stale rows over the stored rule unasked.
       const outcome = quickAddSaveOutcome(res);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
