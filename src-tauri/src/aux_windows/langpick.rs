@@ -63,7 +63,7 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
         let _ = win.set_focus();
         // A Tauri emit with no listener is dropped, never queued. Safe because the window is
         // PREWARMED (mounted at launch, so its mount-effect listener exists long before a
-        // summon) — not because of `win.show()`. A summon in the first few hundred ms could
+        // summon) — not because of `visibility::show`. A summon in the first few hundred ms could
         // still lose it; quick-add's pull-based `get_quickadd_seed` is the fix if that matters.
         let _ = handle.emit("langpick://shown", seed);
     });
