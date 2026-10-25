@@ -18,7 +18,6 @@ type InputProps = {
   onKeyDown: (e: unknown) => void;
 };
 
-/** The first element of `type` in the tree. */
 const findElement = (node: unknown, type: string): ReactElement | null => findInTree(node, (el) => el.type === type);
 
 type ButtonProps = {
