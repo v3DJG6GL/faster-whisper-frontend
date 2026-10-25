@@ -1659,8 +1659,8 @@ export function mergeSegmentTranslations(
       },
     },
   };
-  // Settle the merged indexes' stale marks FIRST so the persisted record
-  // carries the post-merge state (upsertRecord stringifies synchronously).
+  // Settle the merged indexes' stale marks FIRST so the record handed to
+  // upsertRecord below carries the post-merge state.
   // A segment translated from a correction (the retro-translate sends the edited
   // text) is noted, so dropping the correction marks it stale again.
   set((s) => {
@@ -1853,8 +1853,9 @@ let activeCancel: {
  *  the server already retired) is swallowed here. */
 function abandonActiveRun(): void {
   // A re-attached run has no pump; its watcher (lib/jobsReconcile.ts) is
-  // what must stop, synchronously, before the cancel goes out — startRun's
-  // `running` guard reads the store right after this returns.
+  // what must stop, synchronously, before the cancel goes out — its hook writes
+  // `running: false`, which must land before the caller's own store write
+  // (reattachRun sets `running: true` right after this returns).
   const stop = reattachStop;
   reattachStop = null;
   if (stop) stop();
