@@ -83,7 +83,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
       return { title: `${L.colLong(col)} · every ${L.rowUnit}`, kinds: sumKinds(model.cells.filter((c) => c.col === col)), total: v, quarter: undefined, extra };
     }
     const row = i - N - L.cols;
-    // A poll can shrink the grid under a resting pointer (a year or a month-day row drops).
+    // A poll can shrink the grid under a resting pointer (a year row or a day-of-month column drops).
     if (row < 0 || row >= L.rows) return null;
     const v = model.rowTotals[row];
     const extra: [string, string][] = [["share", share(v)], ["vs average", `${model.rowIndex[row].toFixed(1)}× an average ${L.rowUnit}`]];
