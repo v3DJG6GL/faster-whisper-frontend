@@ -126,7 +126,7 @@ function emitBody(type: RuleType, e: EditState): Record<string, unknown> {
 }
 
 // The base side's canonical body, memoized by the base EditState reference: base only changes on
-// a load (patchEdit/resetRule clone, never mutate it), so a keystroke re-emits just the edit side —
+// a load (resetRule/discardAll clone it, never mutate it), so a keystroke re-emits just the edit side —
 // on a large word-mapping list each side is a whole-map sort + stringify. A base object belongs to
 // one rule, so it has one type.
 const baseJsonCache = new WeakMap<EditState, string>();
@@ -594,7 +594,7 @@ function RuleCard({
           <div className="flex items-end justify-between gap-3 border-t border-line pt-3">
             <div className="min-w-0 space-y-1">
               {/* Both are server-authored and unbounded on the wire (the rules payload is an
-                  opaque Value, capped only by the 32 MiB body limit), and unlike `rule.label`
+                  opaque Value, capped only by the 16 MiB RULES_MAX_BODY read), and unlike `rule.label`
                   above neither sits in a `truncate` — they WRAP, so a huge one is millions of
                   line boxes laid out synchronously in the window that owns the debounced
                   config save. Bounded at the RENDER only: `rule.name` is the rule IDENTITY
