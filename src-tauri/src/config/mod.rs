@@ -63,9 +63,7 @@ fn fill_private(mut f: std::fs::File, contents: &str) -> std::io::Result<()> {
 }
 
 /// Replace `path` atomically: write `<path>.tmp` owner-only (`write_private`), then rename it
-/// into place, so a reader sees the old file or the new one, never half of it. The tmp is
-/// removed when the write OR the rename fails (write_private can fail after creating the file,
-/// e.g. on a full volume).
+/// into place, so a reader sees the old file or the new one, never half of it.
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
     replace_via_tmp(&tmp, path, |t| write_private(t, contents))
@@ -534,8 +532,8 @@ pub struct GeneralSettings {
 pub struct RecordingSettings {
     pub indicator_position: IndicatorPosition,
     pub save_recordings: bool,
-    /// User-chosen folder for saved `.wav` recordings; None/empty = the default under
-    /// the app data dir.
+    /// LEGACY custom recordings folder, superseded by `audio_base_dir`; still read as that
+    /// key's fallback base (`commands::audio_base_pref`), so an old setup keeps its location.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recordings_dir: Option<String>,
     /// One base folder for ALL stored audio — `dictations/`, `files/` and
