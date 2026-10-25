@@ -175,12 +175,12 @@ describe("apply: keep-local per gate", () => {
     return applyBlob({ profiles: { list, homeProfileId: null } as never, ...extra }, { ...CATS_ALL, backends: false });
   }
 
+  /** A peer blob applied with the backends and profiles lists off (scalar and app-rule categories only). */
+  const applyScalars = (blob: SyncBlob) => applyBlob(blob, { ...CATS_ALL, backends: false, profiles: false });
+
   it("a gated-off scalar setting never applies (Sound cues)", async () => {
     gateOff("soundCues");
-    await applyBlob(
-      { general: { soundEffects: false, startMinimized: true } as never },
-      { ...CATS_ALL, backends: false, profiles: false },
-    );
+    await applyScalars({ general: { soundEffects: false, startMinimized: true } as never });
     const g = useApp.getState().settings.general;
     expect(g.soundEffects).toBe(true); // kept local
     expect(g.startMinimized).toBe(true); // non-gated applied
@@ -296,20 +296,14 @@ describe("apply: keep-local per gate", () => {
 
   it("a gated-off clipboard-history setting never applies", async () => {
     gateOff("excludeFromClipboardHistory");
-    await applyBlob(
-      { general: { excludeFromClipboardHistory: false } as never },
-      { ...CATS_ALL, backends: false, profiles: false },
-    );
+    await applyScalars({ general: { excludeFromClipboardHistory: false } as never });
     expect(useApp.getState().settings.general.excludeFromClipboardHistory).toBe(true); // kept local
   });
 
   it("perAppOverrides off: a known rule keeps this device's remoteDesktop (its absence too)", async () => {
     useApp.setState({ appRules: [{ id: "r1", appId: "mstsc", block: false }] });
     gateOff("perAppOverrides");
-    await applyBlob(
-      { appRules: { linux: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }], windows: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }] } as never },
-      { ...CATS_ALL, backends: false, profiles: false },
-    );
+    await applyScalars({ appRules: { linux: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }], windows: [{ id: "r1", appId: "mstsc", block: false, remoteDesktop: false }] } as never });
     const r = useApp.getState().appRules.find((x) => x.id === "r1")!;
     expect(r.remoteDesktop ?? null).toBeNull();
   });
