@@ -145,23 +145,20 @@ describe("exportSummary", () => {
   it("plain-text source: placeholder clocks leave the reading speed unchecked, never fine", () => {
     expect(row(sum({ timingSynthesized: true }), "Reading speed"))
       .toEqual({ label: "Reading speed", state: "na", why: "not checked — the source has no timing" });
-    expect(row(sum({ format: "txt", timingSynthesized: true, content: contentStates({ ...base, format: "txt" }) }), "Reading speed")?.state)
-      .toBe("na");
+    expect(row(sum({ format: "txt", timingSynthesized: true }), "Reading speed")?.state).toBe("na");
   });
   it("plain-text source: the placeholder clocks are flagged, never a green timing row", () => {
     const warn = { state: "warn", why: "placeholders, 1 s per line — the source has no timing" };
     expect(row(sum({ timingSynthesized: true }), "Cue timings")).toMatchObject(warn);
-    expect(row(sum({ format: "lrc", timingSynthesized: true, content: contentStates({ ...base, format: "lrc" }) }), "Line timings"))
-      .toMatchObject(warn);
-    expect(row(sum({ format: "json", timingSynthesized: true, content: contentStates({ ...base, format: "json" }) }), "Timestamps"))
-      .toMatchObject(warn);
+    expect(row(sum({ format: "lrc", timingSynthesized: true }), "Line timings")).toMatchObject(warn);
+    expect(row(sum({ format: "json", timingSynthesized: true }), "Timestamps")).toMatchObject(warn);
     const txt = (showTs: boolean) =>
       row(sum({ format: "txt", showTs, timingSynthesized: true, content: contentStates({ ...base, format: "txt", showTs }) }), "Timestamps");
     expect(txt(true)).toMatchObject(warn);
     expect(txt(false)).toMatchObject({ state: "off", why: "off" });
   });
   it("txt with two tracks: interleaved, never \"inside each subtitle\"", () => {
-    const rows = sum({ format: "txt", content: contentStates({ ...base, format: "txt" }) });
+    const rows = sum({ format: "txt" });
     expect(row(rows, "Tracks")?.why).toBe("EN · DE — in that order, interleaved");
   });
 });
