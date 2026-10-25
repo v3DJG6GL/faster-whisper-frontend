@@ -2043,7 +2043,7 @@ describe("cutByShare", () => {
     const press = "Press A. Then press the button twice.";
     expect(cutByShare(press, [1, 1], "en")).toEqual(["Press A.", "Then press the button twice."]);
     expect(wrapLines(press, 16, 2, 0, undefined, "en")).toEqual(["Press A.", "Then press the", "button twice."]);
-    // The letter stays with its noun: "Wir brauchen jetzt Plan" / "B. Danach …".
+    // The letter stays with its noun, never "Wir brauchen jetzt Plan" / "B. Danach …".
     const danach = "Wir brauchen jetzt Plan B. Danach gehen wir heim";
     expect(wrapLines(danach, 26, 2, 0, undefined, "de")).toEqual(["Wir brauchen jetzt Plan B.", "Danach gehen wir heim"]);
     expect(cutByShare(danach, [1, 1], "de")).toEqual(["Wir brauchen jetzt Plan B.", "Danach gehen wir heim"]);
@@ -2530,7 +2530,7 @@ describe("cutByShare", () => {
     expect(cutByShare("  今日はiPhoneです  ", [1, 1, 8]).every(Boolean)).toBe(true);
     // Fewer seams than cuts: every seam is used, only the trailing parts stay empty.
     expect(cutByShare("これはiPhoneProMax", [1, 1, 1, 1, 1])).toEqual(["こ", "れ", "は", "iPhoneProMax", ""]);
-    // Fullwidth and halfwidth forms are characters of their own, not one glued word.
+    // Halfwidth kana are characters of their own; a fullwidth number or acronym is one word.
     expect(cutByShare("ﾃｷｽﾄ", [1, 1, 1]).every(Boolean)).toBe(true);
     expect(cutByShare("東京ＡＢＣ", [1, 1, 1])).toEqual(["東", "京", "ＡＢＣ"]);
     expect(cutByShare("売上は１２３，４５６円", [1, 1, 1]).some((p) => /^[，４５６]/.test(p))).toBe(false);
@@ -2649,7 +2649,7 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["ja short", "ja", "今日はとても良い天気ですね。散歩に行きましょう。", 0.3, "short", "今日はとても良い ⟨1⟩ | 天気ですね。 ⟨1⟩ | 散歩に行きましょう。 ⟨1⟩"],
     ["zh numbers", "zh", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。", 0.3, "std", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。 ⟨2⟩"],
   ];
-  // Whisper-like CJK words ("|" between them, punctuation riding with the word before).
+  // Whisper-like CJK words ("|" between them; an opening bracket rides with the word after, other punctuation with the word before).
   const SPLIT_TOK: [label: string, lang: string, words: string, secPerWord: number, preset: keyof typeof OPTS, want: string][] = [
     ["ja 「」と言った", "ja", "彼は|「もう|帰ろう。」|と|言った。|それから|私たちは|皆で|一緒に|その|場所を|離れました。", 0.4, "std", "彼は「もう帰ろう。」と言った。 ⟨2⟩ | それから私たちは皆で一緒にその場所を離れました。 ⟨2⟩"],
     ["ja 『！』", "ja", "彼女は|『絶対に|行かない！』|と|叫んだ。|でも|結局|一緒に|来てくれた。", 0.4, "std", "彼女は『絶対に行かない！』と叫んだ。 ⟨2⟩ | でも結局一緒に来てくれた。 ⟨1⟩"],
