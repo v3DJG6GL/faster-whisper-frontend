@@ -292,9 +292,7 @@ describe("a sync composed with a degraded keyring", () => {
     try {
       const { base, before } = await seed();
       const remote = peer(base, before, true);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
       await approvePendingReview();
       const st = useApp.getState();
@@ -316,9 +314,7 @@ describe("a sync composed with a degraded keyring", () => {
     try {
       const { base, before } = await seed();
       const remote = peer(base, before, true);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
       const settings = structuredClone(useApp.getState().settings);
       settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, backendList: false } };
@@ -346,9 +342,7 @@ describe("a sync composed with a degraded keyring", () => {
         const b1 = backend({ hasApiKey: true });
         const before = useApp.getState().settings.general.typeAsISpeak;
         const remote = peer(base, before, renameB1);
-        remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-        api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-        await pullNow(true);
+        await pullRetentionDrop(remote);
         expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
         const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
         useApp.setState({ backends: [...useApp.getState().backends, added] });
@@ -600,9 +594,7 @@ describe("approving a review while a pull re-raises it", () => {
     let release: () => void = () => {};
     try {
       const remote = await seedBase();
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
       api.pullPark = new Promise<void>((r) => (release = r));
       api.pullCalled = false;
@@ -632,6 +624,14 @@ async function seedBase(): Promise<SyncBlob> {
   api.keys = { b1: "sk-secret" };
   await pushNow(true);
   return structuredClone(api.pushed) as SyncBlob;
+}
+
+/** The peer lowers the retention (always held for consent) on `remote`, in place, and a pull
+ *  meets it at v2. */
+async function pullRetentionDrop(remote: SyncBlob): Promise<void> {
+  remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+  api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+  await pullNow(true);
 }
 
 /** A synced chip setting (not machine-specific, so the chip category carries it). */
@@ -955,9 +955,7 @@ describe("a pending review the server moved past", () => {
       const base = await seedBase();
       const before = useApp.getState().settings.transcribe?.dictationRetentionDays;
       const risky = structuredClone(base);
-      risky.recording = { ...risky.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: risky };
-      await pullNow(true);
+      await pullRetentionDrop(risky);
       expect(getPendingReview()).not.toBeNull();
       api.pulled = { version: 3, updated_ts: 3, device: "peer", blob: base }; // taken back
       await pullNow(true);
@@ -1001,9 +999,7 @@ describe("an edit made while a sync prompt waits", () => {
     try {
       const base = await seedBase();
       const remote = structuredClone(base);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()).not.toBeNull();
       const scale = bumpChipScale();
       await approvePendingReview();
@@ -1028,9 +1024,7 @@ describe("approving a review after editing a category the peer changed", () => {
     const remote = structuredClone(base);
     const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
     remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-    await pullNow(true);
+    await pullRetentionDrop(remote);
     expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
     expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping); // general applied
     expect(getPendingReview()?.restApplied).toBe(true);
@@ -1123,9 +1117,7 @@ describe("a relisted review", () => {
       setServerAddressesGate(false);
       const remote = structuredClone(base);
       repointToEvil(remote);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       setServerAddressesGate(true);
       await approvePendingReview();
@@ -1157,9 +1149,7 @@ describe("approving a review after turning a sync gate on", () => {
       ...remote.backends!,
       list: remote.backends!.list.map((b) => ({ ...b, name: "renamed-by-peer", serverUrl: "http://evil:9" })),
     };
-    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-    await pullNow(true);
+    await pullRetentionDrop(remote);
     expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
     expect(useApp.getState().backends[0].name).toBe("renamed-by-peer");
     expect(useApp.getState().backends[0].serverUrl).toBe(localUrl);
@@ -1296,9 +1286,7 @@ describe("approving a relisted review after an ordinary edit", () => {
       const remote = structuredClone(base);
       repointToEvil(remote);
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       setServerAddressesGate(true);
       await approvePendingReview();
@@ -1369,9 +1357,7 @@ describe("an edit landing during an approval's keyring wait", () => {
       const remote = structuredClone(base);
       repointToEvil(remote);
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       setServerAddressesGate(true);
       // Park only the approval's FIRST keyring read; edit general while it waits.
@@ -1408,9 +1394,7 @@ describe("an edit landing during an approval's keyring wait", () => {
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       const remote = structuredClone(base);
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       api.readCalled = false;
       api.park = new Promise((r) => (release = r));
@@ -1512,9 +1496,7 @@ describe("a no-op push while a sync prompt waits", () => {
     try {
       const base = await seedBase();
       const remote = structuredClone(base);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()).not.toBeNull();
       const pushesBefore = api.pushes;
       await pushNow();
@@ -1534,9 +1516,7 @@ describe("a no-op push while a sync prompt waits", () => {
     try {
       const base = await seedBase();
       const remote = structuredClone(base);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()).not.toBeNull();
       // The peer reverted the retention and changed something ordinary: nothing to review, but
       // the apply is refused while a session runs.
@@ -1564,9 +1544,7 @@ describe("a no-op push while a sync prompt waits", () => {
   async function raiseBoth(): Promise<void> {
     const base = await seedBase();
     const remote = structuredClone(base);
-    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-    await pullNow(true);
+    await pullRetentionDrop(remote);
     expect(getPendingReview()).not.toBeNull();
     raiseConflictForTests({ remoteVersion: 2 });
     expect(getPendingReview()).not.toBeNull();
@@ -1629,9 +1607,7 @@ describe("a no-op push while a sync prompt waits", () => {
       const base = await seedBase();
       raiseConflictForTests({ remoteVersion: 2 });
       const remote = structuredClone(base);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()).not.toBeNull();
       expect(getPendingConflict()).not.toBeNull();
       const { syncStatus, syncError, syncPromptSeq } = useApp.getState();
@@ -1660,9 +1636,7 @@ describe("a review re-raised by a pull refused while dictating", () => {
       const remote = structuredClone(base);
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.restApplied).toBe(true);
       useApp.setState({ status: "recording" as never });
       try {
@@ -1689,9 +1663,7 @@ describe("a review re-raised by a pull refused while dictating", () => {
       const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
       remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
       repointToEvil(remote);
-      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      await pullNow(true);
+      await pullRetentionDrop(remote);
       expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["dictation-retention", "server-url"]);
       expect(getPendingReview()?.restApplied).toBe(true); // the general change landed
       // While dictating, this device takes the peer's address itself: the repoint row goes.
