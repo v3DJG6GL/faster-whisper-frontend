@@ -2964,8 +2964,8 @@ export default function Transcribe() {
                   ? doneItems[Math.min(doneItems.length - 1, idx + 1)]
                   : doneItems[Math.max(0, (idx < 0 ? doneItems.length : idx) - 1)];
               selectPath(next.path);
-              // role="listbox" with roving tabIndex: the active option must own DOM focus,
-              // or the ring and the screen reader stay on the row the user left.
+              // role="listbox": the active option must own DOM focus, or the ring and the
+              // screen reader stay on the row the user left.
               e.currentTarget
                 .querySelector<HTMLElement>(`[data-qpath="${CSS.escape(next.path)}"]`)
                 ?.focus();
