@@ -126,8 +126,8 @@ fn move_dir_contents(
     Ok(())
 }
 
-/// Fix `mediaPath` inside every history record that pointed at a moved file. False when a
-/// record that pointed at one could not be rewritten.
+/// Fix every media path (`mediaPath`, `videoPath`, `sourcePath`) of every history record that
+/// pointed at a moved file. False when a record that pointed at one could not be rewritten.
 fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) -> bool {
     if map.is_empty() {
         return true;
@@ -252,7 +252,7 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     }
     let mut map: Vec<(String, String)> = Vec::new();
     // Legacy recordings: the custom folder (which may BE the new base — then
-    // its loose .wav/.txt files just move down into dictations/) or the old
+    // its loose dictation files just move down into dictations/) or the old
     // app-data default.
     let legacy_rec = match &pref {
         Some(p) => PathBuf::from(p),
@@ -442,7 +442,8 @@ pub async fn move_audio_base(
     .await
 }
 
-/// The exact refusal text the viewer matches on to fall back to the decode path.
+/// The exact refusal text the webview matches on: the viewer falls back to the decode path,
+/// History says the file is too large instead of gone.
 pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
 
 /// Read a media file into memory for in-card playback from a blob URL: Linux WebKitGTK's
