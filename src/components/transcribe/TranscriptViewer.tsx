@@ -64,7 +64,7 @@ import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/transcribe/TranscriptExport";
 import { SubtitleList, TIME_ANCHOR_ID } from "@/components/transcribe/SubtitleList";
 import { cjkWraps, cueOptionsOf, joinLineBreaks, limitsTitle, trackLimits, trText } from "@/lib/transcript/cueSplit";
-import type { BatchResult, TranscriptWord } from "@/lib/types";
+import type { BatchResult, TranscriptWord, TranslationMode } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
@@ -534,7 +534,7 @@ export function TranscriptViewer({
   const [showTranslate, setShowTranslate] = useState(false);
   // null = not touched yet → prefill from the defaults chain below.
   const [trTargets, setTrTargets] = useState<string[] | null>(null);
-  const [trMode, setTrMode] = useState<"fluent" | "faithful">(
+  const [trMode, setTrMode] = useState<TranslationMode>(
     () => trBackend?.translationOverrides?.mode ?? "fluent",
   );
   // Trimmed: the stored value is synced (the send below resolves it by effectiveTranslationModel).
@@ -590,7 +590,7 @@ export function TranscriptViewer({
         | TranslateRunUi
         | null
         | ((s: TranslateRunUi | null) => TranslateRunUi | null),
-      mode?: "fluent" | "faithful",
+      mode?: TranslationMode,
     ) => {
       const st = useApp.getState();
       st.setTrRun(
@@ -612,7 +612,7 @@ export function TranscriptViewer({
   const runTranslate = async (
     indexes: number[],
     targets: string[],
-    opts?: { mode?: "fluent" | "faithful"; model?: string },
+    opts?: { mode?: TranslationMode; model?: string },
   ) => {
     // Guard BOTH keys: a live run may sit under the path fallback slot.
     if (!indexes.length || !targets.length || trCtls.has(okey) || trCtls.has(trKey)) return;
