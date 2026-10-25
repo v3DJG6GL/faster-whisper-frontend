@@ -971,7 +971,7 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
  *  cuts after sentence/clause punctuation and avoiding one right after an article.
- *  `lang` is the text's language code, for whether "12." can be an ordinal. */
+ *  `lang` is the text's language code, for where a sentence ends ("He was 12.", "Plan B. Dann"), as breakScore judges it. */
 export function cutByShare(text: string, shares: number[], lang?: string): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
