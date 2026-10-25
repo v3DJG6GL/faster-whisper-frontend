@@ -449,6 +449,7 @@ pub fn run() {
             commands::stop_mic_test,
             commands::play_mic_test,
             commands::stop_mic_test_playback,
+            commands::clear_mic_test,
             commands::start_stream,
             commands::stop_stream,
             commands::cancel_stream,

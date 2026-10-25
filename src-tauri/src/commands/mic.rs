@@ -1,7 +1,8 @@
 //! Microphone listing and the mic test (record, level, playback).
 
-use crate::audio::{self, AudioState, MicPlayback, MicTestClip};
+use crate::audio::{self, AudioState, MicClip, MicPlayback, MicTestClip};
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// The microphone picker's list. Async + spawn_blocking: it asks the sound server (≤2 s timeout)
@@ -125,4 +126,53 @@ pub fn play_mic_test(
 #[tauri::command]
 pub fn stop_mic_test_playback(playback: State<MicPlayback>) {
     playback.0.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Drop the mic-test recording when the Settings mic test goes away (AudioTab unmount): replay
+/// needs the clip to outlive stop_mic_test, but not the tab, so up to 30 s of speech
+/// would otherwise stay resident (and replayable) for the app's lifetime. Also silences a replay
+/// and stops a capture still running. Async + spawn_blocking: dropping the capture joins its thread.
+#[tauri::command]
+pub async fn clear_mic_test(app: AppHandle) -> Result<(), String> {
+    super::blocking(move || {
+        app.state::<MicPlayback>().0.fetch_add(1, Ordering::SeqCst);
+        // Capture first: a callback still running would refill the clip after the clear.
+        *app.state::<AudioState>()
+            .0
+            .lock()
+            .map_err(|_| "audio state poisoned")? = None;
+        clear_clip(&app.state::<MicTestClip>().0)
+    })
+    .await
+}
+
+/// Empty the clip and reset its rate (0 s = nothing to replay). Takes the buffer rather than
+/// `clear()`ing it, so the allocation is freed too.
+fn clear_clip(clip: &Mutex<MicClip>) -> Result<(), String> {
+    let mut c = clip.lock().map_err(|_| "mic clip poisoned")?;
+    drop(std::mem::take(&mut c.samples));
+    c.sample_rate = 0;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_clip_drops_samples_and_rate() {
+        let clip = Mutex::new(MicClip {
+            samples: vec![0.25_f32; 48_000].into(),
+            sample_rate: 48_000,
+        });
+        clear_clip(&clip).unwrap();
+        let c = clip.lock().unwrap();
+        assert!(c.samples.is_empty());
+        assert_eq!(
+            c.samples.capacity(),
+            0,
+            "the buffer must be freed, not kept"
+        );
+        assert_eq!(c.sample_rate, 0);
+    }
 }

@@ -840,6 +840,14 @@ export async function stopMicTestPlayback(): Promise<void> {
   await invoke("stop_mic_test_playback");
 }
 
+/** Drop the mic-test recording (and stop any capture/replay) once the mic-test UI is gone.
+ *  Queued like start/stop: issued before an earlier stop settled, the capture could still
+ *  refill the clip after it was cleared. */
+export async function clearMicTest(): Promise<void> {
+  if (!isTauri) return;
+  await inMicTestOrder(() => invoke("clear_mic_test"));
+}
+
 /** Every event subscription goes through here: outside Tauri it returns an empty unlisten (a
  *  subscriber that forgot one would throw, not no-op, in non-Tauri `pnpm dev`), else it
  *  dynamic-imports the event module and listens, handing the typed payload to `cb`. Returns the

@@ -4,8 +4,8 @@ import { useApp } from "@/lib/store";
 import { Button, Card, Notice, SettingRow } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import {
-  listAudioDevices, startMicTest, stopMicTest, playMicTest, stopMicTestPlayback, onMicTestPlayEnded,
-  onMicTestEnded, onAudioLevel,
+  listAudioDevices, startMicTest, stopMicTest, playMicTest, stopMicTestPlayback, clearMicTest,
+  onMicTestPlayEnded, onMicTestEnded, onAudioLevel,
 } from "@/lib/api";
 import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
@@ -209,6 +209,9 @@ export function AudioTab() {
       // only stopMicTestPlayback() halts — the test-effect cleanup's stopMicTest() doesn't touch
       // playback. Without this the clip keeps sounding with no UI to stop it. No-op when idle.
       void stopMicTestPlayback().catch(() => {});
+      // The replay clip has no use without this tab: drop it rather than keep up to 30 s of mic
+      // audio in memory for the app's lifetime.
+      void clearMicTest().catch(() => {});
     };
   }, []);
 
