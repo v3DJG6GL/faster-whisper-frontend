@@ -117,7 +117,8 @@ interface ChipState {
   dimAfterSec: number;
   hoverRevealMs: number;
   // "Chip size" — applied by Rust as this webview's zoom, so nothing here multiplies by it;
-  // the chip only watches it to come out of hiding while the user adjusts it.
+  // the chip watches it to come out of hiding while the user adjusts it, and divides it back
+  // out of the tucked dot (see dotK).
   chipScale: number;
   // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
@@ -687,12 +688,11 @@ export default function Overlay() {
   // The chip is interactive (hoverable / clickable) whenever it's on screen: during a
   // session, or — with the dock on — in standby too.
   const interactive = state.status !== "idle" || (state.persistentDock && state.position !== "off");
-  // `state.status` MUST be a dependency: show_overlay re-applies set_ignore_cursor_events(true) on
-  // every (re)show — including the standby→session re-center in chipController.ts — which WIPES the input
-  // shape and makes the whole window click-through again. With the dock on, neither `interactive`
-  // nor `peeked` changes on session start, so without `status` the shape would never be re-applied
-  // and the chip would stay unhoverable for the entire session. The late 1500ms retry guarantees the
-  // final re-report lands AFTER show_overlay's click-through reset (the early retries can race it).
+  // `state.status` is a dependency: show_overlay re-applies set_ignore_cursor_events(true) on every
+  // (re)show — including the standby→session re-center in chipController.ts — which wipes the input
+  // shape. Rust puts back the last reported region at once (reapply_last_hit_region / win_hover's
+  // reset); with the dock on, neither `interactive` nor `peeked` changes on session start, so
+  // `status` is what makes the webview re-report its current bounds after that reset.
   useEffect(() => {
     if (!interactive) return;
     const ids = [0, 160, 420, 850, 1500].map((ms) => setTimeout(reportBounds, ms));
