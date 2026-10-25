@@ -3,7 +3,15 @@
 // the retry push and adopt the old value as base, and the edit's own push find nothing to send.
 
 import { expect, it, vi } from "vitest";
-import { approvePendingReview, getPendingConflict, getPendingReview, pullNow, pushNow, resetSyncState } from "./sync";
+import {
+  approvePendingReview,
+  getPendingConflict,
+  getPendingReview,
+  hasPendingApplyForTests,
+  pullNow,
+  pushNow,
+  resetSyncState,
+} from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
@@ -213,4 +221,33 @@ it("a pull merge dropped by an edit during the apply's keyring wait re-arms the 
   expect(s.settings.recording.chipScale).toBe(edited);
   expect(s.settings.general.startMinimized).toBe(peerStart);
   expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
+});
+
+// The same drop with a dictation started during the wait as well: the caller re-arms the push only
+// at idle, and the session's end moves no slice, so unless the apply parks a re-pull for that end
+// neither the edit nor the peer's change syncs until the next window focus.
+it("a pull merge dropped by an edit and a dictation during the apply's keyring wait parks a re-pull", async () => {
+  const { edited, peerStart, remote } = await seed();
+  const peer = { version: 5, updated_ts: 5, device: "peer", blob: remote };
+  api.pull = peer;
+  api.conflicts = [peer];
+  api.onKeyRead = () => {
+    api.onKeyRead = () => {
+      editChipScale(edited);
+      useApp.setState({ status: "recording" as never });
+    };
+  };
+  vi.useFakeTimers();
+  try {
+    const pushesBefore = api.pushes;
+    await pullNow(true);
+    expect(useApp.getState().settings.general.startMinimized).not.toBe(peerStart); // dropped
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api.pushes).toBe(pushesBefore); // no push re-armed under the session
+    expect(hasPendingApplyForTests()).toBe(true); // the session's end re-pulls instead
+  } finally {
+    vi.useRealTimers();
+    useApp.setState({ status: "idle" });
+    await resetSyncState();
+  }
 });

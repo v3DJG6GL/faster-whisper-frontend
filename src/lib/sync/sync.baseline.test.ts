@@ -1119,10 +1119,10 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().backends.map((b) => b.name)).toEqual(["from-peer"]);
   });
 
-  it("a session started during the keyring wait reports 'not applied' and parks nothing", async () => {
+  it("a one-shot restore whose session started during the keyring wait reports 'not applied' and parks nothing", async () => {
     // The stale-restart retry re-entered applyBlob's "dictation live" branch and parked the blob,
-    // so a one-shot caller (import, restore, review approval) was told "not applied" while the
-    // settings landed anyway once the session ended.
+    // so a one-shot caller (import, restore) was told "not applied" while the settings landed
+    // anyway once the session ended. (A sync merge dropped this way parks a re-pull on purpose.)
     rejectPendingReview(); // drops anything an earlier test left parked
     expect(hasPendingApplyForTests()).toBe(false);
     let release: (v: Record<string, string>) => void = () => {};
@@ -1131,6 +1131,8 @@ describe("applyBlob keep-local (baseline)", () => {
       const applying = applyBlob(
         { backends: { list: [backend({ name: "from-peer" })] } },
         { ...CATS_ALL, profiles: false },
+        2,
+        { ignoreGates: true },
       );
       await Promise.resolve();
       useApp.setState({ status: "recording" as never });

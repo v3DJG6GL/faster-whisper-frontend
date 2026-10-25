@@ -1929,7 +1929,9 @@ export async function applyBlob(
       // including turning sync OFF — would be reverted and persisted. A sync merge is dropped,
       // not restarted: its blob was composed against the PRE-edit store, so re-hydrating it
       // reverts the edit; the caller re-arms the edit's push (its own debounced one hit the
-      // `inFlight` gate during this wait), whose 409 re-offers the merge. Only an explicit
+      // `inFlight` gate during this wait), whose 409 re-offers the merge — or, when a session
+      // started meanwhile, this parks a re-pull for its end, as the refusal at the top does
+      // (the caller re-arms only at idle, and the session's end moves no slice). Only an explicit
       // one-shot restore (`ignoreGates`, the user's own blob) restarts, recomputing every
       // derived value against current state; bounded, dropped on exhaustion.
       // Compare every slice `hydrate` overwrites, not just `settings`: profile/app-rule edits
@@ -1940,6 +1942,8 @@ export async function applyBlob(
       // reconcileBackendSecrets await slips the guard and `hydrate` replaces profiles,
       // backends and appRules under a session that is actively reading them.
       if (live.status !== "idle" || storeSlicesMoved(st, live) || gen !== myGen) {
+        // Never on a supersede (its own pull follows); a gate-respecting call never recurses.
+        if (live.status !== "idle" && gen === myGen && !opts.ignoreGates) pullParked = true;
         staleRestart = retries > 0 && gen === myGen && opts.ignoreGates === true;
         staleAbort = true;
         throw STALE;
