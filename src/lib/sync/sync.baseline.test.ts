@@ -2225,6 +2225,12 @@ describe("a sync edit made during the launch work", () => {
     expect(io.pushes).toBe(0);
   }
 
+  /** Finish the parked launch and wait until the startup sync has settled. */
+  async function settleLaunch(init: Promise<void>, store: typeof useApp): Promise<void> {
+    await finishLaunch(io, init);
+    await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.doUnmock("../api");
@@ -2240,8 +2246,7 @@ describe("a sync edit made during the launch work", () => {
       store.setState((st) => ({
         settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...sub, logLevel: true } } },
       }));
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
       expect(io.pushes).toBe(0);
@@ -2268,8 +2273,7 @@ describe("a sync edit made during the launch work", () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
       store.setState(relevelAndTurnOn("warn"));
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       await new Promise((r) => setTimeout(r, 30)); // a push the reconcile queued would land now
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
       expect(io.pushes).toBe(0);
@@ -2294,8 +2298,7 @@ describe("a sync edit made during the launch work", () => {
   it("a category turned ON after launch asks too, and nothing is pushed while the dialog waits", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       const pullsBefore = io.pulls;
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } } } }));
@@ -2371,8 +2374,7 @@ describe("a sync edit made during the launch work", () => {
   it("a setting switched ON in a category that already syncs asks when its value differs, and records the question", async () => {
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
       await expectAskedNothingPushed(engine);
@@ -2388,8 +2390,7 @@ describe("a sync edit made during the launch work", () => {
   it("a setting switched ON with the server's value merges, and an unpushed edit to another setting of the group still goes up", async () => {
     const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logsInSidebar: true } }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       // An edit to a synced setting whose push has not gone out yet, then the switch.
       store.setState(logging({ logLevel: "debug", showInSidebar: false, keepDays: 30 }));
       store.setState(turnOn({ ...levelOnly, logsInSidebar: true, logRetention: true }));
@@ -2405,8 +2406,7 @@ describe("a sync edit made during the launch work", () => {
   it("taking the server's value for the re-enabled setting keeps this device's edit to another setting of the group", async () => {
     const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logsInSidebar: true } }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState(logging({ logLevel: "debug", showInSidebar: false, keepDays: 90 }));
       store.setState(turnOn({ ...levelOnly, logsInSidebar: true, logRetention: true }));
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
@@ -2444,8 +2444,7 @@ describe("a sync edit made during the launch work", () => {
   it("turning the re-enabled setting off again drops its question and lets pushes through", async () => {
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
       await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
@@ -2463,8 +2462,7 @@ describe("a sync edit made during the launch work", () => {
     // "Log folder" is machine-specific (off by default): no device ever sent a logDir.
     const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState(logging({ logLevel: "debug", logDir: "/var/log/me" }));
       store.setState(turnOn({ ...levelOnly, logFolder: true }));
       await vi.waitFor(() => expect(io.pushes).toBe(1));
@@ -2558,8 +2556,7 @@ describe("a sync edit made during the launch work", () => {
   it("an automatic pull with a re-enabled category still to reconcile reconciles it, rather than pushing to start a second pull", async () => {
     const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState(keepLocal(90));
       // The server is unreachable when the setting comes on: its reconcile has not landed.
       io.failPulls = true;
@@ -2615,8 +2612,7 @@ describe("a sync edit made during the launch work", () => {
     const setSync = (patch: Partial<NonNullable<AppSettings["sync"]>>) =>
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, ...patch } } }));
     try {
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
       // (b) the gate comes on while sync is off, then sync comes back on.
       setSync({ enabled: false });
@@ -2648,8 +2644,7 @@ describe("a sync edit made during the launch work", () => {
     const { engine, store, init } = await launchEngine({ enabled: false });
     try {
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
-      await finishLaunch(io, init);
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await settleLaunch(init, store);
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
       expect(io.pushes).toBe(0);
