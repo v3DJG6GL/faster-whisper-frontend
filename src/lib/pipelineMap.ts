@@ -3,6 +3,7 @@
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
+import { fmtFull } from "./format";
 import { ownProp } from "./own";
 
 /** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
@@ -241,7 +242,7 @@ export function mapRowsProblem(rows: MapRow[]): string | null {
     keys.add(r.k);
   }
   if (keys.size > MAP_ENTRIES_MAX) {
-    return `The list is too long (at most ${MAP_ENTRIES_MAX.toLocaleString("en-US")} mappings) — delete ${keys.size - MAP_ENTRIES_MAX} to save`;
+    return `The list is too long (at most ${fmtFull(MAP_ENTRIES_MAX)} mappings) — delete ${keys.size - MAP_ENTRIES_MAX} to save`;
   }
   return mapRowTwinProblems(rows).values().next().value ?? null;
 }
@@ -264,7 +265,7 @@ const LOWERCASE_WORD_CHAR = /^[A-Za-zÄÖÜäöüß]$/;
  *  save: the Dictionary holds it with this reason, as it does for a map. */
 export function rulePatchProblem(patch: Record<string, unknown>): string | null {
   const tooLong = (what: string, v: unknown, max: number) =>
-    typeof v === "string" && [...v].length > max ? `${what} is too long (at most ${max.toLocaleString("en-US")} characters)` : null;
+    typeof v === "string" && [...v].length > max ? `${what} is too long (at most ${fmtFull(max)} characters)` : null;
   const p = tooLong("The pattern", patch.pattern, RULE_PATTERN_MAX);
   if (p) return p;
   if (Array.isArray(patch.entries)) {
@@ -281,7 +282,7 @@ export function rulePatchProblem(patch: Record<string, unknown>): string | null 
   }
   if (Array.isArray(patch.wordlist)) {
     if (patch.wordlist.length > LOWERCASE_WORDS_MAX) {
-      return `Too many lowercase words (at most ${LOWERCASE_WORDS_MAX.toLocaleString("en-US")})`;
+      return `Too many lowercase words (at most ${fmtFull(LOWERCASE_WORDS_MAX)})`;
     }
     for (const w of patch.wordlist) {
       if (typeof w !== "string") continue;
