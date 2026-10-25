@@ -492,8 +492,8 @@ fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a 
 /// records a past move rewrote incompletely — earlier builds only rewrote
 /// `mediaPath`, stranding every dictation record's `sourcePath` when the
 /// layout migration moved the files into `<base>/dictations`. Idempotent, but
-/// NOT cheap — it reads and parses every record — so the caller runs it after a
-/// migration that moved something and once per install, not every launch.
+/// NOT cheap — it reads and parses every record — so the caller runs it only after a
+/// migration that moved something or while the base lacks its `HEAL_STAMP`, not every launch.
 /// Returns `(complete, fixed)`. `complete` is false when a record could not be read or
 /// rewritten or a history folder could not be listed: the caller must then keep the heal armed,
 /// or that record stays broken. `fixed` counts the records re-pointed: none means a History
@@ -551,7 +551,6 @@ fn is_record_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("json")
 }
 
-/// A record file parsed as JSON; `None` when it cannot be read or does not parse.
 fn read_json_value(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
@@ -720,8 +719,6 @@ pub fn save_transcript_record(
     crate::audio::create_dir_private(&dir)
         .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
     let path = dir.join(format!("{id}.json"));
-    // Never in place: `read_records_into` silently skips a file that fails to parse, so a crash
-    // between truncate and write would make the record vanish from History.
     let _io = record_io_lock();
     // A record from a listing taken before this session's move or heal may name a dead path.
     let repointed = MOVED
@@ -729,6 +726,8 @@ pub fn save_transcript_record(
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .and_then(|moved| repoint_moved(&record, &moved.fwd));
+    // Never in place: `read_records_into` silently skips a file that fails to parse, so a crash
+    // between truncate and write would make the record vanish from History.
     write_record_keeping_mtime(
         &path,
         repointed
@@ -1030,9 +1029,8 @@ pub async fn transcript_store_stats(
 /// "Delete all dictations": every stored session record AND every app-owned
 /// file in the recordings folder (.wav + .txt sidecars matching the `dictation-*`
 /// naming convention — a user-chosen folder may hold foreign files).
-/// The retention clocks stay as set. Returns records + AUDIO files removed — the sidecars go
-/// too but are not counted, so the result matches the confirm's "N dictations + M audio files"
-/// (`recordingsAudioFiles`).
+/// Returns records + AUDIO files removed — the sidecars go too but are not counted, so the
+/// result matches the confirm's "N dictations + M audio files" (`recordingsAudioFiles`).
 #[tauri::command]
 pub async fn delete_all_dictations(
     app: AppHandle,
