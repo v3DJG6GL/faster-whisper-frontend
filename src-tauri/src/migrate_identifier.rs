@@ -740,14 +740,11 @@ mod tests {
         let (done, absent) = (scratch("legacy-done"), scratch("legacy-absent"));
         std::fs::create_dir_all(done.join(NEW_ID)).unwrap();
         std::fs::write(done.join(NEW_ID).join(MARKER), b"").unwrap();
-        std::fs::create_dir_all(done.join(LEGACY_ID)).unwrap();
-        std::fs::write(done.join(LEGACY_ID).join("config.json"), "{}").unwrap();
+        write_config(&done.join(LEGACY_ID), "{}");
         // The user started fresh under the new name: never moved either.
         let fresh = scratch("legacy-conflict");
-        std::fs::create_dir_all(fresh.join(LEGACY_ID)).unwrap();
-        std::fs::write(fresh.join(LEGACY_ID).join("config.json"), "old").unwrap();
-        std::fs::create_dir_all(fresh.join(NEW_ID)).unwrap();
-        std::fs::write(fresh.join(NEW_ID).join("config.json"), "new").unwrap();
+        write_config(&fresh.join(LEGACY_ID), "old");
+        write_config(&fresh.join(NEW_ID), "new");
 
         let roots = [root(&done), root(&absent), root(&fresh)];
         assert_eq!(migrate(&roots, true), Verdict::Proceed);
@@ -760,8 +757,7 @@ mod tests {
         let (done, todo) = (scratch("legacy-done2"), scratch("legacy-todo"));
         std::fs::create_dir_all(done.join(NEW_ID)).unwrap();
         std::fs::write(done.join(NEW_ID).join(MARKER), b"").unwrap();
-        std::fs::create_dir_all(todo.join(LEGACY_ID)).unwrap();
-        std::fs::write(todo.join(LEGACY_ID).join("config.json"), "old").unwrap();
+        write_config(&todo.join(LEGACY_ID), "old");
 
         let roots = [root(&done), root(&todo)];
         assert!(matches!(migrate(&roots, true), Verdict::Stop(m) if m.contains("still running")));
@@ -777,8 +773,7 @@ mod tests {
     fn a_failed_move_leaves_the_old_folder_whole_and_creates_no_new_one() {
         use std::os::unix::fs::PermissionsExt;
         let (base, old, new) = app_dirs("failed");
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("config.json"), "old").unwrap();
+        write_config(&old, "old");
         // A read-only parent: neither the rename nor the staging copy can create anything.
         std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o555)).unwrap();
         let writable = std::fs::write(base.join("probe"), b"").is_ok(); // root ignores modes
@@ -835,8 +830,7 @@ mod tests {
         assert!(new.join(MARKER).exists());
 
         // An old build run afterwards recreates its folder; it must never be merged back in.
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("config.json"), "{\"stale\":true}").unwrap();
+        write_config(&old, "{\"stale\":true}");
         assert_eq!(migrate_dir(&old, &new, false), Outcome::AlreadyDone);
         assert_eq!(
             std::fs::read_to_string(new.join("config.json")).unwrap(),
@@ -847,10 +841,8 @@ mod tests {
     #[test]
     fn data_already_under_the_new_name_is_never_overwritten() {
         let (_, old, new) = app_dirs("conflict");
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(old.join("config.json"), "old").unwrap();
-        std::fs::write(new.join("config.json"), "new").unwrap();
+        write_config(&old, "old");
+        write_config(&new, "new");
         assert_eq!(migrate_dir(&old, &new, false), Outcome::Conflict);
         assert_eq!(
             std::fs::read_to_string(new.join("config.json")).unwrap(),
@@ -862,9 +854,8 @@ mod tests {
     #[test]
     fn an_empty_new_folder_does_not_block_the_move() {
         let (_, old, new) = app_dirs("empty");
-        std::fs::create_dir_all(&old).unwrap();
+        write_config(&old, "old");
         std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(old.join("config.json"), "old").unwrap();
         assert_eq!(migrate_dir(&old, &new, false), Outcome::Moved);
         assert_eq!(
             std::fs::read_to_string(new.join("config.json")).unwrap(),
@@ -888,8 +879,7 @@ mod tests {
         let (base, old, new) = app_dirs("cache-is-data");
         std::fs::create_dir_all(old.join("audio")).unwrap();
         std::fs::write(old.join("audio").join("a.wav"), b"x").unwrap();
-        std::fs::create_dir_all(&new).unwrap();
-        std::fs::write(new.join("config.json"), "new").unwrap();
+        write_config(&new, "new");
         let mut roots = vec![root(&scratch("cache-is-data-cfg")), root(&base)];
         push_cache_root(&mut roots, base.clone());
         assert!(roots.iter().all(|r| !r.disposable));
