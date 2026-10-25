@@ -14,9 +14,10 @@
 import { keycapLabel } from "./keyboardLayout";
 // A hotkey CODE is untrusted: `isCodeList`/`isStringList` check each code's type (isCodeList also
 // caps its length), never its content, and Rust's `de_hotkey` only sorts and dedups, so a sync
-// blob or imported file can put "__proto__" in a chord. A bare index into the literal maps below would then return an `Object.prototype` member
-// — a React child that throws (no error boundary) or a non-string that breaks `canonicalizeCodes`
-// and stalls sync — hence every lookup goes through `ownProp`.
+// blob or imported file can put "__proto__" in a chord. A bare index into the literal maps below
+// would then return an `Object.prototype` member — a React child that throws (no error boundary)
+// or a non-string that breaks `canonicalizeCodes` and stalls sync — hence every lookup goes
+// through `ownProp`.
 import { ownProp } from "./own";
 import { IS_WINDOWS } from "./platform";
 
