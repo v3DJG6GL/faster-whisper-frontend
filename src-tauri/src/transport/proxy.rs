@@ -8,6 +8,7 @@
 //! because hyper-util's system matcher has no such bypass and a proxy cannot reach our loopback;
 //! so are the OS bypass entries that matcher drops ([`BypassRules`]).
 
+use super::stream::MAX_URL_IN_ERROR;
 use hyper_util::client::proxy::matcher::Matcher;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -29,7 +30,7 @@ impl Proxy {
     /// The proxy as it is safe to print: scheme + authority, bounded like `display_url`.
     pub(super) fn display(&self) -> String {
         let authority = self.uri.authority().map_or("", |a| a.as_str());
-        super::bounded_server_text(&format!("http://{authority}"), 80)
+        super::bounded_server_text(&format!("http://{authority}"), MAX_URL_IN_ERROR)
     }
 }
 
@@ -414,7 +415,7 @@ fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> 
                 hit.uri().scheme_str().unwrap_or(""),
                 hit.uri().authority().map_or("", |a| a.as_str())
             ),
-            80,
+            MAX_URL_IN_ERROR,
         );
         tracing::warn!(
             "[stream] live dictation cannot use the proxy {shown} (only http:// proxies are \

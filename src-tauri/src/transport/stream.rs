@@ -258,7 +258,7 @@ fn display_url(u: &str) -> String {
 }
 
 /// How much of a message a printed URL may spend — see `display_url`.
-const MAX_URL_IN_ERROR: usize = 80;
+pub(super) const MAX_URL_IN_ERROR: usize = 80;
 
 fn text_msg(s: String) -> Message {
     Message::Text(s.into())
