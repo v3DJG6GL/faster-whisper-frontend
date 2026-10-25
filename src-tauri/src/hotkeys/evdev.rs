@@ -553,8 +553,6 @@ mod imp {
                         forget_hold(&pid);
                     }
                 }
-                // Handoff: the hold's session lives on under the superset —
-                // release the teardown bookkeeping, emit no "stop".
                 Fire::ReleaseHold(pid) => forget_hold(&pid),
                 Fire::Toggle(pid) => {
                     // A fresh rising edge, as for Start: any pending loss latch is now a dud.
@@ -658,8 +656,7 @@ mod imp {
         // First commit every release still parked in the debouncer — those keys ARE released, and
         // a hold whose release is parked would otherwise still read as active below and get a
         // manufactured stop with the loss latch armed on a chord the user let go of (see the
-        // `windows` twin). Teardown mode: the Stop is claimed via take_hold, since
-        // stop_held_sessions may have emitted it.
+        // `windows` twin). Committed in teardown mode (see `commit`).
         for key in deb.drain() {
             commit_key!(key, false, true);
         }
