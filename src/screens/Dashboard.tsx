@@ -371,7 +371,6 @@ export default function Dashboard() {
           profiles are missing (the dictate hero below is inert until then). */}
       <SetupChecklist />
 
-      {/* The tinted row is the one the button dictates with; click another enabled row to switch. */}
       <Card className="mt-8 overflow-hidden p-0">
         <div className="flex items-center gap-6 px-6 py-6">
           <button
