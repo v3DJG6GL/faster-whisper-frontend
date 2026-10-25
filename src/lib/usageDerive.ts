@@ -123,7 +123,7 @@ export function metricValue(t: UsageKindTotals, m: ChartMetric): number {
 
 /** Densify the sparse per-kind series into one point per calendar day across the last
  *  `days` days, zero-filling gaps. Anchored on the caller's `today` (days-since-epoch,
- *  local), extended to the latest data day so nothing is ever cut off. */
+ *  local), extended to a data day up to `today + 1` so a point a day ahead is not cut off. */
 export function densifyKinds(series: readonly UsageSeriesPoint[], days: number, today: number): UsageSeriesPoint[] {
   const byDay = new Map<number, UsageSeriesPoint>();
   let maxDay = -Infinity;
