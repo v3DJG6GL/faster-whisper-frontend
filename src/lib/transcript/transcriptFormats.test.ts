@@ -35,7 +35,6 @@ const PLAIN: BatchResult = {
   segments: [{ start: 0.0, end: 2.0, text: "Just one line of text." }],
 };
 
-/** A manual German site subtitle track ("de-x-site") with these cues. */
 const deSiteTrack = (cues: TimedTrack["cues"]): TimedTrack => ({ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues });
 
 describe("prettySpeaker / speakerOrder", () => {
@@ -480,7 +479,6 @@ describe("speakerColorIndex / speakerHex (one resolver for viewer + exports)", (
     expect(speakerColorIndex(order, undefined, "SPEAKER_01")).toBe(1);
     expect(speakerColorIndex(order, { SPEAKER_01: 5 }, "SPEAKER_01")).toBe(5);
     expect(speakerColorIndex(order, { SPEAKER_01: 5 }, "SPEAKER_00")).toBe(0);
-    // Unknown label → first palette slot; out-of-range picks wrap.
     expect(speakerColorIndex(order, undefined, "GHOST")).toBe(0);
     expect(speakerColorIndex(order, { SPEAKER_00: 9 }, "SPEAKER_00"))
       .toBe(9 % DEFAULT_SPEAKER_COLORS.length);
@@ -523,7 +521,6 @@ describe("kept-original translations (quality guard)", () => {
   it("srt keeps the original line but never emits the kept 'translation'", () => {
     const out = generateExport(KEPT, { format: "srt", tracks: ["orig", "de"] });
     expect(out).toContain("Hallo.");
-    // The kept segment's text appears exactly once — as the original line.
     expect(out.match(/General greeting\./g)).toHaveLength(1);
   });
 
