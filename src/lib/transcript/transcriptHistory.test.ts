@@ -1064,15 +1064,12 @@ describe("lastWriteAt pruning keeps coalescing intact", () => {
   });
 });
 
+/** Segments `texts` in order, the i-th spanning i..i+1 s with id i. */
+const segmentsOf = (texts: string[]) => texts.map((text, i) => ({ id: i, start: i, end: i + 1, text }));
+
 describe("recordEditedResult", () => {
   // The server's text need not be a space-join of its segments (CJK, punctuation).
-  const result = {
-    text: "你好。世界。",
-    segments: [
-      { id: 0, start: 0, end: 1, text: "你好。" },
-      { id: 1, start: 1, end: 2, text: "世界。" },
-    ],
-  };
+  const result = { text: "你好。世界。", segments: segmentsOf(["你好。", "世界。"]) };
   const rec = (over: Partial<TranscriptRecord> = {}) => ({ id: "r", result, ...over }) as TranscriptRecord;
 
   it("leaves an unedited record's result alone, its text included (the viewer's rule)", () => {
@@ -1088,16 +1085,10 @@ describe("recordEditedResult", () => {
   });
 
   it("joins Japanese segments without spaces and spaced scripts with one", () => {
-    const ja = {
-      text: "今日は晴れ。明日は雨。",
-      segments: [
-        { id: 0, start: 0, end: 1, text: "今日は晴れ。" },
-        { id: 1, start: 1, end: 2, text: "明日も雨。" },
-      ],
-    };
+    const ja = { text: "今日は晴れ。明日は雨。", segments: segmentsOf(["今日は晴れ。", "明日も雨。"]) };
     const jaOut = recordEditedResult({ id: "j", result: ja, edits: { 1: "明日は雨。" } } as Partial<TranscriptRecord> as TranscriptRecord);
     expect(jaOut.text).toBe("今日は晴れ。明日は雨。");
-    const en = { text: "Hello there. Bye.", segments: [{ id: 0, start: 0, end: 1, text: "Hello there." }, { id: 1, start: 1, end: 2, text: "Bye." }] };
+    const en = { text: "Hello there. Bye.", segments: segmentsOf(["Hello there.", "Bye."]) };
     expect(recordEditedResult({ id: "e", result: en, edits: { 1: "Goodbye." } } as Partial<TranscriptRecord> as TranscriptRecord).text).toBe("Hello there. Goodbye.");
   });
 });
@@ -1105,14 +1096,7 @@ describe("recordEditedResult", () => {
 describe("recordText", () => {
   // History's copy, snippet and search read this: its seams must match the viewer's and
   // the exports' (joinSegmentTexts), not a plain space-join.
-  const cjk = {
-    text: "你好。世界。",
-    segments: [
-      { id: 0, start: 0, end: 1, text: "你好。" },
-      { id: 1, start: 1, end: 2, text: "世界。" },
-      { id: 2, start: 2, end: 3, text: "再见。" },
-    ],
-  };
+  const cjk = { text: "你好。世界。", segments: segmentsOf(["你好。", "世界。", "再见。"]) };
   const rec = (result: unknown, over: Partial<TranscriptRecord> = {}) =>
     ({ id: "r", result, ...over }) as TranscriptRecord;
 
@@ -1127,7 +1111,7 @@ describe("recordText", () => {
   });
 
   it("space-joins spaced scripts exactly as before", () => {
-    const en = { text: "", segments: [{ id: 0, start: 0, end: 1, text: "Hello there." }, { id: 1, start: 1, end: 2, text: "Bye." }] };
+    const en = { text: "", segments: segmentsOf(["Hello there.", "Bye."]) };
     expect(recordText(rec(en))).toBe("Hello there. Bye.");
     expect(recordText(rec(en), 160)).toBe("Hello there. Bye.");
     expect(recordText(rec(en), 8)).toBe("Hello th");
@@ -1135,26 +1119,17 @@ describe("recordText", () => {
 
   it("trims each segment's raw leading space before joining", () => {
     // faster-whisper's segment.text usually leads with a space.
-    const raw = {
-      text: "",
-      segments: [
-        { id: 0, start: 0, end: 1, text: " 今日は" },
-        { id: 1, start: 1, end: 2, text: " 天気です" },
-      ],
-    };
+    const raw = { text: "", segments: segmentsOf([" 今日は", " 天気です"]) };
     expect(recordText(rec(raw))).toBe("今日は天気です");
     expect(recordText(rec(raw), 160)).toBe("今日は天気です");
-    const en = { text: "", segments: [{ id: 0, start: 0, end: 1, text: " Hello." }, { id: 1, start: 1, end: 2, text: " Bye." }] };
+    const en = { text: "", segments: segmentsOf([" Hello.", " Bye."]) };
     expect(recordText(rec(en))).toBe("Hello. Bye.");
     expect(recordText(rec(en), 160)).toBe("Hello. Bye.");
   });
 
   it("bounds to the unbounded join's prefix on mixed CJK/Latin seams and blank segments", () => {
     const texts = [" Hello.", "你好。", "  ", "世界", " world", "テスト。", "", "end.", "再见", "x"];
-    const mixed = {
-      text: "",
-      segments: texts.map((text, i) => ({ id: i, start: i, end: i + 1, text })),
-    };
+    const mixed = { text: "", segments: segmentsOf(texts) };
     const full = recordText(rec(mixed));
     for (const max of [0, 1, 3, 6, 7, 9, 12, 15, 20, 30, full.length, 200]) {
       expect(recordText(rec(mixed), max)).toBe(full.slice(0, max));
@@ -1163,19 +1138,13 @@ describe("recordText", () => {
     const fullEdited = recordText(edited);
     for (const max of [2, 8, 10, 14, 25, 200]) expect(recordText(edited, max)).toBe(fullEdited.slice(0, max));
     // Format-only segments: the join drops them, so the bound must not count them.
-    const marks = {
-      text: "",
-      segments: ["a", "\u200e", "\u200e", "bcd"].map((text, i) => ({ id: i, start: i, end: i + 1, text })),
-    };
+    const marks = { text: "", segments: segmentsOf(["a", "\u200e", "\u200e", "bcd"]) };
     const fullMarks = recordText(rec(marks));
     for (const max of [1, 2, 3, 4, 5, 6]) expect(recordText(rec(marks), max)).toBe(fullMarks.slice(0, max));
   });
 
   it("fills the bound with many short CJK segments (no phantom seam spaces counted)", () => {
-    const many = {
-      text: "",
-      segments: Array.from({ length: 300 }, (_, i) => ({ id: i, start: i, end: i + 1, text: "あ。" })),
-    };
+    const many = { text: "", segments: segmentsOf(Array.from({ length: 300 }, () => "あ。")) };
     const out = recordText(rec(many), 200);
     expect(out).toHaveLength(200);
     expect(out).toBe("あ。".repeat(100));
