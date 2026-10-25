@@ -7,7 +7,7 @@
 // timestamps → karaoke). Search is global; when the active segment hides
 // matches, a banner names them (NN/g scoped-search guidance).
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Film, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
@@ -288,6 +288,12 @@ export default function History() {
   const running = useTranscribeRun((s) => s.running);
   /** A run-gated button's title: while a run is busy (the button is disabled) it says why. */
   const runGatedTitle = (idle: string) => (running ? "Wait for the current run to finish" : idle);
+  /** A run-gated icon-only row action: disabled while a run is busy, its title saying why. */
+  const gatedIconButton = (idleTitle: string, onClick: () => void, icon: ReactNode) => (
+    <Button variant="ghost" size="sm" disabled={running} title={runGatedTitle(idleTitle)} onClick={onClick}>
+      {icon}
+    </Button>
+  );
   const settings = useApp((s) => s.settings);
   const backends = useApp((s) => s.backends);
   const [query, setQuery] = useState(viewMemory.query);
@@ -896,48 +902,27 @@ export default function History() {
             <Download className="size-3.5" />
           </Button>
         )}
-        {ok && rec.kind === "url" && (rec.mediaPath || linkServerAudioLive(rec.result, Date.now() / 1000)) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={running}
-            title={runGatedTitle("Save the audio…")}
-            onClick={() => openExport(rec, "audio")}
-          >
-            <FileAudio className="size-3.5" />
-          </Button>
-        )}
-        {ok && (rec.kind === "url" || (rec.kind !== "text" && isVideoSourcePath(rec.sourcePath))) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={running}
-            title={runGatedTitle("Save the video (with subtitles)…")}
-            onClick={() => openExport(rec, "video")}
-          >
-            <Film className="size-3.5" />
-          </Button>
-        )}
+        {ok &&
+          rec.kind === "url" &&
+          (rec.mediaPath || linkServerAudioLive(rec.result, Date.now() / 1000)) &&
+          gatedIconButton("Save the audio…", () => openExport(rec, "audio"), <FileAudio className="size-3.5" />)}
+        {ok &&
+          (rec.kind === "url" || (rec.kind !== "text" && isVideoSourcePath(rec.sourcePath))) &&
+          gatedIconButton("Save the video (with subtitles)…", () => openExport(rec, "video"), <Film className="size-3.5" />)}
         {exportErrors.has(rec.id) && (
           <span className="text-[11px] text-warn" role="alert">
             Export failed: {safeDisplayText(exportErrors.get(rec.id) ?? "", 120)}
           </span>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={running}
-          title={runGatedTitle(
-            rec.kind === "url"
-              ? "Transcribe this link again with your current settings"
-              : rec.kind === "text"
-                ? "Translate this file again with your current settings"
-                : "Transcribe this file again with your current settings",
-          )}
-          onClick={() => retry(rec)}
-        >
-          <RotateCcw className="size-3.5" />
-        </Button>
+        {gatedIconButton(
+          rec.kind === "url"
+            ? "Transcribe this link again with your current settings"
+            : rec.kind === "text"
+              ? "Translate this file again with your current settings"
+              : "Transcribe this file again with your current settings",
+          () => retry(rec),
+          <RotateCcw className="size-3.5" />,
+        )}
         {deleteButton(rec)}
         {ok && (
           <Button
