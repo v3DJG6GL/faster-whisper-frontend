@@ -1001,8 +1001,8 @@ export function SyncTab() {
         {exportState === "nokeys" && (
           <div className="pb-4">
             <Notice tone="warn">
-              Exported — but the API keys could not be read from the system keyring and are not in
-              the file.
+              Exported — but the API keys could not be read from the system keyring: the file holds
+              your server configurations without their keys.
             </Notice>
           </div>
         )}

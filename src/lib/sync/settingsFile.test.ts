@@ -95,9 +95,12 @@ describe("exportToFile", () => {
     await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
     const env = lastEnvelope();
     expect(env.categories.backends?.secrets).toBeUndefined();
+    // The servers stay in the backup, just without their keys.
+    expect(env.categories.backends?.list).toEqual([b0]);
 
     vi.mocked(api.readBackendKeys).mockResolvedValueOnce({ b1: "sk-1" });
     await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+    expect(lastEnvelope().categories.backends).toEqual({ list: [b0], secrets: { b1: "sk-1" } });
 
     // Keys not asked for: nothing is missing.
     await expect(exportToFile("/tmp/x.json", false)).resolves.toEqual({ keysMissing: false });

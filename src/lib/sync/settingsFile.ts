@@ -23,8 +23,13 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
     allOn,
     undefined,
     // The Transcribe picks are portable: the backends list they name travels in
-    // the same envelope.
-    { includeSecrets, sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: true } },
+    // the same envelope. An unreadable keyring keeps the server list, keyless
+    // (exportToFile reports it as keysMissing).
+    {
+      includeSecrets,
+      sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: true },
+      onUnreadKeys: "keyless",
+    },
   );
   const device = await syncDeviceInfo();
   return {
@@ -41,8 +46,9 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
 /** Build + write the export to `path` (picked via the save dialog).
  *  `keysMissing`: the user asked for the API keys, the exported list had keyed
  *  backends, yet the file has none — composeBlob degrades a locked or partial keyring
- *  read to the keyless list (all or nothing), so the caller must say so instead of
- *  reporting a plain success for a backup that silently lacks its keys. */
+ *  read to the keyless list (all or nothing; the servers stay in the file), so the
+ *  caller must say so instead of reporting a plain success for a backup that silently
+ *  lacks its keys. */
 export async function exportToFile(
   path: string,
   includeSecrets: boolean,

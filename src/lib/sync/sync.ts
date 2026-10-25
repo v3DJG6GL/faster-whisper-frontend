@@ -595,13 +595,17 @@ const degradedComposes = new WeakSet<SyncBlob>();
 /**
  * Build the blob this device would push: live state for toggled-ON categories,
  * the snapshot's (server's) state for OFF ones. `secrets` are attached only
- * when requested (server push: always; export: opt-in).
+ * when requested (server push: always; export: opt-in). `onUnreadKeys` is what
+ * a keyed list becomes when the keyring read degrades: "passThrough" (push,
+ * the default) re-sends the snapshot's category so the server keeps its keys;
+ * "keyless" (export) keeps the local list without secrets — a file has no
+ * stored copy to protect, and dropping the list would empty the backup.
  */
 export async function composeBlob(
   cfg: StoreSlice,
   cats: Record<SyncCategory, boolean>,
   snapshot: SyncBlob | undefined,
-  opts: { includeSecrets: boolean; sub: SyncSubSettings; gates?: Gates },
+  opts: { includeSecrets: boolean; sub: SyncSubSettings; gates?: Gates; onUnreadKeys?: "passThrough" | "keyless" },
 ): Promise<SyncBlob> {
   const blob: SyncBlob = {};
   blob.general = cats.general ? extractGeneral(cfg.settings) : snapshot?.general;
@@ -680,13 +684,17 @@ export async function composeBlob(
         // snapshot, orphaning the stash. So when this device believes it HAS keys and could not
         // read them all, re-push the SNAPSHOT's category (the server's own last content). NOT
         // `undefined`: the transport is a whole-blob PUT and the client does the merge, so an
-        // omitted key erases the stored list AND its keys and becomes the new merge base. On the
-        // export path (no snapshot) the local list travels without secrets — a backup must never
-        // silently lose the server list.
-        blob.backends = snapshot ? snapshot.backends : { list: cfg.backends };
-        // Marked for the merge callers (`backendsDegraded`): not by reference identity, because
-        // the per-setting gate pass below rebuilds `blob.backends` into a fresh object.
-        if (snapshot) degradedComposes.add(blob);
+        // omitted key erases the stored list AND its keys and becomes the new merge base. With no
+        // snapshot (nothing to re-send) or on the export path ("keyless") the local list travels
+        // without secrets — a backup must never silently lose the server list.
+        if (snapshot && opts.onUnreadKeys !== "keyless") {
+          blob.backends = snapshot.backends;
+          // Marked for the merge callers (`backendsDegraded`): not by reference identity, because
+          // the per-setting gate pass below rebuilds `blob.backends` into a fresh object.
+          degradedComposes.add(blob);
+        } else {
+          blob.backends = { list: cfg.backends };
+        }
       }
     }
   } else {

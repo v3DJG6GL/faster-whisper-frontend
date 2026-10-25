@@ -219,6 +219,26 @@ describe("composeBlob passthrough (baseline)", () => {
       keyring.keys = null;
     }
   });
+
+  // The erase guard belongs to the push: an export opts into the keyless list, so a locked wallet
+  // cannot hand the user a backup with no servers in it.
+  it("unreadable keys: a push re-sends the snapshot's category, an export keeps the live list keyless", async () => {
+    const snapshot: SyncBlob = { backends: { list: [backend({ hasApiKey: true })], secrets: { b1: "sk-peer" } } };
+    const live = [backend({ hasApiKey: true, name: "renamed" })];
+    keyring.keys = {};
+    keyring.unreadable = ["b1"];
+    try {
+      const opts = { includeSecrets: true, sub: LEGACY_SUB };
+      const push = await composeBlob(slice({ backends: live }), CATS_ALL, snapshot, opts);
+      expect(push.backends).toEqual(snapshot.backends);
+      // Same snapshot on both: the caller's option alone decides.
+      const exported = await composeBlob(slice({ backends: live }), CATS_ALL, snapshot, { ...opts, onUnreadKeys: "keyless" });
+      expect(exported.backends).toEqual({ list: live });
+    } finally {
+      keyring.keys = null;
+      keyring.unreadable = [];
+    }
+  });
 });
 
 describe("composeBlob forward-compat inside a category", () => {
