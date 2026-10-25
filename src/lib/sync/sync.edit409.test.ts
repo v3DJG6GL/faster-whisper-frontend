@@ -239,8 +239,8 @@ it("an answered push failure after a 404 clears the unsupported-server flag, an 
 });
 
 // A pull's merge dropped because the user edited during its apply's keyring wait (up to 10 s
-// apiece behind a wallet prompt): the edit's own debounced push fired into the pull's `inFlight`
-// and was lost, so without a re-armed push neither the edit nor the peer's change ever synced.
+// apiece behind a wallet prompt) adopts no base and pushes nothing: the drop re-arms a push, so
+// the edit and the peer's change still sync (the 409, then the merge on the peer's base).
 it("a pull merge dropped by an edit during the apply's keyring wait re-arms the edit's push", async () => {
   const { edited, peerStart, remote } = await seed();
   const peer = { version: 5, updated_ts: 5, device: "peer", blob: remote };
