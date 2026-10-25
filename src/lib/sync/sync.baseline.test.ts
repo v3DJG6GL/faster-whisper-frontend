@@ -2218,6 +2218,13 @@ describe("a sync edit made during the launch work", () => {
     return { engine, store, init };
   }
 
+  /** The logging question is up and, a beat later, still nothing has gone up. */
+  async function expectAskedNothingPushed(engine: typeof import("./sync")): Promise<void> {
+    await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(io.pushes).toBe(0);
+  }
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.doUnmock("../api");
@@ -2339,9 +2346,7 @@ describe("a sync edit made during the launch work", () => {
     try {
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
       await finishLaunch(io, init);
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
     } finally {
       endLaunch(io, store);
     }
@@ -2370,9 +2375,7 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
       expect(store.getState().settings.logging?.keepDays).toBe(90); // nothing decided for the user
       // Recorded for a restart: the gate is ON by then, so no transition would mark it again.
       expect(io.saved?.freshGates).toEqual(["logRetention"]);
@@ -2534,9 +2537,7 @@ describe("a sync edit made during the launch work", () => {
       store.setState(keepLocal(90));
       store.setState(turnOn({ ...levelOnly, logRetention: true }));
       await finishLaunch(io, init);
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
     } finally {
       endLaunch(io, store);
     }
@@ -2548,9 +2549,7 @@ describe("a sync edit made during the launch work", () => {
     try {
       store.setState(keepLocal(90));
       await finishLaunch(io, init);
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
     } finally {
       endLaunch(io, store);
     }
@@ -2627,9 +2626,7 @@ describe("a sync edit made during the launch work", () => {
       // (a) the dialog waits; sync goes off and on again: it is asked again, nothing pushed.
       setSync({ enabled: false });
       setSync({ enabled: true });
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
     } finally {
       endLaunch(io, store);
     }
@@ -2641,9 +2638,7 @@ describe("a sync edit made during the launch work", () => {
       store.setState(relevelAndTurnOn("warn"));
       await finishLaunch(io, init);
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
+      await expectAskedNothingPushed(engine);
     } finally {
       endLaunch(io, store);
     }
