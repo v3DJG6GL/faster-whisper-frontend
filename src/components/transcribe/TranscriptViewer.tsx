@@ -94,7 +94,7 @@ function mediaMime(path: string): string {
  *  truncation: `result.text` is untouched, and Copy still writes the FULL text. */
 const TRANSCRIPT_PREVIEW_CHARS = 50_000;
 
-/** Segment cap for the Timestamps/Speakers views — a HARD cap (each segment is a DOM row;
+/** Segment cap for the Segments view and Edit — a HARD cap (each segment is a DOM row;
  *  an hour of speech is ~1-2k rows, fine; a hostile response could carry far more),
  *  disclosed in a footer line. Unlike the character preview it cannot be lifted: the
  *  un-capped render is exactly the stall it guards. Copy and exports carry everything. */
@@ -1883,9 +1883,9 @@ export function TranscriptViewer({
                 // press, moves anywhere on screen keep seeking until release.
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
-                  // Length not known yet (before loadedmetadata, and the record
-                  // stores no duration): frac * 0 would rewind to the start,
-                  // so do nothing instead.
+                  // Length not known yet (before loadedmetadata, or neither the
+                  // media nor the record has a duration): frac * 0 would rewind
+                  // to the start, so do nothing instead.
                   if (!(audioLen > 0)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
