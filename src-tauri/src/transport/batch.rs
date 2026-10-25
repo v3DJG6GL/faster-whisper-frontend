@@ -117,8 +117,9 @@ pub struct BatchOptions {
     /// endpoint) instead of the full backend's `task` form field — used when
     /// the backend is a plain OpenAI-compatible server.
     pub use_translations_endpoint: Option<bool>,
-    /// The backend is a plain OpenAI-compatible server (no override profiles, so the
-    /// explicit-empty `language` sentinel buys nothing there and a strict server may 400 it).
+    /// The backend is a plain OpenAI-compatible server: no override profiles, so the
+    /// explicit-empty `language` sentinel buys nothing there (and a strict server may 400 it),
+    /// and no `decode_overrides`, so temperature rides as its own form field.
     pub standard: Option<bool>,
 }
 
@@ -1249,8 +1250,9 @@ pub async fn transcribe_wav_bytes(
         .mime_str("audio/wav")?;
     // Dictation batch: short clips; keep the 120 s client default (the record path's only
     // stuck-session backstop, since the streaming-style finalize watchdog is stream-only).
-    // No stage options — dictation never diarizes/translates — only the server-kind flag
-    // that shapes the `language` field for a plain OpenAI-compatible server.
+    // No stage options — dictation never diarizes/translates — only the server-kind flag:
+    // a plain OpenAI-compatible server gets its own `language` shape and a separate
+    // temperature field.
     let options = BatchOptions {
         standard: Some(standard),
         ..Default::default()
@@ -1988,9 +1990,10 @@ pub struct LanguagePiece {
     pub probability: f64,
 }
 
-/// What `POST /v1/audio/url-language` answers. The check downloads the audio,
-/// which the run then reuses through `prefetched_media_id`. Snake_case on the
-/// wire, camelCase to the webview (like `UrlMediaDownload`).
+/// What `POST /v1/audio/url-language` answers. A check that downloaded the whole
+/// audio hands it to the run through `media_id` (`prefetched_media_id`); a
+/// segmented-stream link has only its pieces fetched and answers none. Snake_case
+/// on the wire, camelCase to the webview (like `UrlMediaDownload`).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UrlLanguageCheck {
@@ -2012,15 +2015,17 @@ pub struct UrlLanguageCheck {
     pub media_expires_at: Option<i64>,
 }
 
-/// The check downloads a whole link's audio before it listens, then waits for
-/// the GPU: like `url_audio_download`, give it room past the server's own
-/// download clock (`URL_DOWNLOAD_TIMEOUT_S`, 900 s by default) plus a queue wait.
+/// The check can download a whole link's audio before it listens (a single-file
+/// link, or a segmented stream's fallback), then waits for the GPU: like
+/// `url_audio_download`, give it room past the server's own download clock
+/// (`URL_DOWNLOAD_TIMEOUT_S`, 900 s by default) plus a queue wait.
 const URL_LANGUAGE_TIMEOUT: Duration = FILE_TRANSCRIBE_TIMEOUT;
 /// Most other languages / sampled pieces one check lists (the server samples three).
 const MAX_HEARD: usize = 8;
 
 /// Ask the server which language a link speaks. Slow (it downloads the
-/// audio); cancel through the shared progress cancel route on `progress_id`.
+/// audio, or a segmented stream's sampled pieces); cancel through the shared
+/// progress cancel route on `progress_id`.
 pub async fn url_language_check(
     server_url: &str,
     api_key: Option<&str>,
