@@ -92,8 +92,7 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str, released_at: 
     // must not divert this session's first phrase. A plugin press with no release since the latch
     // was armed is the chord held across the re-registration (an autorepeat reaching the new X11
     // grab), which must not wipe the true positive. Deliberately NOT on "stop":
-    // `stop_held_sessions`' teardown stops route through here. (`handle_cli_args` only lets
-    // start/stop/toggle through, so an unrecognised `--action` never reaches this.)
+    // `stop_held_sessions`' teardown stops route through here.
     if matches!(action, "start" | "toggle") {
         crate::hotkeys::held_keys::clear_chord_lost_if_armed_before(released_at);
     }
@@ -136,8 +135,6 @@ fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
 pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     let mut profile: Option<String> = None;
     let mut action: Option<String> = None;
-    // Did this relaunch carry a recognized trigger/quick-add flag? If not, it's a bare
-    // "open the app again" launch (e.g. double-clicking the icon) and we reveal the window.
     let mut recognized = false;
     let mut i = 0;
     while i < argv.len() {
@@ -197,7 +194,7 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
             tracing::warn!("[trigger] cli ignored unknown action '{a_log}'");
         }
     }
-    // A bare second launch (no trigger/quick-add flag) means "open the app again". The main
+    // A bare second launch (no recognized flag) means "open the app again". The main
     // window is routinely hidden (start-minimized, or close-to-tray), so without this the
     // already-running instance would stay invisible and the app would appear not to open.
     if !recognized {
