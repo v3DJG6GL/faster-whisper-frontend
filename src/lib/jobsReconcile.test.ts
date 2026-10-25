@@ -492,7 +492,6 @@ describe("reconcileJobs", () => {
   });
 
   it("a lost request whose backend is deleted settles its failed record and queue row with the reason", async () => {
-    // The pump's lost-contact catch already left a failed queue row naming the orphan job.
     await persistLost();
     await watchRunningLost();
     expect(getJob).toHaveBeenCalledTimes(1);
