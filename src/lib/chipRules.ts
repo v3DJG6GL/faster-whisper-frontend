@@ -1,7 +1,7 @@
 // The overlay chip's expand / tuck / cancel-affordance decisions, as pure functions:
-// the chip is a webview component in a repo with no jsdom and no component test, so
-// anything left inline in Overlay.tsx (which keeps the effects/timers) is untestable,
-// and these several-term booleans regress silently.
+// the repo has no jsdom (a component test can only render static markup), so anything
+// left inline in Overlay.tsx (which keeps the effects/timers) is untestable, and these
+// several-term booleans regress silently.
 //
 // Every rule that reads the phase re-checks `phase.kind === status` (currentPhase). The
 // two travel to the chip in ONE payload but are written by different store transitions,
@@ -93,8 +93,8 @@ export function chipExpansion(a: {
  *
  *  NOTE this does NOT override "stay hidden while dictating" (peekWhileActive): that
  *  is an explicit user instruction, and the caller's keep-minimized branch keeps the
- *  dot tucked whatever this returns. In that mode the cancel is reachable from Home
- *  and the hotkey instead. */
+ *  dot tucked whatever this returns. In that mode the cancel is reachable from the
+ *  Dashboard and the hotkey instead. */
 export function chipTuckHold(a: {
   peeked: boolean;
   status: DictationStatus;
