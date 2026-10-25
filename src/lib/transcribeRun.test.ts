@@ -98,6 +98,18 @@ import { useApp } from "./store";
 const flush = () => new Promise((r) => setTimeout(r, 0));
 // The minimal run context: a full (non-standard) backend "b1" at http://x.
 const RUN_CTX = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+
+/** Runs `fn` with Date faked 1 s past the video poll's two-hour deadline (transcribeRun.ts). */
+async function pastVideoDeadline(fn: () => Promise<void> | void): Promise<void> {
+  const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    vi.setSystemTime(deadline);
+    await fn();
+  } finally {
+    vi.useRealTimers();
+  }
+}
 /** A done file record of `sourcePath` (named by its last path part), stamped 2026-08-30 12:00Z; `over` sets the rest. */
 const recordOf = (id: string, sourcePath: string, over: Partial<TranscriptRecord> = {}): TranscriptRecord => ({
   schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
@@ -1920,14 +1932,9 @@ describe("an on-demand video that finishes is pulled once", () => {
     const answer = retryHeld();
     tick!(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
-    const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      vi.setSystemTime(deadline);
+    await pastVideoDeadline(async () => {
       tick!(); await flush();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
     expect(cleared).toBe(1);
     expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
@@ -2279,34 +2286,24 @@ describe("a run's pending video whose progress entry closed between two polls", 
     getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: { text: "hi", sourceVideoPending: true } }));
     await poll(1);
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
-    const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      vi.setSystemTime(deadline);
+    await pastVideoDeadline(async () => {
       await poll(1);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
       await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
       expect(getJobResult.mock.calls[0][0].jobId).toBe(jobId);
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toMatch(/took too long/);
       expect(fetchUrlVideo).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 
   it("pulls a video the job row names as finished at the deadline", async () => {
     getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: { text: "hi", sourceVideoMediaId: "f".repeat(32) } }));
     await poll(1);
-    const deadline = Date.now() + 2 * 60 * 60 * 1000 + 1_000;
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      vi.setSystemTime(deadline);
+    await pastVideoDeadline(async () => {
       await poll(1);
       await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
-    } finally {
-      vi.useRealTimers();
-    }
+    });
   });
 });
 
