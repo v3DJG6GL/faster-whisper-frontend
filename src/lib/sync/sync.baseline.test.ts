@@ -1057,7 +1057,7 @@ describe("applyBlob keep-local (baseline)", () => {
   it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
     // Everything applyBlob computes is derived from a PRE-wait snapshot, and hydrate replaces
     // the slices wholesale — so the staleness check must cover `backends` too, not just
-    // `settings` (upsertBackend returns only `{backends}`). A sync merge is dropped, not
+    // `settings` (upsertBackend never touches `settings`). A sync merge is dropped, not
     // restarted; the next pull re-offers it.
     let release: (v: Record<string, string>) => void = () => {};
     keyring.park = new Promise((r) => (release = r));
