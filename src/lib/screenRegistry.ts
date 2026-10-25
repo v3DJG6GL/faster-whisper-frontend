@@ -52,7 +52,6 @@ export function screenEyebrow(id: OverlayScreen): string {
   return `${APP_NAME} · ${screenTitle(id)}`;
 }
 
-/** Screen id → router path, for the navigate bridge. */
 export const SCREEN_PATH = Object.fromEntries(SCREENS.map((s) => [s.id, s.path])) as Record<
   OverlayScreen,
   string
