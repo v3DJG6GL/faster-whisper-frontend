@@ -5,8 +5,6 @@
 import { capCodePoints, profileDisplayName, trimLeadingInvisible } from "./sanitize";
 
 export function deriveChipTag(name: string): string {
-  // Cut by code points, not UTF-16 units, so an astral char (emoji) straddling the cap isn't
-  // split into a lone surrogate that renders as the replacement glyph "�".
   return capCodePoints(name.trim().replace(/\s+/g, " ").toUpperCase(), 10).trimEnd();
 }
 
