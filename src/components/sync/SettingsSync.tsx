@@ -847,7 +847,7 @@ function ConflictDialogBody({
   onPick: (category: string, value: "local" | "remote") => void;
 }) {
   // resolveSyncConflicts returns silently while a session runs (same rule as the review's
-  // approve) — the button says so instead of doing nothing.
+  // approve) — the button disables and a notice says why, instead of doing nothing.
   const dictating = useApp((st) => st.status !== "idle");
   const [busy, setBusy] = useState(false);
   return (
@@ -868,10 +868,6 @@ function ConflictDialogBody({
                 onChange={(v) => onPick(c, v)}
                 options={[
                   { value: "local", label: LOCAL_ARM_LABEL },
-                  // The server names this button. Defanging its characters does not stop it
-                  // reporting the literal string "This device" and rendering two identical
-                  // arms — on the one control that decides whose settings win, for categories
-                  // (general, profiles, app rules) that then apply with no second prompt.
                   { value: "remote", label: remoteArmLabel(pending.remoteDevice) },
                 ]}
               />
@@ -886,8 +882,9 @@ function ConflictDialogBody({
         <Button variant="ghost" disabled={busy} onClick={dismissSyncConflict}>
           Later
         </Button>
-        {/* Resolve nulls the pending conflict before its await, so no Later/backdrop click can
-            land in this dialog meanwhile. */}
+        {/* `busy` locks both buttons while resolve waits for the engine lock and composes this
+            device; it then nulls the pending conflict before awaiting the apply, so the dialog
+            is gone for that. */}
         <Button
           disabled={busy || dictating}
           onClick={() => {
@@ -915,7 +912,7 @@ export function SyncTab() {
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
   const lastSyncFrom = peerName(lastSyncDevice);
   // "Last synced …" is relative to now and nothing else re-renders this tab between syncs (no
-  // periodic pull). Hidden (closed to the tray): skip the redraw, and catch up at once on show.
+  // periodic pull).
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!lastSyncedAt) return;
