@@ -9,9 +9,9 @@ import { describe, expect, it } from "vitest";
 import src from "./Transcribe.tsx?raw";
 import siteSubtitlesSrc from "../lib/transcript/siteSubtitles.ts?raw";
 import { runTargets } from "../lib/translationTargets";
-import { initialSiteState, pickPolicy, type SiteSubsInput } from "../lib/transcript/siteSubtitles";
+import { initialSiteState, pickPolicy, resetSiteTargets, type SiteSubsInput } from "../lib/transcript/siteSubtitles";
 import type { SiteTrackInfo } from "../lib/urlSource";
-import { targetsOnLeave } from "./Transcribe";
+import { sitePanelState, targetsOnLeave } from "./Transcribe";
 
 /** The body of the screen Language picker's onChange. */
 const languageOnChange = () => {
@@ -103,12 +103,44 @@ describe("leaving the screen with the site-subtitle panel open", () => {
     expect(targetsOnLeave(custom.targets, custom.state, 3, true, 1)).toEqual(["en"]);
     // Also once the panel no longer held the chips: the promoted code is still not yours.
     expect(targetsOnLeave(custom.targets, custom.state, 3, false, 1)).toEqual(["en"]);
-    // No panel, nothing promoted, or no translation: the saved list stays.
+    // No panel, or nothing promoted: the saved list stays.
     expect(targetsOnLeave(["en", "es"], null, 3, false, 0)).toBeNull();
     expect(targetsOnLeave(["en", "es"], initialSiteState(["en", "es"]), 3, true, 2)).toBeNull();
-    expect(targetsOnLeave(custom.targets, custom.state, null, true, 1)).toBeNull();
     // The over-limit cut on a held release is unchanged: never below the list the panel took.
     expect(targetsOnLeave(["en", "fr", "it"], initialSiteState(["en"]), 1, true, 1)).toEqual(["en"]);
     expect(targetsOnLeave(["en", "fr", "it"], initialSiteState(["en"]), 1, true, 3)).toBeNull();
+  });
+});
+
+// A backend switch resets the panel on the NEW backend's caps. The languages the old panel saved
+// as promoted must still leave the saved targets when the new backend has no translation, and a
+// panel that saved nothing (no translation) must not wipe your own targets on one that has it.
+describe("the site panel's promoted languages across a backend switch", () => {
+  const tr = (lang: string): SiteTrackInfo => ({ id: lang, lang, kind: "manual", ext: "vtt", hoh: false });
+
+  it("drops what the panel saved as promoted on leaving, also without translation", () => {
+    const inp: SiteSubsInput = { tracks: [tr("de"), tr("en"), tr("es")], spoken: "de", multi: false, targets: ["en"], maxTargets: 3 };
+    const custom = pickPolicy(inp, initialSiteState(inp.targets), "custom");
+    const state = sitePanelState(custom, initialSiteState(inp.targets), true);
+    expect(state.promoted).toEqual(["es"]);
+    expect(targetsOnLeave(["en", "es"], state, null, false, 1)).toEqual(["en"]);
+    // The over-limit cut still needs translation: a held release without it cuts nothing more.
+    expect(targetsOnLeave(["en", "fr", "it"], initialSiteState(["en"]), null, true, 1)).toBeNull();
+  });
+
+  it("records no promotion a panel without translation never saved", () => {
+    // No translation: the panel's input targets are [], so Custom promotes every site language.
+    const inp: SiteSubsInput = { tracks: [tr("de"), tr("en"), tr("es")], spoken: "de", multi: false, targets: [] };
+    const prev = initialSiteState([]);
+    const custom = pickPolicy(inp, prev, "custom");
+    expect(custom.state.promoted).toEqual(["en", "es"]);
+    const state = sitePanelState(custom, prev, false);
+    expect(state.promoted).toEqual([]);
+    expect(state.policy).toBe("custom");
+    // Your own saved ["en"] (from a backend with translation) survives the reset.
+    expect(resetSiteTargets(state, ["en"])).toEqual(["en"]);
+    // A promotion recorded while translation was on is kept: those codes were saved.
+    const saved = { ...prev, promoted: ["es"] };
+    expect(sitePanelState(custom, saved, false).promoted).toEqual(["es"]);
   });
 });

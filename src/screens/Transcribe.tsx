@@ -234,14 +234,22 @@ function seedTranscribe(t: TranscribeSettings | undefined, backends: readonly Ba
 /** The saved targets as the screen leaves them (null = unchanged). Leaving starts the site panel
  *  over like a new preview: the languages its Custom only promoted go (resetSiteTargets), or they
  *  stay saved as your own picks. If the panel still held the chips, what it grew past both the
- *  limit and the list it took is cut too. Nothing changes without translation (`cap` null). */
+ *  limit and the list it took is cut too — only with translation (`cap` null = none). The
+ *  promoted drop holds either way: the panel records only promotions it saved (sitePanelState). */
 export function targetsOnLeave(
   stored: readonly string[], panel: SiteSubsState | null, cap: number | null, held: boolean, base: number,
 ): string[] | null {
-  if (cap === null) return null;
   let next = resetSiteTargets(panel, stored);
-  if (held) next = next.slice(0, Math.max(cap, base));
+  if (held && cap !== null) next = next.slice(0, Math.max(cap, base));
   return next.length !== stored.length ? next : null;
+}
+
+/** The site panel's state after a change. Without translation the change writes no targets, so
+ *  the languages its Custom promoted were never saved: the previous promoted list stays, and
+ *  every promoted code is one the panel really saved — the resets drop them whatever the backend
+ *  they run on (resetSiteTargets). */
+export function sitePanelState(ch: SiteChange, prev: SiteSubsState | null, mt: boolean): SiteSubsState {
+  return mt ? ch.state : { ...ch.state, promoted: prev?.promoted ?? [] };
 }
 
 export default function Transcribe() {
@@ -609,12 +617,14 @@ export default function Transcribe() {
   useEffect(() => {
     // `siteState` here is the old panel's (this render's): the targets drop what its Custom only
     // promoted, written where they are saved, so the new panel starts from them (resetSiteTargets).
-    const kept = translationAvailable ? resetSiteTargets(siteState, translateTo) : [];
-    if (translationAvailable && kept.length !== translateTo.length) {
+    // Also without translation now: a backend switch resets the panel on the NEW backend's caps,
+    // and what the old one saved must not stay as your own picks (sitePanelState).
+    const kept = resetSiteTargets(siteState, translateTo);
+    if (kept.length !== translateTo.length) {
       setTranslateTo(kept);
       persistOptions({ translateTo: kept });
     }
-    setSiteState(urlPreviewData?.subtitle_tracks?.length ? initialSiteState(kept) : null);
+    setSiteState(urlPreviewData?.subtitle_tracks?.length ? initialSiteState(translationAvailable ? kept : []) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per preview
   }, [urlPreviewData]);
   const linkLang = useLinkLanguage({
@@ -664,7 +674,7 @@ export default function Transcribe() {
   /** One door for every panel or chip change: the panel's state, and the Processing card's
    *  targets when the change wrote them. */
   const applySite = (ch: SiteChange) => {
-    setSiteState(ch.state);
+    setSiteState(sitePanelState(ch, siteState, translationAvailable));
     if (translationAvailable && ch.targets.join() !== translateTo.join()) {
       setTranslateTo(ch.targets);
       persistOptions({ translateTo: ch.targets });
