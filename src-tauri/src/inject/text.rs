@@ -178,7 +178,7 @@ pub(crate) async fn inject_text(
         // Same check as the mid-function divert below, for the same reason: a cancel landing
         // between the epoch capture and this write (the own-window focus IPC above is an
         // event-loop round trip) must not install the transcript over the user's clipboard.
-        // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept,
+        // `cancel_discards`, not a bare `injection_cancelled`: an error abort wants its text kept,
         // unless the caller withheld it (nothing in it to recover).
         let discarded = move || crate::inject::cancel_discards(epoch, withhold_on_divert);
         if discarded() {
@@ -345,7 +345,7 @@ pub(crate) async fn inject_text(
         // `modifiers_stuck` arm). A cancel in that window must not install the transcript as a live
         // persistent clipboard owner over what the user copied: `cancel_injection`'s contract.
         //
-        // `cancel_wants_recovery` is NOT redundant here: an error abort (a died session) reaches
+        // `cancel_discards`, not a bare `injection_cancelled`: an error abort (a died session) reaches
         // this branch through the same race, and it DOES want its text recovered. Because this is
         // an early `return`, it never reaches the recovery block at the end of the function, so
         // letting the write happen IS that recovery. Unless the caller withheld it: a withheld
@@ -548,9 +548,10 @@ pub(crate) async fn inject_text(
             } else {
                 None
             };
-            // Sink gate at the clipboard write, as `inject::inject`'s paste path has: the
-            // held-modifier wait, latch consume, focus read and bounded prev read (~0.5-1.2s)
-            // separate it from the entry guards.
+            // Sink gate at the clipboard write, as `inject::inject`'s paste path has: nothing on
+            // this path has asked about a cancel since the epoch capture (the held-modifier wait,
+            // latch consume, focus read and bounded prev read: ~0.5-1.2s), and our own window was
+            // last checked before the latch consume.
             // - Cancel: a user cancel means "I don't want this" (see `RECOVER_AT_EPOCH`), and writing
             //   anyway clobbers what they had copied. An error abort that wants recovery is NOT
             //   stopped: an early `return` would skip the recovery block at the end of this function
