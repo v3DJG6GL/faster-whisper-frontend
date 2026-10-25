@@ -114,8 +114,9 @@ pub fn cancel_discards(epoch: u64, withhold_on_divert: bool) -> bool {
 /// (a restore the frontend queued before an error abort can still run after the recovery write),
 /// and `end_injection` takes it.
 ///
-/// Armed at all four recovery writes (the two in the paste path, the mid-function divert arm and
-/// the entry clipboard-only arm), and consumed at the top of `end_injection` — unconditionally,
+/// Armed at all four recovery writes (the Wayland paste arm's write guard, the error-abort block
+/// at the end of `inject_text`, the mid-function divert arm and the entry clipboard-only arm), and
+/// consumed at the top of `end_injection` — unconditionally,
 /// above its snapshot test, so a session that never took a snapshot still clears it — or by
 /// `discard_injection_snapshot`, the other way a session ends. Those two are the only session
 /// teardowns, so the flag cannot outlive the session that armed it, which is what makes it safe
@@ -787,9 +788,10 @@ pub fn is_deceptive_format_char(c: char) -> bool {
 /// normal phrase is still a single call.
 const DIRECT_CHUNK_CHARS: usize = 512;
 
-/// What an X11/Windows job actually did. `Ok(())` alone could not tell "typed it" from "abandoned
-/// it because one of our own windows took focus", and the caller has to know: the first advances
-/// the typed baseline, the second must be re-sent.
+/// What a keystroke sink's job actually did (X11/Windows, the virtual keyboard, the Wayland portal).
+/// `Ok(())` alone could not tell "typed it" from "abandoned it because one of our own windows took
+/// focus", and the caller has to know: the first advances the typed baseline, the second must be
+/// re-sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Landed {
     /// Keystrokes were synthesized — or the job was a deliberate no-op (empty text, or a cancel bail,
@@ -1107,8 +1109,9 @@ fn serve_clipboard_blocking(
 }
 
 /// Put `text` on the clipboard and KEEP it there for the user to paste later. Used by the
-/// clipboard-only insert method and `inject_text`'s divert and recovery arms, where (unlike paste)
-/// nothing consumes the clipboard immediately, so it must persist via a live owner.
+/// clipboard-only insert method, the divert and recovery arms of `inject_text` and the Wayland
+/// typer, and `recover_to_clipboard`, where (unlike paste) nothing consumes the clipboard
+/// immediately, so it must persist via a live owner.
 /// Returns whether the text actually reached the clipboard, as far as that is knowable.
 ///
 /// The answer matters on the DIVERT path: `streaming.ts` treats a landed divert as delivered —
@@ -1672,7 +1675,6 @@ fn paste(
     res.map(|()| Landed::Yes)
 }
 
-/// The platform paste modifier: Cmd on macOS, Ctrl elsewhere.
 const PASTE_MOD: Key = if cfg!(target_os = "macos") {
     Key::Meta
 } else {
