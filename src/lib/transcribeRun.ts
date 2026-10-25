@@ -279,7 +279,7 @@ export const SKIPPED_EXPLANATIONS: Record<RailStage, string> = {
   translating: " — the transcript stays in its source language.",
 };
 
-/** The run's overall 0..1 fraction: the SERVER's number (core/run_plan.py
+/** The run's overall 0..1 fraction: the SERVER's number (transcription/run_plan.py
  *  weighs every stage by what it cost or is expected to cost, and holds it
  *  monotone), 0 until the first poll answers. Null when nothing runs. */
 export function overallOf(s: { queue: QueueItem[]; progress: BatchProgress | null }): number | null {
@@ -756,6 +756,7 @@ function railCleared(): Pick<TranscribeRunState, "progress" | "stageTimes" | "st
  *    resolving   — URL metadata probe (folds onto the download row)
  *    loading     — MT-model loading (always a translating sub-phase)
  *    waiting     — semaphore queue (folds onto transcribe)
+ *    analyzing   — audio decode + VAD pass before the first segment (folds onto transcribe)
  *    separating, transcribing, diarizing, translating — pipeline stages
  *
  *  NOTE: "downloading" is ambiguous — it can be a media download (download rail)
@@ -1516,8 +1517,6 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     lastOptions: rec.options,
     runOptions: undefined,
     lastOverrides: {},
-    // Overlay slots keyed by record ID — the path can't do it, two records
-    // of the same URL share theirs.
     renames: { ...s.renames, [rec.id]: rec.renames ?? {} },
     speakerColors: { ...s.speakerColors, [rec.id]: rec.speakerColors ?? {} },
     edits: { ...s.edits, [rec.id]: rec.edits ?? {} },
