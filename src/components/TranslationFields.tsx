@@ -1,6 +1,6 @@
 // Controls for the T2T translation stage: the target-language chips (the selected
-// targets as removable pills in output order, plus a "+ language" picker over the
-// remaining candidates), the per-run options fields, and the Backend/Profile
+// targets as removable pills in output order, plus a "+ language" multi-select picker
+// that ticks them), the per-run options fields, and the Backend/Profile
 // "Translation defaults" editor. The chips are reused by the Processing card, the
 // defaults editors, and the viewer's retro-translate panel.
 import type { ReactNode } from "react";
