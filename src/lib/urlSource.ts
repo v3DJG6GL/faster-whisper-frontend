@@ -57,8 +57,8 @@ export function stripMediaUrlNoise(raw: string): string {
  *  spreadsheet cells read? `new URL` would percent-encode the space and quietly merge the two
  *  into one queue key. A second scheme WITHOUT a separator before it stays a link: archive and
  *  redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…).
- *  Judged on the RAW text: stripUrlNoise deletes inner tabs, which would glue the two cells into
- *  one link. CR/LF go first, as the parsers drop them (a soft-wrapped single link stays one);
+ *  Judged on the RAW text: stripMediaUrlNoise deletes inner tabs, which would glue the two cells
+ *  into one link. CR/LF go first, as the parsers drop them (a soft-wrapped single link stays one);
  *  the separators the parsers keep part two links. Text that does not start with a link is not
  *  "several links" — it is text before a link. */
 export function pastesSeveralLinks(raw: string): boolean {
