@@ -859,8 +859,6 @@ pub async fn run<F>(
             }
         };
         if timed_out {
-            // The one transcript-loss path left: the server never sent its finals (or its
-            // close) within the deadline, so log it.
             tracing::warn!(
                 "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
@@ -1364,8 +1362,8 @@ fn bank_doc(docs: &mut Vec<String>, doc: &str) {
 enum Frame {
     Continue,
     /// The last `final`. NOT terminal for the reader: the `captured` frame for that
-    /// utterance is written AFTER it (see `FromReader`), and a reader that stopped here
-    /// never read the last phrase's receipt — the frontend then parked its inject queue
+    /// utterance is written AFTER it (see [`StreamEvent::Captured`]), and a reader that stopped
+    /// here never read the last phrase's receipt — the frontend then parked its inject queue
     /// for the full CAPTURE_ID_WAIT_MS on every session.
     LastFinal,
     /// `closing` — the server is done.
