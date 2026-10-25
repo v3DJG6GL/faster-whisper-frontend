@@ -261,8 +261,9 @@ pub(crate) async fn inject_text(
     // hold and the whole gate above is skipped.
     //
     // That teardown is not a bystander: it emits a mid-hold stop for a push-to-talk profile, which
-    // MANUFACTURES this injection at the exact moment the chord is provably still down. So the wipe
-    // arms a chord-precise, self-expiring latch for this injection to consume.
+    // MANUFACTURES this injection at the exact moment the chord is provably still down. So that
+    // stop (not the wipe — see `held_keys::MODS_LOST_AT`) arms a chord-precise, self-expiring latch
+    // for this injection to consume.
     //
     // Deliberately consumed AFTER the loop, not merged into it: this is a "the chord was down when
     // we lost sight of it" fact, not a live reading, so there is nothing to wait for. Straight to
@@ -274,10 +275,11 @@ pub(crate) async fn inject_text(
     // keys in the app's own settings/dictionary fields — and on the paste path clobber the
     // clipboard first.
     //
-    // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `focus::windows`'s
-    // twin) classify our own window as noise and fall back to `last_other`, so they report the
-    // PREVIOUS app — which still matches `expect_app_id`, so the mismatch arm never fires. Only
-    // the authoritative webview-focus check sees it, so re-run exactly that.
+    // The per-app re-check below CANNOT stand in for this. `focused_app_now` classifies our own
+    // window as noise and falls back to `last_other` (written on Windows by `focus::windows`'
+    // `fold_foreground`), so it reports the PREVIOUS app — which still matches `expect_app_id`, so
+    // the mismatch arm never fires. Only the authoritative webview-focus check sees it, so re-run
+    // exactly that.
     //
     // `landed: false`, deliberately NOT a degrade to "clipboard": our own window holding focus must
     // never clobber the user's clipboard for an insert they cannot see land. Skipping is safe —
