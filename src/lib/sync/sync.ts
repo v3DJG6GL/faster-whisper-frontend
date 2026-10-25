@@ -2504,7 +2504,7 @@ function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
     // compared): say so, not only that incoming changes wait.
     syncError: fresh
       ? "Your API keys couldn't be read from the keyring, so the server list (or a server-list setting) you turned on for sync can't be compared with the server's yet, and nothing is synced until then. Unlock it and restart the app to resume syncing."
-      : "Your API keys couldn't be read from the keyring, so incoming backend changes (and the pinned Quick add list that depends on them) are on hold. Unlock it and restart the app to resume syncing.",
+      : "Your API keys couldn't be read from the keyring, so a server-list or pinned Quick add list change from another device can't be merged yet, and nothing this device changes is uploaded until then. Unlock it and restart the app to resume syncing.",
   });
   return true;
 }

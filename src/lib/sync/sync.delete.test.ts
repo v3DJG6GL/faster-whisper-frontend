@@ -263,6 +263,8 @@ describe("a sync composed with a degraded keyring", () => {
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
       await pullNow(true);
       expect(useApp.getState().syncStatus).toBe("error");
+      // The withheld base holds this device's own pushes behind a 409 too: say so.
+      expect(useApp.getState().syncError).toMatch(/nothing this device changes is uploaded/);
       api.keys = { b1: "sk-secret" };
       await pushNow(true);
       expect(api.pushedBase).toBe(1); // still the seeded base: the old pin cannot overwrite v2
