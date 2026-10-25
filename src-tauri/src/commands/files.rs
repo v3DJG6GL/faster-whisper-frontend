@@ -790,14 +790,7 @@ mod tests {
 
     #[test]
     fn move_dir_contents_leaves_inflight_tmp_behind() {
-        let base = std::env::temp_dir().join(format!(
-            "fwf-move-dir-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let base = crate::config::fresh_test_dir("move-dir");
         let from = base.join("from");
         let to = base.join("to");
         std::fs::create_dir_all(&from).unwrap();
