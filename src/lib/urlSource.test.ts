@@ -159,7 +159,7 @@ describe("displayLabel", () => {
   });
   it("truncates hostile/overlong titles", () => {
     const label = displayLabel("https://x.example/", "T".repeat(500));
-    expect(label.length).toBeLessThanOrEqual(121); // safeDisplayText cap + ellipsis
+    expect(label.length).toBeLessThanOrEqual(121); // displayLabel's 120 safeDisplayText cap (no ellipsis)
   });
   it("falls back to host + short path when there is no title", () => {
     expect(displayLabel("https://media.example/talks/ep1.mp3")).toBe(
