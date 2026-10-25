@@ -1001,7 +1001,8 @@ pub struct BatchProgress {
     /// Seconds of audio decoded so far (transcribe stage).
     #[serde(default)]
     pub position: Option<f64>,
-    /// Diarization pipeline's current step name.
+    /// The active stage's sub-step, e.g. diarization's pipeline step, separation's
+    /// "waiting"/"preparing", the link's extractor while downloading.
     #[serde(default)]
     pub step: Option<String>,
     /// The last decoded segment's text (transcribe stage live tail).
