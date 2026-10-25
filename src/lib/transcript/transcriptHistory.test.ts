@@ -74,6 +74,12 @@ const listAndLoad = async (records: unknown[]): Promise<void> => {
   await loadHistory(true);
 };
 
+const deferred = () => {
+  let resolve: (v: unknown[]) => void = () => {};
+  const promise = new Promise<unknown[]>((r) => { resolve = r; });
+  return { promise, resolve };
+};
+
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
   _resetHistoryLoadForTests();
@@ -649,13 +655,13 @@ describe("pending writes are droppable and flushable", () => {
       upsertRecord({ ...base, id: "flush-1", result: { text: "w1" } });
       upsertRecord({ ...base, id: "flush-1", result: { text: "w2" } });
       expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
-      let resolveList: (v: unknown[]) => void = () => {};
-      listTranscriptRecords.mockReturnValue(new Promise((r) => { resolveList = r; }));
+      const listing = deferred();
+      listTranscriptRecords.mockReturnValue(listing.promise);
       const load = loadHistory(true);
       // Flushed synchronously, while the listing is still in flight.
       expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
       expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("w2");
-      resolveList([]);
+      listing.resolve([]);
       await load;
     } finally {
       vi.useRealTimers();
@@ -880,11 +886,6 @@ describe("flushRecordWrites resolves once the parked writes land", () => {
 
 describe("loadHistory(force) chains onto an in-flight listing", () => {
   it("the forced listing wins: it was taken after the files changed", async () => {
-    const deferred = () => {
-      let resolve: (v: unknown[]) => void = () => {};
-      const promise = new Promise<unknown[]>((r) => { resolve = r; });
-      return { promise, resolve };
-    };
     const d1 = deferred();
     const d2 = deferred();
     listTranscriptRecords.mockReturnValueOnce(d1.promise).mockReturnValueOnce(d2.promise);
@@ -900,11 +901,6 @@ describe("loadHistory(force) chains onto an in-flight listing", () => {
 });
 
 describe("loadHistory replays mirror changes made while the listing was in flight", () => {
-  const deferred = () => {
-    let resolve: (v: unknown[]) => void = () => {};
-    const promise = new Promise<unknown[]>((r) => { resolve = r; });
-    return { promise, resolve };
-  };
   const A = fileRecord("A", "a.mp3");
 
   it("an upsert during the listing survives the snapshot", async () => {
