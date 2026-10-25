@@ -1928,7 +1928,8 @@ export async function applyBlob(
       // the wait and `hydrate` replaces it wholesale, so anything the user changed meanwhile —
       // including turning sync OFF — would be reverted and persisted. A sync merge is dropped,
       // not restarted: its blob was composed against the PRE-edit store, so re-hydrating it
-      // reverts the edit; the next pull (or the edit's own push) re-offers it. Only an explicit
+      // reverts the edit; the caller re-arms the edit's push (its own debounced one hit the
+      // `inFlight` gate during this wait), whose 409 re-offers the merge. Only an explicit
       // one-shot restore (`ignoreGates`, the user's own blob) restarts, recomputing every
       // derived value against current state; bounded, dropped on exhaustion.
       // Compare every slice `hydrate` overwrites, not just `settings`: profile/app-rule edits
@@ -3287,6 +3288,9 @@ export async function pushNow(manual = false): Promise<void> {
           // re-offers it. Clear the 'syncing' this call set, as reconcileRemote's twin does —
           // without hiding a prompt that still waits, or overwriting a Reject / Later meanwhile.
           if (useApp.getState().syncStatus === "syncing") idleStatus();
+          // Dropped (the store moved during the keyring wait): the edit's own push fired into
+          // this call's `inFlight` and was lost, so re-arm it (a refusal parks a re-pull instead).
+          if (useApp.getState().status === "idle") schedulePush();
           return;
         }
         // Applied without the degraded backends category: adopt the base and keep pushing only
@@ -3354,6 +3358,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // dropSupersededPending either, so a waiting prompt keeps its notice — and a Reject / Later
     // pressed meanwhile keeps its status (pushNow's 409 twin).
     if (useApp.getState().syncStatus === "syncing") idleStatus();
+    // Dropped: re-arm the edit's push, which the pull's `inFlight` swallowed (pushNow's twin).
+    if (useApp.getState().status === "idle") schedulePush();
     return;
   }
   // Applied without the degraded backends category: the remote becomes the base only when it

@@ -184,3 +184,33 @@ it("an answered push failure after a 404 clears the unsupported-server flag, an 
   expect(s.syncUnsupported).toBe(false);
   expect(s.syncError).toBe("HTTP 502");
 });
+
+// A pull's merge dropped because the user edited during its apply's keyring wait (up to 10 s
+// apiece behind a wallet prompt): the edit's own debounced push fired into the pull's `inFlight`
+// and was lost, so without a re-armed push neither the edit nor the peer's change ever synced.
+it("a pull merge dropped by an edit during the apply's keyring wait re-arms the edit's push", async () => {
+  const { edited, peerStart, remote } = await seed();
+  const peer = { version: 5, updated_ts: 5, device: "peer", blob: remote };
+  api.pull = peer;
+  api.conflicts = [peer];
+  // The first keyring read is the compose's; the edit lands in the apply's.
+  api.onKeyRead = () => {
+    api.onKeyRead = () => editChipScale(edited);
+  };
+  vi.useFakeTimers();
+  try {
+    const pushesBefore = api.pushes;
+    await pullNow(true);
+    expect(useApp.getState().settings.general.startMinimized).not.toBe(peerStart); // dropped
+    expect(api.pushes).toBe(pushesBefore);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(api.pushes).toBe(pushesBefore + 2); // the 409, then the merge on the peer's base
+  } finally {
+    vi.useRealTimers();
+  }
+  const s = useApp.getState();
+  expect(s.syncStatus).toBe("ok");
+  expect(s.settings.recording.chipScale).toBe(edited);
+  expect(s.settings.general.startMinimized).toBe(peerStart);
+  expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
+});
