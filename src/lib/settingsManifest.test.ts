@@ -10,10 +10,15 @@ import {
   SYNC_GROUPS,
   TOP_COVERAGE,
   TRANSCRIBE_COVERAGE,
+  completeGates,
+  settingsOfCategory,
   settingsOfGroup,
   type FieldRef,
 } from "./settingsManifest";
 import { DICTATION_HISTORY_FIELDS, FILE_TRANSCRIPTION_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./sync/syncTypes";
+import { catsFromGates } from "./sync/syncGates";
+import { withSettingsDefaults } from "./store";
+import { DEFAULT_SYNC } from "./defaults";
 
 
 describe("manifest integrity", () => {
@@ -149,24 +154,21 @@ describe("manifest integrity", () => {
 });
 
 describe("completeGates migration", () => {
-  it("defaults with nothing saved", async () => {
-    const { completeGates } = await import("./settingsManifest");
+  it("defaults with nothing saved", () => {
     const g = completeGates(undefined, undefined);
     expect(g.soundCues).toBe(true);
     expect(g.pasteShortcut).toBe(false); // machine-specific
     expect(g.audioFolder).toBe(false);
   });
 
-  it("an OFF legacy category seeds every member OFF (nothing silently starts syncing)", async () => {
-    const { completeGates } = await import("./settingsManifest");
+  it("an OFF legacy category seeds every member OFF (nothing silently starts syncing)", () => {
     const g = completeGates(undefined, { chip: false });
     expect(g.autoHideToEdge).toBe(false);
     expect(g.liveTranscript).toBe(false);
     expect(g.soundCues).toBe(true); // other categories untouched
   });
 
-  it("legacy sub keys map onto their new ids; explicit saved gates win over category folding", async () => {
-    const { completeGates } = await import("./settingsManifest");
+  it("legacy sub keys map onto their new ids; explicit saved gates win over category folding", () => {
     const g = completeGates(
       { recordingsDir: true, transcribePicks: true, autoHideToEdge: true },
       { chip: false },
@@ -179,8 +181,7 @@ describe("completeGates migration", () => {
     expect(g.liveTranscript).toBe(DEFAULT_SETTING_SYNC.liveTranscript);
   });
 
-  it("a setting added after the manifest follows its category's current gates, not a frozen legacy OFF toggle", async () => {
-    const { completeGates, settingsOfCategory } = await import("./settingsManifest");
+  it("a setting added after the manifest follows its category's current gates, not a frozen legacy OFF toggle", () => {
     // The user had Profiles OFF before the manifest, then turned every Profiles switch back ON;
     // `sync.categories.profiles` has no writer any more, so it stays false.
     const withProfiles = (on: boolean) => {
@@ -200,9 +201,7 @@ describe("completeGates migration", () => {
     expect(completeGates(noChip, { chip: false }).liveTranscript).toBe(false);
   });
 
-  it("a pre-manifest sub map refines only within an ON category (its defaults were auto-persisted)", async () => {
-    const { completeGates } = await import("./settingsManifest");
-    const { catsFromGates } = await import("./sync/syncGates");
+  it("a pre-manifest sub map refines only within an ON category (its defaults were auto-persisted)", () => {
     const legacy = { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
     const g = completeGates(legacy, { general: true, dictionary: false });
     expect(g.quickAddHotkey).toBe(false); // the OFF dictionary fold wins over the auto-persisted true
@@ -215,8 +214,7 @@ describe("completeGates migration", () => {
 });
 
 describe("store completion of a pre-split config", () => {
-  it("an OFF pre-split category keeps its split-out members OFF after migration", async () => {
-    const { withSettingsDefaults } = await import("./store");
+  it("an OFF pre-split category keeps its split-out members OFF after migration", () => {
     const settings = withSettingsDefaults({ sync: { categories: { recording: false, general: false } } });
     const sub = settings.sync!.sub!;
     // chip was split out of recording, dictionary out of general
@@ -227,8 +225,7 @@ describe("store completion of a pre-split config", () => {
     expect(sub.backendList).toBe(true); // unrelated category untouched
   });
 
-  it("a pre-manifest sub map does not re-enable the quick-add chord of an OFF pre-split General", async () => {
-    const { withSettingsDefaults } = await import("./store");
+  it("a pre-manifest sub map does not re-enable the quick-add chord of an OFF pre-split General", () => {
     const sub = withSettingsDefaults({
       sync: {
         categories: { general: false },
@@ -238,15 +235,13 @@ describe("store completion of a pre-split config", () => {
     expect(sub.quickAddHotkey).toBe(false);
   });
 
-  it("legacy latchAutoStop survives a completion round-trip (downgrade keeps the intent)", async () => {
-    const { withSettingsDefaults } = await import("./store");
+  it("legacy latchAutoStop survives a completion round-trip (downgrade keeps the intent)", () => {
     const sub = withSettingsDefaults({ sync: { sub: { latchAutoStop: false } } }).sync!.sub!;
     expect(sub.handsFreeAutoStop).toBe(false);
     expect(sub.latchAutoStop).toBe(false);
   });
 
-  it("DEFAULT_SYNC.sub agrees with the manifest so the two can never drift", async () => {
-    const { DEFAULT_SYNC } = await import("./defaults");
+  it("DEFAULT_SYNC.sub agrees with the manifest so the two can never drift", () => {
     const sub = DEFAULT_SYNC.sub!;
     expect(sub.profileHotkeys).toBe(DEFAULT_SETTING_SYNC.profileHotkeys);
     expect(sub.quickAddHotkey).toBe(DEFAULT_SETTING_SYNC.quickAddHotkey);
