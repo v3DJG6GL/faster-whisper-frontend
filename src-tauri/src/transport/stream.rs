@@ -5,6 +5,7 @@
 //! capture rate) as binary frames while parsing the server's JSON messages
 //! into [`StreamEvent`]s.
 
+use crate::audio::capture::rms;
 use crate::audio::resample::Resampler16k;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
@@ -261,17 +262,6 @@ const MAX_URL_IN_ERROR: usize = 80;
 
 fn text_msg(s: String) -> Message {
     Message::Text(s.into())
-}
-
-/// RMS of a mono f32 frame (rate-independent). Used by the save-time speech gate to
-/// mirror the capture meter (`session.rs`) and the chip's speaking detector.
-#[inline]
-fn rms_f32(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum: f32 = samples.iter().map(|s| s * s).sum();
-    (sum / samples.len() as f32).sqrt()
 }
 
 /// A parsed server message handed from the dedicated read task to the main loop,
@@ -1025,7 +1015,7 @@ fn save_chunk(
     match gate {
         Some(gate) => {
             gated.clear();
-            gate.push(crate::audio::chip_level(rms_f32(chunk)), bytes, gated);
+            gate.push(crate::audio::chip_level(rms(chunk)), bytes, gated);
             save_capped(saved, gated, capped);
         }
         None => save_capped(saved, bytes, capped),
