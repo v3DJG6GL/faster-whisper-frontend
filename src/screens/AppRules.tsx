@@ -28,9 +28,10 @@ const DETECT_FAILED_MSG =
  *  basename without `.exe` (focus/exe_name.rs), so a pasted `C:\Apps\Chrome.exe` or a
  *  Task-Manager-style `chrome.exe` would otherwise save as a rule that never matches. */
 export function typedAppId(raw: string): string {
-  const id = normalizeAppId(raw);
-  if (!IS_WINDOWS) return id;
-  return (id.split(/[\\/]/).pop() ?? "").trim().replace(/\.exe$/i, "").trim();
+  if (!IS_WINDOWS) return normalizeAppId(raw);
+  // Basename first, then bound — the detector's order: bounding a long path first would cut the
+  // exe name off its tail.
+  return normalizeAppId(raw.split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "").trim();
 }
 
 function blankAppRule(): AppRule {

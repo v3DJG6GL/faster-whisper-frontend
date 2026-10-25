@@ -23,6 +23,11 @@ describe("typedAppId", () => {
     expect(appRuleKey(typedAppId(".exe"))).toBe("");
   });
 
+  it("keeps the exe name of a pasted Windows path longer than the id bound", async () => {
+    const typedAppId = await load(true);
+    expect(appRuleKey(typedAppId("C:\\" + "a".repeat(220) + "\\Code.exe"))).toBe("code");
+  });
+
   it("leaves a Linux app id as typed", async () => {
     const typedAppId = await load(false);
     expect(typedAppId(" org.kde.konsole ")).toBe("org.kde.konsole");
