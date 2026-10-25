@@ -81,8 +81,7 @@ function haystackOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, Haysta
   const hit = cache.get(r);
   if (hit) return hit;
   // The translated text a session injected, and a file/link/text run's translated
-  // tracks, are shown and copied, so they are searchable too —
-  // type-guarded and bounded, the file is not validated on load.
+  // tracks, are shown and copied, so they are searchable too — bounded like the record text.
   const translated = typeof r.translatedText === "string" ? "\n" + r.translatedText.slice(0, 20_000) : "";
   const fileTr = recordTranslationTexts(r, 20_000)
     .map((v) => "\n" + v)
@@ -475,9 +474,9 @@ export default function History() {
       .catch((e) => console.error("history track copy failed:", e));
   };
 
-  /** "Save audio…/Save video…": open the workbench straight onto the export
-   *  panel with that Media choice (the panel holds the container and
-   *  subtitle options — a row button cannot). */
+  /** "Save the audio…" / "Save the video (with subtitles)…": open the workbench
+   *  straight onto the export panel with that Media choice (the panel holds the
+   *  container and subtitle options — a row button cannot). */
   const openExport = (rec: TranscriptRecord, media: "audio" | "video") => {
     if (openHistoryRecord(rec)) navigate("/transcribe", { state: { openExport: { media } } });
   };
@@ -610,9 +609,10 @@ export default function History() {
     return parts.join(" · ");
   };
 
-  // Gated on what the pill would SHOW, read as the chip reads an authored tag: `profileTag` is
-  // stored after a plain trim, so it can keep format-only characters and U+2800 padding — a
-  // raw-truthy check would draw an empty pill or cut a padded tag's visible part.
+  // Gated on what the pill would SHOW, read as the chip reads an authored tag: a `profileTag` on
+  // disk is unvalidated (older records stored it after a plain trim), so it can keep format-only
+  // characters and U+2800 padding — a raw-truthy check would draw an empty pill or cut a padded
+  // tag's visible part.
   const tagBadge = (rec: TranscriptRecord) => {
     const tag = safeDisplayText(authoredChipTag(rec.profileTag), 16).trim();
     return tag ? <Badge tone="accent">{tag}</Badge> : null;
