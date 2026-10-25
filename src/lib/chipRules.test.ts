@@ -140,10 +140,8 @@ describe("chipTuckHold", () => {
     ).toBe(true);
   });
 
-  // peekWhileActive ("stay hidden while dictating") is an explicit user instruction, so a
-  // cold translate must NOT override it — the cancel stays reachable from Home and the
-  // hotkey in that mode. The hold is only ONE term of the caller's peek eligibility; this
-  // mirrors the rest of that expression (Overlay.tsx's peek driver) to pin the outcome.
+  // The hold is only ONE term of the caller's peek eligibility; this mirrors the rest of that
+  // expression (Overlay.tsx's peek driver) to pin the outcome.
   it("does not override peekWhileActive", () => {
     const eligible = (keepMin: boolean) => {
       const status: DictationStatus = "translating";
