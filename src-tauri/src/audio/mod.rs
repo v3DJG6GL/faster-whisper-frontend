@@ -267,9 +267,9 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
         opts.mode(0o600);
     }
     let f = opts.open(path)?;
-    // The Windows half of "owner-only": a file inherits its folder's DACL, and a folder that
-    // already existed when the user picked it (a synced tree, a backup restore) keeps whatever
-    // permissions it had. Best-effort, like the directory call.
+    // The Windows half of "owner-only", per FILE: a file inherits its folder's DACL, and
+    // `create_dir_private` deliberately leaves a folder that already existed alone. Applied while
+    // the file is still empty. Warn, not fail: failing would drop the dictation it was made for.
     #[cfg(windows)]
     windows_owner_only_logged(path);
     Ok(f)
@@ -300,7 +300,13 @@ pub(crate) fn restrict_file_private(path: &Path) {
 /// per-second timestamped log of every dictation (when, how often, how large the archive is). On
 /// Windows the default inherited ACL of a folder outside the profile (`C:\Users\Public`, a mapped
 /// share, a OneDrive/Dropbox tree) would leave the directory and every `.wav`/`.txt` in it readable
-/// by other accounts. A directory that already exists keeps whatever permissions the user gave it.
+/// by other accounts.
+///
+/// A directory that already exists keeps whatever permissions the user gave it, on both platforms.
+/// On Unix that is harmless because each file is 0600 anyway; on Windows it is NOT the same thing,
+/// so each file gets its own owner-only DACL (`create_new_private`). Re-ACLing the user's folder
+/// instead would strip SYSTEM, Administrators and inherited entries from a folder they may share
+/// on purpose (backup, AV, indexing).
 pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -348,11 +354,12 @@ fn windows_owner_only_logged(path: &Path) {
     }
 }
 
-/// Replace the DACL of `dir` (a folder or a file) with a single inheritable ACE granting the
+/// Replace the DACL of `path` (a folder or a file) with a single inheritable ACE granting the
 /// current user full control, and mark it PROTECTED so the parent's inherited entries do not
-/// apply. On a folder, new files created inside inherit that one ACE.
+/// apply. On a folder, new files created inside inherit that one ACE; on a file the inheritance
+/// flags are inert.
 #[cfg(windows)]
-pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn windows_owner_only_dacl(path: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{LocalFree, HANDLE};
     use windows_sys::Win32::Security::Authorization::{
@@ -368,7 +375,7 @@ pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
 
     const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
 
-    let mut wide: Vec<u16> = dir.as_os_str().encode_wide().collect();
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     wide.push(0);
 
     unsafe {
