@@ -54,6 +54,9 @@ import { ownProp } from "@/lib/own";
 /** The pre-dialog size check's subtitle streams: the result and tracks they were built from. */
 type CheckedTracks = { res: BatchResult; ids: string[]; tracks: EmbeddedTrack[] };
 
+/** The longest failure message the panel shows or hands to the app's banner. */
+const ERROR_MAX = 300;
+
 /** Why a video Save stops for one subtitle track over the packager's embed cap. */
 const tooLargeToEmbed = (t: EmbeddedTrack) =>
   `The "${safeDisplayText(t.label || t.lang, 60)}" subtitle track is too large to put ` +
@@ -582,7 +585,7 @@ export function TranscriptExport({
           .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
           .catch(() => {});
       } catch (e) {
-        return fail("fetch", safeDisplayText(errorText(e), 300) || "The video could not be fetched.");
+        return fail("fetch", safeDisplayText(errorText(e), ERROR_MAX) || "The video could not be fetched.");
       }
     } else {
       return fail("none", "No video is available for this transcription.");
@@ -694,7 +697,7 @@ export function TranscriptExport({
       } else late(outcome.reason ?? outcome.detail);
       return false;
     }
-    const msg = outcome.kind === "cancelled" ? "Export cancelled." : safeDisplayText(outcome.detail, 300) || "Export failed.";
+    const msg = outcome.kind === "cancelled" ? "Export cancelled." : safeDisplayText(outcome.detail, ERROR_MAX) || "Export failed.";
     if (mine()) setMediaError({ kind: outcome.kind, msg });
     // A user's cancel needs no banner.
     else if (outcome.kind !== "cancelled") late(msg);
@@ -748,7 +751,7 @@ export function TranscriptExport({
     const late = (msg: string) => {
       console.error("media export failed:", msg);
       useApp.getState().setLogsDoorway({
-        msg: `Export of "${title}" failed: ${safeDisplayText(msg, 300)}`, showLogs: false,
+        msg: `Export of "${title}" failed: ${safeDisplayText(msg, ERROR_MAX)}`, showLogs: false,
       });
     };
     setSaveError(null);
@@ -1287,10 +1290,10 @@ export function TranscriptExport({
                 A video carries at most {embedCap} subtitle tracks — leave some out or save them as files.
               </span>
             )}
-            {saveError && <span className="mt-2 text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>}
+            {saveError && <span className="mt-2 text-[12px] text-warn">{safeDisplayText(saveError, ERROR_MAX)}</span>}
             {mediaError && (
               <span className="mt-2 text-[12px] text-warn">
-                {safeDisplayText(mediaError.msg, 300)}
+                {safeDisplayText(mediaError.msg, ERROR_MAX)}
                 {mediaError.kind === "mp4" && !tooManyEmbedded && (
                   <button type="button" className="ml-2 underline"
                     onClick={() => void doExport()}>
