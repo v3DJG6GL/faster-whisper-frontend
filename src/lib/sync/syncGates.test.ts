@@ -464,8 +464,8 @@ describe("withGateParts", () => {
 
 describe("pure helpers", () => {
   it("gateComposeScalar / gateApplyScalar pass non-objects through", () => {
-    // A gate must be OFF, or both functions short-circuit on `off.length === 0`
-    // and the isPlainObject guard (the string-spread hazard) is never reached.
+    // A gate must be OFF: with every gate on, the `off.length === 0` return passes the value
+    // through anyway, so a missing isPlainObject guard (the string-spread hazard) would go unseen.
     const someOff = { ...GATES_ALL, soundCues: false };
     expect(gateComposeScalar("general", "junk", undefined, someOff)).toBe("junk");
     expect(gateApplyScalar("general", "junk", someOff)).toBe("junk");
