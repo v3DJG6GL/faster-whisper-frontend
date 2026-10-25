@@ -1078,6 +1078,47 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(byId.get("b1")!.name).toBe("local"); // and the blob did not land
   });
 
+  it("a sync merge whose store moved during the keyring wait is dropped, not re-applied", async () => {
+    // With retries left, the restart re-hydrated the SAME pre-edit merge blob over the edit.
+    let release: (v: Record<string, string>) => void = () => {};
+    keyring.park = new Promise((r) => (release = r));
+    try {
+      const applying = applyBlob(
+        { backends: { list: [backend({ name: "from-peer" })] } },
+        { ...CATS_ALL, profiles: false },
+      );
+      await Promise.resolve();
+      useApp.getState().upsertBackend(backend({ id: "b2", name: "added-meanwhile" }));
+      release({});
+      expect(await applying).toBe(false);
+    } finally {
+      keyring.park = null;
+    }
+    const byId = new Map(useApp.getState().backends.map((b) => [b.id, b]));
+    expect(byId.get("b2")?.name).toBe("added-meanwhile");
+    expect(byId.get("b1")!.name).toBe("local");
+  });
+
+  it("an explicit restore whose store moved during the keyring wait restarts and lands", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    keyring.park = new Promise((r) => (release = r));
+    try {
+      const applying = applyBlob(
+        { backends: { list: [backend({ name: "from-peer" })] } },
+        { ...CATS_ALL, profiles: false },
+        2,
+        { ignoreGates: true },
+      );
+      await Promise.resolve();
+      useApp.getState().upsertBackend(backend({ id: "b2", name: "added-meanwhile" }));
+      release({});
+      expect(await applying).toBe(true);
+    } finally {
+      keyring.park = null;
+    }
+    expect(useApp.getState().backends.map((b) => b.name)).toEqual(["from-peer"]);
+  });
+
   it("a session started during the keyring wait reports 'not applied' and parks nothing", async () => {
     // The stale-restart retry re-entered applyBlob's "dictation live" branch and parked the blob,
     // so a one-shot caller (import, restore, review approval) was told "not applied" while the

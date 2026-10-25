@@ -1652,8 +1652,9 @@ async function reconcileBackendSecrets(
 export async function applyBlob(
   blob: SyncBlob,
   cats: Record<SyncCategory, boolean>,
-  /** Retries left after a mid-apply store change (see the check after the keyring wait).
-   *  Bounded so a user editing settings in a tight loop cannot spin this. */
+  /** Retries left after a mid-apply store change (see the check after the keyring wait); used
+   *  only by an `ignoreGates` restore — a sync merge is dropped instead. Bounded so a user
+   *  editing settings in a tight loop cannot spin this. */
   retries = 2,
   /** `ignoreGates`: an explicit one-shot restore (file import, Restore from server,
    *  onboarding) — see the gate step below. */
@@ -1925,10 +1926,11 @@ export async function applyBlob(
       // The ONLY await in this function, and the blob sizes it (sequential keyring writes, 10s
       // timeout apiece, up to 500 entries). Everything above came from a snapshot taken BEFORE
       // the wait and `hydrate` replaces it wholesale, so anything the user changed meanwhile —
-      // including turning sync OFF — would be reverted and persisted. Restart rather than merge:
-      // re-entering recomputes every derived value (dangling-reference scrub, conflict pass)
-      // against current state. Bounded; on exhaustion the apply is dropped, not applied stale —
-      // the next pull brings the blob back.
+      // including turning sync OFF — would be reverted and persisted. A sync merge is dropped,
+      // not restarted: its blob was composed against the PRE-edit store, so re-hydrating it
+      // reverts the edit; the next pull (or the edit's own push) re-offers it. Only an explicit
+      // one-shot restore (`ignoreGates`, the user's own blob) restarts, recomputing every
+      // derived value against current state; bounded, dropped on exhaustion.
       // Compare every slice `hydrate` overwrites, not just `settings`: profile/app-rule edits
       // leave `settings` identical, and `nextBackends` is re-pinned against the PRE-wait list.
       const live = useApp.getState();
@@ -1937,7 +1939,7 @@ export async function applyBlob(
       // reconcileBackendSecrets await slips the guard and `hydrate` replaces profiles,
       // backends and appRules under a session that is actively reading them.
       if (live.status !== "idle" || storeSlicesMoved(st, live) || gen !== myGen) {
-        staleRestart = retries > 0 && gen === myGen;
+        staleRestart = retries > 0 && gen === myGen && opts.ignoreGates === true;
         staleAbort = true;
         throw STALE;
       }
@@ -2125,7 +2127,7 @@ export async function applyBlob(
     if (useApp.getState().status !== "idle") return false;
     return applyBlob(blob, cats, retries - 1, opts);
   }
-  // Dropped stale with no retry left (retries exhausted, or superseded): report "not applied" —
+  // Dropped stale (a sync merge, retries exhausted, or superseded): report "not applied" —
   // the caller must leave the base alone and let the next pull re-offer it.
   if (staleAbort) return false;
   return true;
