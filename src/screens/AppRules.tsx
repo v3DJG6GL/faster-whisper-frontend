@@ -30,8 +30,9 @@ const DETECT_FAILED_MSG =
 export function typedAppId(raw: string): string {
   if (!IS_WINDOWS) return normalizeAppId(raw);
   // Basename first, then bound — the detector's order: bounding a long path first would cut the
-  // exe name off its tail.
-  return normalizeAppId(raw.split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "").trim();
+  // exe name off its tail. Explorer's "Copy as path" wraps the path in quotes, which no Windows
+  // file name can contain.
+  return normalizeAppId(raw.replace(/"/g, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "").trim();
 }
 
 function blankAppRule(): AppRule {
