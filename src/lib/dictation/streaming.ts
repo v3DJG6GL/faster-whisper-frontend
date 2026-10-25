@@ -298,10 +298,11 @@ function noteDroppedCarry(): void {
   carrySep = "";
   owedUtterances = settleOwedUtterances(owedUtterances, { kind: "drop" }).owed;
 }
-// The last final's document (advanced synchronously per final), used ONLY for the "did the document
-// grow" guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
-// hands-free end), independent of whether/where it was typed. Separate from `injectedText` so the typed
-// baseline can be type-time/own-window-aware without breaking re-sent-final detection.
+// The last final's document (advanced synchronously per final), for the "did the document grow"
+// guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
+// hands-free end) — and for where the new phrase starts (an owed record's `from`), independent of
+// whether/where it was typed. Separate from `injectedText` so the typed baseline can be
+// type-time/own-window-aware without breaking re-sent-final detection.
 let seenDoc = "";
 // Documents completed before a hard break, accumulated for the "stop"-timing single
 // insert. Live mode types as it goes, so it doesn't read this back.
@@ -606,8 +607,8 @@ let sessionTranslatedText: string | null = null;
  *  renders. Live mode translates each phrase separately, so appending the joined blobs would
  *  interleave a multi-target session into `DE EN FR DE EN FR…`; per language, each track
  *  stays continuous. */
-// Null-prototype: the keys are language codes from `translateTo`, which sanitizeProfiles
-// type-checks but does not allowlist, and the server echoes them back. On a plain `{}` a code
+// Null-prototype: the keys are language codes from `translateTo`, which `wireCodes` shape-checks
+// (2–16 letters, digits, `-`) but does not allowlist. On a plain `{}` a code
 // spelled like an inherited member ("constructor", "toString"…) reads a non-nullish function,
 // `??=` never fires and `.push` throws — inside settleIdle, before the history capture and the
 // idle store write, wedging the session. Same class of hazard `ownProp` / effectiveServerUrl guard.
@@ -1167,11 +1168,10 @@ let injectChain: Promise<void> = Promise.resolve();
 /** Pending links on `injectChain`. The queue is fed by `stream://final`, whose rate the untrusted
  *  server chooses — Rust bounds each FIELD at MAX_TRANSCRIPT and the message at MAX_WS_MESSAGE,
  *  but emits one Final per frame with no rate or count limit — and it drains at one
- *  `resolveTarget()` per task, i.e. a `get_focused_app` IPC round trip plus an AT-SPI/D-Bus query
- *  on Linux: tens of milliseconds. Each queued closure retains its `target` and `phraseClip`, so
- *  the backlog holds up to two 4 MiB strings per link in the shared WebKitGTK renderer, and every
- *  link is also one more AT-SPI query amplified from one frame. `bankedDoc` was given an 8 MiB
- *  budget for exactly this shape; the queue that holds a full copy of each document had none.
+ *  `resolveTarget()` IPC round trip plus one injection per task. Each queued closure retains its
+ *  `target` and `phraseClip`, so the backlog holds up to two 4 MiB strings per link in the shared
+ *  WebKitGTK renderer. `bankedDoc` was given an 8 MiB budget for exactly this shape; the queue
+ *  that holds a full copy of each document had none.
  *
  *  One counter object per chain generation: startLiveInner / cancelLive swap in a fresh one
  *  alongside the fresh `injectChain`, and each link decrements the counter it incremented. A
@@ -2152,7 +2152,7 @@ async function ensureListeners(): Promise<void> {
       }, pWait);
     }
     // Still speaking → keep deferring the per-phrase actions (Enter / clipboard restore / clipboard
-    // phrase boundary) until you actually pause. Armed for any live session, but only while capturing.
+    // phrase boundary) until you actually pause.
     if (insertCfg?.live && capturing) bumpPhraseEnd();
   });
 
@@ -2256,11 +2256,8 @@ async function ensureListeners(): Promise<void> {
         // window, and don't let the bookkeeping/catches below touch the next session (stopLive keeps
         // cfg, so a normal end-of-session phrase still lands).
         if (insertCfg !== cfg) return;
-        // HOLD/PTT must never live-TYPE: the trigger chord is still physically held, so injected keys
-        // fold into the held modifier and fire shortcuts — which is why live-in-hold is allowed only
-        // when the method is clipboard. At start that's enforced; but focus can move mid-session to a
-        // window that resolves to paste/direct, so for a hold session copy the phrase to the clipboard
-        // instead (types nothing, recoverable) rather than typing with the chord down.
+        // A hold session whose focus moved to a paste/direct window copies the phrase instead of
+        // typing it with the chord down (see holdCoerced): types nothing, stays recoverable.
         const useClipboard = holdCoerced(insertCfg?.activation, t.method);
         if (useClipboard) {
           // A release reopens the closed window only when a copy of it landed (the pause's close
@@ -3116,10 +3113,6 @@ async function ensureListeners(): Promise<void> {
         }
         setDictation({ status: sessionTranslation ? "translating" : "injecting" });
         enqueueInject(async () => {
-          // The translate below falls back to the original on timeout/failure (maybeTranslate warns).
-          // `oneShot`: this is the LAST task in the inject chain — nothing is queued behind it — so
-          // it can wait out a cold model load (tens of seconds for a GGUF) instead of timing out and
-          // inserting the original. Live phrases don't get the long wait: they block the next phrase.
           let outText = text;
           // Push-to-talk asks for its targets HERE, not at session start: the chord is held
           // for the whole dictation, so a prompt then would have eaten the keystrokes. The
@@ -3167,6 +3160,10 @@ async function ensureListeners(): Promise<void> {
           }
           if (sessionTranslation) {
             setDictation({ status: "translating" });
+            // Falls back to the original on timeout/failure (maybeTranslate warns). `oneShot`: this
+            // is the LAST task in the inject chain — nothing is queued behind it — so it can wait out
+            // a cold model load (tens of seconds for a GGUF) instead of timing out and inserting the
+            // original. Live phrases don't get the long wait: they block the next phrase.
             const one = await maybeTranslate(text, cfg, { oneShot: true });
             if (insertCfg !== cfg) return;
             outText = one.text;
