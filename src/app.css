@@ -280,7 +280,7 @@ html.accent-tick .transition-colors {
   --page-pad: clamp(20px, 3vw, 48px);
   --w-prose: 1760px; /* History, Dictionary — lists and tables, they fill the window */
   --w-cards: 1760px; /* card layouts — Dashboard */
-  --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings */
+  --w-form: 1180px;  /* label + control rows, two-column editors — Profiles, Backends, App rules, Settings, stacked Transcribe */
   --w-dense: 1760px; /* self-scrolling panes side by side — Transcribe studio; Statistics */
 }
 
