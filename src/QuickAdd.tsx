@@ -577,7 +577,7 @@ export default function QuickAdd() {
 
   // Esc closes the window from anywhere in it — not only when a text field is focused.
   // (Clicking empty space moves focus to <body>, an ancestor of the React root, so a
-  // keydown there never bubbled through the root div's handler.) The Combobox stops
+  // keydown there would never bubble through a root-div handler.) The Combobox stops
   // Esc only while its suggestions are showing, so the first Esc there only closes them.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
