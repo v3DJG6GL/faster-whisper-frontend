@@ -98,7 +98,6 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
   cps: { min: 10, max: 25, step: 1 },
 };
 
-/** The CJK scripts (Han, Hiragana, Katakana). */
 const CJK_SCRIPTS = "\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}";
 /** Scripts written without spaces between words that are no CJK (unspacedChar holds
  *  only Han/Kana and CJK punctuation, as the LRC seams need): inside spaced text a run of
@@ -691,7 +690,6 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  word break. A no-break space (one BREAK_SPACE excludes) between two characters of a word is
  *  part of it: "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
-/** The no-break spaces: U+00A0, U+202F, U+2007. */
 const NBSP = "\\u00a0\\u202f\\u2007";
 const WORD_CHAR = `[^\\s${OPEN_PUNCT}${CJK_SCRIPTS}ー${SYLLABIC}${FULLWIDTH}]`;
 const MIXED_TOKEN = new RegExp(
