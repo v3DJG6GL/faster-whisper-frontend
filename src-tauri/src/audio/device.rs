@@ -297,7 +297,8 @@ fn server_hold() -> bool {
     }
 }
 
-/// The saved pin value of the picker's "System default" row (micMigration.ts writes it too).
+/// The pin value meaning System default: accepted from a saved setting, and resolve_legacy's answer
+/// for a sound-server route (micMigration.ts and micOptions.ts match it; the picker saves `null`).
 const SYSTEM_DEFAULT_PIN: &str = "default";
 
 /// Is this saved value a cpal device id (vs a pre-ids display-name pin)?
