@@ -142,7 +142,7 @@ export function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const undecided = state.routePending === "undecided";
   if (targets.length === 0 && !undecided) return "";
   const backend = backendForProfile(profile, state.backends);
-  // The same source rule as the chip's LangPick (routeSourceCode), capped so a long synced
+  // The same source rule as the target picker (routeSourceCode), capped so a long synced
   // language can't push the targets past the tray's 64-character route cap.
   const src = routeSourceCode(effectiveLanguage(profile?.language, backend?.language));
   if (targets.length === 0) return `${src} → ?`;
