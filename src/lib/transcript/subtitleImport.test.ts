@@ -176,7 +176,7 @@ describe("plain text + errors", () => {
   });
   it("clock-like prefixes never become speakers (a cue-bearing format reaches the guard)", () => {
     // Through lrc, not txt: plain text can never set a speaker, so a txt fixture would pass
-    // for every input and leave the guard in cueText untested.
+    // for every input and leave the guard in speakerPrefix untested.
     const back = parseImportedText("lrc", "[00:12.00]12: lunch at noon");
     expect(back.segments[0].speaker).toBeUndefined();
     expect(back.segments[0].text).toBe("12: lunch at noon");
@@ -923,8 +923,8 @@ describe("site subtitle cleanup", () => {
     expect(segs.map((s) => [s.text, s.start, s.end])).toEqual([["Hello.", undefined, undefined], ["Bye.", undefined, undefined]]);
   });
   it("an empty cue does not make a file look rolling", () => {
-    // srtExport writes an empty segment as an empty zero-length cue: it "repeats" its
-    // neighbours vacuously, and must not merge the line said twice.
+    // srtExport writes an empty segment as an empty cue: it "repeats" its neighbours
+    // vacuously, and must not merge the line said twice.
     const srt =
       "1\n00:00:00,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:04,000\nThank you.\n\n"
       + "3\n00:00:04,000 --> 00:00:04,000\n\n4\n00:00:04,000 --> 00:00:06,000\nBye.\n";
@@ -1040,8 +1040,8 @@ describe("site subtitle cleanup", () => {
 
 describe("markup shape matrix", () => {
   // Real subtitle markup strips, attributes and all (`<font …>`, `<span …>`, `<i class=…>`),
-  // as does a voice tag past the 64th character that is not the cue's first; a literal
-  // comparison or an unknown <word> is the line's own text.
+  // as does a long voice tag that is not the cue's first; a literal comparison or an
+  // unknown <word> is the line's own text.
   const N70 = "N".repeat(70);
   const cue = (fmt: "srt" | "vtt", text: string) =>
     fmt === "srt" ? `1\n00:00:01,000 --> 00:00:02,000\n${text}\n` : `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`;
