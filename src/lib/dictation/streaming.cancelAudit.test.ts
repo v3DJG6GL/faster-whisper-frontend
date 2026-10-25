@@ -1383,8 +1383,8 @@ describe("work that must wait for the queue or the cancel", () => {
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {
-    // An inline copy can drift from the clear-before-await ordering: the helper body must be the
-    // only call site (the import names it without a call).
+    // An inline call would skip the helper's catch (a failed restore is logged, never thrown at the
+    // caller): the helper body must be the only call site (the import names it without a call).
     const calls = mask(streamingSrc).split("restoreClipboardSnapshot(").length - 1;
     expect(calls, "call restoreClipboardSnapshot only from giveClipboardBack").toBe(1);
   });
