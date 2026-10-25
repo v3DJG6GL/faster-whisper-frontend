@@ -145,8 +145,8 @@ impl Drop for InflightSlot {
     }
 }
 
-/// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
-/// MB, so ENOSPC mid-write is the realistic case (`save_text_file` has the same shape).
+/// Through `replace_via_tmp` so a failed write leaves no tmp behind: a WAV here can be hundreds
+/// of MB, so ENOSPC mid-write is the realistic case.
 fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
     crate::config::replace_via_tmp(&cache_tmp_path(out), out, |t| {
         std::fs::write(t, wav)?;
