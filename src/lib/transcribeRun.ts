@@ -444,6 +444,9 @@ export function unitsFraction(units: PlanUnit[] | null | undefined): number | nu
   return total > 0 ? got / total : null;
 }
 
+/** The narrowest a strip segment gets, in ms, and its width when no clock or estimate exists. */
+const MIN_SEGMENT_MS = 1000;
+
 export function planTimeline(s: {
   stages: RailStage[];
   skipped: ReadonlySet<RailStage>;
@@ -463,15 +466,15 @@ export function planTimeline(s: {
     if (s.skipped.has(st)) return;
     const p = byName.get(st);
     const t = s.stageTimes[st];
-    const span = t?.end != null ? Math.max(t.end - t.start, 1000) : null;
+    const span = t?.end != null ? Math.max(t.end - t.start, MIN_SEGMENT_MS) : null;
     const state: TimelineEntry["state"] = p
       ? p.state === "done" || p.state === "failed" ? "done"
         : p.state === "active" ? "active" : "pending"
       : i < active ? "done" : i === active ? "active" : "pending";
     const estMs = p?.estS != null ? p.estS * 1000 : null;
-    const tookMs = p?.tookS != null ? Math.max(p.tookS * 1000, 1000) : null;
+    const tookMs = p?.tookS != null ? Math.max(p.tookS * 1000, MIN_SEGMENT_MS) : null;
     if (state === "done") {
-      const ms = tookMs ?? span ?? estMs ?? 1000;
+      const ms = tookMs ?? span ?? estMs ?? MIN_SEGMENT_MS;
       out.push({ stage: st, ms, elapsedMs: span ?? ms, state, fill: 1, overrun: false, estMs,
         // A failed stage's units are already closed by the server (done stays done, the
         // one in flight failed, the queued never ran): forcing them done would fill the
@@ -500,7 +503,7 @@ export function planTimeline(s: {
         // Never narrower than the time already spent: a stage past its
         // estimate keeps its true width, in whole 15 s steps so the strip
         // does not creep per tick.
-        ms: Math.max(estMs ?? 1000, over ? Math.ceil(elapsed / 15000) * 15000 : 0, 1),
+        ms: Math.max(estMs ?? MIN_SEGMENT_MS, over ? Math.ceil(elapsed / 15000) * 15000 : 0, 1),
         elapsedMs: elapsed,
         state,
         fill: over ? 0.96 : Math.min(Math.max(frac, 0), 1),
@@ -511,7 +514,7 @@ export function planTimeline(s: {
       });
       return;
     }
-    out.push({ stage: st, ms: estMs ?? 1000, elapsedMs: 0, state, fill: 0, overrun: false, estMs,
+    out.push({ stage: st, ms: estMs ?? MIN_SEGMENT_MS, elapsedMs: 0, state, fill: 0, overrun: false, estMs,
       estimated: true, lanes: lanesOf(p, false) });
   });
   return out;
