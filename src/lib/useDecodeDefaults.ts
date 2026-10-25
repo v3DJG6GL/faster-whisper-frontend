@@ -26,13 +26,12 @@ export function useDecodeDefaults(args: {
   /** The override profile the request will name (NO_OVERRIDE_PROFILE included). */
   profileName?: string | null;
   serverKind: ServerKind;
-  /** Bumped by a fresh successful connection test of the same target: refetch. */
   refresh?: number;
 }): DecodeDefaults | undefined {
   const { serverUrl, backendId, apiKey, serverKind, refresh } = args;
   // Bumped when the backend's stored key is replaced elsewhere (a sync pull): values fetched as
-  // the old caller are withheld and refetched. Read on every render: the eviction that bumps it
-  // (forgetBackendCaches) also replaces the store's `connections`, which re-renders every screen
+  // the old caller are withheld and refetched. Read on every render: the call that bumps it
+  // (forgetCredential) also replaces the store's `connections`, which re-renders every screen
   // that shows these values.
   const credentialGen = requestCredentialGen(backendId, apiKey);
   const model = args.model?.trim() ?? "";
