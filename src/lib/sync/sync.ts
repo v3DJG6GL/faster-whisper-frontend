@@ -1928,9 +1928,9 @@ export async function applyBlob(
       // the wait and `hydrate` replaces it wholesale, so anything the user changed meanwhile —
       // including turning sync OFF — would be reverted and persisted. A sync merge is dropped,
       // not restarted: its blob was composed against the PRE-edit store, so re-hydrating it
-      // reverts the edit; the caller re-arms the edit's push (its own debounced one hit the
-      // `inFlight` gate during this wait), whose 409 re-offers the merge — or, when a session
-      // started meanwhile, this parks a re-pull for its end, as the refusal at the top does
+      // reverts the edit; the edit's own debounced push, refused at the `inFlight` gate during
+      // this wait, retries itself (the caller re-arms it too), and its 409 re-offers the merge —
+      // or, when a session started meanwhile, this parks a re-pull for its end, as the refusal at the top does
       // (the caller re-arms only at idle, and the session's end moves no slice). Only an explicit
       // one-shot restore (`ignoreGates`, the user's own blob) restarts, recomputing every
       // derived value against current state; bounded, dropped on exhaustion.
@@ -2125,9 +2125,8 @@ export async function applyBlob(
   }
   // The retry runs OUTSIDE the try so the STALE sentinel of the recursive call is its own
   // (`applyingRemote` wraps only `hydrate`, so nothing is held across the recursion).
-  // A session that started during the keyring wait must NOT park via the top-of-function branch:
-  // only a top-level call may queue a re-pull. A retry that answers "not applied" here is final;
-  // the caller (a reconcile re-offers on the next pull, a one-shot restore reports it) owns it.
+  // Only a one-shot restore (`ignoreGates`) retries, so nothing here queues a re-pull: a retry
+  // that answers "not applied" is final, and the restore's caller reports it.
   if (staleRestart) {
     if (useApp.getState().status !== "idle") return false;
     return applyBlob(blob, cats, retries - 1, opts);
@@ -2433,7 +2432,7 @@ function canSync(): boolean {
  *  `composeBlob`'s up-to-10 s keyring read) before building the address, so
  *  `effectiveServerUrl(backend, live settings)` would mix a LIVE override map with a STALE
  *  `backend.serverUrl`. A push is routinely in flight while the user edits Settings, and a
- *  corrected sync address only schedules another push (dropped by the `inFlight` gate) — the
+ *  corrected sync address only schedules another push (held back by the `inFlight` gate) — the
  *  in-flight PUT would still go to the ABANDONED host, with that backend's bearer key and, on the
  *  `cats.backends` path, EVERY backend's plaintext key in the body.
  *
@@ -3301,8 +3300,8 @@ export async function pushNow(manual = false): Promise<void> {
           // re-offers it. Clear the 'syncing' this call set, as reconcileRemote's twin does —
           // without hiding a prompt that still waits, or overwriting a Reject / Later meanwhile.
           if (useApp.getState().syncStatus === "syncing") idleStatus();
-          // Dropped (the store moved during the keyring wait): the edit's own push fired into
-          // this call's `inFlight` and was lost, so re-arm it (a refusal parks a re-pull instead).
+          // Dropped (the store moved during the keyring wait): the edit's own push retries past
+          // this call's `inFlight`; re-arming here is a backstop (a refusal parks a re-pull instead).
           if (useApp.getState().status === "idle") schedulePush();
           return;
         }
@@ -3371,7 +3370,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // dropSupersededPending either, so a waiting prompt keeps its notice — and a Reject / Later
     // pressed meanwhile keeps its status (pushNow's 409 twin).
     if (useApp.getState().syncStatus === "syncing") idleStatus();
-    // Dropped: re-arm the edit's push, which the pull's `inFlight` swallowed (pushNow's twin).
+    // Dropped: re-arm the edit's push as a backstop to its own lock retry (pushNow's twin).
     if (useApp.getState().status === "idle") schedulePush();
     return;
   }
@@ -3791,18 +3790,18 @@ interface PendingReview {
   /** `storeSignature` right after the raise's held-back apply: an approval takes a category as
    *  edited while the review waited only when the store's value moved off this one. Not a gated
    *  compose — a gate turned on since changes that with no edit (a stripped field now carries
-   *  this device's value), and a push's retry raise has no compose of this device at all. */
+   *  this device's value). */
   storeSig: SyncBlob;
   /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. A relist
    *  keeps it — no apply ran since, so the store still lacks what the raise's gates stripped. */
   gatesSig: Record<SyncCategory, string>;
   /** The categories the raise's apply landed (`appliedAt` over `heldBack(cats, changes)` THEN);
-   *  `categorySelection(false)` when that apply did not land (refused while dictating, or its
-   *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count
-   *  a category that was held back at the raise, and whose rows no longer show, as applied — and
-   *  keep a live edit over a peer value the store never received. Kept (with `gatesSig`) across
-   *  a re-raise of the same server version whose apply was refused too: that apply changed
-   *  nothing, so the earlier landed one still holds. */
+   *  `categorySelection(false)` when that apply did not land (refused while dictating, or dropped
+   *  by an edit during its keyring wait). Kept across a relist: recomputing it from the relisted
+   *  rows would count a category that was held back at the raise, and whose rows no longer show,
+   *  as applied — and keep a live edit over a peer value the store never received. Kept (with
+   *  `gatesSig`) across a re-raise of the same server version whose apply was refused too: that
+   *  apply changed nothing, so the earlier landed one still holds. */
   applied: Record<SyncCategory, boolean>;
   version: number;
   updatedAt: number | null;
@@ -4020,11 +4019,10 @@ export async function approvePendingReview(): Promise<void> {
     if (myGen === gen) inFlight = false;
   }
   if (myGen !== gen) return;
-  // After the release: the push takes the lock itself. "done" still re-arms the debounced push:
-  // a store edit made just before the click fired its pushNow into this lock and was dropped,
-  // and nothing else re-sends it (the hash check makes it a no-op otherwise). Not "prompt": a
-  // push then only 409s back into it (the edit goes out with the answer), re-running the
-  // held-back apply for nothing.
+  // After the release: the push takes the lock itself. "done" still re-arms the debounced push,
+  // a backstop for a store edit whose pushNow hit this lock (that push also retries itself; the
+  // hash check makes either a no-op otherwise). Not "prompt": a push then only 409s back into it
+  // (the edit goes out with the answer), re-running the held-back apply for nothing.
   if (outcome === "push") schedulePush(0);
   else if (outcome === "done") schedulePush();
 }
@@ -4298,10 +4296,9 @@ export async function resolveSyncConflicts(
     if (myGen === gen) inFlight = false;
   }
   if (myGen !== gen) return;
-  // After the release, or pushNow would no-op on the lock this call held. Otherwise re-arm the
-  // debounced push for an edit whose pushNow hit this lock (as approvePendingReview does) — but
-  // not when a prompt went back up: the push would only 409 into it and re-run the held-back
-  // apply and keyring read for nothing (approvePendingReview's same rule).
+  // After the release, or pushNow would no-op on the lock this call held. The "done" re-arm is a
+  // backstop for an edit whose pushNow hit this lock (that push also retries itself); none when a
+  // prompt went back up, which a push would only 409 into (approvePendingReview's same rule).
   if (outcome === "push") void pushNow(true);
   else if (outcome === "done") schedulePush();
 }
