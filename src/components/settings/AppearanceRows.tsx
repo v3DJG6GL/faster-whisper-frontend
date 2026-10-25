@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { SETTING } from "@/lib/settingsManifest";
 import {
   ACCENT_PRESETS, DEFAULT_ACCENT_HUE, DEFAULT_ACCENT_MOTION, DEFAULT_ARC_HUE, currentAccentHue, deriveAccent, nearestPreset,
-  REDUCED_MOTION_MQ, fmtPer, motionCostNote, prefersReducedMotion, resolvedTheme, secToSlider, sliderToSec, subscribeAccentHue,
+  REDUCED_MOTION_MQ, fmtPer, motionCostNote, prefersReducedMotion, resolvedTheme, secToSlider, sliderToSec, SPEED_SLIDER_MAX, subscribeAccentHue,
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
 
@@ -392,7 +392,7 @@ function MotionRows({
               <input
                 type="range"
                 min={0}
-                max={1000}
+                max={SPEED_SLIDER_MAX}
                 step={1}
                 value={slider}
                 aria-label="Seconds per turn (log scale)"

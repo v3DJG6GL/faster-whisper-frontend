@@ -229,14 +229,16 @@ export function effectiveMotion(m: AccentMotion, reduced: boolean): AccentMotion
 
 const LOG_MIN = Math.log(MOTION_MIN_PERIOD);
 const LOG_MAX = Math.log(MOTION_MAX_PERIOD);
-/** Slider position 0…1000 → seconds per turn, log scale: 0 = 30 s, 1000 = 7 d. */
+/** The custom-speed slider's resolution: positions 0…SPEED_SLIDER_MAX, log-mapped onto MOTION_MIN_PERIOD…MOTION_MAX_PERIOD. */
+export const SPEED_SLIDER_MAX = 1000;
+/** Slider position 0…SPEED_SLIDER_MAX → seconds per turn, log scale: 0 = 30 s, SPEED_SLIDER_MAX = 7 d. */
 export function sliderToSec(v: number): number {
-  return Math.round(Math.exp(LOG_MIN + ((LOG_MAX - LOG_MIN) * v) / 1000));
+  return Math.round(Math.exp(LOG_MIN + ((LOG_MAX - LOG_MIN) * v) / SPEED_SLIDER_MAX));
 }
 /** The inverse, so a stored period puts the thumb where it was. */
 export function secToSlider(s: number): number {
   const c = Math.max(MOTION_MIN_PERIOD, Math.min(MOTION_MAX_PERIOD, s));
-  return Math.round(((Math.log(c) - LOG_MIN) / (LOG_MAX - LOG_MIN)) * 1000);
+  return Math.round(((Math.log(c) - LOG_MIN) / (LOG_MAX - LOG_MIN)) * SPEED_SLIDER_MAX);
 }
 /** "one turn every 2.3 h" — the Settings readout and the "Right now" note. */
 export function fmtPer(s: number): string {
