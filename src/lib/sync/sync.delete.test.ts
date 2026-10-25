@@ -245,6 +245,32 @@ describe("a sync composed with a degraded keyring", () => {
     }
   });
 
+  // Holding backends out of the apply holds the peer's quick-add pin with it, yet a remote that
+  // moved only the pin became the base — the next push re-sent the old pin over the peer's.
+  it("a pull that moved only the quick-add pin adopts no base", async () => {
+    try {
+      await resetSyncState();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+      settings.quickAddList = { backendId: "b1", slug: "old" } as never;
+      useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      const remote = structuredClone(api.pushed) as SyncBlob;
+      expect(remote.dictionary?.quickAddList).toEqual({ backendId: "b1", slug: "old" });
+      api.keys = {};
+      remote.dictionary = { ...remote.dictionary, quickAddList: { backendId: "b1", slug: "new" } } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(useApp.getState().syncStatus).toBe("error");
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      expect(api.pushedBase).toBe(1); // still the seeded base: the old pin cannot overwrite v2
+    } finally {
+      resetPeerFakes();
+    }
+  });
+
   it("a 409 that left backends alone adopts the merge and pushes on the new base", async () => {
     try {
       const { base, before } = await seed();

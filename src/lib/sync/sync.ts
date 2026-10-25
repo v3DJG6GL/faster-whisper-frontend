@@ -2489,14 +2489,21 @@ function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
   // the remote's list through — so no base may say it was: the first unlocked pull asks.
   const fresh =
     freshCats.has("backends") || [...freshGates].some((id) => DEFS.find((d) => d.id === id)?.category === "backends");
-  if (!fresh && catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
+  // Holding backends out of the apply holds the peer's quick-add pin with it (`applyBlob`'s pin
+  // arm needs the list): a remote that moved the pin must not become the base either.
+  const pinOf = (d: unknown) => (isPlainObject(d) ? ownProp(d as Record<string, unknown>, "quickAddList") : undefined);
+  const pinMoved =
+    syncCats().dictionary &&
+    settingGates().pinnedMappings &&
+    !catEqual(pinOf(remoteBlob.dictionary), pinOf(state.snapshot?.dictionary));
+  if (!fresh && !pinMoved && catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
   setRuntime({
     syncStatus: "error",
     // While it waits, nothing goes up either (the push gate holds every push until the list is
     // compared): say so, not only that incoming changes wait.
     syncError: fresh
       ? "Your API keys couldn't be read from the keyring, so the server list (or a server-list setting) you turned on for sync can't be compared with the server's yet, and nothing is synced until then. Unlock it and restart the app to resume syncing."
-      : "Your API keys couldn't be read from the keyring, so incoming backend changes are on hold. Unlock it and restart the app to resume syncing.",
+      : "Your API keys couldn't be read from the keyring, so incoming backend changes (and the pinned Quick add list that depends on them) are on hold. Unlock it and restart the app to resume syncing.",
   });
   return true;
 }
