@@ -1004,8 +1004,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // push-to-talk. Rust's `#[serde(alias = "latch")]` covers the config-file path; this
       // covers the sync one.
       activation: canonicalActivation((p as Profile).activation) ?? "hold",
-      // Rendered as React CHILDREN (`<Badge>{p.endpoint}</Badge>`, `languageLabel(p.language)`,
-      // which returns its argument unchanged when the code is unknown) — an object leaf throws
+      // Rendered as a React CHILD (`<Badge>{p.endpoint}</Badge>`) — an object leaf throws
       // "Objects are not valid as a React child" — and `endpoint` is another fallback-less enum.
       endpoint: p.endpoint == null ? p.endpoint : oneOf<EndpointKind>(p.endpoint, ENDPOINT_KINDS, "stream"),
       name: p.name,
@@ -2094,8 +2093,9 @@ export async function applyBlob(
       nextSettings = { ...nextSettings, sync: { ...sync, urlOverrides } };
     }
 
-    // The only store write in this function, and the only stretch the flag covers: `hydrate`
-    // is a plain synchronous zustand `set`, so the subscriber sees the flag for exactly that.
+    // The only write of the synced slices in this function, and the only stretch the flag
+    // covers: `hydrate` is a plain synchronous zustand `set`, so the subscriber sees the flag
+    // for exactly that.
     applyingRemote = true;
     try {
       useApp.getState().hydrate({
@@ -4142,8 +4142,8 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   const applied = await applyBlob(blobNow, applyCats);
   if (myGen !== gen) return "done";
   if (!applied) {
-    // Not applied (a session started mid-apply, or the store kept changing under it): put
-    // the review back so the approval isn't consumed by an apply that never happened.
+    // Not applied (a session started mid-apply, or an edit during its keyring wait dropped it):
+    // put the review back so the approval isn't consumed by an apply that never happened.
     setPendingReview(r);
     return "prompt";
   }
@@ -4385,7 +4385,7 @@ async function resolveLocked(
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
-  // The writer of the version being adopted, like the two sibling adopt sites — otherwise
+  // The writer of the version being adopted, like the other adopt sites — otherwise
   // "Last synced just now · from X" kept naming the PREVIOUS sync's device. Its `updatedAt`
   // too: a null one makes initSync restore "Not synced yet." after a restart.
   await adoptBase(c.remote, c.remoteVersion, c.remoteUpdatedAt ?? null, c.remoteDevice ?? null);
