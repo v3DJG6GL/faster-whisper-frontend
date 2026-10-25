@@ -438,11 +438,16 @@ fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> 
 /// stock Squid (`deny CONNECT !SSL_ports`) refuses a tunnel to any port but 443 while it forwards
 /// (not tunnels) the HTTP routes to the same server. A 407 (a login to fix) and a proxy that
 /// cannot be reached or answers garbage fail outright.
+///
+/// `deadline` is the caller's own connect timeout. The direct attempt gives up
+/// [`FALLBACK_MARGIN`] before it: a network that forces a proxy usually drops direct SYNs, and the
+/// caller's timeout would otherwise fire first and lose the proxy's refusal.
 pub(super) async fn connect(
     request: Request,
     config: WebSocketConfig,
     tls: Option<Connector>,
     proxy: Option<&Proxy>,
+    deadline: tokio::time::Instant,
 ) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, Response), String> {
     let direct = |request, tls| async move {
         tokio_tungstenite::connect_async_tls_with_config(request, Some(config), false, tls)
@@ -456,9 +461,11 @@ pub(super) async fn connect(
         Ok(stream) => stream,
         Err(Tunnel::Refused(why)) => {
             tracing::warn!("[stream] {why}; connecting directly");
-            return direct(request, tls)
-                .await
-                .map_err(|e| format!("{e} (directly, after {why})"));
+            let fallback_deadline = deadline.checked_sub(FALLBACK_MARGIN).unwrap_or(deadline);
+            return match tokio::time::timeout_at(fallback_deadline, direct(request, tls)).await {
+                Ok(r) => r.map_err(|e| format!("{e} (directly, after {why})")),
+                Err(_) => Err(format!("timed out connecting directly, after {why}")),
+            };
         }
         Err(Tunnel::Failed(why)) => return Err(why),
     };
@@ -466,6 +473,10 @@ pub(super) async fn connect(
         .await
         .map_err(|e| format!("{e} (through the proxy {})", proxy.display()))
 }
+
+/// How long before the caller's deadline [`connect`]'s direct fallback gives up, so its error
+/// (which keeps the proxy's refusal) wins the race against the caller's timeout.
+const FALLBACK_MARGIN: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Why [`tunnel`] has no stream; both carry the user-facing text, naming the proxy.
 enum Tunnel {
@@ -565,6 +576,11 @@ mod tests {
         super::route(matcher, &BypassRules::default(), ws_url)
     }
 
+    /// The stream route's own connect bound, for the tests that are not about it.
+    fn deadline() -> tokio::time::Instant {
+        tokio::time::Instant::now() + std::time::Duration::from_secs(10)
+    }
+
     /// A one-session plain ws:// server that echoes the first text frame.
     async fn echo_server() -> std::net::SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -617,8 +633,14 @@ mod tests {
     async fn round_trip(ws_url: &str, matcher: &Matcher) -> Result<String, String> {
         let proxy = route(matcher, ws_url);
         let request = ws_url.into_client_request().unwrap();
-        let (mut ws, _) =
-            connect(request, WebSocketConfig::default(), None, proxy.as_ref()).await?;
+        let (mut ws, _) = connect(
+            request,
+            WebSocketConfig::default(),
+            None,
+            proxy.as_ref(),
+            deadline(),
+        )
+        .await?;
         ws.send(Message::Text("hello".into())).await.unwrap();
         match ws.next().await {
             Some(Ok(Message::Text(t))) => Ok(t.to_string()),
@@ -717,9 +739,15 @@ mod tests {
         // the direct attempt dials the real loopback server.
         let route = route(&matcher, &format!("ws://echo.test:{}/x", server.port())).unwrap();
         let request = format!("ws://{server}/x").into_client_request().unwrap();
-        let (mut ws, _) = connect(request, WebSocketConfig::default(), None, Some(&route))
-            .await
-            .unwrap();
+        let (mut ws, _) = connect(
+            request,
+            WebSocketConfig::default(),
+            None,
+            Some(&route),
+            deadline(),
+        )
+        .await
+        .unwrap();
         ws.send(Message::Text("hello".into())).await.unwrap();
         assert!(matches!(ws.next().await, Some(Ok(Message::Text(t))) if t == "hello"));
         assert!(seen.lock().unwrap().starts_with("CONNECT "));
@@ -736,9 +764,15 @@ mod tests {
         let matcher = Matcher::builder().all(proxy.as_str()).build();
         let route = route(&matcher, &format!("ws://echo.test:{}/x", server.port())).unwrap();
         let request = format!("ws://{server}/x").into_client_request().unwrap();
-        let err = connect(request, WebSocketConfig::default(), None, Some(&route))
-            .await
-            .unwrap_err();
+        let err = connect(
+            request,
+            WebSocketConfig::default(),
+            None,
+            Some(&route),
+            deadline(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.contains(&proxy) && err.contains("407"), "{err}");
     }
 
@@ -755,6 +789,44 @@ mod tests {
             err.contains(&proxy) && err.contains("403 Forbidden"),
             "{err}"
         );
+    }
+
+    /// A direct attempt that hangs (a firewall dropping it, here a server that never answers the
+    /// handshake) ends before the caller's timeout, and its error still carries the refusal.
+    #[tokio::test]
+    async fn a_hanging_direct_attempt_after_a_refusal_keeps_the_proxy_status() {
+        // Bound but never accepted: the TCP connect lands in the backlog, the handshake hangs.
+        let silent = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = silent.local_addr().unwrap().port();
+        let (proxy, _) = fake_proxy("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await;
+        let matcher = Matcher::builder().all(proxy.as_str()).build();
+        let route = route(&matcher, &format!("ws://echo.test:{port}/x")).unwrap();
+        let request = format!("ws://127.0.0.1:{port}/x")
+            .into_client_request()
+            .unwrap();
+        // As stream.rs does: one deadline, the outer timeout at it.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(600);
+        let res = tokio::time::timeout_at(
+            deadline,
+            connect(
+                request,
+                WebSocketConfig::default(),
+                None,
+                Some(&route),
+                deadline,
+            ),
+        )
+        .await;
+        let err = match res {
+            Ok(Err(e)) => e,
+            Ok(Ok(_)) => panic!("connected to a silent server"),
+            Err(_) => panic!("the caller's timeout fired and lost the proxy's refusal"),
+        };
+        assert!(
+            err.contains(&proxy) && err.contains("403 Forbidden") && err.contains("directly"),
+            "{err}"
+        );
+        drop(silent);
     }
 
     #[test]

@@ -428,9 +428,18 @@ pub async fn run<F>(
     if !via.is_empty() {
         tracing::info!("[stream] connecting{via}");
     }
-    let connect = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        super::proxy::connect(request, ws_config, ws_tls_connector(), proxy.as_ref()),
+    // One deadline for both: proxy::connect's direct fallback ends just before it, so its error
+    // (which keeps the proxy's refusal) is what surfaces, not this backstop's.
+    let deadline = tokio::time::Instant::now() + CONNECT_TIMEOUT;
+    let connect = tokio::time::timeout_at(
+        deadline,
+        super::proxy::connect(
+            request,
+            ws_config,
+            ws_tls_connector(),
+            proxy.as_ref(),
+            deadline,
+        ),
     );
     tokio::pin!(connect);
     let (ws, _resp) = loop {
