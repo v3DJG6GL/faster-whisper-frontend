@@ -314,8 +314,8 @@ mod imp {
             let engine = Engine::new(chords.clone());
             tasks.push(tauri::async_runtime::spawn(async move {
                 // into_event_stream() builds a tokio AsyncFd, so it MUST run inside
-                // the async runtime — calling it on the main thread (where the
-                // command runs) panics with "no reactor running".
+                // the async runtime — calling it from `start` itself panics with "no
+                // reactor running" on setup's main-thread apply and the suspend-watch thread.
                 let stream = match dev.into_event_stream() {
                     Ok(s) => s,
                     Err(e) => {
