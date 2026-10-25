@@ -206,8 +206,8 @@ export function AudioTab() {
       if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
       // Silence an in-flight replay on unmount: AudioTab unmounts on a Settings tab switch or a
       // route navigation, but the mic-test playback is a detached Rust thread (up to ~15s) that
-      // only stopMicTestPlayback() halts — the test-effect cleanup's stopMicTest() doesn't touch
-      // playback. Without this the clip keeps sounding with no UI to stop it. No-op when idle.
+      // the test-effect cleanup's stopMicTest() doesn't touch. Without this the clip keeps
+      // sounding with no UI to stop it. No-op when idle.
       void stopMicTestPlayback().catch(() => {});
       // The replay clip has no use without this tab: drop it rather than keep up to 30 s of mic
       // audio in memory for the app's lifetime.
