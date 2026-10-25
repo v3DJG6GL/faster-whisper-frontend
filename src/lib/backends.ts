@@ -80,9 +80,10 @@ export function typedServerUrl(raw: string): string {
   return normalizeUrl(storedTypedUrl(raw));
 }
 
-/** The backend the Backends connect-first restore hands the just-typed API key to: the first one
- *  whose stored address normalizes to the server it connected to. ONE rule for the restore that
- *  writes the key and the consent dialog that must not call that backend keyless. */
+/** The backend a connect-first restore (the Backends screen's, or Onboarding's gate) hands the
+ *  just-typed API key to: the first one whose stored address normalizes to the server it connected
+ *  to. ONE rule for the restores that write the key and the consent dialog that must not call that
+ *  backend keyless. */
 export function backendForAddress(list: Backend[], address: string): Backend | undefined {
   const target = normalizeUrl(address);
   return list.find((b) => normalizeUrl(b.serverUrl) === target);
