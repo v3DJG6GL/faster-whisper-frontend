@@ -82,7 +82,7 @@ import { translateSourceCode } from "../languages";
 let wired = false;
 
 // Auto-stop a hands-free session after a configured stretch of continuous silence (0 = off).
-// Reuses the SAME speaking detector as the chip (lib/speaking), so "silence" means exactly what the
+// Reuses the SAME speaking detector as the chip (./speaking), so "silence" means exactly what the
 // chip shows as not-green; fires the normal stop (which drains the last phrase). Armed per session in
 // startLiveInner and by applyReclassify's in-place hands-free upgrade, disarmed on any stop/cancel.
 let autoStopMemo: SpeakMemo = newSpeakMemo();
@@ -2013,13 +2013,12 @@ async function ensureListeners(): Promise<void> {
   const { listen } = await import("@tauri-apps/api/event");
   const setDictation = useApp.getState().setDictation;
 
-  // The level meter arrives per audio callback (~50–100 Hz). Pushing every sample
-  // into the store fans out to a cross-window IPC `emit` + a full overlay re-render
-  // on EVERY frame (chipController.ts re-broadcasts on any `level` change) — over a multi-
-  // hour session that churn alone bloated the shared WebKitGTK renderer to multiple
-  // GB. ~30 Hz is indistinguishable for a level meter, so coalesce: fire on the
-  // leading edge, then trail the latest value so the meter still settles to its true
-  // resting level instead of freezing mid-throttle.
+  // Every `level` store write fans out to a cross-window IPC `emit` + a full overlay re-render
+  // (chipController.ts re-broadcasts on any `level` change) — over a multi-hour session that
+  // churn helped bloat the shared WebKitGTK renderer to multiple GB. Rust already paces the emits
+  // at ~30 Hz (audio::publish_levels_with_live); this cap holds the store to that rate whatever
+  // the emit cadence: fire on the leading edge, then trail the latest value so the meter still
+  // settles to its true resting level instead of freezing mid-throttle.
   const LEVEL_MIN_MS = 33;
   let lastLevelAt = 0;
   let levelTimer: ReturnType<typeof setTimeout> | undefined;
@@ -2235,7 +2234,7 @@ async function ensureListeners(): Promise<void> {
       const grew = uttFrom < target.length;
       seenDoc = target;
       // Captured synchronously so the task bails on a cancel (insertCfg→null) or a cancel-then-restart
-      // (a new object) landing during either await; within a session insertCfg keeps a stable identity.
+      // (a new object) landing during any of its awaits; within a session insertCfg keeps a stable identity.
       const cfg = insertCfg;
       // Queue depth read at enqueue time: it sets how long this phrase's translate may wait on a
       // cold model (see translateCeilingMs). Read inside the task, it would report the depth at
@@ -3004,11 +3003,11 @@ async function ensureListeners(): Promise<void> {
         setDictation({ level: 0 });
         return;
       }
-      // A late `closed` from the drain lands ~6s after the server closed — AFTER the 4s error-linger
-      // has already flipped the chip to idle (the error path nulls insertCfg but leaves
-      // committedDoc/bankedDoc intact). Re-running the tail here would re-inject the whole transcript into the now-refocused
-      // window. Treat an already-settled idle as terminal (post-cancel also lands here with insertCfg
-      // null — handled below too, but bailing early is harmless and clearer).
+      // An already-settled idle is terminal. The error and cancel teardowns retire the epoch, so a
+      // late `closed` reaches here only by beating that retire (cancel flips the chip idle before
+      // its cancel_stream/cancel_record lands); re-running the tail then would re-inject the whole
+      // transcript into the now-refocused window (the error path nulls insertCfg but leaves
+      // committedDoc/bankedDoc intact).
       if (st.status === "idle") {
         setDictation({ level: 0 });
         return;
@@ -3260,10 +3259,12 @@ async function ensureListeners(): Promise<void> {
   });
 
   await reg<string>("stream://error", (e) => {
-    // Drop a cancelled/stopped session's detached-drain late error: stop/cancel don't bump
-    // ACTIVE_EPOCH, so a finish()-detached drain that errors after a stop→cancel still passes
-    // emit_if_active and would flashError a spurious red chip over the idle chip the user cleared.
-    // The first real session error always arrives while busy. Mirrors partial/final/boundary/overrides.
+    // Drop a cancelled/stopped session's detached-drain late error: a stop never bumps
+    // ACTIVE_EPOCH, and a cancel retires it only once its awaited cancel_stream/cancel_record lands
+    // (the chip is already idle by then), so a finish()-detached drain that errors in that window
+    // still passes emit_if_active and would flashError a spurious red chip over the idle chip the
+    // user cleared. The first real session error always arrives while busy. Mirrors
+    // partial/final/boundary/overrides.
     if (!inSession()) return;
     // Reconcile the warm-up gate (an error during warm-up otherwise leaves the backstop armed, so it
     // stamps micLive:true onto the errored/idle chip later — a spurious go-live that can mis-fire a
