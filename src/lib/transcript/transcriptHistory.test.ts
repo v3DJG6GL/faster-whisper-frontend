@@ -232,19 +232,14 @@ describe("loadHistory", () => {
 
   it("drops a non-canonical or out-of-range correction key on a clean segment list too", async () => {
     const segs = { text: "One. Two.", segments: [{ start: 0, end: 1, text: "One." }, { start: 1, end: 2, text: "Two." }] };
-    const base = {
-      schemaVersion: 1, kind: "file", sourcePath: "/a.wav", sourceName: "a.wav", status: "done", result: segs,
-    } as const;
-    const clean = {
-      ...base, id: "keys-clean", createdAt: "2026-01-02T03:04:07.000Z",
-      edits: { 1: "Zwei." }, speakerEdits: { 0: "Ana" }, translationsStale: { 1: true },
-    };
+    const clean = storedFile("keys-clean", "a.wav", "2026-01-02T03:04:07.000Z", {
+      result: segs, edits: { 1: "Zwei." }, speakerEdits: { 0: "Ana" }, translationsStale: { 1: true },
+    });
     listTranscriptRecords.mockResolvedValue([
-      {
-        ...base, id: "keys-mixed", createdAt: "2026-01-02T03:04:05.000Z",
-        edits: { "01": "x", 5: "y", 1: "ok" }, speakerEdits: { "": "A" }, translationsStale: { x: true, 0: true },
-      },
-      { ...base, id: "keys-only-bad", createdAt: "2026-01-02T03:04:06.000Z", edits: { "01": "x" } },
+      storedFile("keys-mixed", "a.wav", "2026-01-02T03:04:05.000Z", {
+        result: segs, edits: { "01": "x", 5: "y", 1: "ok" }, speakerEdits: { "": "A" }, translationsStale: { x: true, 0: true },
+      }),
+      storedFile("keys-only-bad", "a.wav", "2026-01-02T03:04:06.000Z", { result: segs, edits: { "01": "x" } }),
       clean,
     ]);
     await loadHistory(true);
@@ -330,19 +325,10 @@ describe("loadHistory", () => {
   });
 
   it("drops corrections with no segment to land on: an empty or missing list", async () => {
-    const base = {
-      schemaVersion: 1,
-      kind: "file",
-      sourcePath: "/a.wav",
-      sourceName: "a.wav",
-      status: "done",
-      edits: { 0: "x" },
-      speakerEdits: { 0: "Ana" },
-      translationsStale: { 0: true },
-    };
+    const fix = { edits: { 0: "x" }, speakerEdits: { 0: "Ana" }, translationsStale: { 0: true } };
     listTranscriptRecords.mockResolvedValue([
-      { ...base, id: "empty-segs", createdAt: "2026-01-02T03:04:05.000Z", result: { text: "plain", segments: [] } },
-      { ...base, id: "no-segs", createdAt: "2026-01-02T03:04:06.000Z", result: { text: "plain" } },
+      storedFile("empty-segs", "a.wav", "2026-01-02T03:04:05.000Z", { ...fix, result: { text: "plain", segments: [] } }),
+      storedFile("no-segs", "a.wav", "2026-01-02T03:04:06.000Z", { ...fix, result: { text: "plain" } }),
     ]);
     await loadHistory(true);
     for (const id of ["empty-segs", "no-segs"]) {
