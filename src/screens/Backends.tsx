@@ -210,9 +210,6 @@ function Editor({
     refresh: hookTestGen,
   });
   const server = serverInherited(decodeDefaults);
-  // The backend's own model, if it names one: on a full server the `whisper-1` alias (a new
-  // backend's default) loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips
-  // and ModelPicker do. On a standard (OpenAI-compatible) server it is the real model sent.
   const ownModel = ownModelName(b.model, kind);
   // The header's device chip: /v1/models doesn't say which listed model is the server default, so
   // a backend on it gets the name the server resolved for exactly this request — only while the
@@ -1160,8 +1157,8 @@ export default function Backends() {
 
   const handleTest = async (b: Backend) => {
     const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
-    // A key rotated and saved mid-test passes the serverUrl / hasApiKey / URL checks below, so the
-    // credential generation catches it; the save emptied this backend's connection, and the old
+    // A key rotated and saved mid-test passes stillRoutesTo's serverUrl / hasApiKey / URL checks, so
+    // the credential generation catches it; the save emptied this backend's connection, and the old
     // key's verdict would sit there for the session.
     const gen = credentialGeneration(b.id);
     const run: ListRun = { id: b.id, serverUrl: b.serverUrl, url: testedUrl, hasKey: b.hasApiKey, gen };
