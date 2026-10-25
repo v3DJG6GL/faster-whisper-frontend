@@ -1,7 +1,8 @@
 // Keyboard mapping for hotkey capture + display.
 //
-// Bindings are stored as accelerator strings ("Ctrl+Shift+Numpad0") that the Rust
-// global-shortcut plugin parses (global-hotkey's `parse_hotkey`). That parser
+// Bindings are stored as `KeyboardEvent.code` lists; Rust's `codes_to_accelerator` turns them
+// into the accelerator strings ("Ctrl+Shift+Numpad0") the global-shortcut plugin parses
+// (global-hotkey's `parse_hotkey`). That parser
 // accepts the uppercased W3C `KeyboardEvent.code` for the key part (KEYH, DIGIT1,
 // BACKSPACE, ARROWUP, NUMPAD0, F1–F24, numpad operators, …) plus friendly aliases,
 // and logical modifiers (Ctrl/Alt/Shift/Super) — it can NOT distinguish left/right
@@ -11,9 +12,9 @@
 // final gate.
 
 import { keycapLabel } from "./keyboardLayout";
-// A hotkey CODE is untrusted: `isCodeList`/`isStringList` check only `typeof === "string"` and
-// Rust's `de_hotkey` only sorts and dedups, so a sync blob or imported file can put "__proto__" in
-// a chord. A bare index into the literal maps below would then return an `Object.prototype` member
+// A hotkey CODE is untrusted: `isCodeList`/`isStringList` check each code's type (isCodeList also
+// caps its length), never its content, and Rust's `de_hotkey` only sorts and dedups, so a sync
+// blob or imported file can put "__proto__" in a chord. A bare index into the literal maps below would then return an `Object.prototype` member
 // — a React child that throws (no error boundary) or a non-string that breaks `canonicalizeCodes`
 // and stalls sync — hence every lookup goes through `ownProp`.
 import { ownProp } from "./own";
