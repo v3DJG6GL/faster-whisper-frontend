@@ -1172,10 +1172,9 @@ mod imp {
             guard.as_ref().unwrap().clone()
         };
         let (reply, reply_rx) = oneshot::channel();
-        // `epoch` is captured by the CALLER at the top of `inject_text`, not here: queuing follows up
-        // to ~1.2s of pre-work (the held-modifier wait, focus IPCs, a bounded clipboard read, the
-        // settle, on the fallback path a failed VK attempt), and a cancel landing there must still
-        // cancel this job. The counter is monotonic, so a cancel cannot leak into the NEXT injection.
+        // `epoch` is captured by the CALLER at the top of `inject_text`, not here: a cancel landing
+        // during its pre-work (listed there) must still cancel this job. The counter is monotonic,
+        // so a cancel cannot leak into the NEXT injection.
         tx.send(Job {
             text,
             clip_text,
