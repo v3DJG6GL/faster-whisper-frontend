@@ -126,6 +126,8 @@ function topLevelFunctions(src: string): Record<string, string> {
 
 /** The two handler bodies most guards slice into, sliced once (bodyAfter masks the whole module per call). */
 const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+/** The final handler's body, masked (comments and literals blanked). */
+const final = mask(finalBody);
 const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
 /** The hard break's queued separator task (masked). */
 const separatorTask = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
@@ -405,7 +407,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
   it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {
     // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
     // survives a landed Return (the next block opened with three more Returns).
-    const final = mask(finalBody);
     // Owed per app: a block typed into another (focus moved across a hard break) opens that
     // app's empty field with no Returns, and going back still owes it in the first one (A, B, A).
     expect(final).toMatch(/\(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :/);
@@ -437,7 +438,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // nothing (`block` is empty). Normalised to gap + block it typed PHRASE_GAP alone — three bare
     // Returns, empty submits in a chat box. Typed as-is, its "\n" was still a Return (a submit)
     // that left the gap owed, so the next block opened four line breaks down.
-    const final = mask(finalBody);
     expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const opensBlock = !sessionTranslation \|\| block !== \s+;\s+const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block :\s+\)\s+: phrase\.text;/);
     // The gap is never typed without a block after it.
     expect(final).not.toMatch(/sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP/);
@@ -484,7 +484,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // typed paste: lastPhraseDiverted cleared (the quiet-timer Enter then submitted the field
     // without the block just diverted to the clipboard), a "typed" pulse, and a snapshot plus a
     // restore debt that put the user's old clipboard back over that diverted block.
-    const final = mask(finalBody);
     const exit = found(final, "if (!opensBlock) {", "the empty block must leave the task before its insert");
     expect(exit).toBeGreaterThan(final.indexOf(": phrase.text;"));
     expect(exit).toBeLessThan(final.indexOf("await beginInjection()"));
@@ -517,7 +516,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // after a phrase went to the clipboard: its "\n" was a Return submitting the field without that
     // phrase, and its typed booking cleared lastPhraseDiverted, so the quiet-timer Enter pressed a
     // second one — in the window the user moved to so they could paste.
-    const final = mask(finalBody);
     const hold = final.search(/const spacingOnly = !typeOut\.trim\(\);\s+if \(spacingOnly && lastPhraseDiverted\) \{\s+injectedText = target;\s+return;\s+\}/);
     expect(hold, "a suffix-only final must stand down with a diverted phrase").toBeGreaterThanOrEqual(0);
     expect(hold).toBeGreaterThan(final.indexOf("if (!opensBlock) {"));
@@ -664,7 +662,6 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // An own-window insert is never delivered, so the baseline never moves: translating it first
     // re-translated everything since focus came to us on every final (GPU work growing per phrase,
     // the queue held up to the live ceiling, a timeout raising the "translation failed" doorway).
-    const final = mask(finalBody);
     // (The typed branch first drops a suffix-only final: see the own-window suffix test above.)
     const exit = /^if \(t\.isSelf\) \{\s+(?:if \(!carried && !toType\.trim\(\)\) injectedText = target;\s+)?oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/;
     for (const [open, translate] of [
@@ -1055,7 +1052,6 @@ describe("work that must wait for the queue or the cancel", () => {
     // typeOut would paste opening with three blank lines. The FIELD keeps its gap, so the live
     // insert hands Rust the bare block as its clipboard form (`clipboardText`) and every divert /
     // recovery arm writes that instead.
-    const final = mask(finalBody);
     expect(final).toMatch(/const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
     // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
     // when the two differ (omitted = the clipboard gets `text`).
@@ -1125,7 +1121,6 @@ describe("work that must wait for the queue or the cancel", () => {
   it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
     // An inline arrow in the final handler shares the dropped task's closure scope (target,
     // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.
-    const final = mask(finalBody);
     expect(final).toMatch(/!queued && uttRec\?\.id && uttRec\.delta\.trim\(\)\) oweDroppedInsert\(/);
     expect(final).not.toMatch(/injectChain = injectChain\.then\([^;]*oweUtterance\(/);
     expect(mask(topLevelFunctions(streamingSrc).oweDroppedInsert)).toContain("insertCfg === cfg");
@@ -1186,7 +1181,6 @@ describe("work that must wait for the queue or the cancel", () => {
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
     expect(link).toMatch(/closing\.booked = clipBooked;\s+closing\.byLang = clipByLang;\s+closing\.landed = clipLanded;\s+\}\s+clipBooked = null;\s+clipLanded = false;\s+flushClipByLang\(\);/);
     // A release final (no ordinal) copies from the closed window's baseline and leaves it closed.
-    const final = mask(finalBody);
     expect(final).toMatch(/const reopen = ordinal === null \? clipClosed : null;/);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
     expect(final).toMatch(/const plainStartRaw = commonPrefixLen\(clipBaseline, committedDoc\);\s+const reopenStartRaw = reopen \? commonPrefixLen\(reopen\.baseline, committedDoc\) : plainStartRaw;\s+if \(reopen\) clipBaseline = committedDoc;/);
@@ -1218,7 +1212,6 @@ describe("work that must wait for the queue or the cancel", () => {
     // releases only between utterances, so new speech always lands that final first.
     expect(mask(bodyAfter(streamingSrc, '"stream://partial"'))).not.toContain("clipClosed");
     expect(mask(bodyAfter(streamingSrc, '"stream://utterance"'))).not.toContain("clipClosed");
-    const final = mask(finalBody);
     expect(final.match(/clipClosed = null;/g)).toEqual(["clipClosed = null;"]);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
   });
@@ -1298,7 +1291,6 @@ describe("work that must wait for the queue or the cancel", () => {
     // back to the bare "\n" or " ": a divert made it the clipboard's owner over the user's copy
     // (or the block diverted just before it), and a failed insert's recovery copied it with an
     // "it's on the clipboard" flash. A word-less "?" is not whitespace and keeps both.
-    const final = mask(finalBody);
     const call = anchorAt(final, "injectText({ text: typeOut, clipboardText,", "the live phrase insert");
     expect(final.slice(0, call)).toMatch(/const spacingOnly = !typeOut\.trim\(\);/);
     expect(final.slice(call, final.indexOf("}));", call))).toMatch(/, withholdOnDivert: spacingOnly $/);
@@ -1349,7 +1341,6 @@ describe("work that must wait for the queue or the cancel", () => {
   it("the phrase task takes its snapshot through the same gate", () => {
     // A JS "the clipboard holds our text" flag cannot see a copy the user made since: only a
     // paste still owed a restore (clipDirty) skips the read; Rust's is_own_injected decides the rest.
-    const final = mask(finalBody);
     const begin = anchorAt(final, "await beginInjection()", "the phrase task's snapshot");
     expect(final.slice(final.lastIndexOf("if (", begin), begin)).toMatch(SNAPSHOT_GATE);
     expect(streamingSrc).not.toContain("clipHoldsOurs");
