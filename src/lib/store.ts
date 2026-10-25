@@ -107,11 +107,6 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
   };
 }
 
-/** Complete the per-setting sync gates from a persisted (possibly
- *  older-version) config: manifest defaults ← old category toggles (an OFF
- *  category seeds its members OFF) ← legacy sub keys ← saved gate values.
- *  The pre-rename keys (`recordingsDir`, `latchAutoStop`) are also written BACK
- *  (derived from the gates) so a downgraded app still reads the same intent. */
 function completeSub(
   saved: Partial<SyncSubSettings> | undefined,
   savedCategories: Partial<Record<SyncCategory, boolean>> | undefined,
@@ -136,10 +131,10 @@ function completeCategories(
 
 /** Element-level shape checks for the two lists that arrive typed only by assertion. The FILE
  *  import path gets a real serde parse in Rust; a sync pull does not — its blob is an opaque
- *  `serde_json::Value` all the way into `hydrate`. A profile missing `hotkey` or `name` throws
- *  in `conflicts()` and `deriveChipTag()`, and there is no error boundary in the tree, so the
- *  throw unmounts the window and kills the debounced config save for the session. Drop the
- *  malformed entries instead, so every path into the store shares one floor.
+ *  `serde_json::Value` all the way into `hydrate`. A profile missing `hotkey` throws in
+ *  `conflicts()`, and there is no error boundary in the tree, so the throw unmounts the window
+ *  and kills the debounced config save for the session. Drop the malformed entries instead, so
+ *  every path into the store shares one floor.
  *
  *  Deliberately SHAPE ONLY. The sync sanitizers also apply entry ceilings and enum clamps, and
  *  those must NOT be mirrored here: this runs on the user's own on-disk config on every launch,
@@ -425,10 +420,10 @@ interface AppState {
 
   /** The Statistics page's own usage document: fetched for the filters it has set
    *  (`usageViewQuery`) against the viewed backend, tagged with the query signature it
-   *  answers so a stale response is ignored. null = nothing fetched yet / unsupported.
-   *  `failed`: the fetch for `sig` failed — `stats` is then the last good document of the same
-   *  backend + target (any query), kept up so a refused range doesn't wipe the page, else null.
-   *  Runtime-only. Fed by lib/usage.ts. */
+   *  answers so a stale response is ignored. null = nothing fetched yet.
+   *  `failed`: the fetch for `sig` failed (an unsupported server included) — `stats` is then the
+   *  last good document of the same backend + target (any query), kept up so a refused range
+   *  doesn't wipe the page, else null. Runtime-only. Fed by lib/usage.ts. */
   usageView: { sig: string; stats: UsageStats | null; failed?: boolean } | null;
   /** The Statistics calendar's own document: the last 365 days under the page's stage
    *  filter, whatever range the page shows, so the calendar is always a year (the page's
@@ -519,7 +514,9 @@ interface AppState {
 
   /** Pick which Backend the usage view shows (null = follow the dictation target). */
   setUsageViewBackend: (id: string | null) => void;
-  /** Store the Statistics page's fetched document for a query signature. */
+  /** Store the Statistics page's fetched document for a query signature. Unlike setUsage, null
+   *  means the fetch failed: marked `failed`, keeping a same-backend + target stand-in
+   *  (setUsageYear alike). */
   setUsageView: (sig: string, stats: UsageStats | null) => void;
   setUsageYear: (sig: string, stats: UsageStats | null) => void;
   /** Change what the Statistics page asks for (the controller refetches). */
