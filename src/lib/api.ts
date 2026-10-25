@@ -761,11 +761,8 @@ export async function saveUsageOutcomes(queue: unknown): Promise<void> {
   await usageOutcomesTurn(() => invoke("save_usage_outcomes", { queue }));
 }
 
-/** Apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
- *  {rules_patch, fingerprints} object built from the user's edits. Returns
- *  saved / conflicts / requires_restart, plus 422 `errors` or a 400/403/500
- *  `detail`. A 2xx with `ok: false` LANDED (see PipelineSaveResult): branch on
- *  `saveLanded`, not `ok`. */
+/** Apply the user's per-rule edits (PATCH /v1/pipeline-rules). A 2xx with `ok: false` LANDED
+ *  (see PipelineSaveResult): branch on `saveLanded`, not `ok`. */
 export async function savePipelineRules(args: ServerTarget & {
   patch: {
     rules_patch: Record<string, Record<string, unknown>>;
@@ -849,9 +846,7 @@ export async function clearMicTest(): Promise<void> {
 }
 
 /** Every event subscription goes through here: outside Tauri it returns an empty unlisten (a
- *  subscriber that forgot one would throw, not no-op, in non-Tauri `pnpm dev`), else it
- *  dynamic-imports the event module and listens, handing the typed payload to `cb`. Returns the
- *  unlisten fn. */
+ *  subscriber that forgot one would throw, not no-op, in non-Tauri `pnpm dev`). */
 export async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
@@ -1227,8 +1222,9 @@ export async function injectText(args: {
    *  the user — the clipboard-only write, a divert, a failed paste, an error-abort recovery —
    *  writes this in place of `text`; the field still gets `text`. Omit for "the same as `text`". */
   clipboardText?: string;
-  /** Nothing here is worth leaving on the clipboard (the hard-break separator): `text` never
-   *  becomes the clipboard's persistent owner. Before anything is written, a divert or recovery
+  /** Nothing here is worth leaving on the clipboard (the hard-break separator, a whitespace-only
+   *  live phrase): `text` never becomes the clipboard's persistent owner. Before anything is
+   *  written, a divert or recovery
    *  that would put it there (trigger chord still held, focus moved, an own window at a Wayland
    *  chord, the Wayland portal's letters-not-on-the-layout divert, the error-abort recovery after
    *  a sink that wrote nothing) writes nothing and reports `landed: false, diverted: false`; a
