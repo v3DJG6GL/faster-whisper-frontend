@@ -161,6 +161,9 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
 /** Cap on a backend or profile name quoted in a preview notice, so one entry reads the same in every line. */
 const NOTICE_NAME_CAP = 60;
 
+/** Cap on a server host shown where dictation or a key would go, so one host reads the same in every line. */
+const HOST_CAP = 80;
+
 /** The API-key half of the import / restore disclosure (`backendKeyFates`): keys the apply
  *  stores, keys nobody supplies, and a key this device keeps that now goes to another server. */
 function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKeyFates>; source: "file" | "backup" }) {
@@ -197,7 +200,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
           <Notice key={`moved-${b.id}`} tone="warn">
             &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
             <span className="font-mono font-semibold">
-              {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
+              {auth ? safeIdentityText(auth.host, HOST_CAP) : "an unreadable address"}
             </span>
             {auth?.hasUserinfo ? " (the address hides the real host behind a username)" : ""}.
           </Notice>
@@ -601,7 +604,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
                   length cap on the sync/import path, and the plain filter's markerless 80-code-point
                   cut would show a padded hostname (`sync.internal.corp.example.com.<padding>.evil.tld`)
                   as a trusted-looking PREFIX of itself on the dialog that discloses where dictation goes. */}
-              <span className="font-semibold">{auth ? safeIdentityText(auth.host, 80) : "unreadable address"}</span>
+              <span className="font-semibold">{auth ? safeIdentityText(auth.host, HOST_CAP) : "unreadable address"}</span>
               {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
               {warn ? ` · ${warn}` : ""}
             </li>
@@ -743,7 +746,7 @@ function SecurityReviewDialog() {
               <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
               {auth && (
                 <div className="mt-1 text-[12.5px] text-text">
-                  Would connect to <span className="font-mono font-semibold">{safeIdentityText(auth.host, 80)}</span>
+                  Would connect to <span className="font-mono font-semibold">{safeIdentityText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
