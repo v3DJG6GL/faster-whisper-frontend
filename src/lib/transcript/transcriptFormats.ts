@@ -279,8 +279,7 @@ function spkClass(index: number): string {
 }
 
 /** Cue text lines for one segment across the included tracks, in track order.
- *  `mt` renders a translated line; the speaker is language-independent, so the
- *  color modes style it exactly as they style the original. */
+ *  `mt` renders a translated line. */
 function cueLines(
   ctx: Ctx,
   seg: TranscriptSegment,
