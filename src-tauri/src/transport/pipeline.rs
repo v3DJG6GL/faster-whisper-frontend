@@ -61,7 +61,7 @@ pub struct PipelineRulesState {
 }
 
 /// GET outcome. `ok` ⇒ `state` is present; otherwise `status` + `error` say why
-/// (status 0 = transport failure / server unreachable).
+/// (status 0 = no usable answer: transport failure or an unreadable 2xx body).
 #[derive(Debug, Serialize, Default)]
 pub struct PipelineFetch {
     pub ok: bool,
