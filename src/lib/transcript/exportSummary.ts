@@ -95,7 +95,7 @@ export function lengthNeedsWords(hasWords: boolean, length: string): boolean {
   return !hasWords && length !== "transcribed";
 }
 
-/** ✓ on · ○ off · – not part of this format · ! needs a look. */
+/** ✓ on · ○ off · – does not apply (not part of this format, or nothing to write or check) · ! needs a look. */
 export type SummaryState = "on" | "off" | "na" | "warn";
 
 export interface SummaryRow {
