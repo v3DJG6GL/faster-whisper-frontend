@@ -692,6 +692,14 @@ mod tests {
             .to_string()
     }
 
+    /// `dir/config.json` holding `bytes`, `dir` created first.
+    fn write_config(dir: &Path, bytes: impl AsRef<[u8]>) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let config = dir.join("config.json");
+        std::fs::write(&config, bytes).unwrap();
+        config
+    }
+
     /// The `audioBaseDir` setting a config.json holds now, read as the app's loader reads it.
     fn audio_base(config: &Path) -> serde_json::Value {
         let text = crate::config::read_config_text(config).unwrap().unwrap();
@@ -795,13 +803,11 @@ mod tests {
         let (data_old, data_new) = (data_root.join(LEGACY_ID), data_root.join(NEW_ID));
         std::fs::create_dir_all(&data_new).unwrap();
         std::fs::write(data_new.join(MARKER), b"").unwrap();
-        std::fs::create_dir_all(&cfg_new).unwrap();
-        let cfg = audio_base_config(&data_old.join("audio-x"));
-        std::fs::write(cfg_new.join("config.json"), cfg).unwrap();
+        let config = write_config(&cfg_new, audio_base_config(&data_old.join("audio-x")));
         let roots = [root(&cfg_root), root(&data_root)];
         rewrite_moved_paths(&roots, vec![(cfg_old, cfg_new.clone())]);
         assert_eq!(
-            audio_base(&cfg_new.join("config.json")),
+            audio_base(&config),
             serde_json::json!(data_new.join("audio-x"))
         );
     }
@@ -930,19 +936,16 @@ mod tests {
     #[test]
     fn custom_folders_inside_the_old_app_folder_follow_the_move() {
         let (base, old, new) = app_dirs("cfg");
-        std::fs::create_dir_all(&new).unwrap();
         let elsewhere = base.join("elsewhere");
         let cfg = serde_json::json!({ "settings": {
             "recording": { "audioBaseDir": old.join("my-audio"), "recordingsDir": elsewhere },
             "logging": { "logDir": null },
         }});
-        std::fs::write(new.join("config.json"), cfg.to_string()).unwrap();
-        let rebased =
-            rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]).unwrap();
+        let config = write_config(&new, cfg.to_string());
+        let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
         assert_eq!(rebased, vec![new.join("my-audio")]);
         let out: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(new.join("config.json")).unwrap())
-                .unwrap();
+            serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
         assert_eq!(
             out["settings"]["recording"]["audioBaseDir"],
             serde_json::json!(new.join("my-audio"))
@@ -956,27 +959,20 @@ mod tests {
     #[test]
     fn a_config_saved_with_a_bom_still_follows_the_move() {
         let (_, old, new) = app_dirs("bom");
-        std::fs::create_dir_all(&new).unwrap();
         let cfg = audio_base_config(&old.join("my-audio"));
         let mut bytes = b"\xEF\xBB\xBF".to_vec();
         bytes.extend_from_slice(cfg.as_bytes());
-        std::fs::write(new.join("config.json"), bytes).unwrap();
-        let rebased =
-            rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]).unwrap();
+        let config = write_config(&new, bytes);
+        let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
         assert_eq!(rebased, vec![new.join("my-audio")]);
-        assert_eq!(
-            audio_base(&new.join("config.json")),
-            serde_json::json!(new.join("my-audio"))
-        );
+        assert_eq!(audio_base(&config), serde_json::json!(new.join("my-audio")));
     }
 
     #[test]
     fn a_config_that_is_not_valid_utf8_follows_the_move_and_keeps_its_bytes_aside() {
         let (_, old, new) = app_dirs("not-utf8");
-        std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
-        let config = new.join("config.json");
-        std::fs::write(&config, &bytes).unwrap();
+        let config = write_config(&new, &bytes);
         let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
         // Re-pointed: the loader reads the file lossily anyway, and the move never retries.
         assert_eq!(rebased, vec![new.join("my-audio")]);
@@ -994,10 +990,8 @@ mod tests {
     #[test]
     fn a_side_copy_cut_short_is_written_again_so_the_re_point_retry_lands() {
         let (_, old, new) = app_dirs("side-partial");
-        std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
-        let config = new.join("config.json");
-        std::fs::write(&config, &bytes).unwrap();
+        let config = write_config(&new, &bytes);
         let side = new.join("config.json.invalid-utf8.bak");
         let moved = [(old, new.clone())];
         std::fs::write(&side, b"other").unwrap();
@@ -1015,10 +1009,8 @@ mod tests {
     #[test]
     fn a_failed_config_write_reports_nothing_re_pointed_and_a_later_launch_still_re_points() {
         let (_, old, new) = app_dirs("write-fails");
-        std::fs::create_dir_all(&new).unwrap();
         let bytes = latin1_config(&old.join("my-audio"));
-        let config = new.join("config.json");
-        std::fs::write(&config, &bytes).unwrap();
+        let config = write_config(&new, &bytes);
         // A directory where the atomic write's temp file goes: the write fails, as a held
         // config.json does on Windows.
         let blocker = crate::transport::media::tmp_sibling(&config);
@@ -1103,10 +1095,8 @@ mod tests {
     #[test]
     fn a_re_point_fault_goes_on_only_when_an_earlier_launch_hit_the_same_one() {
         let (_, old, new) = app_dirs("fault-kinds");
-        std::fs::create_dir_all(&new).unwrap();
         let cfg = audio_base_config(&old.join("my-audio"));
-        let config = new.join("config.json");
-        std::fs::write(&config, &cfg).unwrap();
+        let config = write_config(&new, &cfg);
         // Blocks the atomic write's temp file, as a held config.json does on Windows.
         let blocker = crate::transport::media::tmp_sibling(&config);
         std::fs::create_dir_all(blocker.join("held")).unwrap();
@@ -1165,21 +1155,19 @@ mod tests {
         let (cfg_root, data_root) = (scratch("cfg-root"), scratch("data-root"));
         let cfg_new = cfg_root.join(NEW_ID);
         let (data_old, data_new) = (data_root.join(LEGACY_ID), data_root.join(NEW_ID));
-        std::fs::create_dir_all(&cfg_new).unwrap();
         let cfg = serde_json::json!({ "settings": {
             "recording": { "audioBaseDir": data_old.join("audio-x") },
             "logging": { "logDir": data_old.join("logs") },
         }});
-        std::fs::write(cfg_new.join("config.json"), cfg.to_string()).unwrap();
+        let config = write_config(&cfg_new, cfg.to_string());
         let moved = [
             (cfg_root.join(LEGACY_ID), cfg_new.clone()),
             (data_old, data_new.clone()),
         ];
-        let rebased = rewrite_config_paths(&cfg_new.join("config.json"), &moved).unwrap();
+        let rebased = rewrite_config_paths(&config, &moved).unwrap();
         assert_eq!(rebased, vec![data_new.join("audio-x")]);
         let out: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
-                .unwrap();
+            serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
         assert_eq!(
             out["settings"]["recording"]["audioBaseDir"],
             serde_json::json!(data_new.join("audio-x"))
