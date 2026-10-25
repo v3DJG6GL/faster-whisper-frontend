@@ -28,6 +28,12 @@ describe("typedAppId", () => {
     expect(appRuleKey(typedAppId("C:\\" + "a".repeat(220) + "\\Code.exe"))).toBe("code");
   });
 
+  it("strips the .exe of a Windows exe name just under the id bound before bounding it", async () => {
+    const typedAppId = await load(true);
+    expect(appRuleKey(typedAppId("C:\\x\\" + "a".repeat(198) + ".exe"))).toBe("a".repeat(198));
+    expect(appRuleKey(typedAppId("Code.exe\u200b"))).toBe("code");
+  });
+
   it("drops the quotes Explorer's Copy as path puts around a pasted Windows path", async () => {
     const typedAppId = await load(true);
     expect(appRuleKey(typedAppId('"C:\\Apps\\Chrome.exe"'))).toBe("chrome");

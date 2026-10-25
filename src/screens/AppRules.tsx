@@ -29,10 +29,14 @@ const DETECT_FAILED_MSG =
  *  Task-Manager-style `chrome.exe` would otherwise save as a rule that never matches. */
 export function typedAppId(raw: string): string {
   if (!IS_WINDOWS) return normalizeAppId(raw);
-  // Basename first, then bound — the detector's order: bounding a long path first would cut the
-  // exe name off its tail. Explorer's "Copy as path" wraps the path in quotes, which no Windows
-  // file name can contain.
-  return normalizeAppId(raw.replace(/"/g, "").split(/[\\/]/).pop() ?? "").replace(/\.exe$/i, "").trim();
+  // The detector's order: basename, strip `.exe`, THEN bound — bounding first would cut a long
+  // path's exe name off its tail, or cut into the `.exe` of a ~200-char name so it no longer
+  // strips. Explorer's "Copy as path" wraps the path in quotes, which no Windows file name can
+  // contain. Invisible marks go before the strip so `Code.exe\u200b` still keys as `code`.
+  const base = raw.replace(/"/g, "").split(/[\\/]/).pop() ?? "";
+  // normalizeAppId's character filter without its bound, applied per code point.
+  const visible = [...base].filter((ch) => /\s/.test(ch) || normalizeAppId(ch) !== "").join("").trim();
+  return normalizeAppId(visible.replace(/\.exe$/i, ""));
 }
 
 function blankAppRule(): AppRule {
