@@ -53,7 +53,7 @@ export function trackChipLabel(result: TrackResult, track: string): string {
   return `${langCode(t.lang)} · ${sourceWord(t)}`;
 }
 
-/** A track's language code as chips, lane cues and the Summary show it: "DE", "UND". */
+/** A track's language code as lane cues and the Summary show it: "DE", "UND". */
 export function trackCode(result: TrackResult, track: string): string {
   return langCode(trackLang(result, track));
 }
