@@ -55,7 +55,6 @@ pub struct UsageOutcomePost {
 }
 
 impl UsageOutcomePost {
-    /// A failed post: `status` 0 = unreachable, else the HTTP status (422 = refused locally).
     fn failed(status: u16, error: String) -> Self {
         Self {
             status,
