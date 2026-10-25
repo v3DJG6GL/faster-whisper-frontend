@@ -85,7 +85,9 @@ describe("utteranceInsertTranslation", () => {
   // A translated hands-free session: an utterance's ordinal final typed "Hello the", then the
   // server's release final handed its record the held-back " world".
   const fr = { targets: ["fr"] };
-  const release = { sent: "world", delta: " world", phrase: { text: "monde", translated: true, byLang: { fr: "monde" } } };
+  /** A phrase the one-target `fr` session translated: `text` is its French, as one track. */
+  const frPhrase = (text: string) => ({ text, translated: true, byLang: { fr: text } });
+  const release = { sent: "world", delta: " world", phrase: frPhrase("monde") };
 
   it("a release whose utterance went in untranslated books no translation of its word alone", () => {
     // The ordinal insert's translate timed out: the original was typed, the record holds no
@@ -111,11 +113,7 @@ describe("utteranceInsertTranslation", () => {
     // only); its release word translated too. A bare translationAttempted reads in History as
     // "translation failed — original inserted".
     const r = { result: { text: "Hello there friend" }, insertMethod: "typed" as const };
-    const out = utteranceInsertTranslation(
-      r,
-      { sent: "friend", delta: " friend", phrase: { text: "ami", translated: true, byLang: { fr: "ami" } } },
-      fr,
-    );
+    const out = utteranceInsertTranslation(r, { sent: "friend", delta: " friend", phrase: frPhrase("ami") }, fr);
     expect(out.translationAttempted).toBeUndefined();
     expect(out).toEqual({});
   });
@@ -135,11 +133,7 @@ describe("utteranceInsertTranslation", () => {
   it("an utterance's own insert still books its translation when the release's words landed first", () => {
     // The release final appended " world" to the record while the ordinal's translate ran.
     const r = { result: { text: "Hello the world" }, insertMethod: "none" as const };
-    const out = utteranceInsertTranslation(
-      r,
-      { sent: "Hello the", delta: " Hello the", first: true, phrase: { text: "Bonjour le", translated: true, byLang: { fr: "Bonjour le" } } },
-      fr,
-    );
+    const out = utteranceInsertTranslation(r, { sent: "Hello the", delta: " Hello the", first: true, phrase: frPhrase("Bonjour le") }, fr);
     expect(out.translatedText).toBe("Bonjour le");
   });
 
@@ -148,11 +142,7 @@ describe("utteranceInsertTranslation", () => {
     // translation), then the release's held-back "No." translated. The record's text starts
     // with it, but this final did not open the record.
     const r = { result: { text: "No. No." }, insertMethod: "typed" as const };
-    const out = utteranceInsertTranslation(
-      r,
-      { sent: "No.", delta: " No.", first: false, phrase: { text: "Non.", translated: true, byLang: { fr: "Non." } } },
-      fr,
-    );
+    const out = utteranceInsertTranslation(r, { sent: "No.", delta: " No.", first: false, phrase: frPhrase("Non.") }, fr);
     expect(out.translatedText).toBeUndefined();
     expect(out).toEqual({});
   });
@@ -160,11 +150,7 @@ describe("utteranceInsertTranslation", () => {
   it("a release word that opens its utterance's first word books no translation of it alone", () => {
     // "It works and" went out untranslated; the held-back " I" is a character prefix of "It".
     const r = { result: { text: "It works and I" }, insertMethod: "typed" as const };
-    const out = utteranceInsertTranslation(
-      r,
-      { sent: "I", delta: " I", first: false, phrase: { text: "je", translated: true, byLang: { fr: "je" } } },
-      fr,
-    );
+    const out = utteranceInsertTranslation(r, { sent: "I", delta: " I", first: false, phrase: frPhrase("je") }, fr);
     expect(out.translatedText).toBeUndefined();
     expect(out).toEqual({});
   });
@@ -177,11 +163,7 @@ describe("utteranceInsertTranslation", () => {
       translatedText: "Bonjour le",
       translations: { fr: "Bonjour le" },
     };
-    const out = utteranceInsertTranslation(
-      r,
-      { sent: "Hello the world", delta: " world", phrase: { text: "Bonjour le monde", translated: true, byLang: { fr: "Bonjour le monde" } } },
-      fr,
-    );
+    const out = utteranceInsertTranslation(r, { sent: "Hello the world", delta: " world", phrase: frPhrase("Bonjour le monde") }, fr);
     expect(out.translatedText).toBe("Bonjour le monde");
     expect(out.translations).toEqual({ fr: "Bonjour le monde" });
   });
