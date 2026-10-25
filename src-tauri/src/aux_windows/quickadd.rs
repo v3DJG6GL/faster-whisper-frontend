@@ -549,9 +549,10 @@ pub(crate) mod win_seed {
     }
 
     /// Signals `quickadd::show`'s "safe to show the window now" rendezvous exactly once —
-    /// explicitly, right after the copy chord is injected (the last point where focus must
-    /// still be on the source app), or implicitly on drop, so every early-return / panic
-    /// path releases the window instead of riding out the caller's backstop cap.
+    /// explicitly, once focus may leave the source app (right after the copy chord is
+    /// injected; for a remote-desktop client only once the copy lands or the forwarding
+    /// grace passes), or implicitly on drop, so every early-return / panic path releases
+    /// the window instead of riding out the caller's backstop cap.
     pub struct Ready(Option<std::sync::mpsc::Sender<()>>);
     impl Ready {
         fn signal(&mut self) {
