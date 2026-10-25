@@ -262,7 +262,8 @@ export interface AccentMotion {
 /** Which usage figure the chip's optional readout shows (today's value). */
 export type OverlayStatsMetric = "words" | "audio" | "both";
 /** A navigable app screen, referenced by the sidebar, the overlay quick-launch,
- *  and cross-window navigation (kept in sync with the router in App.tsx). */
+ *  and cross-window navigation. Each id needs a `SCREENS` row (lib/screenRegistry.ts)
+ *  and a route in App.tsx. */
 export type OverlayScreen = "dashboard" | "transcribe" | "history" | "profiles" | "backends" | "dictionary" | "app-rules" | "statistics" | "logs" | "settings";
 /** A dictation action the overlay quick-launch can trigger (beyond screen nav). */
 export type OverlayActionKind = "toggle-dictation" | "cycle-active-profile" | "open-quick-add";
@@ -467,8 +468,10 @@ export interface TranscribeSettings {
   /** Record dictation sessions to History. Default (absent) = true; turning
    *  it off also wipes the stored dictation records (Rust sweep). */
   keepDictationHistory?: boolean;
-  /** Dictation-history retention in days; absent = the 7-day default, 0 =
-   *  keep forever. Read by Rust, swept independently of file transcripts. */
+  /** Dictation-history retention in days; absent = the 7-day default, 0 = no
+   *  limit from this key (the sweep uses the stricter non-zero of this and
+   *  recording.recordingsRetentionDays). Read by Rust, swept independently of
+   *  file transcripts. */
   dictationRetentionDays?: number;
   /** Copy each file-transcription input into the app's media store so History
    *  playback survives the original moving. Default (absent) = true. */
@@ -674,8 +677,9 @@ export interface Capabilities {
   /** The one media ceiling (uploads, link audio/video), in bytes. */
   media_max_bytes?: number;
   /** Subtitle packaging (server-side ffmpeg mux). ABSENT = the feature does
-   *  not exist; the Media section's Video card shows only on `=== true`,
-   *  with `media_package.reason` explaining a false. */
+   *  not exist; only `=== true` enables embedded tracks — without it the Media
+   *  section's Video card is on offer only for a local video (a sidecar copy),
+   *  with `media_package.reason` explaining why. */
   media_package_enabled?: boolean;
   media_package?: {
     containers: MediaContainer[];
@@ -690,8 +694,9 @@ export interface Capabilities {
   jobs_enabled?: boolean;
   jobs?: { ttl_s: number };
   /** Whether this server runs the T2T translating stage. Like
-   *  url_download_enabled, ABSENT means the feature does not exist —
-   *  translation UI shows only on `=== true` (deliberate opt-in). */
+   *  url_download_enabled, the Transcribe screen's translation UI shows only
+   *  on `=== true` (deliberate opt-in); the viewer's retro-translate and the
+   *  preload treat ABSENT as unknown and hide only on an explicit false. */
   translation_enabled?: boolean;
   /** T2T models the caller may pick per run (allowlist ∪ default ∪ loaded). */
   translation_models?: ServerModel[];
