@@ -32,8 +32,8 @@ export function useOverrideContext(args: {
   const { serverUrl, backendId, apiKey, serverKind, refresh } = args;
   // Bumped when the backend's stored key is replaced elsewhere (a sync pull): a live probe ran as
   // the old caller and a cached entry was evicted, so the effect below must re-run. Derived here
-  // for every caller, as useDecodeDefaults does. Read on every render: the eviction that bumps it
-  // (forgetBackendCaches) also replaces the store's `connections` / `caps`, which re-renders the readers.
+  // for every caller, as useDecodeDefaults does. Read on every render: the call that bumps it
+  // (forgetCredential) also replaces the store's `connections` / `caps`, which re-renders the readers.
   const credentialGen = requestCredentialGen(backendId, apiKey);
   // Read-through of the store cache (lib/capabilities.ts) instead of a per-mount fetch:
   // streaming.ts and preload.ts need the same answer and have no hook to fetch from.
