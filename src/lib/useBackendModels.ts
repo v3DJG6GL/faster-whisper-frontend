@@ -21,9 +21,9 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   // which re-runs the probe — but mid-probe `conn` is already undefined, so only `url` in the
   // deps re-aims it at the new address.
   const url = useApp((s) => (backend ? effectiveServerUrl(backend, s.settings) : ""));
-  // Key presence too: a sync pull that adds a key to a keyless backend (or removes one) moves no
-  // credential generation, and `conn` is already undefined — keyed on it, the probe re-runs as
-  // the current caller and the keyless probe's verdict is dropped.
+  // Key presence too: a sync pull that adds a key to a keyless backend (or removes one) moves the
+  // credential generation, which is no dep, and `conn` is already undefined — keyed on it, the
+  // probe re-runs as the current caller and the keyless probe's verdict is dropped.
   const hasKey = backend?.hasApiKey ?? false;
   useEffect(() => {
     if (!backend || !isTauri || conn) return;
