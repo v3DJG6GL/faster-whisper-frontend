@@ -22,10 +22,11 @@ const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 /// inherited ACL already shuts other accounts out. A path outside it (the settings export) goes
 /// through [`write_export_atomic`].
 ///
-/// On Linux the open does not follow a symlink at the final component. `export_settings_file`
-/// writes to `<user-picked-path>.tmp`, which can land in a world-writable directory (a save
-/// dialog pointed at /tmp) — without `O_NOFOLLOW` a pre-planted symlink there would have this
-/// truncate and overwrite whatever it pointed at, with the user's privileges.
+/// On Linux the open (`open_private`) does not follow a symlink at the final component. The
+/// settings export (`write_export_atomic`, same open) writes to `<user-picked-path>.tmp`, which
+/// can land in a world-writable directory (a save dialog pointed at /tmp) — without `O_NOFOLLOW`
+/// a pre-planted symlink there would have it truncate and overwrite whatever it pointed at,
+/// with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     fill_private(open_private(path)?, contents)
 }
@@ -303,8 +304,8 @@ pub struct Profile {
     /// Override the Backend's language; None/empty = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Override the Backend's prompt: None = inherit, "" = explicit clear (send no
-    /// initial_prompt), a value = override.
+    /// Override the Backend's prompt: None = inherit, "" = explicit clear (send an empty
+    /// prompt, suppressing the inherited one), a value = override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
     /// Per-Profile decode-param overrides, opaque to Rust.
@@ -1452,7 +1453,6 @@ pub(crate) fn fresh_test_dir(tag: &str) -> PathBuf {
     dir
 }
 
-/// Sets an existing test file's mtime.
 #[cfg(test)]
 pub(crate) fn set_test_mtime(path: &Path, when: std::time::SystemTime) {
     std::fs::File::options()
@@ -1767,7 +1767,7 @@ mod tests {
             out["settings"]["recentSpokenLanguages"],
             serde_json::json!(["de", "yue"])
         );
-        // The quick-add and picker windows read the Signal colour through this struct.
+        // The quick-add window reads the Signal colour through this struct.
         assert_eq!(out["settings"]["accentHue"], serde_json::json!(330.0));
         // The export panel's "Open folder after saving" (an opaque transcribe key).
         assert_eq!(
