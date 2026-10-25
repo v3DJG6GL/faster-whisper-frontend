@@ -24,6 +24,15 @@ const APP_ID_PLACEHOLDER = IS_WINDOWS
 const DETECT_FAILED_MSG =
   "Couldn’t detect a focused app yet. Click into the target app once, come back, and retry — or type the id manually.";
 
+/** The id as typed, keyed the way the local detector reports it. On Windows that is the exe
+ *  basename without `.exe` (focus/exe_name.rs), so a pasted `C:\Apps\Chrome.exe` or a
+ *  Task-Manager-style `chrome.exe` would otherwise save as a rule that never matches. */
+export function typedAppId(raw: string): string {
+  const id = normalizeAppId(raw);
+  if (!IS_WINDOWS) return id;
+  return (id.split(/[\\/]/).pop() ?? "").trim().replace(/\.exe$/i, "").trim();
+}
+
 function blankAppRule(): AppRule {
   return { id: crypto.randomUUID(), appId: "", name: "", block: false };
 }
@@ -81,7 +90,7 @@ function Editor({
   // a slow reply for "mstsc" can't label "mstsc2". `null` = not asked yet / no id. Asked about
   // the comparison key the rule matches by (appRuleKey: joiners dropped), so "ms\u200dtsc" is
   // judged as the "mstsc" it matches; a joiner-only id keys to "" and is not asked.
-  const detectId = appRuleKey(r.appId);
+  const detectId = appRuleKey(typedAppId(r.appId));
   const [autoRemote, setAutoRemote] = useState<boolean | null>(null);
   useEffect(() => {
     // Reset first: a previous id's answer must not label this one while its reply is in flight.
@@ -143,7 +152,7 @@ function Editor({
       return false; // nothing persisted — "Save and leave" must stay
     }
     setSaveError(null);
-    onSave({ ...r, appId: normalizeAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
+    onSave({ ...r, appId: typedAppId(r.appId), name: r.name?.trim() ? r.name.trim() : undefined });
     return true;
   };
 
