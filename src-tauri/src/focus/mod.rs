@@ -9,9 +9,9 @@
 //! Model (what screen readers do): a background task subscribes to AT-SPI focus events
 //! and caches the last focused `{app, role, editable}`. Qt/GTK/WebKit apps bridge
 //! natively (`QT_ACCESSIBILITY=1`, a KDE default). Chromium/Electron/Gecko build their
-//! a11y tree on-demand — only the opt-in "deep detection" reaches them, by flipping the
-//! `org.a11y.Status` enabled flag and actively poking their tree (`GetAttributes` /
-//! `GetRelationSet` — the "Orca signal"). Terminals expose `role=terminal` and are
+//! a11y tree on-demand — only the opt-in "deep detection" reaches them, by actively poking
+//! their tree (`GetAttributes` / `GetRelationSet` — the "Orca signal"); the listener flips
+//! the `org.a11y.Status` enabled flag either way. Terminals expose `role=terminal` and are
 //! whitelisted as typable. Apps that expose nothing (games, no a11y) → `editable = None`
 //! → callers type anyway (the guard is positive-only).
 //!
@@ -112,7 +112,7 @@ struct Snapshot {
 pub struct AtspiGuard {
     started: parking_lot::Mutex<bool>,
     snapshot: Arc<parking_lot::Mutex<Snapshot>>,
-    /// Opt-in "deep field detection": flip the a11y flag + poke Chromium/Electron trees.
+    /// Opt-in "deep field detection": poke Chromium/Electron trees awake (the Orca signal).
     deep: Arc<AtomicBool>,
 }
 
@@ -205,7 +205,7 @@ pub fn start(g: &AtspiGuard) {
     }
 }
 
-/// Toggle opt-in deep field detection (a11y flag + Chromium/Electron poke). The running
+/// Toggle opt-in deep field detection (the Chromium/Electron poke). The running
 /// listener applies it on its next tick; also ensures the listener exists.
 pub fn set_deep(g: &AtspiGuard, enabled: bool) {
     g.deep.store(enabled, Ordering::SeqCst);
