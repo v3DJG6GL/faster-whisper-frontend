@@ -306,8 +306,9 @@ async function refreshOne(backend: Backend): Promise<void> {
 
 /** Refresh usage for EVERY configured backend (sequentially, best-effort) so the
  *  usage view can switch between backends instantly from the store. Guarded so
- *  overlapping polls don't stack. `direct`: the show handler just fetched the page's documents,
- *  with `sentOutcomeCount()` at `at`; `confirmed` settles to whether they landed. The pass skips
+ *  overlapping polls don't stack. `direct`: the page's documents were just fetched directly (by the
+ *  show handler, or by a page mounted while hidden), with `sentOutcomeCount()` at `at`; `confirmed`
+ *  settles to whether they landed. The pass skips
  *  its own page step only when they did, the page is still confirmed for the view current at
  *  that step (the per-backend loop can move the viewed backend, a query change's fetch can
  *  miss), and no outcome was delivered since. */
