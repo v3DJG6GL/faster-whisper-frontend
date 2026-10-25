@@ -314,7 +314,7 @@ describe("composeBlob forward-compat inside a category", () => {
     expect("autoEnter" in g).toBe(false);
     expect("evdevEnabled" in g).toBe(false);
     expect(g.newerFlag).toBe(1);
-    // A category this device does not sync passes through whole as before.
+    // A category this device does not sync passes through whole, untouched by the echo.
     const off = await composeBlob(cfg, { ...CATS_ALL, general: false }, snapshot, opts());
     expect(off.general).toBe(snapshot.general);
   });
@@ -767,7 +767,8 @@ describe("applyBlob keep-local (baseline)", () => {
 
   it("an explicit restore also brings the folders and Transcribe picks the legacy sub keys gate", async () => {
     // ignoreGates must also neutralise these arms' legacy `sub` gates, or a restore drops the
-    // very folders it promises.
+    // Transcribe picks it promises. (Real restores strip folders first via `stripMachineFolders`;
+    // the folder half pins applyBlob's own contract.)
     useApp.setState({ settings: settings() });
     await applyBlob(
       {
@@ -1056,8 +1057,8 @@ describe("applyBlob keep-local (baseline)", () => {
   it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
     // Everything applyBlob computes is derived from a PRE-wait snapshot, and hydrate replaces
     // the slices wholesale — so the staleness check must cover `backends` too, not just
-    // `settings` (upsertBackend returns only `{backends}`). Retries exhausted → drop the
-    // apply; the next pull re-offers it.
+    // `settings` (upsertBackend returns only `{backends}`). A sync merge is dropped, not
+    // restarted; the next pull re-offers it.
     let release: (v: Record<string, string>) => void = () => {};
     keyring.park = new Promise((r) => (release = r));
     try {
@@ -2055,7 +2056,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
     const { engine, store, init } = await launchEngine();
     try {
-      await engine.pushNow(); // an automatic push still drops at the gate during launch
+      await engine.pushNow(); // an automatic push stops at the launch lock (it only re-arms itself)
       const click = engine.pushNow(true);
       await Promise.resolve();
       expect(io.pushes).toEqual([]);
@@ -2717,7 +2718,7 @@ describe("a sync edit made during the launch work", () => {
   });
 
   it("with the sync settings unchanged the startup pull stays automatic", async () => {
-    // Same gate set as above, ON from launch: an unchanged version is "nothing new", as before.
+    // Same gate set as above, ON from launch: an unchanged version is "nothing new".
     const { engine, store, init } = await launchEngine({});
     try {
       await finishLaunch(io, init);
