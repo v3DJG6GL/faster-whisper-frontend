@@ -1238,7 +1238,7 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
 
   it("a retry onto a translating server leaves a missing slice missing", () => {
     // An explicit [] would switch a link's frozen site targets back on (linkTranslateTo) while the
-    // rail, reading the un-reconciled options, shows no Translating stage.
+    // rail (it reads the reconciled runOptions) shows no Translating stage.
     const out = reconcileRetryOptions({ diarize: true }, false, true);
     expect(out).toEqual({ diarize: true, standard: undefined });
     expect(linkTranslateTo(out!, { siteSubs: { mtTargets: ["de"] } as never })).toBeUndefined();
