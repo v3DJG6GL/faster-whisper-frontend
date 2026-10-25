@@ -241,8 +241,9 @@ pub fn init(ring: LogRing, writer: SwapWriter) {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
     // Only a non-blank RUST_LOG that parses overrides the Settings level: a blank one counts as
-    // unset (it would parse to an enable-nothing filter), a mistyped one falls back to Info with a
-    // warning, and the setting must stay live rather than leave the log at a level nobody chose.
+    // unset (it would parse to an enable-nothing filter), one that fails to parse falls back to Info
+    // with a warning, and the setting must stay live rather than leave the log at a level nobody
+    // chose. A mistyped bare word (`verbos`) is NOT caught: tracing parses it as a target directive.
     let raw = std::env::var("RUST_LOG").ok();
     let env = env_override(raw.as_deref());
     let _ = ENV_OVERRIDE.set(matches!(env, Some(Ok(_))));
