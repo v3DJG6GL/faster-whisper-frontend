@@ -1408,17 +1408,13 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
   const epoch = s.epoch;
   const pid = newProgressId();
   set((st2) => ({
-    stageMeta: {
-      ...st2.stageMeta,
-      downloading: {
-        ...st2.stageMeta.downloading,
-        video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "queued",
-                 progress: null, downloadedBytes: null, error: null },
-        // Started by the first "downloading" poll: queue time is not transfer time.
-        videoDlStart: undefined,
-        videoDlEnd: undefined,
-      },
-    },
+    stageMeta: stageMetaWith(st2.stageMeta, "downloading", {
+      video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "queued",
+               progress: null, downloadedBytes: null, error: null },
+      // Started by the first "downloading" poll: queue time is not transfer time.
+      videoDlStart: undefined,
+      videoDlEnd: undefined,
+    }),
   }));
   awaitRunUrlVideo(rec, ctx, pid, epoch, startOnDemandVideo(path, ctx, pid, epoch));
 }
@@ -1457,14 +1453,10 @@ function startOnDemandVideo(
     if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url
         || onDemandVideoPid !== pid) return null;
     set((st2) => ({
-      stageMeta: {
-        ...st2.stageMeta,
-        downloading: {
-          ...st2.stageMeta.downloading,
-          video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "failed",
-                   error: errorText(e, 200) },
-        },
-      },
+      stageMeta: stageMetaWith(st2.stageMeta, "downloading", {
+        video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "failed",
+                 error: errorText(e, 200) },
+      }),
     }));
     return null;
   });
@@ -1722,6 +1714,15 @@ function foldVideo(dl: StageMeta | undefined, video: VideoProgress, now: number)
   };
 }
 
+/** `meta` with `patch` merged into one stage's chips. */
+function stageMetaWith(
+  meta: TranscribeRunState["stageMeta"],
+  stage: RailStage,
+  patch: StageMeta,
+): TranscribeRunState["stageMeta"] {
+  return { ...meta, [stage]: { ...meta[stage], ...patch } };
+}
+
 /** The store slice that folds `video` into the download row's meta, timed now. */
 function withVideo(s: TranscribeRunState, video: VideoProgress): Pick<TranscribeRunState, "stageMeta"> {
   return { stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) } };
@@ -1792,31 +1793,21 @@ export function foldProgress(p: BatchProgress) {
     // A model fetch folded onto another row (the older-server fallback) names the
     // translation model: those chips belong to the translating row only.
     if (p.model && p.stage !== "waiting" && (!mtFetch || mtFetch === "translating")) {
-      stageMeta = {
-        ...stageMeta,
-        [cur]: {
-          ...stageMeta[cur],
-          model: p.model,
-          device: p.device ?? undefined,
-          compute: p.compute ?? undefined,
-        },
-      };
+      stageMeta = stageMetaWith(stageMeta, cur, {
+        model: p.model,
+        device: p.device ?? undefined,
+        compute: p.compute ?? undefined,
+      });
     }
     // The download's total bytes live only in downloading-stage polls; copy
     // them into the stage's meta so the done row can show its receipt.
     if (cur === "downloading" && typeof p.totalBytes === "number" && p.totalBytes > 0) {
-      stageMeta = {
-        ...stageMeta,
-        downloading: { ...stageMeta.downloading, bytes: p.totalBytes },
-      };
+      stageMeta = stageMetaWith(stageMeta, "downloading", { bytes: p.totalBytes });
     }
     // Actual-transfer clock: the exact stage (not the folded rail row) —
     // resolving polls must not start it.
     if (p.stage === "downloading" && !mtFetch && !stageMeta.downloading?.dlStart) {
-      stageMeta = {
-        ...stageMeta,
-        downloading: { ...stageMeta.downloading, dlStart: now },
-      };
+      stageMeta = stageMetaWith(stageMeta, "downloading", { dlStart: now });
     }
     // keep_video runs: the secondary video fetch rides in the entry's
     // `video` sub-object on every poll (also after the transcript returned,
@@ -1829,13 +1820,9 @@ export function foldProgress(p: BatchProgress) {
     // elapsed_s only moves per poll).
     if (p.target && (cur === "translating" || cur === "diarizing") &&
         !ownProp(stageMeta[cur]?.unitStarts, p.target)) {
-      stageMeta = {
-        ...stageMeta,
-        [cur]: {
-          ...stageMeta[cur],
-          unitStarts: { ...stageMeta[cur]?.unitStarts, [p.target]: now },
-        },
-      };
+      stageMeta = stageMetaWith(stageMeta, cur, {
+        unitStarts: { ...stageMeta[cur]?.unitStarts, [p.target]: now },
+      });
     }
     return { progress: p, stageTimes, stageMeta };
   });
