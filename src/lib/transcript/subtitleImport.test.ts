@@ -14,6 +14,7 @@ import {
   parseImportedText,
 } from "./subtitleImport";
 import type { BatchResult } from "../types";
+import { wordLine } from "./transcript.testkit";
 
 const RESULT: BatchResult = {
   text: "Hello there. General greeting.",
@@ -93,16 +94,7 @@ describe("round-trips against generateExport", () => {
     expect(back.segments[0].end).toBeCloseTo(2.1, 2); // next line's start
   });
   it("lrc: CJK word tags reduce to text without spaces the export never wrote", () => {
-    const ja: BatchResult = {
-      text: "今日は晴れ",
-      language: "ja",
-      segments: [{ start: 0, end: 1.5, text: "今日は晴れ" }],
-      words: [
-        { word: "今日", start: 0, end: 0.5 },
-        { word: "は", start: 0.5, end: 1 },
-        { word: "晴れ", start: 1, end: 1.5 },
-      ],
-    };
+    const ja = wordLine("今日は晴れ", ["今日", "は", "晴れ"], "ja");
     const back = parseImportedText("lrc", generateExport(ja, { format: "lrc", wordTimestamps: true }));
     expect(back.segments[0].text).toBe("今日は晴れ");
     // Tags with no space between Latin words still separate them.
@@ -123,32 +115,17 @@ describe("round-trips against generateExport", () => {
     }
   });
   it("lrc: a tag beside CJK punctuation round-trips without a space (same seam rule as the export)", () => {
-    const tagged = (text: string, ws: string[]): BatchResult => ({
-      text,
-      language: "ja",
-      segments: [{ start: 0, end: ws.length * 0.5, text }],
-      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-    });
     const lrc = (r: BatchResult) => generateExport(r, { format: "lrc", wordTimestamps: true });
-    const period = lrc(tagged("晴れです。明日は雨", ["晴れ", "です。", "明日", "は", "雨"]));
+    const period = lrc(wordLine("晴れです。明日は雨", ["晴れ", "です。", "明日", "は", "雨"], "ja"));
     expect(period).toContain("です。<00:01.00>明日");
     expect(parseImportedText("lrc", period).segments[0].text).toBe("晴れです。明日は雨");
-    const bracket = lrc(tagged("彼は「新機能」です", ["彼は", "「新機能」", "です"]));
+    const bracket = lrc(wordLine("彼は「新機能」です", ["彼は", "「新機能」", "です"], "ja"));
     expect(bracket).toContain("彼は<00:00.50>「新機能」");
     expect(parseImportedText("lrc", bracket).segments[0].text).toBe("彼は「新機能」です");
   });
   it("lrc: a spaced Thai line round-trips with only its own spaces", () => {
     const text = "สวัสดี ครับ";
-    const th: BatchResult = {
-      text,
-      language: "th",
-      segments: [{ start: 0, end: 1.5, text }],
-      words: [
-        { word: "สวัส", start: 0, end: 0.5 },
-        { word: "ดี", start: 0.5, end: 1 },
-        { word: "ครับ", start: 1, end: 1.5 },
-      ],
-    };
+    const th = wordLine(text, ["สวัส", "ดี", "ครับ"], "th");
     const lrc = generateExport(th, { format: "lrc", wordTimestamps: true });
     expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);
     // A space after the line stamp or a speaker prefix is no seam space.
@@ -159,12 +136,7 @@ describe("round-trips against generateExport", () => {
     // 𠮷 is a surrogate pair: a seam test looking at one UTF-16 unit misses it.
     const text = "私は𠮷野家に行った山𠮷";
     const ws = ["私は", "𠮷野家", "に行った", "山𠮷"];
-    const r: BatchResult = {
-      text,
-      language: "ja",
-      segments: [{ start: 0, end: ws.length * 0.5, text }],
-      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-    };
+    const r = wordLine(text, ws, "ja");
     const lrc = generateExport(r, { format: "lrc", wordTimestamps: true });
     expect(lrc).toContain("私は<00:00.50>𠮷野家");
     expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);

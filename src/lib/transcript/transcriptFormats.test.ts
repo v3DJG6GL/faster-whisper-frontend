@@ -11,6 +11,7 @@ import {
 import { parseImportedText } from "./subtitleImport";
 import { stripControlChars } from "../sanitize";
 import type { BatchResult, TimedTrack } from "../types";
+import { wordLine } from "./transcript.testkit";
 
 const RESULT: BatchResult = {
   text: "Hello there. General greeting.",
@@ -36,14 +37,6 @@ const PLAIN: BatchResult = {
 
 /** A manual German site subtitle track ("de-x-site") with these cues. */
 const deSiteTrack = (cues: TimedTrack["cues"]): TimedTrack => ({ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues });
-
-/** One segment holding `text`, its words `ws` timed 0.5 s apiece from 0. */
-const wordLine = (text: string, ws: string[], language?: string): BatchResult => ({
-  text,
-  ...(language ? { language } : {}),
-  segments: [{ start: 0, end: ws.length * 0.5, text }],
-  words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
-});
 
 describe("prettySpeaker / speakerOrder", () => {
   it("maps pyannote labels to human names and keeps others verbatim", () => {
@@ -732,16 +725,7 @@ describe("lrc word tags", () => {
     expect(out).toContain("[00:01.00]<00:01.00>b");
   });
   it("unspaced (CJK) words are tagged without a space between them", () => {
-    const r: BatchResult = {
-      text: "今日は晴れ",
-      language: "ja",
-      segments: [{ start: 0, end: 1.5, text: "今日は晴れ" }],
-      words: [
-        { word: "今日", start: 0, end: 0.5 },
-        { word: "は", start: 0.5, end: 1 },
-        { word: "晴れ", start: 1, end: 1.5 },
-      ],
-    };
+    const r = wordLine("今日は晴れ", ["今日", "は", "晴れ"], "ja");
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>今日<00:00.50>は<00:01.00>晴れ\n");
   });
@@ -762,14 +746,7 @@ describe("lrc word tags", () => {
       .toBe("[00:00.00]<00:00.00>สวัสดี<00:00.50>ครับ <00:01.00>ผม<00:01.50>ชื่อ\n");
   });
   it("a word the text does not hold falls back to the script rule for its seams", () => {
-    const r: BatchResult = {
-      text: "Hello there",
-      segments: [{ start: 0, end: 1, text: "Hello there" }],
-      words: [
-        { word: " Hallo", start: 0, end: 0.5 },
-        { word: " there", start: 0.5, end: 1 },
-      ],
-    };
+    const r = wordLine("Hello there", [" Hallo", " there"]);
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>Hallo <00:00.50>there\n");
   });
