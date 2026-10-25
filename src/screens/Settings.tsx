@@ -378,8 +378,6 @@ export default function Settings() {
         setBusy("store", false);
       });
   };
-  // One store row's Delete… / confirm pair: arming re-reads the counts (armStoreAction), and the
-  // confirm waits for that read ("Counting…") before it can run.
   const storeDeleteControl = (kind: StoreKind, confirmLabel: string) =>
     confirming === kind ? (
       <span className="flex items-center gap-2">
