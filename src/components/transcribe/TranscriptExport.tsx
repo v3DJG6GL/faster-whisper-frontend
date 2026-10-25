@@ -513,7 +513,7 @@ export function TranscriptExport({
   /** The video: a plain copy when no tracks ride inside it and a local copy
    *  exists; otherwise the server packages it (uploading a local file first,
    *  or fetching a link's video on demand). False = stopped with an error
-   *  the panel now shows while it is mounted and `started`'s record still shows (no
+   *  the panel now shows while it is mounted, open and `started`'s record still shows (no
    *  outcome lands on another record's panel); otherwise a failure goes to `late`. `checked` = the
    *  tracks the pre-dialog size check built, reused while their result is still the
    *  latest. `skipLocal` = the local copy is known gone (exportVideoTo's retry). `onEmbedded`
