@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { popoverBox } from "./useAnchoredRect";
 
-// A Select's list used to be exactly its trigger's width, so a short trigger ("Ctrl + V") cut
-// every longer option to "Ctrl …". `grow` sizes it to its content instead, never under the
-// trigger, growing toward the side with room and capped 8 px inside the viewport.
+// `grow` sizes a Select's list to its content, so a short trigger ("Ctrl + V") does not cut every
+// longer option to "Ctrl …": never under the trigger, growing toward the side with room and capped
+// 8 px inside the viewport.
 describe("popoverBox grow", () => {
   beforeEach(() => vi.stubGlobal("window", { innerWidth: 1000, innerHeight: 800 }));
   afterEach(() => vi.unstubAllGlobals());
