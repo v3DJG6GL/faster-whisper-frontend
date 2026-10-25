@@ -231,15 +231,13 @@ describe("applyTheme + setAccentHue", () => {
       },
     },
   };
-  // The drift tests' prologue: a fake clock at 0, the stand-in document, and a window whose
-  // matchMedia answers "dark OS, motion allowed" unless a test passes its own.
+  // The default matchMedia answers "dark OS, motion allowed" unless a test passes its own.
   const bootDriftClock = (matchMedia: (q: string) => unknown = () => ({ matches: false })) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal("window", { matchMedia });
   };
-  // Starts a wheel drift of `period` seconds on the dark theme; returns the driver's stop.
   const startWheelDrift = (period: number) => {
     setAccentMotion({ period, range: "wheel" });
     applyTheme("dark");
