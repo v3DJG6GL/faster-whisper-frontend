@@ -203,7 +203,7 @@ export interface BugReportHeader {
   stages?: string | null;
   source?: string | null;
   /** Human-readable description of the view filters the copied lines passed
-   *  ("warn+ · tag: overlay · text: portal"); omitted when nothing is
+   *  ("warn+ · tags: overlay · text: portal"); omitted when nothing is
    *  filtered. Recorded in the header so a reader knows the paste is a
    *  SUBSET, not the whole session. */
   filters?: string | null;
