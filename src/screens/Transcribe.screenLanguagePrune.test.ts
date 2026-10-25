@@ -9,6 +9,9 @@ import { describe, expect, it } from "vitest";
 import src from "./Transcribe.tsx?raw";
 import siteSubtitlesSrc from "../lib/transcript/siteSubtitles.ts?raw";
 import { runTargets } from "../lib/translationTargets";
+import { initialSiteState, pickPolicy, type SiteSubsInput } from "../lib/transcript/siteSubtitles";
+import type { SiteTrackInfo } from "../lib/urlSource";
+import { targetsOnLeave } from "./Transcribe";
 
 /** The body of the screen Language picker's onChange. */
 const languageOnChange = () => {
@@ -83,5 +86,29 @@ describe("a run while the panel holds the chips", () => {
     expect(src).toContain("const effTargets = translationAvailable ? runTargets(translateTo, knownSource) : [];");
     expect(src).toContain("const runT = translationAvailable ? runTargets(translateTo, knownSource) : [];");
     expect(src).not.toContain("wireCodes(translateTo)");
+  });
+});
+
+// Leaving the screen drops the site panel like a new preview does: the languages its Custom only
+// promoted must leave the saved targets too, or they come back as your own picks — a plain file
+// run translates into them, and a later preset on the next link keeps them.
+describe("leaving the screen with the site-subtitle panel open", () => {
+  it("drops the languages Custom only promoted from the saved targets", () => {
+    const tr = (lang: string): SiteTrackInfo => ({ id: lang, lang, kind: "manual", ext: "vtt", hoh: false });
+    const inp: SiteSubsInput = { tracks: [tr("de"), tr("en"), tr("es")], spoken: "de", multi: false, targets: ["en"], maxTargets: 3 };
+    const custom = pickPolicy(inp, initialSiteState(inp.targets), "custom");
+    expect(custom.targets).toEqual(["en", "es"]);
+    expect(custom.state.promoted).toEqual(["es"]);
+    // Saved ["en", "es"] while the panel held the chips (taken at length 1, limit 3).
+    expect(targetsOnLeave(custom.targets, custom.state, 3, true, 1)).toEqual(["en"]);
+    // Also once the panel no longer held the chips: the promoted code is still not yours.
+    expect(targetsOnLeave(custom.targets, custom.state, 3, false, 1)).toEqual(["en"]);
+    // No panel, nothing promoted, or no translation: the saved list stays.
+    expect(targetsOnLeave(["en", "es"], null, 3, false, 0)).toBeNull();
+    expect(targetsOnLeave(["en", "es"], initialSiteState(["en", "es"]), 3, true, 2)).toBeNull();
+    expect(targetsOnLeave(custom.targets, custom.state, null, true, 1)).toBeNull();
+    // The over-limit cut on a held release is unchanged: never below the list the panel took.
+    expect(targetsOnLeave(["en", "fr", "it"], initialSiteState(["en"]), 1, true, 1)).toEqual(["en"]);
+    expect(targetsOnLeave(["en", "fr", "it"], initialSiteState(["en"]), 1, true, 3)).toBeNull();
   });
 });

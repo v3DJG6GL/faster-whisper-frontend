@@ -231,6 +231,19 @@ function seedTranscribe(t: TranscribeSettings | undefined, backends: readonly Ba
   };
 }
 
+/** The saved targets as the screen leaves them (null = unchanged). Leaving starts the site panel
+ *  over like a new preview: the languages its Custom only promoted go (resetSiteTargets), or they
+ *  stay saved as your own picks. If the panel still held the chips, what it grew past both the
+ *  limit and the list it took is cut too. Nothing changes without translation (`cap` null). */
+export function targetsOnLeave(
+  stored: readonly string[], panel: SiteSubsState | null, cap: number | null, held: boolean, base: number,
+): string[] | null {
+  if (cap === null) return null;
+  let next = resetSiteTargets(panel, stored);
+  if (held) next = next.slice(0, Math.max(cap, base));
+  return next.length !== stored.length ? next : null;
+}
+
 export default function Transcribe() {
   // History's "Save audio…/Save video…" open the workbench straight onto the
   // export panel: the choice rides in router state and is consumed once.
@@ -940,14 +953,16 @@ export default function Transcribe() {
     // caps unwatched: a backend switch to a lower limit must not silently and permanently drop targets
   }, [knownSource, busy, !!siteChips]);
   // Left (or unmounted) while the panel still held the chips: that release never reaches the
-  // effect above, so cut the persisted list here, or the next visit sends it over the limit.
+  // effect above, so cut the persisted list here, or the next visit sends it over the limit
+  // (targetsOnLeave, which also drops what the panel's Custom only promoted).
   releaseCap.current = translationAvailable ? maxTranslationTargets(caps) : null;
+  /** The panel as of the last render: leaving drops what its Custom only promoted. */
+  const leftPanel = useRef(siteState);
+  leftPanel.current = siteState;
   useEffect(() => () => {
-    const cap = releaseCap.current;
-    if (!panelHeldChips.current || cap === null) return;
-    const cur = wireCodes(useApp.getState().settings.transcribe?.translateTo);
-    const keep = Math.max(cap, panelBase.current);
-    if (cur.length > keep) persistOptions({ translateTo: cur.slice(0, keep) });
+    const stored = wireCodes(useApp.getState().settings.transcribe?.translateTo);
+    const next = targetsOnLeave(stored, leftPanel.current, releaseCap.current, panelHeldChips.current, panelBase.current);
+    if (next) persistOptions({ translateTo: next });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount only; reads refs and the store
   }, []);
 
