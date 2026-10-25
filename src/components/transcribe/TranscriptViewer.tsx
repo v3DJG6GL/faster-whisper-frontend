@@ -112,7 +112,6 @@ function scrollParentOf(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
-/** `top` bounded to what `el` can actually scroll to. */
 function clampScrollTop(el: HTMLElement, top: number): number {
   return Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
 }
