@@ -88,7 +88,7 @@ export function dayToDate(day: number): Date {
 }
 
 /** Axis tick label: `12.06.` (day+month), or a short month name (`Juni`) when
- *  `month` is set — used on wide windows so labels don't crowd. */
+ *  `month` is set (per-month buckets, on ranges over two years). */
 export function fmtDateTick(day: number, month = false): string {
   return (month ? _tickMonth : _tickDay).format(dayToDate(day));
 }
