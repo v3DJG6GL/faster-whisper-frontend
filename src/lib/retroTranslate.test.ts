@@ -264,7 +264,7 @@ describe("translate progress state machine", () => {
   });
 
   it("a later chunk leaving 'reconnecting' reads translating even if no translating poll landed", () => {
-    // Chunk 1 answered, so the model is up — the stale pct 0 must not pick "loading".
+    // Chunk 1 answered, so the model is up.
     let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldTranslatePoll(s, { stage: "loading" });
     s = foldPollFailure(s);
