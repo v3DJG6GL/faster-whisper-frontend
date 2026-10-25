@@ -62,7 +62,8 @@ let started = false;
 let inFlight = false;
 let retries = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-/** A retry timer fired while a pass was in flight: that pass runs one more right after it. */
+/** A pass was asked for (a retry timer, a late ledger read) while one was in flight: that pass
+ *  runs one more right after it. */
 let rerun = false;
 /** The pass is reading the ledger itself: a late load it lands is its own to reconcile. */
 let passReading = false;
