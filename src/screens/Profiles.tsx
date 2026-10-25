@@ -834,11 +834,11 @@ function ProfileRow({
 }
 
 /** One starter's chord as the checklist card names it: the chord "Keep these" commits
- *  (startersClearOf), so a starter the quick-add chord took reads unbound instead of promising a
- *  shortcut that is never created. */
+ *  (startersClearOf), so a starter whose chord would clash with the quick-add chord (same chord or
+ *  one nested in the other) reads unbound instead of promising a shortcut that is never created. */
 export function StarterChord({ kept, id, verb, tail = "" }: { kept: Profile[]; id: string; verb: string; tail?: string }) {
   const hotkey = kept.find((p) => p.id === id)?.hotkey ?? [];
-  if (hotkey.length === 0) return <>no shortcut yet — Quick add uses that chord; set one after keeping</>;
+  if (hotkey.length === 0) return <>no shortcut yet — it would clash with Quick add’s shortcut; set one after keeping</>;
   return (
     <>
       {verb} <HotkeyChips codes={hotkey} />
