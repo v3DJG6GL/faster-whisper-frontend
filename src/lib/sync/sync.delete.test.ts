@@ -269,9 +269,7 @@ describe("a sync composed with a degraded keyring", () => {
   it("resolving a conflict keeps this device's list", async () => {
     try {
       const { base, before } = await seed();
-      const s = useApp.getState().settings;
-      const localStart = !s.general.startMinimized;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: localStart } } });
+      toggleStartMinimized();
       api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: peer(base, before, false) };
       await pullNow(true);
       expect(getPendingConflict()?.categories).toEqual(["general"]);
@@ -566,8 +564,7 @@ describe("a 409 against a deleted server copy", () => {
   it("re-seeds from version 0 and pushes the full blob", async () => {
     try {
       const full = await seedBase();
-      const s = useApp.getState().settings;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: !s.general.startMinimized } } });
+      toggleStartMinimized();
       api.conflicts = [{ version: 0, updated_ts: null, device: null, blob: null }];
       const pushesBefore = api.pushes;
       await pushNow(true);
@@ -632,6 +629,14 @@ async function pullRetentionDrop(remote: SyncBlob): Promise<void> {
   remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
   api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
   await pullNow(true);
+}
+
+/** Flip this device's startMinimized (an ordinary general edit) and return the new value. */
+function toggleStartMinimized(): boolean {
+  const s = useApp.getState().settings;
+  const next = !s.general.startMinimized;
+  useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: next } } });
+  return next;
 }
 
 /** A synced chip setting (not machine-specific, so the chip category carries it). */
@@ -1030,12 +1035,6 @@ describe("approving a review after editing a category the peer changed", () => {
     expect(getPendingReview()?.restApplied).toBe(true);
     return { base, peerTyping };
   }
-  const toggleStartMinimized = (): boolean => {
-    const s = useApp.getState().settings;
-    const next = !s.general.startMinimized;
-    useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: next } } });
-    return next;
-  };
 
   it("keeps the edit, adopts the peer's version and pushes the edit", async () => {
     try {
@@ -1292,9 +1291,7 @@ describe("approving a relisted review after an ordinary edit", () => {
       await approvePendingReview();
       expect(getPendingReview()?.relisted).toBe(true);
       // An edit to general (applied at the raise; its gates never moved) on top of the peer's.
-      const s = useApp.getState().settings;
-      const mine = !s.general.startMinimized;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      const mine = toggleStartMinimized();
       await approvePendingReview();
       expect(getPendingConflict()).toBeNull();
       expect(getPendingReview()).toBeNull();
@@ -1366,9 +1363,7 @@ describe("an edit landing during an approval's keyring wait", () => {
       const approving = approvePendingReview();
       await vi.waitFor(() => expect(api.readCalled).toBe(true));
       api.park = null;
-      const s = useApp.getState().settings;
-      const mine = !s.general.startMinimized;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      const mine = toggleStartMinimized();
       release({ b1: "sk-secret" });
       await approving;
       expect(getPendingReview()?.relisted).toBe(true);
@@ -1401,9 +1396,7 @@ describe("an edit landing during an approval's keyring wait", () => {
       const approving = approvePendingReview();
       await vi.waitFor(() => expect(api.readCalled).toBe(true));
       api.park = null;
-      const s = useApp.getState().settings;
-      const mine = !s.general.startMinimized;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      const mine = toggleStartMinimized();
       release({ b1: "sk-secret" });
       await approving;
       expect(getPendingConflict()).toBeNull();
@@ -1443,9 +1436,7 @@ describe("approving a review raised while dictating", () => {
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       expect(useApp.getState().settings.general.typeAsISpeak).toBe(localTyping); // nothing landed
       expect(getPendingReview()?.restApplied).toBe(false); // the dialog must not say "applied already"
-      const s = useApp.getState().settings;
-      const mine = !s.general.startMinimized;
-      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      const mine = toggleStartMinimized();
       const pushesBefore = api.pushes;
       await approvePendingReview();
       expect(getPendingReview()).toBeNull();
