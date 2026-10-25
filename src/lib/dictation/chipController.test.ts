@@ -144,7 +144,7 @@ describe("chipRouteTargets", () => {
 
 describe("chipRoutePending", () => {
   // The stand-in for the route when there is none to promise. Paired with chipRouteTargets
-  // the way chipPayload pairs them: an "ask" preview hides the configured targets.
+  // the way chipRoute pairs them: an "ask" preview hides the configured targets.
   it("is empty for a running session that resolved its targets", () => {
     expect(chipRoutePending(null, "listening", true)).toBe("");
     expect(chipRouteTargets(["fr"], ["it"])).toEqual(["fr"]);
