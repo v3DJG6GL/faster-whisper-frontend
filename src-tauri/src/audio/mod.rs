@@ -497,7 +497,7 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
 /// flushed on each silence→speech edge so word onsets aren't clipped (the leave-hold keeps the
 /// tail). Hold and pre-roll are sample-counted; only the EMA is sensitive to chunk cadence.
 pub struct SpeechGate {
-    sp_stream: f32, // ~ session.rs `stream://level` (0.7/0.3 EMA of rms*6)
+    sp_stream: f32, // ~ capture::Meter, the `stream://level` EMA (0.7/0.3 of rms*6)
     sp_smooth: f32, // ~ speaking.ts memo.smooth (0.8/0.2 EMA)
     speaking: bool,
     low_run: usize, // consecutive 16 kHz samples below SPEAK_LOW
