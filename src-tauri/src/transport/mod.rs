@@ -1004,7 +1004,6 @@ mod cert_rejected_tests {
         )
     }
 
-    /// A rejected certificate (self-signed, expired) is named as such, not as an unreachable server.
     #[test]
     fn a_rejected_certificate_is_told_apart_from_a_dead_server() {
         assert!(cert_rejected(&connect_error(
