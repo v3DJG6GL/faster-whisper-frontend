@@ -1231,9 +1231,6 @@ describe("history record display", () => {
     });
 
     it("returns null for a record written before tracks existed", () => {
-      // Its translatedText is a blank-line join and a transcript contains its
-      // own line breaks, so splitting it would mislabel text rather than
-      // recover it. One untitled block is the honest rendering.
       expect(recordTracks(rec({ translatedText: "Hallo\n\nHello\n\nSalut" }))).toBeNull();
       expect(recordTracks(rec({}))).toBeNull();
     });
