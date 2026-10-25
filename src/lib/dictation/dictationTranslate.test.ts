@@ -230,7 +230,7 @@ describe("runDictationTranslate", () => {
   });
 
   it("sends null when there is no held receipt", async () => {
-    // Every non-dictation caller, and any dictation against a backend too old
+    // The one-shot, a session without per-utterance receipts, or a backend too old
     // to send the id. The server treats it as "nothing held", not an error.
     expect((await sentArgs({}))?.capturedId).toBeNull();
   });
