@@ -421,8 +421,8 @@ pub fn capture_config(
 /// Map a pre-ids pin (a device's display name) to today's `(id, label)`. On Linux the old names
 /// were ALSA descriptions: "<card>, <pcm>" for a card (the sound server reports the same two as
 /// source properties, so the match is exact), or a sound-server plugin entry ("PipeWire Sound
-/// Server", "Default ALSA Output (currently …)"), which answers `("default", "System default")`
-/// on the record path. Elsewhere the old name is the device's own name.
+/// Server", "Default ALSA Output (currently …)"), which answers `("default", "System default")`.
+/// Elsewhere the old name is the device's own name.
 /// `persist` = the answer is saved as the new pin (the one-time migration), not just recorded from.
 pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
     if parse_pin(name).is_some() {
