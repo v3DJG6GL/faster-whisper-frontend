@@ -744,8 +744,8 @@ pub struct AppSettings {
     pub quick_add_list: Option<QuickAddTarget>,
     pub general: GeneralSettings,
     pub recording: RecordingSettings,
-    /// Settings-sync metadata (enable flag, sync-backend id, per-device category
-    /// toggles, per-backend URL overrides). Frontend-owned opaque JSON like
+    /// Settings-sync metadata (enable flag, sync-backend id, per-device per-setting
+    /// sync gates, per-backend URL overrides). Frontend-owned opaque JSON like
     /// `quick_launch` — Rust stores + round-trips but never interprets
     /// it. MACHINE-LOCAL by contract: the TS sync layer excludes it from every
     /// synced blob and export.
