@@ -5,10 +5,10 @@ export type DayOption = { value: string; label: string };
 
 /**
  * The retention lists a Select offers, plus the current value when it is not
- * among them. A controlled `<select>` whose value matches no option shows the
- * FIRST option — "7 days" or "Keep forever" — while some other clock runs; a
- * value that arrived from an older config, a server pull or an import file
- * can be any integer in 0..3650, so the readout must carry it as-is.
+ * among them. A `Select` whose value matches no option shows the FIRST option
+ * — "7 days" or "Keep forever" — while some other clock runs; a value that
+ * arrived from an older config, a server pull or an import file can be any
+ * integer in 0..3650, so the readout must carry it as-is.
  */
 export function withCurrentDay(options: DayOption[], days: number): DayOption[] {
   const v = String(days);
