@@ -13,7 +13,6 @@ import { initialSiteState, pickPolicy, resetSiteTargets, type SiteSubsInput } fr
 import type { SiteTrackInfo } from "../lib/urlSource";
 import { sitePanelState, targetsOnLeave, targetsOnRelease } from "./Transcribe";
 
-/** The body of the screen Language picker's onChange. */
 const languageOnChange = () => {
   const picker = src.indexOf('ariaLabel="Language"');
   expect(picker).toBeGreaterThanOrEqual(0);
