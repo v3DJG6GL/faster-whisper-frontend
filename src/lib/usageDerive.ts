@@ -645,7 +645,7 @@ export interface RhythmLayout {
 
 /** Whether this server sent what the rhythm needs: the measure's nested split on the slots
  *  (`no-measure`: a server from before 2 Sep 2026 sends words only) or the day-of-month grid
- *  at all (`no-grid`). Words and months never depend on either. */
+ *  at all (`no-grid`). Words never need the split; months need neither. */
 export type RhythmSent = "yes" | "no-measure" | "no-grid";
 
 export interface RhythmModel {
