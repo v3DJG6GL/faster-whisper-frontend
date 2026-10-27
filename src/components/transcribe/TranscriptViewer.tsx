@@ -148,7 +148,7 @@ export function TranscriptViewer({
    *  records share their path, so id-keying keeps their edits apart. */
   overlayKey?: string;
   /** Open straight onto the export panel with this Media choice (History's
-   *  "Save audio…/Save video…" hand-off). Consumed when it changes. */
+   *  "Save the audio…" / "Save the video (with subtitles)…" hand-off). Consumed when it changes. */
   initialExport?: { media: MediaChoice };
   /** Studio pane: fill the available height instead of capping at 65vh. */
   fill?: boolean;
