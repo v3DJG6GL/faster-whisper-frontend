@@ -112,8 +112,8 @@ describe("chipRouteTargets", () => {
   });
 
   it("drops non-strings and blanks rather than rendering them", () => {
-    // The sanitizers drop non-string codes but keep blanks; an object leaf reaching the chip
-    // anyway would render as "Objects are not valid as a React child".
+    // Callers pass wire-clean lists; this is the chip's own guard, since an object leaf reaching
+    // it would render as "Objects are not valid as a React child".
     const dirty = ["fr", "", "  ", null, 42, { x: 1 }] as unknown as string[];
     expect(chipRouteTargets(null, dirty)).toEqual(["fr"]);
   });
@@ -132,7 +132,7 @@ describe("chipRouteTargets", () => {
   });
 
   it("caps the length of a single code", () => {
-    // No sanitizer bounds a per-element length, and this lands in a `shrink-0` cell.
+    // A wire code may run to 16 characters, and this lands in a `shrink-0` cell.
     const long = "x".repeat(400);
     expect(chipRouteTargets(null, [long])).toEqual(["x".repeat(12)]);
   });
