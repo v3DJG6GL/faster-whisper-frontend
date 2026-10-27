@@ -135,7 +135,8 @@ export function TranscriptViewer({
   path: string;
   /** App-managed audio copy, playback fallback when `path` is gone. */
   mediaPath?: string;
-  /** Shown in the meta line when several files are on the workbench. */
+  /** Shown in the meta line (and titles a translate run) when several files are on the
+   *  workbench or the source is a link. */
   fileLabel?: string;
   /** When this transcript was made (ISO) — shown in the meta line so
    *  same-source records (the same URL run six times) are tellable apart. */
@@ -634,8 +635,8 @@ export function TranscriptViewer({
     window.clearTimeout(trDoneTimers.get(okey));
     trDoneTimers.delete(okey);
     setTrRun(
-      // Name the run so global surfaces (sidebar badge, other-runs strip)
-      // can identify it while its transcript is off screen.
+      // Name the run so the other-runs strip can identify it while its
+      // transcript is off screen.
       { ...newTranslateRun(indexes.length, targets), title: fileLabel ?? basename(path) },
       mode,
     );
