@@ -120,8 +120,9 @@ export function TranscriptExport({
   // Which language tracks the export carries: null = follow the viewer's
   // visible tracks (the-view-is-the-export); a pick overrides per panel.
   const [exportTracks, setExportTracks] = useState<string[] | null>(null);
-  /** History's "Save audio…/Save video…" opens the panel on that media for this visit only
-   *  (initialExport): never persisted, dropped on the user's own pick and on a record switch. */
+  /** History's "Save the audio…" / "Save the video (with subtitles)…" opens the panel on that
+   *  media for this visit only (initialExport): never persisted, dropped on the user's own pick
+   *  and on a record switch. */
   const [mediaOverride, setMediaOverride] = useState<MediaChoice | null>(null);
   const mediaChoice: MediaChoice = mediaOverride ?? settings.transcribe?.exportMedia ?? "none";
   const container: MediaContainer = settings.transcribe?.exportContainer ?? "mkv";
