@@ -624,7 +624,6 @@ describe("newest-first ordering", () => {
     upsertRecord(at("a", TIE));
     upsertRecord(at("mid", TIE));
     upsertRecord(at("c", TIE));
-    // Newest-first: the last upsert leads. (Ties keep insertion order, newest first.)
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["c", "mid", "a"]);
     upsertRecord({ ...at("mid", TIE), sourceName: "renamed" });
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["mid", "c", "a"]);
