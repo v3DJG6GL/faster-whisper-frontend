@@ -538,8 +538,7 @@ pub struct RecordingSettings {
     pub recordings_dir: Option<String>,
     /// One base folder for ALL stored audio — `dictations/`, `files/` and
     /// `links/` live inside it. None/empty = the default under the app data
-    /// dir; the legacy `recordings_dir` acts as a fallback base so a custom
-    /// recordings folder keeps working after the upgrade.
+    /// dir (or the legacy `recordings_dir`, see above).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio_base_dir: Option<String>,
     /// When saving: keep only the spoken spans (drop silence) in the .wav, so a long hands-free
@@ -629,8 +628,9 @@ pub struct RecordingSettings {
     /// value: the webview passes it to `show_overlay`, which clamps it.
     #[serde(default = "default_scale")]
     pub chip_scale: f64,
-    /// "Dot size": extra factor (1.0–3.0) for the status dot while the chip is minimized
-    /// (standby dot / tucked at the edge). Frontend-only — pure CSS in the chip webview.
+    /// "Dot size": factor (1.0–3.0) for the status dot tucked at the screen edge only (not the
+    /// docked standby dot), independent of "Chip size". Frontend-only — pure CSS in the chip
+    /// webview.
     #[serde(default = "default_scale")]
     pub dot_scale: f64,
     /// Send the dictated-into app id with each session's usage outcome. Older configs
