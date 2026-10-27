@@ -161,8 +161,8 @@ static LAST_INJECTED: Mutex<Option<String>> = Mutex::new(None);
 
 /// Record `text` as the most recent clipboard content WE set (see `LAST_INJECTED`), returning the
 /// value it replaced. Read and replaced under one lock, so a caller that may have to take its note
-/// back (`persist_transcript`) holds exactly what it replaced, not a value a note from another
-/// thread superseded between a separate read and this write.
+/// back (`persist_transcript_unless`) holds exactly what it replaced, not a value a note from
+/// another thread superseded between a separate read and this write.
 fn note_injected(text: &str) -> Option<String> {
     LAST_INJECTED
         .lock()
@@ -1111,7 +1111,8 @@ fn serve_clipboard_blocking(
 /// Put `text` on the clipboard and KEEP it there for the user to paste later. Used by the
 /// clipboard-only insert method, the divert and recovery arms of `inject_text` and the Wayland
 /// typer, and `recover_to_clipboard`, where (unlike paste) nothing consumes the clipboard
-/// immediately, so it must persist via a live owner.
+/// immediately, so it must persist via a live owner — and by the Wayland paste arm's remote-target
+/// write, whose fetch is deferred the same way.
 /// Returns whether the text actually reached the clipboard, as far as that is knowable.
 ///
 /// The answer matters on the DIVERT path: `streaming.ts` treats a landed divert as delivered —
@@ -1966,8 +1967,9 @@ mod tests {
         }
         // Zero-width characters `is_control()` misses: the Hangul fillers are category Lo
         // (letters) and the line/paragraph separators Zl/Zp — yet U+2028/U+2029 are UAX#14
-        // mandatory breaks, so on the typing paths they land as a real Enter. The rest are further
-        // invisible Cf controls (deprecated format controls, Duployan shorthand, musical beams).
+        // mandatory breaks, so on the typing paths they would land as a real Enter. The rest are
+        // further invisible Cf controls (deprecated format controls, Duployan shorthand, musical
+        // beams).
         for c in [
             '\u{115f}',
             '\u{1160}',
