@@ -193,7 +193,7 @@ export default function Settings() {
   const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
   // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
   // second click would re-run the wipe — that call finds nothing, settles last and reports
-  // "Removed 0". Its rendered mirror disables the folder buttons while a wipe runs (a move would
+  // "Removed 0". Its rendered mirror disables Change…/Reset while a wipe runs (a move would
   // walk the folder the wipe is deleting from).
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
   // Read with the flag: runningStore is set before and cleared before setBusy("store", …) notifies.
