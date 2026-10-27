@@ -3,7 +3,7 @@
 // (hidden while closed), so its picks and a running media export survive
 // closing the panel.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, setStepProgress, sidecarFiles, sidecarSource, stampCopyPath, stepProgressFor, tracksAtWrite,
+  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, noteSaveResult, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, setStepProgress, sidecarFiles, sidecarSource, saveResultFor, stampCopyPath, stepProgressFor, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -135,6 +135,9 @@ export function TranscriptExport({
    *  still shows, and only while the panel is mounted and open (exportOutcomeShowsHere). */
   const latestResult = useRef({ owner, editedResult });
   latestResult.current = { owner, editedResult };
+  // Also into this record's running Save (mediaExport.ts): a Save started before a remount
+  // reads it there, as the panel that started it is gone.
+  useLayoutEffect(() => noteSaveResult(owner, editedResult), [owner, editedResult]);
   /** The panel is mounted: an export outlives the viewer (a route change, a closed record),
    *  and its outcome then goes to the app's banner. Set in the effect, so StrictMode's
    *  remount sets it again. */
@@ -148,9 +151,12 @@ export function TranscriptExport({
   openRef.current = open;
   /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
    *  retranslate chunk or an edit may have landed since the click. Another record on screen
-   *  by then never lends its result — the click's own stands. */
+   *  by then never lends its result — the click's own stands. Once this panel is unmounted
+   *  its ref is frozen: the record's latest noted result (a remounted panel's) is read. */
   const liveResult = (started: typeof owner) =>
-    latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
+    !mounted.current
+      ? saveResultFor(started) ?? editedResult
+      : latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
   // One slot PER record for the steps with no server job (withMediaJob): another record's
   // never overwrites this one's. Kept in mediaExport.ts, as the queued export's progress is:
   // both outlive the panel, so a remount still shows them.
@@ -726,6 +732,7 @@ export function TranscriptExport({
     // Save must still work (and queue) while a long video export of this one runs. Kept in
     // mediaExport.ts, so it also answers for a Save started before this panel was (re)mounted.
     if (tooManyEmbedded || !beginSave(owner)) return;
+    noteSaveResult(owner, editedResult);
     // The panel stays mounted across records: what this Save reports after an await
     // lands only while its record still shows.
     const started = owner;

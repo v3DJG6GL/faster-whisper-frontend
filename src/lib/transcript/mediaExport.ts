@@ -761,6 +761,9 @@ export function setRunningProgress(jobId: string, progress: MediaExportProgress)
 // join it), and a remounted panel must still show them and refuse a second Save.
 const saving = new Set<string>();
 let steps: Record<string, MediaExportProgress> = {};
+// The record's latest result while its Save runs: the panel that started the Save may be
+// gone (a route change), and a remounted one showing the record feeds the Save from here.
+const saveResults = new Map<string, BatchResult>();
 
 /** Mark `owner`'s Save under way; false (and nothing changes) when one already is. */
 export function beginSave(owner: string): boolean {
@@ -772,6 +775,17 @@ export function beginSave(owner: string): boolean {
 /** End `owner`'s Save (begun by beginSave). */
 export function endSave(owner: string): void {
   saving.delete(owner);
+  saveResults.delete(owner);
+}
+
+/** Note `owner`'s latest result for its running Save; ignored when no Save of it runs. */
+export function noteSaveResult(owner: string, res: BatchResult): void {
+  if (saving.has(owner)) saveResults.set(owner, res);
+}
+
+/** The latest result noted for `owner`'s running Save, or undefined. */
+export function saveResultFor(owner: string): BatchResult | undefined {
+  return saveResults.get(owner);
 }
 
 /** Set `owner`'s step with no server job; null clears that record's only. */

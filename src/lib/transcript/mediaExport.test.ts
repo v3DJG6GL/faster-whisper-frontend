@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportStem, fileStem, packageLang,
-  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress,
-  setStepProgress, siteDisplayName, stepProgressFor, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
+  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, noteSaveResult, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, saveResultFor,
+  setRunningProgress, setStepProgress, siteDisplayName, stepProgressFor, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
 
@@ -623,5 +623,19 @@ describe("a Save before it joins the queue", () => {
     expect(beginSave("rec-a")).toBe(true);
     endSave("rec-a");
     endSave("rec-b");
+  });
+
+  it("hands a remounted panel's latest result to a Save started before the remount", () => {
+    const atClick: BatchResult = { text: "Hallo" };
+    const translated: BatchResult = { text: "Hallo Welt" };
+    noteSaveResult("rec-a", atClick); // no Save of rec-a runs: ignored
+    expect(saveResultFor("rec-a")).toBeUndefined();
+    expect(beginSave("rec-a")).toBe(true);
+    noteSaveResult("rec-a", atClick); // the click's own result
+    noteSaveResult("rec-a", translated); // the remounted panel's render once the translation landed
+    expect(saveResultFor("rec-a")).toBe(translated);
+    expect(saveResultFor("rec-b")).toBeUndefined(); // another record never lends its result
+    endSave("rec-a");
+    expect(saveResultFor("rec-a")).toBeUndefined();
   });
 });
