@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/feedback";
 export function Labeled({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   // The caption is a sibling <label> with no htmlFor that doesn't wrap the child, so it names
   // nothing: a direct Select would be named only by its current value and a TextInput not at all.
-  // Auto-label it from `label` unless one is set. Composite children (an API-key input + reveal
+  // Auto-label it from `label` unless one is set. Composite children (an app-id input + capture
   // button in a div) fail the type check and pass through untouched.
   let control: ReactNode = children;
   if (isValidElement(children)) {
