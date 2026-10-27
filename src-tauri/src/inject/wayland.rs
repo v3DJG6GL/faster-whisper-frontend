@@ -1879,7 +1879,8 @@ mod imp {
             }
         }
 
-        /// A Latin layout typing a-z and A-Z, plus `extra` chars, each on a key of its own.
+        /// A Latin layout: `us_letters` plus A-Z on the Shift level of each letter's key, plus
+        /// `extra`.
         fn latin_with(extra: &[(char, KeySpec)]) -> HashMap<char, KeySpec> {
             let mut map = us_letters();
             for (i, c) in ('A'..='Z').enumerate() {
