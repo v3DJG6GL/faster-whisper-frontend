@@ -671,8 +671,9 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
  *  a killed Burmese/Khmer consonant, then an optional repetition mark (REPEAT). */
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
 const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
-/** A token of spaced text: a word (with any opening brackets before it), or one unspaced
- *  (CJK, Thai…) character with the opening brackets before it and its other punctuation
+/** A token of text with a CJK/Thai-like run, spaced or not (mixedTokens): a word (with any
+ *  opening brackets before it), or one unspaced (CJK, Thai…) character with the opening
+ *  brackets before it and its other punctuation
  *  after it (a Thai/Lao leading vowel rides with the consonant after it) —
  *  so a CJK translation holding one Latin word still splits between its characters, and
  *  never right after a 「 or （ (a Latin word or number before 「 does not swallow it). A
