@@ -274,7 +274,7 @@ export function toUsageQuery(q: UsagePageQuery, tz?: string): UsageQuery {
   return { ...base, days: q.range === "custom" ? 30 : Number(q.range) };
 }
 
-/** The window a page state resolves to, for the summary pill and the calendar span,
+/** The window a page state resolves to, for the summary pill and the charts,
  *  before the server answers (`firstDay` = the server's `range.first_day` once known). */
 export function resolveWindow(q: UsagePageQuery, today: number, firstDay?: number | null): { from: number; to: number; days: number } {
   if (q.range === "custom" && q.from !== undefined && q.to !== undefined) {
