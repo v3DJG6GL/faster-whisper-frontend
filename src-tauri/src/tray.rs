@@ -416,9 +416,9 @@ mod sni {
 
 pub(crate) fn show_main(app: &AppHandle) {
     // A second launch reaches here off the main thread (the single-instance handler →
-    // hotkeys::triggers::handle_cli_args). on_main_window's hop queues onto the loop, so the
-    // already-on-main callers (tray menu events, the sync show_main_at_screen command) don't
-    // deadlock.
+    // hotkeys::triggers::handle_cli_args). on_main_window's hop never waits on the loop (Tauri
+    // runs it inline when already on main, queues it otherwise), so the already-on-main callers
+    // (tray menu events, the sync show_main_at_screen command) don't deadlock.
     let _ = crate::aux_windows::on_main_window(app, "main", |window| {
         crate::aux_windows::visibility::show(window);
         let _ = window.unminimize();
