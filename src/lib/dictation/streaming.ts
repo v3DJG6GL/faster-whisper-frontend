@@ -1035,7 +1035,7 @@ function oweRecord(id: string, from: number): void {
 
 /** A phrase dropped at the flood cap: owe its record from a chained (uncounted) link. Lives out
  *  here, not in the final handler, so the link's closure captures only the id, the offset and the
- *  session token — never the dropped task's target/phraseClip, which would otherwise stay alive
+ *  session token — never the dropped task's target/clip strings, which would otherwise stay alive
  *  until the chain drains and undo the flood cap's memory bound (MAX_INJECT_DEPTH). */
 function oweDroppedInsert(cfg: InsertCfg | null, id: string, from: number): void {
   injectChain = injectChain.then(() => {
@@ -1170,9 +1170,9 @@ let injectChain: Promise<void> = Promise.resolve();
  *  server chooses — Rust bounds each FIELD at MAX_TRANSCRIPT and the message at MAX_WS_MESSAGE,
  *  but emits one Final per frame with no rate or count limit — and it drains at one
  *  `resolveTarget()` IPC round trip plus one injection per task. Each queued closure retains its
- *  `target` and `phraseClip`, so the backlog holds up to two 4 MiB strings per link in the shared
- *  WebKitGTK renderer. `bankedDoc` was given an 8 MiB budget for exactly this shape; the queue
- *  that holds a full copy of each document had none.
+ *  `target`, `plainClip` and `reopenClip`, so the backlog holds up to three 4 MiB strings per link
+ *  in the shared WebKitGTK renderer. `bankedDoc` was given an 8 MiB budget for exactly this shape;
+ *  the queue that holds a full copy of each document had none.
  *
  *  One counter object per chain generation: startLiveInner / cancelLive swap in a fresh one
  *  alongside the fresh `injectChain`, and each link decrements the counter it incremented. A
@@ -3059,8 +3059,9 @@ async function ensureListeners(): Promise<void> {
         // the transcript the user wants to paste, so discard the snapshot (clear, no restore). We
         // decide at drain time — not here — so a late paste OR late clipboard-only still queued when
         // `closed` fires is honored on BOTH the tail and the no-tail path. (clipDirty is reset for
-        // the next session by startLive's clearPhraseEnd, and microtask ordering guarantees finalClip
-        // runs before any new session could reset it.)
+        // the next session by startLiveInner's clearPhraseEnd. A start can follow only this session's
+        // settleIdle, which runs after finalClip, or a cancel, which the `insertCfg` token guards
+        // around both finalClip calls below catch.)
         const finalClip = (): Promise<void> => {
           // The queue has drained, so a carry still pending here never found a real window to go
           // to (the last phrases were all skipped in our own window or refused by the sink). Say
@@ -3782,8 +3783,8 @@ async function startLiveInner(
     // fallback the editor's "Inherit" would silently mean "off".
     // `insertTiming === "off"` still reaches here via sync apply (a pre-migration peer
     // that slips past the "off"→"stop" remap, or a race with a local migration): the
-    // `closed` handler's `cfg.timing === "off"` guard drops the whole insert, but only
-    // when `live` is false — otherwise phrases are injected live and that guard never runs.
+    // `closed` handler's `cfg.timing === "off"` guard drops the whole insert, but only at
+    // close — too late for a live session, whose phrases were already injected.
     // `!askTargetsAtSettle`: a push-to-talk session that asks for its targets answers at the
     // one-shot insert, which a live session never reaches (clipboard-only would otherwise go
     // live here, and the picker would never open).
@@ -4073,7 +4074,7 @@ function applyReclassify(profile: Profile): void {
     if (bankedDoc === "") {
       // The `timing !== "off"` term mirrors startLiveInner's `live` too (timing is the frozen
       // g.insertTiming): an "off" session that went live here would type every phrase, since
-      // the closed handler's off-drop only runs when `live` is false.
+      // the closed handler's off-drop comes only at close, after the live phrases are typed.
       insertCfg.live = insertCfg.timing !== "off" && liveAllowed({
         wants: profile.typeAsISpeak ?? useApp.getState().settings.general.typeAsISpeak,
         // `activeEndpoint` is null only with no transport open, and this runs on a live
