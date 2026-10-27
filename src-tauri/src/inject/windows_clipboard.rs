@@ -13,9 +13,9 @@
 //! announces the format without data, and Windows asks us (`WM_RENDERFORMAT`) the moment anyone
 //! actually reads it. That turns every fetch into an observable event — who fetched, how long
 //! after the offer, how long after our chord — which is what the `diag` mode logs. `enforce`
-//! additionally re-announces the same text once right after the target's post-chord fetch, so the
-//! remote never keeps a rendered cache: a premature next Ctrl+V then fetches live from us instead
-//! of pasting stale text.
+//! additionally re-announces the same text once right after the target's post-chord fetch (or at
+//! the chord, when the target already fetched before it), so the remote never keeps a rendered
+//! cache: a premature next Ctrl+V then fetches live from us instead of pasting stale text.
 //!
 //! **Modes** (env `FWF_RDP_CLIP`, read once): `legacy` = the plain arboard write, owner never
 //! started; `diag` (the default) = the owner writes and logs, behaviour otherwise
