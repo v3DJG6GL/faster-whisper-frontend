@@ -79,9 +79,9 @@ pub struct Capabilities {
     #[serde(default)]
     pub can_request_decode_overrides: bool,
     /// Whether the server runs the optional pipeline stages at all (additive,
-    /// newer backends only) — pre-flight-disables the client's "Separate
-    /// music" / "Speaker diarization" toggles. Absent = unknown ⇒ assume
-    /// available (never gate a knob we can't prove is unsupported).
+    /// newer backends only) — pre-flight-disables the client's "Music source
+    /// separation (MSS)" / "Speaker diarization" toggles. Absent = unknown ⇒
+    /// assume available (never gate a knob we can't prove is unsupported).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bgm_separation_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1150,8 +1150,7 @@ pub async fn json_capped_to<T: serde::de::DeserializeOwned>(
     let text = body_capped_to(resp, limit).await?;
     // serde embeds the offending value VERBATIM in its message (`Unexpected::Str` formats as
     // `string {:?}`), so a 32 MiB field yields a 32 MiB error — larger still once Debug escaping
-    // expands each character. That string is what the unattended sync pull surfaces in the
-    // settings banner. Bound it here, where every caller inherits the bound.
+    // expands each character. Bound it here, where every caller inherits the bound.
     serde_json::from_str(&text).map_err(|e| bounded_server_text(&e.to_string(), MAX_ERROR_TEXT))
 }
 
