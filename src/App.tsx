@@ -55,9 +55,10 @@ function ScrollReset() {
   return null;
 }
 
-// Bridges overlay → main-window navigation: the chip calls show_main_at_screen, which
-// focuses this window and emits `app://navigate`; here (inside the router) we turn
-// that into a route change. Must live within <HashRouter> to use useNavigate.
+// Bridges navigation requests from outside the main window (the chip's quick-launch,
+// Quick-Add, the tray menu): show_main_at_screen focuses this window and emits
+// `app://navigate`; here (inside the router) we turn that into a route change. Must live
+// within <HashRouter> to use useNavigate.
 function NavigationBridge() {
   const navigate = useNavigate();
   // navigate changes identity on every route change under HashRouter (useNavigateUnstable
