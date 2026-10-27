@@ -360,9 +360,9 @@ export default function Settings() {
                 ]
               : [
                   // forgetRecord's deleted path reads an earlier launch's lost requests from the
-                  // history mirror, which only the Transcribe/History/Logs screens load: load it
-                  // first (it never rejects), with the pre-wipe ids. Drop again after the await:
-                  // an edit debounce firing meanwhile may have parked a write.
+                  // history mirror, which nothing may have loaded yet: load it first (it never
+                  // rejects), with the pre-wipe ids. Drop again after the await: an edit debounce
+                  // firing meanwhile may have parked a write.
                   loadHistory().then(() => {
                     dropPendingWrites(isFileStoreRecord);
                     forgetRecord(null, { deleted: true });
