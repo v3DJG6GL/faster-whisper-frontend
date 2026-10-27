@@ -79,8 +79,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // quick-add step only when the restore did not already pin a list).
   const restored = useRef(false);
   // Set once a restore's apply landed, even when a later step of it (the keyring write) threw:
-  // the store then holds the peer's profiles, and "Start fresh" would upsert the starters over
-  // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
+  // the store then holds the peer's profiles, so "Start fresh" would no longer be fresh (the
+  // starters would mix in beside them). A retried Restore everything finishes from there, or
   // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
   // The backend a half-landed restore kept at the gate's address is keyless here although the
