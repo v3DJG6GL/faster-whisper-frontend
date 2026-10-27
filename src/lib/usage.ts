@@ -106,9 +106,9 @@ export function openStatisticsPage(): () => void {
   };
 }
 
-/** The Backend whose usage the chip + Home stats reflect: the Profile currently
- *  dictating, else the home target Profile (so an idle dock previews the same
- *  numbers Home shows), falling back to the first Backend. */
+/** The Backend whose usage the chip reflects (Home follows viewStatsBackend): the Profile
+ *  currently dictating, else the home target Profile (so an idle dock previews the numbers
+ *  Home shows by default), falling back to the first Backend. */
 export function activeStatsBackend(s = useApp.getState()): Backend | undefined {
   const profile = s.activeProfile
     ? s.profiles.find((p) => p.id === s.activeProfile)
@@ -128,8 +128,8 @@ export function viewerTimeZone(): string | undefined {
   }
 }
 
-/** The Backend the Statistics page views, among those that have usage: the user's pick,
- *  else the home-target backend, else the first. */
+/** The Backend the usage view (Home strip + Statistics page) shows, among those that have
+ *  usage: the user's pick, else the home-target backend, else the first. */
 export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   const withUsage = s.backends.filter((b) => !!ownProp(s.usage, b.id));
   const defaultId = homeTargetProfile(s.profiles, s.settings.homeProfileId)?.backendId ?? s.backends[0]?.id;
