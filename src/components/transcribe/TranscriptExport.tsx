@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
+  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -153,7 +153,8 @@ export function TranscriptExport({
     latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
   /** The record whose Save is running (dialog to last file); null = none. */
   const exportingFor = useRef<typeof owner | null>(null);
-  // One job slot PER record: another record's progress events never overwrite this one's.
+  // One slot PER record for the steps with no server job (withMediaJob): another record's
+  // never overwrites this one's. A queued export's progress lives in mediaExport.ts instead.
   const [mediaJobs, setMediaJobs] = useState<Record<string, MediaExportProgress>>({});
   /** Set this record's job; null clears this record's only. */
   const setMediaJob = (j: MediaExportProgress | null) =>
@@ -164,7 +165,9 @@ export function TranscriptExport({
       delete n[owner];
       return n;
     });
-  const ownJob = mediaJobs[owner] ?? null;
+  /** This record's queued export while it runs: it outlives the panel, so a remount shows it. */
+  const runningJob = useSyncExternalStore(subscribeExportQueue, () => runningExportFor(owner)?.progress ?? null);
+  const ownJob = mediaJobs[owner] ?? runningJob;
   /** This record's export waiting its turn (queueMediaExport), or null. */
   const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
@@ -620,35 +623,31 @@ export function TranscriptExport({
     let uploadedExpiry: number | null = null;
     const unsub = await onMediaExportProgress((p) => {
       if (p.jobId !== jobId) return;
-      setMediaJob({ jobId, phase: p.phase, done: p.done, total: p.total });
+      setRunningProgress(jobId, { jobId, phase: p.phase, done: p.done, total: p.total });
     });
     let outcome;
     try {
       // One export at a time, in Save order — across every viewer (lib/transcript/mediaExport.ts).
       outcome = await queueMediaExport(jobId, owner, async () => {
-        setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
-        try {
-          const out = await packageMedia({
-            serverUrl, backendId: trBackend.id, jobId,
-            ...source,
-            container: effContainer, subtitles, defaultTrack, originalTrack,
-            audioLang, audioLabel: audio ? trackLanguageName(audio.spoken) : null,
-            destPath: dest, filename: fileStem(dest),
-            maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
-            audioBase,
-          });
-          if (out.kind === "busy" && out.mediaId) {
-            // Also covers an export dequeued (cancelled) after this answer: the id is kept.
-            if (source.sourcePath) {
-              uploadedExpiry = out.expiresAt;
-              rememberUpload(out.mediaId, out.expiresAt ?? undefined);
-            }
-            source = { sourceMediaId: out.mediaId, localSource: localVideo };
+        setRunningProgress(jobId, { jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
+        const out = await packageMedia({
+          serverUrl, backendId: trBackend.id, jobId,
+          ...source,
+          container: effContainer, subtitles, defaultTrack, originalTrack,
+          audioLang, audioLabel: audio ? trackLanguageName(audio.spoken) : null,
+          destPath: dest, filename: fileStem(dest),
+          maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
+          audioBase,
+        });
+        if (out.kind === "busy" && out.mediaId) {
+          // Also covers an export dequeued (cancelled) after this answer: the id is kept.
+          if (source.sourcePath) {
+            uploadedExpiry = out.expiresAt;
+            rememberUpload(out.mediaId, out.expiresAt ?? undefined);
           }
-          return out;
-        } finally {
-          setMediaJob(null);
+          source = { sourceMediaId: out.mediaId, localSource: localVideo };
         }
+        return out;
       });
     } finally {
       unsub();
@@ -732,8 +731,9 @@ export function TranscriptExport({
     // no path (the Save button, the "Save as MKV" retry) may get that far. Nor a second
     // click while this record's Save is still running (a double-click would open two dialogs
     // and could queue the same video twice) — keyed by record, since another record's
-    // Save must still work (and queue) while a long video export of this one runs.
-    if (tooManyEmbedded || exportingFor.current === owner) return;
+    // Save must still work (and queue) while a long video export of this one runs. The queue
+    // also answers for a Save started before this panel was (re)mounted.
+    if (tooManyEmbedded || exportingFor.current === owner || runningExportFor(owner) || queuedExportFor(owner)) return;
     exportingFor.current = owner;
     // The panel stays mounted across records: what this Save reports after an await
     // lands only while its record still shows.

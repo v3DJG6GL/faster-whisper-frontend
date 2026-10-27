@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
-  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
+  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
@@ -501,6 +501,28 @@ describe("queueMediaExport", () => {
     expect(c.g.calls).toBe(1);
     c.g.settle({ kind: "ok" });
     await expect(c.p).resolves.toEqual({ kind: "ok" });
+  });
+
+  it("the running export, and its progress, is readable by record until it settles (a remounted panel's view)", async () => {
+    const a = queued("a");
+    const b = queued("b");
+    await flush();
+    expect(runningExportFor("rec-a")).toEqual({ jobId: "ja", owner: "rec-a", progress: null });
+    expect(runningExportFor("rec-b")).toBeNull(); // waiting, not running
+    const p = { jobId: "ja", phase: "uploading" as const, done: 5, total: 10 };
+    setRunningProgress("ja", p);
+    setRunningProgress("jb", { ...p, jobId: "jb" }); // not the running job: ignored
+    const snap = runningExportFor("rec-a");
+    expect(snap?.progress).toEqual(p);
+    expect(runningExportFor("rec-a")).toBe(snap); // stable snapshot for useSyncExternalStore
+    a.g.settle({ kind: "ok" });
+    await a.p;
+    expect(runningExportFor("rec-a")).toBeNull();
+    await flush();
+    expect(runningExportFor("rec-b")?.jobId).toBe("jb");
+    b.g.fail(new Error("boom"));
+    await expect(b.p).rejects.toThrow("boom");
+    expect(runningExportFor("rec-b")).toBeNull();
   });
 
   it("a busy server slot is retried every BUSY_RETRY_MS, holding the turn and reading as queued", async () => {

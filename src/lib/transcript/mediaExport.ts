@@ -648,13 +648,32 @@ interface QueuedExport {
   drop: () => void;
 }
 
+/** The export whose attempt is under way, and its latest progress (null before the first). */
+export interface RunningExport {
+  jobId: string;
+  owner: string;
+  progress: MediaExportProgress | null;
+}
+
 let exportChain: Promise<void> = Promise.resolve();
 let waiting: QueuedExport[] = [];
+// Kept here, not in the viewer: the export outlives it, and a remounted panel must still
+// show its progress and Cancel (and refuse a second Save of the same record).
+let running: RunningExport | null = null;
 const queueListeners = new Set<() => void>();
+
+function notifyQueue(): void {
+  for (const fn of queueListeners) fn();
+}
 
 function setWaiting(next: QueuedExport[]): void {
   waiting = next;
-  for (const fn of queueListeners) fn();
+  notifyQueue();
+}
+
+function setRunning(next: RunningExport | null): void {
+  running = next;
+  notifyQueue();
 }
 
 /** Run `attempt` once every export queued before it has finished, and again every
@@ -682,6 +701,7 @@ export function queueMediaExport<T extends { kind: string }>(
       let since: number | null = null;
       for (;;) {
         if (!waiting.includes(entry)) return; // dequeued while it waited
+        running = { jobId, owner, progress: null };
         setWaiting(waiting.filter((w) => w !== entry));
         let out: T;
         try {
@@ -689,6 +709,8 @@ export function queueMediaExport<T extends { kind: string }>(
         } catch (e) {
           reject(e);
           return;
+        } finally {
+          setRunning(null);
         }
         if (out.kind !== "busy" || Date.now() - (since ??= Date.now()) >= BUSY_MAX_WAIT_MS) {
           resolve(out);
@@ -724,7 +746,18 @@ export function queuedExportFor(owner: string): string | null {
   return waiting.find((w) => w.owner === owner)?.jobId ?? null;
 }
 
-/** Be told whenever a job joins or leaves the waiting list. Returns the unsubscribe. */
+/** The export `owner` has running (a stable object until it changes), or null. */
+export function runningExportFor(owner: string): RunningExport | null {
+  return running?.owner === owner ? running : null;
+}
+
+/** Record the running export's progress; a job that is not the running one is ignored. */
+export function setRunningProgress(jobId: string, progress: MediaExportProgress): void {
+  if (running?.jobId === jobId) setRunning({ ...running, progress });
+}
+
+/** Be told whenever a job joins or leaves the waiting list, starts or stops running, or
+ *  reports progress. Returns the unsubscribe. */
 export function subscribeExportQueue(fn: () => void): () => void {
   queueListeners.add(fn);
   return () => void queueListeners.delete(fn);
