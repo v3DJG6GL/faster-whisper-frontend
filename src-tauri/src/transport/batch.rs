@@ -1400,12 +1400,7 @@ async fn post(
     // T2T targets as a CSV of screened language codes. When it names any, the
     // whisper `task` field is never sent (T2T wins over translate-to-EN —
     // the UI enforces the exclusivity, this is the belt-and-braces).
-    //
-    // translate_to sentinel: None → omit the field, so the server inherits its
-    // override-profile's TRANSLATE_TO; Some(_) → send it, where an EMPTY value means
-    // "no targets" and overrides that inherited list. The client's chip list is
-    // authoritative, so an empty one has to be said out loud — omitting it would let
-    // the server put back the stage the user had switched off.
+    // None/empty/CSV sentinel: see `translate_to_field`.
     if let Some(csv) = translate_to {
         form = form.text("translate_to", csv);
         if has_targets {
