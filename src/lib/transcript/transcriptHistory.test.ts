@@ -507,7 +507,7 @@ describe("loadHistory", () => {
     listTranscriptRecords.mockResolvedValueOnce([fileRecord("A", "a.mp3")]);
     await loadHistory();
     listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
-    await loadHistory(true); // e.g. after "Delete all dictations" wiped A on disk
+    await loadHistory(true); // e.g. after "Delete all transcriptions" wiped A on disk
     listTranscriptRecords.mockResolvedValueOnce([]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records).toEqual([]);
