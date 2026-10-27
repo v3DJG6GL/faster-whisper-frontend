@@ -96,7 +96,6 @@ describe("attachLogStream ownership", () => {
     const p1 = attachLogStream();
     const p2 = attachLogStream();
     (await p1)();
-    // mount1's detach ran AFTER mount2 attached: it must not send `false`.
     expect(streamCalls[streamCalls.length - 1]).toBe(true);
     (await p2)();
     expect(streamCalls[streamCalls.length - 1]).toBe(false);
