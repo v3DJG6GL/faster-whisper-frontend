@@ -295,9 +295,9 @@ setOrphanWatch(watchOrphan);
  *  request), and a finished result must still land then. */
 const stoppedIds = new Set<string>();
 
-/** The user retried a file whose lost request was handed to watchOrphan: stop that
- *  watcher and forget its row, so the old job can't land a second record (and re-point
- *  the file's latest transcript) after the retry's; best-effort, the server stops it. */
+/** The user retried a lost request's file or deleted its record: stop its watcher (if any)
+ *  and forget its row, so the old job can't land a second record (and re-point the file's
+ *  latest transcript) after the retry's; best-effort, the server stops it. */
 export function stopOrphan(jobId: string): void {
   // Before the watcher's stop, which drops its captured row (an evicted one is only there).
   const row = ledgerRows().find((r) => r.jobId === jobId) ?? watchedRows.get(jobId) ?? passRows.get(jobId);
