@@ -693,8 +693,8 @@ mod tests {
     }
 
     /// The typed mirror drops what it does not name: every decode key (the settings map keeps
-    /// whatever the server lists), the prompt, the streaming pins and the stage/language
-    /// defaults must survive the round trip to the webview.
+    /// any registry-shaped key, a newer server's too), the prompt, the streaming pins and the
+    /// stage/language defaults must survive the round trip to the webview.
     #[test]
     fn decode_defaults_keep_every_key() {
         let keys = [
