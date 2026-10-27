@@ -29,8 +29,8 @@ pub struct InjectOutcome {
     /// typed baseline, there is nothing to recover, and a re-send is safe. That invariant is the
     /// contract; the causes today are one of our own windows holding focus, so the insert was
     /// skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel landed
-    /// during one of its own-window probes (the chord-time probe or the portal job's pre-job
-    /// probe), otherwise it is a divert), or a clipboard write that was busy or failed before any
+    /// during the chord-time own-window probe or after the portal job's pre-job probe answered,
+    /// otherwise it is a divert), or a clipboard write that was busy or failed before any
     /// keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on
     /// Windows: a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read
     /// still held it, or the remote-desktop owner or legacy write failed or timed out — a
