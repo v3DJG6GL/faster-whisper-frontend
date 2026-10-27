@@ -53,8 +53,9 @@ pub fn trigger_modifiers_still_held(held: &crate::hotkeys::held_keys::HeldKeys) 
 /// on an empty snapshot, so without it the "chord still held → divert to clipboard" gate is dead
 /// on exactly the paths where it can engage.
 ///
-/// Callers pass the FIRING CHORD's own modifiers, not every modifier currently down, so an
-/// unrelated held Ctrl (scroll-zoom) or Shift does not divert an ordinary phrase to the clipboard.
+/// The backends pass the FIRING CHORD's own modifiers, not every modifier currently down, so an
+/// unrelated held Ctrl (scroll-zoom) or Shift does not divert an ordinary phrase to the clipboard
+/// (`emit_trigger`'s CLI/plugin paths have no chord in hand and pass every shortcut modifier).
 /// An empty slice produces an empty snapshot — a chord with no observable modifiers.
 /// The evdev/Windows backends' teardown-emitted stops pass `None` and skip this call entirely,
 /// so the existing snapshot survives for the clipboard gate.
