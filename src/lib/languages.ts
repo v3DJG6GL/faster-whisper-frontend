@@ -398,7 +398,8 @@ export function offersMultilingual(args: {
 /** A spoken-language field over its decode-overrides layer (Transcribe's run, a Profile, a
  *  Backend): the picker's value, and what a pick stores. `inherited` is what a blank
  *  `multilingual` resolves to below this layer (serverInherited().values). Where the flag isn't
- *  `offered`, this layer's own value is ignored and a pick leaves the overrides alone. */
+ *  `offered`, this layer's own value is ignored and a pick leaves the overrides alone — except an
+ *  inherit ("") pick, which drops the layer's own flag rather than leave it set but hidden. */
 export function spokenField(
   language: string,
   own: DecodeOverrides | undefined,
@@ -408,6 +409,12 @@ export function spokenField(
   const below = typeof inherited === "boolean" ? inherited : undefined;
   return {
     value: spokenValue(language, offered ? own?.multilingual : undefined, below),
-    pick: (v) => ({ language: spokenLanguage(v), overrides: offered ? applyMultilingual(own, v, below) : own }),
+    pick: (v) => {
+      const language = spokenLanguage(v);
+      if (offered) return { language, overrides: applyMultilingual(own, v, below) };
+      if (language !== "" || own?.multilingual === undefined) return { language, overrides: own };
+      const { multilingual: _drop, ...rest } = own;
+      return { language, overrides: rest };
+    },
   };
 }

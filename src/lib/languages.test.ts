@@ -202,6 +202,11 @@ describe("Multiple languages", () => {
     expect(locked.value).toBe("auto");
     expect(locked.pick("auto")).toEqual({ language: "auto", overrides: { multilingual: true } });
   });
+  it("a Default pick drops the layer's own flag even where it isn't offered", () => {
+    const englishOnly = spokenField("auto", { multilingual: true, beam_size: 3 }, false, false);
+    expect(englishOnly.pick("")).toEqual({ language: "", overrides: { beam_size: 3 } });
+    expect(englishOnly.pick("auto")).toEqual({ language: "auto", overrides: { multilingual: true, beam_size: 3 } });
+  });
 });
 
 describe("primarySubtag", () => {
