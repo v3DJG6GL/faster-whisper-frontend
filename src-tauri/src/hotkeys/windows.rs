@@ -1140,12 +1140,12 @@ mod imp {
     /// both commit through here.
     ///
     /// `teardown`: the post-loop drain of parked releases. `stop_held_sessions` may already have
-    /// manufactured (and CLAIMED, via `take_hold`) the stop for a hold this release ends —
-    /// `apply_bindings` calls it before the old listener is dropped — so a teardown Stop is
-    /// emitted only if the hold is still unclaimed, and with no chord mods: HeldKeys was wiped by
-    /// the successor's start, so a snapshot taken here would clear a fresh session's trigger mods.
-    /// It goes through `manufactured_stop` because a staggered chord may still have its other
-    /// modifier down even though the parked key is released.
+    /// manufactured (and CLAIMED, by draining ACTIVE_HOLDS) the stop for a hold this release
+    /// ends — `apply_bindings` calls it before the old listener is dropped — so a teardown Stop
+    /// is emitted only if `take_hold` still finds the hold unclaimed, and with no chord mods:
+    /// HeldKeys was wiped by the successor's start, so a snapshot taken here would clear a fresh
+    /// session's trigger mods. It goes through `manufactured_stop` because a staggered chord may
+    /// still have its other modifier down even though the parked key is released.
     fn commit(
         app: &AppHandle,
         held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
