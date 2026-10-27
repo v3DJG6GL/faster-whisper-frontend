@@ -455,9 +455,9 @@ mod imp {
     }
 
     /// Remove `profile_id` from ACTIVE_HOLDS, reporting whether it was present — the twin of
-    /// `windows::take_hold`, and here for the same reason its docblock gives: a manufactured
-    /// stop must be CLAIMED, so whichever of the two racing producers runs first wins and a late
-    /// duplicate cannot kill a session the user re-triggered in between.
+    /// `windows::take_hold`. A manufactured stop must be CLAIMED: `stop_held_sessions` and a
+    /// reader post-loop running past the abort point race for the same hold, so whichever runs
+    /// first wins and a late duplicate cannot kill a session the user re-triggered in between.
     fn take_hold(profile_id: &str) -> bool {
         let Ok(mut h) = ACTIVE_HOLDS.lock() else {
             return false;
