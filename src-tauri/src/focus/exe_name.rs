@@ -30,7 +30,8 @@ pub(super) fn normalize_exe_basename(path: &str) -> Option<String> {
         .map(str::to_string)
         .unwrap_or(base);
     // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
-    // overlay payload, a persisted AppRule that rides the sync push, the once-a-second log line).
+    // overlay payload, a persisted AppRule that rides the sync push, the default-on
+    // `[focused-app]` log line).
     // An NTFS filename cannot hold Cc control characters but CAN hold Cf ones (U+202E/U+2066/U+200B).
     //
     // Done HERE rather than at each consumer: the rule side is normalized with the same character
