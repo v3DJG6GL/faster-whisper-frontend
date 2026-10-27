@@ -1,5 +1,5 @@
-// Paste-shortcut presets, shared by Settings (global default) and the per-app rules
-// editor. Stored as KeyboardEvent.code chords; the Rust paste paths map them to evdev
+// Paste-shortcut presets, shared by Settings (global default) and the profile / per-app
+// rule editors. Stored as KeyboardEvent.code chords; the Rust paste paths map them to evdev
 // keycodes (Wayland) / enigo keys (X11, Windows). Terminals (Konsole, kitty…) need Ctrl+Shift+V.
 
 import { IS_LINUX } from "./platform";
