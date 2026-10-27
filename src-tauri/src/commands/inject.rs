@@ -503,7 +503,7 @@ pub async fn inject_text(
 /// own-window guard, epoch check or modifier wait here; nothing is typed.
 #[tauri::command]
 pub async fn recover_to_clipboard(text: String) -> Result<bool, String> {
-    // Same sanitising as every injection path (see `inject_text`).
+    // Same sanitising as every injection path (see `inject::text::inject_text`).
     let text = crate::inject::sanitize_injected(&text);
     if text.is_empty() {
         return Ok(false);
