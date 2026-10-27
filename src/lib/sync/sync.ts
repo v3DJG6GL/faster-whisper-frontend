@@ -1013,9 +1013,8 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // Typed `Option<bool>` in Rust like its sibling above: a non-boolean would fail the
       // whole `save_config` parse.
       askTranslationTargets: p.askTranslationTargets == null ? undefined : p.askTranslationTargets === true,
-      // Per-Profile insertion overrides get the same clamps their per-app twins do —
-      // `save_config` parses into a typed Rust struct with no serde fallback, so ONE bad
-      // enum here wedges every later save for the session.
+      // Per-Profile insertion overrides get the same clamps their per-app twins do: Rust
+      // keeps `insertionOverrides` as opaque JSON and never checks them, so this is their floor.
       //
       // `autoEnter` is dropped rather than clamped, as in `sanitizeAppRules`: a peer must
       // not be able to arm a post-paste Return.
@@ -1443,9 +1442,9 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
         r.pasteShortcut == null
           ? r.pasteShortcut
           : safePasteShortcut(r.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
-      // Sibling of the clamp above, and of the `general` clamp in `applyBlob`: a per-rule
-      // insertMethod outside the enum is rejected by `save_config`'s typed parse and wedges
-      // every later save. `null`/absent means "inherit the global", which stays valid.
+      // Sibling of the clamp above, and of the `general` clamp in `applyBlob`: Rust keeps app
+      // rules as opaque JSON and never checks a per-rule insertMethod, so this is its floor.
+      // `null`/absent means "inherit the global", which stays valid.
       insertMethod:
         r.insertMethod == null
           ? r.insertMethod
@@ -4068,7 +4067,8 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   const st0 = useApp.getState();
   const sigNow = await storeSignature(r.cats);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
-  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
+  // The remote fills the pass-through (no base, or a category turned on since), as the raisers
+  // compose (see `composeLive`).
   const localNow = await composeLive(cats, passThroughFor(r.remote));
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   const movedMid = storeSlicesMoved(st0, useApp.getState());
@@ -4321,7 +4321,8 @@ async function resolveLocked(
   // as it is NOW, or a "keep mine" lands the peer's repoint with no review row. Same rule as
   // approvePendingReview.
   const syncedCats = syncCats();
-  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
+  // The remote fills the pass-through (no base, or a category turned on since), as the raisers
+  // compose (see `composeLive`).
   const localNow = await composeLive(syncedCats, passThroughFor(c.remote));
   if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
@@ -4382,10 +4383,9 @@ async function resolveLocked(
   if (degraded && degradedBaseWithheld(c.remote)) return "done";
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
-  // later automatic pushes still see a difference and retry.
-  // The writer of the version being adopted, like the other adopt sites — otherwise
-  // "Last synced just now · from X" kept naming the PREVIOUS sync's device. Its `updatedAt`
-  // too: a null one makes initSync restore "Not synced yet." after a restart.
+  // later automatic pushes still see a difference and retry. With the adopted version's writer
+  // and write stamp, as the other adopt sites: initSync restores "Last synced · from X" from them
+  // after a restart, and a null `updatedAt` would show "Not synced yet." instead.
   await adoptBase(c.remote, c.remoteVersion, c.remoteUpdatedAt ?? null, c.remoteDevice ?? null);
   if (myGen !== gen) return "done";
   // Same as approveLocked: a review at this version is answered by the adopted base (its held-back
