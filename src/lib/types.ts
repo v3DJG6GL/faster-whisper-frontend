@@ -698,7 +698,8 @@ export interface Capabilities {
    *  on `=== true` (deliberate opt-in); the viewer's retro-translate and the
    *  preload treat ABSENT as unknown and hide only on an explicit false. */
   translation_enabled?: boolean;
-  /** T2T models the caller may pick per run (allowlist ∪ default ∪ loaded). */
+  /** T2T models the caller may pick per run (the caller's default ∪ the server default ∪ the
+   *  allowlist; never a loaded-but-disallowed one — residency is only each row's `loaded`). */
   translation_models?: ServerModel[];
   /** The caller's resolved TRANSLATE_TO default (seeds the toggle). */
   translate_to_default?: string[];
