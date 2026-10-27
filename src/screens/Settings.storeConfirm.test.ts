@@ -1,8 +1,9 @@
 // The Recording & history "Delete…" confirms name the exact count they remove. Saving a dictation
 // or finishing a run sends no event the tab listens to, so arming must re-read the store stats or
 // the confirm promises the count from the last read ("Delete 5 dictations" for a wipe of 50).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import settingsSrc from "./Settings.tsx?raw";
+import { reportStoreError, takeParkedStoreError } from "./Settings";
 
 const KINDS = ["dict", "files", "links", "video", "clear"] as const;
 
@@ -43,5 +44,27 @@ describe("store delete confirms re-read their counts on arm", () => {
     expect(settingsSrc).toMatch(rendersVia(kind));
     expect(control).toContain("onClick={() => armStoreAction(kind)}");
     expect(settingsSrc).not.toContain(`setConfirming("${kind}")`);
+  });
+});
+
+// A wipe outlives the screen: when it fails after the route unmounted, the dead mount's tab ref
+// still reads Recording & history and its setState is dropped, so the failure must be parked for
+// the live mount (and logged) rather than "shown" on the dead one.
+describe("a store wipe failure reaches the live screen", () => {
+  it("parks a failure that settles after the starting screen unmounted, and logs it", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      takeParkedStoreError();
+      const err = new Error("video/: permission denied");
+      expect(reportStoreError(err, false, "Recording & history")).toBeNull();
+      expect(log).toHaveBeenCalledWith("store action failed:", err);
+      expect(takeParkedStoreError()).toContain("video/: permission denied");
+      expect(takeParkedStoreError()).toBeNull(); // shown once
+      // The live mount on the tab shows it itself, and parks nothing.
+      expect(reportStoreError(err, true, "Recording & history")).toContain("permission denied");
+      expect(takeParkedStoreError()).toBeNull();
+    } finally {
+      log.mockRestore();
+    }
   });
 });

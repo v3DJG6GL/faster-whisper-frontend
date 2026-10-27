@@ -135,15 +135,34 @@ const subscribeBusy = (f: () => void) => {
     busySubs.delete(f);
   };
 };
-// A failed move parks its message here for the same reason: the screen (or the tab) that
-// started it may be gone when it settles, and a per-mount message would be dropped or wiped by
-// the tab reset, leaving a failed or partial move of the whole store unreported. The live mount
-// shows it once the Recording & history tab is open, then clears it.
-let moveError: string | null = null;
+// A failed move or wipe parks its message here for the same reason: the screen (or the tab)
+// that started it may be gone when it settles, and a per-mount message would be dropped or
+// wiped by the tab reset, leaving a failed or partial move or cleanup of the store unreported.
+// The live mount shows it once the Recording & history tab is open, then clears it.
+let parkedStoreError: string | null = null;
+function parkStoreError(text: string) {
+  parkedStoreError = text;
+  busySubs.forEach((f) => f());
+}
+/** The parked failure message, cleared by the read (one mount shows it once). */
+export function takeParkedStoreError(): string | null {
+  const text = parkedStoreError;
+  parkedStoreError = null;
+  return text;
+}
 function reportMoveError(e: unknown) {
   console.error("audio folder move failed:", e);
-  moveError = `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`;
-  busySubs.forEach((f) => f());
+  parkStoreError(`Could not move the audio folder: ${safeDisplayText(String(e), 200)}`);
+}
+/** A failed store wipe: always logged, and returned for the starting mount to show only while
+ *  that mount is live (`mounted`) and on Recording & history; otherwise parked. After a route
+ *  change the dead mount's tab ref still reads the store tab, and its setState is dropped. */
+export function reportStoreError(e: unknown, mounted: boolean, tab: string): string | null {
+  console.error("store action failed:", e);
+  const text = safeDisplayText(String(e), 200);
+  if (mounted && tab === STORE_TAB) return text;
+  parkStoreError(text);
+  return null;
 }
 
 
@@ -249,17 +268,25 @@ export default function Settings() {
     setConfirming(kind);
   };
   const storeCounting = statsSettled < armSeq;
-  // After the reset above, so a move that failed while away survives the trip back to the tab.
-  const pendingMoveErr = useSyncExternalStore(subscribeBusy, () => moveError);
+  // After the reset above, so a move or wipe that failed while away survives the trip back to the tab.
+  const pendingStoreErr = useSyncExternalStore(subscribeBusy, () => parkedStoreError);
   useEffect(() => {
-    if (tab === STORE_TAB && moveError) {
-      setStoreMsg({ text: moveError, error: true });
-      moveError = null;
-    }
-  }, [tab, pendingMoveErr]);
+    if (tab !== STORE_TAB) return;
+    const text = takeParkedStoreError();
+    if (text) setStoreMsg({ text, error: true });
+  }, [tab, pendingStoreErr]);
   // An action that resolves after the user left the tab must not re-set what the reset above cleared.
   const tabRef = useRef(tab);
   tabRef.current = tab;
+  // Nor one that resolves after the screen unmounted: tabRef keeps its last tab. Set in the
+  // effect, so StrictMode's remount sets it again.
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const runStoreAction = (kind: StoreKind) => {
     // The buttons are disabled while either runs; this backstops a click that raced the render.
     // Say why instead of dropping it: the running wipe's `done` later clears the armed confirm
@@ -294,17 +321,18 @@ export default function Settings() {
         : null;
     const done = (n: number, [one, many]: [string, string]) => {
       if (preWipe) dropPendingWrites((r) => isDictationRecord(r) && preWipe.has(r.id));
-      if (tabRef.current === STORE_TAB) {
+      if (mountedRef.current && tabRef.current === STORE_TAB) {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
         setConfirming(null);
       }
       void loadHistory(true).catch(() => {});
     };
     const fail = (e: unknown) => {
-      if (tabRef.current === STORE_TAB) {
+      const text = reportStoreError(e, mountedRef.current, tabRef.current);
+      if (text !== null) {
         setConfirming(null);
-        setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
-      } else console.error("store action failed:", e);
+        setStoreMsg({ text, error: true });
+      }
       // A wipe that failed on one folder may still have removed records from another.
       void loadHistory(true).catch(() => {});
     };
@@ -532,7 +560,7 @@ export default function Settings() {
           }
           return;
         }
-        moveError = null;
+        parkedStoreError = null;
         setStoreMsg(null);
         setBusy("dir", true);
         try {
@@ -570,7 +598,7 @@ export default function Settings() {
       .catch(reportMoveError);
   const resetRecDir = () => {
     if (busy.dir || busy.store) return;
-    moveError = null;
+    parkedStoreError = null;
     setStoreMsg(null);
     setBusy("dir", true);
     // Flush, don't drop, before the move: see changeRecDir.
