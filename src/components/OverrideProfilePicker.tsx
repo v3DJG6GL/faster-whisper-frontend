@@ -38,9 +38,9 @@ export function OverrideProfilePicker({
   value: string; // "" = inherit / server default · NO_OVERRIDE_PROFILE = no profile · else a name
   inheritLabel: string;
   onChange: (v: string) => void;
-  /** Accessible name for the rendered control(s): a bare <select> has no placeholder fallback, and
-   *  this composite component slips past Labeled's auto-aria-label (which only clones onto a direct
-   *  Select/TextInput child). */
+  /** Accessible name for the rendered control(s): without it the Select is named only by its
+   *  current value and the custom-name field only by its placeholder, and this composite component
+   *  slips past Labeled's auto-aria-label (which only clones onto a direct Select/TextInput child). */
   ariaLabel?: string;
   /** Bumped by a fresh successful connection test of the same target: refetch the names (an
    *  admin may have added or removed a profile since). Callers without a test omit it. */
