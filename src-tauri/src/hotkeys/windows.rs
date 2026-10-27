@@ -1109,10 +1109,10 @@ mod imp {
     }
 
     /// Remove `profile_id` from ACTIVE_HOLDS, reporting whether it was present.
-    /// Unlike evdev's abort()'d readers, this worker DOES run its post-loop cleanup
-    /// on teardown — so its "stop" must be claim-based to fire at most once even
-    /// when a teardown's stop_held_sessions() already emitted it (a late duplicate
-    /// could otherwise kill a session the user re-triggered in between).
+    /// This worker runs its post-loop cleanup on teardown (evdev's readers only when
+    /// they outrun their abort) — so its "stop" must be claim-based to fire at most
+    /// once even when a teardown's stop_held_sessions() already emitted it (a late
+    /// duplicate could otherwise kill a session the user re-triggered in between).
     fn take_hold(profile_id: &str) -> bool {
         let Ok(mut h) = ACTIVE_HOLDS.lock() else {
             return false;
