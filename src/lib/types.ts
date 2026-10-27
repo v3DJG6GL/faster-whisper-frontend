@@ -893,8 +893,9 @@ export interface RecentWords {
 }
 
 // Per-user usage stats (GET /v1/usage). snake_case mirrors the backend
-// JSON 1:1 — it passes straight through the Rust IPC boundary unchanged
-// (`transport::UsageStats`, which also bounds every list and string).
+// JSON 1:1 through a typed Rust mirror (`transport::UsageStats`, which also
+// bounds every list and string) that drops any key it lacks: a new field
+// must be added there too.
 
 /** The job kinds the server rolls usage up by. */
 export type UsageKind = "dictation" | "file" | "url" | "text";
