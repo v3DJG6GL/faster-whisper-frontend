@@ -269,7 +269,7 @@ describe("mediaExportPlan", () => {
     expect(emb.sidecars).toBeNull();
     expect(emb.saveLabel).toBe("Save video");
     expect(emb.primary.name("talk")).toBe("talk.mp4");
-    // Sidecars: one per language beside the video, not the bilingual text file.
+    // Sidecars: one per track beside the video, not the bilingual text file.
     const side = mediaExportPlan({ ...base, subtitleMode: "sidecar" });
     expect(side.files.map((f) => f.name("talk"))).toEqual(["talk.mp4", "talk.de.srt", "talk.en.srt"]);
     expect(side.embedded).toEqual([]);
