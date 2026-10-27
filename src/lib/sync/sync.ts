@@ -1798,11 +1798,8 @@ export async function applyBlob(
           // off sends the literal `false`.
           ...settings.recording,
           ...typedLike(rec as Partial<typeof settings.recording>, settings.recording),
-          // The folder is a machine path: applied only when this device's sub-toggle opts in
-          // AND a well-typed value arrived; otherwise keep this device's folder no matter what.
-          // `null` is a LEGITIMATE value ("use the default location", Rust Option<String>) and
-          // must apply — treating it as "keep local" would let a peer's next push resurrect the
-          // old path and silently revert a reset-to-default after one round trip.
+          // An inbound `null` must apply: treating it as "keep local" would let a peer's next
+          // push resurrect the old path and silently revert a reset-to-default after one round trip.
           recordingsDir: gatedPath(gates.audioFolder, rec.recordingsDir, settings.recording.recordingsDir),
           audioBaseDir: gatedPath(gates.audioFolder, rec.audioBaseDir, settings.recording.audioBaseDir),
         },
@@ -2428,7 +2425,7 @@ function canSync(): boolean {
 /** Re-resolve the sync target AT the request and return its address, or `null` if the backend the
  *  caller captured is no longer the one to talk to.
  *
- *  `pullNow`/`pushNow` capture `backend` once at entry and then await real IPC (`ensureStateFor`,
+ *  `pullCore`/`pushNow` capture `backend` once at entry and then await real IPC (`ensureStateFor`,
  *  `composeBlob`'s up-to-10 s keyring read) before building the address, so
  *  `effectiveServerUrl(backend, live settings)` would mix a LIVE override map with a STALE
  *  `backend.serverUrl`. A push is routinely in flight while the user edits Settings, and a
@@ -2457,7 +2454,7 @@ let snapshotSecretsUnavailable = false;
 /** Would a push right now erase the server's stored API keys? True while the keyring
  *  could not give back the keys the snapshot recorded — the push is refused instead of
  *  sending a keyless list (or omitting the category, which the whole-blob PUT treats as
- *  deletion). Latched for the session like the flag it reads. */
+ *  deletion). Set by the launch's restore; only dropping the stash clears it. */
 function backendsPushBlocked(): boolean {
   return snapshotSecretsUnavailable;
 }
@@ -2943,7 +2940,7 @@ let parkedPushGen: number | null = null;
 
 /** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then wait out the
  *  lock as well, as rePullAfterSession does — a "Delete server copy" made during the launch work
- *  can still hold it (its keyring delete queues behind launch's keyring read), and two clicks
+ *  can still hold it (its keyring delete can outlast the launch work), and two clicks
  *  parked on one launch wake together, the first taking it. False when a supersede (sync
  *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
  *  the lock one await hop later, so it loops on `inFlight`. */
@@ -3351,7 +3348,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   const risky = gatedSecurityCheck(merged, local, applyCats);
   if (risky.length > 0) {
     // Everything else still applies — only the categories with a held-back change wait.
-    // Deliberately no persistState here: adopting the server's version as the new base would
+    // Deliberately no adoptBase here: adopting the server's version as the new base would
     // drop the held-back change, so the next pull re-offers it until the user decides.
     await applyAndRaiseReview(myGen, {
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
@@ -3384,7 +3381,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // client-side forever. (For toggled-OFF categories merged == remote by
   // construction, so compose-from-snapshot preservation is unaffected.)
   await adoptBase(remoteBlob, remote.version, remote.updated_ts ?? null, remote.device ?? null);
-  // persistState can park in the keyring stash; a reset/sync-off in that window must not get
+  // adoptBase can park in the keyring stash; a reset/sync-off in that window must not get
   // this epoch's "ok" written over it.
   if (myGen !== gen) return;
   dropSupersededPending(remote.version);
