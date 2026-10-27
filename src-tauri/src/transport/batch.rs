@@ -1463,12 +1463,8 @@ async fn post(
     }
 
     // /v1/audio/translations auto-detects the source and always outputs
-    // English — `language` is undefined there.
-    //
-    // language sentinel (see `transport::wire_language` for the three states): "auto" is
-    // said out loud as an EMPTY value on the full backend, where it overrides an override
-    // profile's DEFAULT_LANGUAGE. A STANDARD server has no profile to inherit from, and an
-    // empty `language` is not a valid code there, so auto is omitted for it.
+    // English — `language` is undefined there. The sentinel states ("auto" sent
+    // empty, or omitted on a standard server) live in `wire_language_for`.
     if !use_translations_route {
         if let Some(wire) = super::wire_language_for(opts.standard.unwrap_or(false), language) {
             form = form.text("language", wire.to_string());
