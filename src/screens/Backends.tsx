@@ -40,7 +40,7 @@ import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
 import { adoptWrittenKey, keyWriteOutcome } from "@/lib/backendKeyWrite";
 
-function Editor({
+export function Editor({
   initial,
   initialKey,
   initialResult,
@@ -652,7 +652,7 @@ function Editor({
               />
             </div>
           </OverrideHeader>
-          <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")}>
+          <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")} overridden={!!spoken.value}>
             <div className={OVERRIDE_CONTROL_W}>
               <SpokenLanguagePicker
                 ariaLabel="Default language"
