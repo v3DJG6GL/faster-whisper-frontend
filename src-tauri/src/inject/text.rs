@@ -59,7 +59,8 @@ pub struct InjectOutcome {
 }
 
 impl InjectOutcome {
-    /// Typed or pasted: the text reached the target.
+    /// Nothing to re-send: typed, pasted or (clipboard-only) left on the clipboard as asked — or
+    /// stopped with nothing owed (a cancel before the write, an empty insert). See `landed`.
     const LANDED: Self = Self {
         landed: true,
         diverted: false,
