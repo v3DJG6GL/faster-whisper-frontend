@@ -157,8 +157,8 @@ function wellFormedProfiles(v: unknown): Profile[] {
         canonicalActivation((p as Profile).activation) !== undefined,
     )
     // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
-    // already does this for every config it parses, so this only covers the paths that skip
-    // Rust — the browser dev path and a hand-edited config.json. Worth doing anyway: the
+    // already does this for every config it parses (a hand-edited config.json included), so this
+    // only covers the path that skips Rust: the browser dev path. Worth doing anyway: the
     // value indexes `GLYPH[p.activation]` in Dashboard, which is rendered AS A COMPONENT, so an
     // unmatched key is `React.createElement(undefined)` and unmounts the main window.
     .map((p) => {
