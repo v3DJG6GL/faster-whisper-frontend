@@ -658,7 +658,7 @@ export interface RunningExport {
 let exportChain: Promise<void> = Promise.resolve();
 let waiting: QueuedExport[] = [];
 // Kept here, not in the viewer: the export outlives it, and a remounted panel must still
-// show its progress and Cancel (and refuse a second Save of the same record).
+// show its progress and Cancel (a second Save of the same record is refused by beginSave).
 let running: RunningExport | null = null;
 const queueListeners = new Set<() => void>();
 
@@ -756,8 +756,42 @@ export function setRunningProgress(jobId: string, progress: MediaExportProgress)
   if (running?.jobId === jobId) setRunning({ ...running, progress });
 }
 
+// A record's whole Save (dialog to last file) and the phase of its steps with no server job
+// (a link's fetch, a local copy) live here too: those steps run before the queue (or never
+// join it), and a remounted panel must still show them and refuse a second Save.
+const saving = new Set<string>();
+let steps: Record<string, MediaExportProgress> = {};
+
+/** Mark `owner`'s Save under way; false (and nothing changes) when one already is. */
+export function beginSave(owner: string): boolean {
+  if (saving.has(owner)) return false;
+  saving.add(owner);
+  return true;
+}
+
+/** End `owner`'s Save (begun by beginSave). */
+export function endSave(owner: string): void {
+  saving.delete(owner);
+}
+
+/** Set `owner`'s step with no server job; null clears that record's only. */
+export function setStepProgress(owner: string, p: MediaExportProgress | null): void {
+  if (p) steps = { ...steps, [owner]: p };
+  else if (ownProp(steps, owner)) {
+    const next = { ...steps };
+    delete next[owner];
+    steps = next;
+  } else return;
+  notifyQueue();
+}
+
+/** `owner`'s step with no server job (a stable object until it changes), or null. */
+export function stepProgressFor(owner: string): MediaExportProgress | null {
+  return ownProp(steps, owner) ?? null;
+}
+
 /** Be told whenever a job joins or leaves the waiting list, starts or stops running, or
- *  reports progress. Returns the unsubscribe. */
+ *  reports progress, or a record's step with no server job changes. Returns the unsubscribe. */
 export function subscribeExportQueue(fn: () => void): () => void {
   queueListeners.add(fn);
   return () => void queueListeners.delete(fn);

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
+  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress,
-  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
+  setStepProgress, siteDisplayName, stepProgressFor, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
 
@@ -594,5 +594,34 @@ describe("queueMediaExport", () => {
     expect(c.g.calls).toBe(1);
     c.g.settle({ kind: "ok" });
     await c.p;
+  });
+});
+
+describe("a Save before it joins the queue", () => {
+  it("is refused a second time for the same record and shows its step to a remounted panel", () => {
+    // A link's on-demand fetch runs before queueMediaExport: nothing is queued or running yet.
+    expect(beginSave("rec-a")).toBe(true);
+    expect(beginSave("rec-a")).toBe(false);
+    expect(beginSave("rec-b")).toBe(true); // another record's Save still works
+    let calls = 0;
+    const unsub = subscribeExportQueue(() => (calls += 1));
+    const p = { jobId: "", phase: "fetching" as const, done: 0, total: null };
+    setStepProgress("rec-a", p);
+    expect(calls).toBe(1);
+    const snap = stepProgressFor("rec-a");
+    expect(snap).toEqual(p);
+    expect(stepProgressFor("rec-a")).toBe(snap); // stable snapshot for useSyncExternalStore
+    expect(stepProgressFor("rec-b")).toBeNull();
+    setStepProgress("rec-b", null); // clears that record's only
+    expect(calls).toBe(1);
+    expect(stepProgressFor("rec-a")).toBe(snap);
+    setStepProgress("rec-a", null);
+    expect(stepProgressFor("rec-a")).toBeNull();
+    expect(calls).toBe(2);
+    unsub();
+    endSave("rec-a");
+    expect(beginSave("rec-a")).toBe(true);
+    endSave("rec-a");
+    endSave("rec-b");
   });
 });

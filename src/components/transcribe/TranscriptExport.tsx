@@ -38,8 +38,8 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
+  audioPackageLang, basename, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
+  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, setStepProgress, sidecarFiles, sidecarSource, stampCopyPath, stepProgressFor, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -151,23 +151,15 @@ export function TranscriptExport({
    *  by then never lends its result — the click's own stands. */
   const liveResult = (started: typeof owner) =>
     latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
-  /** The record whose Save is running (dialog to last file); null = none. */
-  const exportingFor = useRef<typeof owner | null>(null);
   // One slot PER record for the steps with no server job (withMediaJob): another record's
-  // never overwrites this one's. A queued export's progress lives in mediaExport.ts instead.
-  const [mediaJobs, setMediaJobs] = useState<Record<string, MediaExportProgress>>({});
+  // never overwrites this one's. Kept in mediaExport.ts, as the queued export's progress is:
+  // both outlive the panel, so a remount still shows them.
   /** Set this record's job; null clears this record's only. */
-  const setMediaJob = (j: MediaExportProgress | null) =>
-    setMediaJobs((m) => {
-      if (j) return { ...m, [owner]: j };
-      if (!(owner in m)) return m;
-      const n = { ...m };
-      delete n[owner];
-      return n;
-    });
-  /** This record's queued export while it runs: it outlives the panel, so a remount shows it. */
+  const setMediaJob = (j: MediaExportProgress | null) => setStepProgress(owner, j);
+  const stepJob = useSyncExternalStore(subscribeExportQueue, () => stepProgressFor(owner));
+  /** This record's queued export while it runs. */
   const runningJob = useSyncExternalStore(subscribeExportQueue, () => runningExportFor(owner)?.progress ?? null);
-  const ownJob = mediaJobs[owner] ?? runningJob;
+  const ownJob = stepJob ?? runningJob;
   /** This record's export waiting its turn (queueMediaExport), or null. */
   const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
@@ -731,17 +723,16 @@ export function TranscriptExport({
     // no path (the Save button, the "Save as MKV" retry) may get that far. Nor a second
     // click while this record's Save is still running (a double-click would open two dialogs
     // and could queue the same video twice) — keyed by record, since another record's
-    // Save must still work (and queue) while a long video export of this one runs. The queue
-    // also answers for a Save started before this panel was (re)mounted.
-    if (tooManyEmbedded || exportingFor.current === owner || runningExportFor(owner) || queuedExportFor(owner)) return;
-    exportingFor.current = owner;
+    // Save must still work (and queue) while a long video export of this one runs. Kept in
+    // mediaExport.ts, so it also answers for a Save started before this panel was (re)mounted.
+    if (tooManyEmbedded || !beginSave(owner)) return;
     // The panel stays mounted across records: what this Save reports after an await
     // lands only while its record still shows.
     const started = owner;
     try {
       await runExport(started);
     } finally {
-      if (exportingFor.current === started) exportingFor.current = null;
+      endSave(started);
     }
   };
   const runExport = async (started: typeof owner) => {
