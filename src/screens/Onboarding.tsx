@@ -709,7 +709,7 @@ function QuickAddStep({
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const [rules, setRules] = useState<PipelineRule[] | null>(null);
   const [slug, setSlug] = useState<string | null>(null);
-  // `ruleListOf` yields [] for a failed/gated fetch too (status 0/401/403/404/500), which the
+  // `quickAddListsOf` yields [] for a failed/gated fetch too (status 0/401/403/404/500), which the
   // empty-list notice below would otherwise report as "no editable list on this server".
   const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
