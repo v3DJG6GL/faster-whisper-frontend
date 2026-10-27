@@ -1538,9 +1538,10 @@ describe("a cancelled translating session's usage outcome", () => {
 
 describe("a translate a cancel abandoned stays out of the next session", () => {
   // cancelLive only asks the SERVER to stop the translate; our end of the race keeps waiting
-  // for the answer, the live ceiling or the cold stall (20–45 s). A next session started in
-  // that window must not be touched when the old promise finally resolves — none of this is
-  // reachable without Tauri, so pin the session-token checks around the translate awaits.
+  // for the answer, the live ceiling (20 s–5 min) or the cold stall (45 s). A next session
+  // started in that window must not be touched when the old promise finally resolves — none
+  // of this is reachable without Tauri, so pin the session-token checks around the translate
+  // awaits.
   // Up to the column-0 close: both signatures carry an `opts?: { … }` type literal, which
   // topLevelFunctions would take for the body.
   // CRLF-normalized: a Windows checkout has no "\n}\n".
