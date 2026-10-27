@@ -35,7 +35,7 @@ import { serverUrlFromPeer } from "./backends";
 // without each re-running the smoothing. One singleton memo: the store is a singleton.
 const speakMemo = newSpeakMemo();
 
-/** Ceiling on quick-launch entries reaching the store. The editor caps the user at 6 out of ~11
+/** Ceiling on quick-launch entries reaching the store. The editor caps the user at 6 out of ~13
  *  possible targets; this is loose on purpose (the list is synced back, so truncating near the
  *  real count would propagate to the user's other devices) while still bounding a hostile list. */
 const MAX_QUICK_LAUNCH = 100;
