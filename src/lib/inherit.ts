@@ -3,7 +3,8 @@
 //
 //   Inherit · on        — an override layer (Profile over Backend, Backend over server, App rule
 //                         over Profile/Settings)
-//   Default · large-v3  — a per-run choice on the Transcribe page
+//   Default · large-v3  — a per-run choice on the Transcribe page, and a backend's model /
+//                         language (the server's DEFAULT_MODEL / DEFAULT_LANGUAGE)
 //
 // The server's own decode values come from GET /v1/request-default-settings (serverInherited); a value
 // nobody can name (the server is unreachable) leaves the bare word.
