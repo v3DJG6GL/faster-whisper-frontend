@@ -682,7 +682,7 @@ mod tests {
 
     /// A tap of Super during push-to-talk completes the hands-free chord — which is NOT a
     /// superset of the hold, so it is not the designed `Reclassify` upgrade but a plain
-    /// `Toggle`, and the frontend's toggle arm CANCELS a busy session. The hold must ride
+    /// `Toggle`, and the frontend's toggle arm ENDS a busy session. The hold must ride
     /// it out and stop on its own release.
     #[test]
     fn an_overlapping_chord_cannot_cancel_a_live_hold() {
