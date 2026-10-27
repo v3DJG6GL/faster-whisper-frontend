@@ -2025,8 +2025,8 @@ mod clip_tests {
     use std::sync::atomic::AtomicBool;
     use tokio::sync::mpsc::UnboundedReceiver;
 
-    /// A silent kept session under trim saves no tail (so writes no near-empty `.wav`); speech
-    /// still in progress at stop keeps its tail, and so does every untrimmed recording.
+    /// A silent kept session under trim saves no tail (so writes no near-empty `.wav`); a session
+    /// the gate kept any speech from keeps its tail, and so does every untrimmed recording.
     #[test]
     fn the_drain_tail_joins_the_recording_only_behind_kept_speech() {
         assert!(!drain_keeps_tail(true, true, &[]));
