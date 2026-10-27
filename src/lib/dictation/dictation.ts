@@ -35,10 +35,10 @@ function isBusy(): boolean {
 // happens there depends on the gesture:
 //   • `hard` (a deliberate hands-free TOGGLE — a re-press saying "kill it"): cancel, the
 //     explicit recovery for a wedged session, same as the in-app button.
-//   • not `hard` (a HOLD chord release): do NOTHING. A release lands here only in the
-//     fast re-press flow — its matching press was swallowed by the busy gate (and
-//     queued, see dictate) — so it pairs with NO session; cancelling would discard the
-//     previous dictation's still-draining transcript.
+//   • not `hard` (a HOLD chord release): leave the session alone (only the queued start is
+//     voided, below). A release lands here only in the fast re-press flow — its matching
+//     press was swallowed by the busy gate (and queued, see dictate) — so it pairs with NO
+//     session; cancelling would discard the previous dictation's still-draining transcript.
 function stopOrCancel(hard: boolean): void {
   const s = useApp.getState().status;
   // "listening" OR a processing status with the mic still open (a per-phrase translate) —
@@ -145,7 +145,8 @@ export function dictate(profileId: string, action: TriggerAction): void {
     // …except a hold PRESS during "finalizing…"/"inserting…" — the fast re-press. Don't
     // drop it: queue it, and streaming fires it on settle IF the chord is still held
     // (checked against Rust's HeldKeys), so the next sentence starts the moment the
-    // previous text lands, without another press. Its release is a no-op (stopOrCancel).
+    // previous text lands, without another press. Its release before settle only voids the
+    // queued start, never the session (stopOrCancel).
     // …and only when capture is actually OVER: a per-phrase translate reports a processing
     // status with the mic still open, and queueing there would fire a whole new session the
     // moment that phrase settled — on top of the one still running.
