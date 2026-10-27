@@ -26,7 +26,6 @@ type ButtonProps = {
   onKeyDown?: (e: unknown) => void;
 };
 
-/** The element of `type` whose aria-label starts with `label`. */
 const findLabelled = (node: unknown, type: string, label: string): ReactElement | null =>
   findInTree(node, (el) => el.type === type && !!(el.props["aria-label"] as string | undefined)?.startsWith(label));
 
