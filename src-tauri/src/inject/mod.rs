@@ -1388,8 +1388,9 @@ fn paste(
     // its clipboard recovery cannot land mid-grab (it then hits the cancel check below, writes
     // nothing, and the lock is free again before `inject_text` recovers). A withheld insert stops
     // on any cancel, error abort included, as the cancel check below does: it has nothing to
-    // recover. Only a grab stuck past that bails. Nothing has been read or written yet, so
-    // `NothingWritten` is truthful and the caller's re-send cannot duplicate text.
+    // recover. Only a holder (a grab or a stuck snapshot read) still there after that bails.
+    // Nothing has been read or written yet, so `NothingWritten` is truthful and the caller's
+    // re-send cannot duplicate text.
     let Some(_clip_job) =
         wait_clip_job(CLIP_JOB_WAIT, || cancel_discards(epoch, withhold_on_divert))
     else {
