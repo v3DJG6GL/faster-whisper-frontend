@@ -539,8 +539,6 @@ export function TranscriptViewer({
   );
   // Trimmed: the stored value is synced (the send below resolves it by effectiveTranslationModel).
   const [trModel, setTrModel] = useState(() => trBackend?.translationOverrides?.model?.trim() ?? "");
-  // Prefill: Backend Translation defaults → the caller's server-side default
-  // → English; never the known source (a source→source track is a no-op), within the cap.
   const seededTargets = useMemo(
     () =>
       seedTargets({
