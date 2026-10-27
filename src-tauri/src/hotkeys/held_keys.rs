@@ -195,7 +195,7 @@ impl HeldKeys {
                 .unwrap_or(false)
     }
 
-    /// Forget all held keys — called when the listener (re)starts, so a stale count
+    /// Forget all held keys — called when a listener (re)starts or is stopped, so a stale count
     /// from a previous run can't wedge the gate — and retire every existing writer.
     ///
     /// The retirement is what makes the wipe safe. The Windows worker exits gracefully and
