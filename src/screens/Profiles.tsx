@@ -910,11 +910,9 @@ export default function Profiles() {
       ? `Same shortcut as “${nameOf(c.otherId)}” — resolve to save & register.`
       : `Overlaps “${nameOf(c.otherId)}” — one would set off the other; resolve to save & register.`;
   };
-  // What the checklist card's "Keep these" commits: the suggestion's chords are fixed, the
-  // quick-add chord is not, so a colliding starter goes in UNBOUND (startersClearOf) rather than
-  // writing a conflict that freezes every save on the persistence gate. The card's chord text and
-  // the evdev note judge these chords, not the fixed suggestion: with both starters cleared the
-  // note has nothing to warn of.
+  // What the checklist card's "Keep these" commits (startersClearOf: a starter that collides with
+  // the quick-add chord goes in unbound). The card's chord text and the evdev note judge these
+  // chords, not the fixed suggestion: with both starters cleared the note has nothing to warn of.
   const keptStarters = startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive);
 
   const startAdd = () => setDraft(blankProfile(backends[0]?.id ?? null));
