@@ -300,8 +300,8 @@ export default function Dashboard() {
           : "bg-think text-white"
         : vis.state === "armed"
           ? // The fixed armed amber (--c-armed), not the accent: the Signal colour may be any hue
-            // and may drift. Armed is always amber in both themes, so its ink is a constant too
-            // (the same dark ink app.css pairs with the stock amber accent).
+            // and may drift. Armed is amber in both themes, so one dark ink serves both (the ink
+            // app.css pairs with the dark theme's stock amber accent).
             "bg-armed text-[#1a1207]"
           : "bg-surface-2 text-dim";
   const waveTone = vis.tone;
