@@ -275,7 +275,7 @@ describe("usage poll gates", () => {
     getUsageStats.mockClear();
     useApp.getState().forgetBackendCaches("b1"); // an API-key rotation: bKey does not move
     await settle();
-    expect(calls().fixed).toBe(0); // debounced (a URL override evicts per keystroke)
+    expect(calls().fixed).toBe(0); // debounced (a URL override is written per keystroke)
     await tick(1_000);
     expect(calls().fixed).toBe(1); // without waiting for the next tick
   });
