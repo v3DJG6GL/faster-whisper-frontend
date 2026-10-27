@@ -756,7 +756,8 @@ pub struct AppSettings {
     /// round-trips it, and reads exactly THREE keys — `historyRetentionDays`
     /// (`transcribe_retention_days`), `dictationRetentionDays`
     /// (`dictation_retention_days`) and `keepDictationHistory`
-    /// (`keep_dictation_history`) — for the retention sweeps in store/transcripts.rs.
+    /// (`keep_dictation_history`) — for the retention sweeps in store/transcripts.rs
+    /// and the recordings sweep (`apply_recordings_retention`, commands/config.rs).
     /// Renaming any of them on the TS side silently changes retention.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transcribe: Option<serde_json::Value>,
@@ -1135,9 +1136,9 @@ fn backup_unreadable(path: &Path) -> bool {
 /// no paused sync), but a whole file re-encoded by a hand edit (ANSI/CP1252 Notepad) turns EVERY
 /// non-ASCII character into U+FFFD, and the next auto-save writes that over the only copy. So the
 /// raw bytes are kept first in `config.json.invalid-utf8.bak` — the identifier migration's name;
-/// not `.json.bak`, which the reset banner reads as "a config the loader reset". A copy already
-/// holding these bytes is reused; a different one (an earlier incident) is kept and the next
-/// numbered name is used.
+/// not `.json.bak`, which `bak_target` owns and `reset_unconfirmed` reads as "a config the loader
+/// reset". A copy already holding these bytes is reused; a different one (an earlier incident) is
+/// kept and the next numbered name is used.
 fn decode_keeping_invalid_utf8(path: &Path, bytes: &[u8]) -> String {
     let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     if std::str::from_utf8(body).is_err() {
