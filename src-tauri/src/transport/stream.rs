@@ -226,7 +226,7 @@ fn handshake_auth_headers(
 /// storable and `http_to_ws` carries the userinfo through, so a routine connect failure would put
 /// the user's reverse-proxy password into the message AND `tracing::warn!` — on Windows a log file
 /// users attach to support reports. Bounded because `serverUrl` has no length cap on the
-/// sync/import path, only the 4 MiB whole-blob ceiling.
+/// sync/import path, only the whole-blob ceilings (4 MiB synced, 20 MB imported).
 fn display_url(u: &str) -> String {
     let (scheme, rest) = match u.split_once("://") {
         Some((s, r)) => (s, r),
