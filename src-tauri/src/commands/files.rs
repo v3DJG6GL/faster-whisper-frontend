@@ -373,7 +373,7 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
 /// the records' stored paths. The caller (the Settings screen) persists the new
 /// setting only after this returns Ok — never save-then-hope. On Err the records
 /// that DID move are already rewritten on disk, so the caller must reload history
-/// either way, or its mirror writes the pre-move paths back on the next edit.
+/// either way, or its mirror keeps playing the pre-move paths.
 #[tauri::command]
 pub async fn move_audio_base(
     app: AppHandle,
