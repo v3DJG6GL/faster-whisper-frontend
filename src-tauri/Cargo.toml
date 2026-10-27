@@ -85,7 +85,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-log = "0.2"
 
 uuid = { version = "1", features = ["v4", "serde"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 
 # Secure API-key storage in the OS secret store. HELD AT 3 (see renovate.json):
 # the keyring 4 "v1" migration broke API-key reads INSIDE the running app on
