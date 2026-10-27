@@ -2,9 +2,9 @@
 //!
 //! Tauri names every per-app folder after `identifier` (tauri.conf.json): config, data,
 //! local data (logs + the WebView profile, which holds localStorage) and cache. Renaming the
-//! identifier therefore orphans all of it — the app would start empty. This runs at the very
-//! top of `run()`, BEFORE the Tauri builder: before the single-instance plugin, before the
-//! webview opens (and locks) a profile, before anything resolves a path.
+//! identifier therefore orphans all of it — the app would start empty. This runs at the top of
+//! `run()`, right after the logging init and BEFORE the Tauri builder: before the single-instance
+//! plugin, before the webview opens (and locks) a profile, before anything resolves a path.
 //!
 //! Not identifier-scoped, so untouched here: the keyring service, the autostart entry, the
 //! KWin rule names and the installers' upgrade identity — all derive from the product name.
