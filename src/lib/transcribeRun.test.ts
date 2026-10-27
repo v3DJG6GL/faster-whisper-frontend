@@ -6,23 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const saveTranscriptRecord = vi.fn(
   (_id: string, _json: string, _dictation: boolean): Promise<import("./api").RepointedMedia | null> => Promise.resolve(null),
 );
-// Unset = the real outside-Tauri command; the lost-request tests make it reject.
 const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
-// Unset = the real outside-Tauri command; the text-source translate tests answer it.
 const translateText = vi.fn<(args: Parameters<typeof import("./api").translateText>[0]) => Promise<import("./api").TextTranslationResult>>();
-// Unset = the real outside-Tauri commands; the site-transcript fallback test answers them.
 const transcribeUrl = vi.fn<(args: Parameters<typeof import("./api").transcribeUrl>[0]) => Promise<never>>();
 const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<import("./api").UrlSubtitles>>();
-// Unset = the real outside-Tauri command; the site-transcript audio-expiry test answers it.
 const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
-// Unset = the real outside-Tauri command; the video-poll tests answer it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
-// Unset = the real outside-Tauri commands; the video-download tests answer them.
 const fetchUrlVideoOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideoOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideo>[0]) => Promise<string | null>>();
-// Unset = the real outside-Tauri command; the run-video "entry gone" tests answer it.
 const getJobResult = vi.fn<(args: Parameters<typeof import("./api").getJobResult>[0]) => ReturnType<typeof import("./api").getJobResult>>();
-// Unset = the real outside-Tauri command (no copy); the late audio-copy test answers it.
 const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
 const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
