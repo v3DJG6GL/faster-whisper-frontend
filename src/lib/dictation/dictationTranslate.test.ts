@@ -276,9 +276,9 @@ describe("runDictationTranslate", () => {
     });
 
     it("a server that keeps REPORTING PROGRESS outlives the priced budget", async () => {
-      // The whole point of the stall detector: this run takes 40 s, far past
-      // the priced budget, but the progress entry advances every poll so it is
-      // never abandoned.
+      // The whole point of the stall detector: this run takes 40 s, five times
+      // the 8 s warm stall threshold, but the progress entry advances every poll
+      // so it is never abandoned.
       let pct = 0;
       const d = {
         ...deps(answerAfter(40_000)),
