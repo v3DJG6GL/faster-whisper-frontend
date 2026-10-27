@@ -613,8 +613,8 @@ pub async fn run<F>(
                         .as_ref()
                         .map_or((1005, ""), |f| (u16::from(f.code), f.reason.as_str()));
                     tracing::info!("[stream] ws reader: close {code}");
-                    // A refused handshake (key, disabled, busy, origin, idle) arrives as an
-                    // application close code with NO `error` frame first; a bare `Closed` would
+                    // A refused handshake, an idle timeout or a server restart / keepalive timeout
+                    // arrives as a close code with NO `error` frame first; a bare `Closed` would
                     // read as a clean end and drop the dictation to idle with no word of why.
                     if let Some(message) =
                         close_frame_error(code, reason, error_seen.load(Ordering::Relaxed))
