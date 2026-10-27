@@ -1376,9 +1376,9 @@ export function sanitizeBackends(list: unknown): Backend[] {
     // `name`/`model`/`language`/`prompt`/`endpoint`/`responseFormat` with NO serde default, so a
     // filter would DROP a legitimately older peer's backend entirely — along with the keyring
     // association its `id` carries. Filling keeps the entry and its key while making the value
-    // safe for both sinks: the list card renders `name`/`model`/`languageLabel(language)` as
-    // React children (an object leaf throws and unmounts the settings window), and the two enums
-    // have no serde fallback, so an unknown variant wedges every later save for the session.
+    // safe for both sinks: the list card `.trim()`s `model` and `language` in its render (an
+    // object leaf throws and unmounts the settings window), and the two enums have no serde
+    // fallback, so an unknown variant wedges every later save for the session.
     .map((b) => ({
       ...b,
       // Inbound addresses are stored VERBATIM and go straight to the transport, so store the
@@ -3238,13 +3238,13 @@ export async function pushNow(manual = false): Promise<void> {
           // The server copy was deleted under our base (a peer's "Delete server copy", or a
           // wipe): the 409 body is the zero-state. Merging `{}` against the stale snapshot drops
           // every unchanged category and conflicts the changed ones — re-seed from version 0
-          // instead, as pullNow's null-blob arm does, and let the follow-up push send it all.
+          // instead, as pullCore's null-blob arm does, and let the follow-up push send it all.
           if (!(await forgetDeadDocument(myGen))) return;
           setRuntime({ syncStatus: "ok" });
           schedulePush(0);
           return;
         }
-        // Same as pullNow: a re-created document drops the dead base, so the merge below is a
+        // Same as pullCore: a re-created document drops the dead base, so the merge below is a
         // first-contact one (no snapshot) instead of a 3-way merge against the deleted document.
         if (serverRecreated(remote.version, remote.updated_ts)) {
           if (!(await forgetDeadDocument(myGen))) return;
@@ -3784,10 +3784,11 @@ interface PendingReview {
   blob: SyncBlob;
   cats: Record<SyncCategory, boolean>;
   remote: SyncBlob;
-  /** `storeSignature` right after the raise's held-back apply: an approval takes a category as
-   *  edited while the review waited only when the store's value moved off this one. Not a gated
-   *  compose — a gate turned on since changes that with no edit (a stripped field now carries
-   *  this device's value). */
+  /** `storeSignature` right after the raise's held-back apply (of the store that apply read, when
+   *  an edit during its keyring wait dropped it): an approval takes a category as edited while
+   *  the review waited only when the store's value moved off this one. Not a gated compose — a
+   *  gate turned on since changes that with no edit (a stripped field now carries this device's
+   *  value). */
   storeSig: SyncBlob;
   /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. A relist
    *  keeps it — no apply ran since, so the store still lacks what the raise's gates stripped. */
@@ -4342,7 +4343,7 @@ async function resolveLocked(
   }
   // Degraded keyring (see `backendsDegraded`): a degraded compose carries the base's backends
   // category, not this device's list, so `final` holds the remote/base list whichever side won —
-  // applying it deleted every backend added here. Hold the category out, as the two sibling adopt
+  // applying it deleted every backend added here. Hold the category out, as the other adopt
   // sites do. Either compose counts: the raise-time `c.local`, and `localNow` (the re-merge
   // and every "local" pick).
   const degradedNow = backendsDegraded(localNow, syncedCats);
