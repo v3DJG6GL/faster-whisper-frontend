@@ -606,7 +606,8 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
       flags ??= quoteFlags(text);
       const j = cur - 1;
       let n = 0;
-      /** Counted quotes of the glued ASCII quote's kind (qm[1]) through it: even when it closes one. */
+      /** Counted quotes of the kind of the ASCII quote before the glued one (qm[1]), through that
+       *  quote: even when it closes one. */
       let np = 0;
       let later = false;
       for (let x = 0; x < text.length; x++) {
