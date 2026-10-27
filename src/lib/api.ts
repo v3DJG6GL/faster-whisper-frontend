@@ -1084,9 +1084,11 @@ export async function cancelRecord(userInitiated = false, discardRecording = tru
   await invoke("cancel_record", { userInitiated, discardRecording });
 }
 
-/** Retire the active session epoch WITHOUT draining/aborting — the error/fatal-inject teardown keeps
- *  its draining stop (sidecar still written) but uses this so the detached drain's late final/closed
- *  can't bleed onto a session re-triggered during the error linger. */
+/** Retire the active session epoch WITHOUT draining/aborting the session — the "session died"
+ *  teardowns (stream error, fatal inject, rejected stop) use this so the detached drain's late
+ *  final/closed can't bleed onto a session re-triggered during the error linger; the error and
+ *  fatal-inject paths keep their draining stop (sidecar still written). Rust also aborts a
+ *  transcript still being typed, leaving it on the clipboard. */
 export async function retireSessionEpoch(): Promise<void> {
   if (!isTauri) return;
   await invoke("retire_session_epoch");
@@ -1361,9 +1363,9 @@ export async function getFocusedSelection(): Promise<string | null> {
 }
 
 /**
- * Shape the overlay window's mouse input region to just the visible chip (logical
- * px, relative to the window's top-left), so the chip becomes hoverable while the
- * rest of the transparent strip stays click-through. No-op outside Tauri.
+ * Shape the overlay window's mouse input region to just the visible chip (CSS px,
+ * relative to the window's top-left; Rust scales them by the "Chip size" zoom), so the
+ * chip becomes hoverable while the rest of the transparent strip stays click-through.
  */
 export async function setChipHitRegion(
   x: number,
@@ -1416,8 +1418,9 @@ export async function onSystemResumed(cb: () => void): Promise<() => void> {
   return subscribe<unknown>("system://resumed", () => cb());
 }
 
-/** Show + focus the main window and ask its router to navigate to a screen. Used by
- *  the overlay chip's quick-launch (a separate window that can't drive the router). */
+/** Show + focus the main window and ask its router to navigate to a screen. Used by the
+ *  auxiliary windows (the chip's quick-launch, Quick-Add's Dictionary button), which can't
+ *  drive the main window's router. */
 export async function showMainAtScreen(screen: string): Promise<void> {
   if (!isTauri) return;
   await invoke("show_main_at_screen", { screen });
