@@ -854,7 +854,7 @@ pub struct PlanStage {
     pub units: Option<Vec<PlanUnit>>,
 }
 
-/// The pipeline has five stages; a plan longer than that is not ours.
+/// The pipeline has five stages, with headroom; a plan longer than this is not ours.
 const MAX_PLAN_STAGES: usize = 8;
 /// Matches the server's TRANSLATION_MAX_TARGETS ceiling with headroom.
 const MAX_PLAN_UNITS: usize = 16;
@@ -2120,9 +2120,9 @@ pub struct UrlMediaDownload {
 /// download is an hour by default; give the request room past that.
 const URL_VIDEO_TIMEOUT: Duration = super::media::MEDIA_EXPORT_TIMEOUT;
 
-/// Ask the server to fetch a link's VIDEO into its media store on demand
-/// (the export panel's path for a run that did not keep it). Progress rides
-/// on `progress_id` through the shared progress route.
+/// Ask the server to fetch a link's VIDEO into its media store on demand (a
+/// site-subtitle run, the Video row's retry, or the export panel for a run that
+/// did not keep it). Progress rides on `progress_id` through the shared progress route.
 pub async fn url_video_download(
     server_url: &str,
     api_key: Option<&str>,
