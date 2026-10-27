@@ -1602,8 +1602,9 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       expect(cuesOf([...head, g, "再见", q, ...tail], "short", { 4: 0.8 }).join(" | "))
         .toBe(`我们的产品叫${g.slice(0, -1)} | ${g.slice(-1)}再见${q}然后我们一起走了`);
     }
-    // Not moved: a quote closing one opened between two letters (RTX"Super"), one glued to a Latin
-    // word or number (AI", iPhone", Model"X"), and a lone " timed as a word of its own.
+    // Not split as a quote after a closing quote (other rules or none decide them): a quote closing one
+    // opened between two letters (RTX"Super"), one glued to a Latin word or number (AI", iPhone",
+    // Model"X"), and a lone " timed as a word of its own.
     for (const [ws, pauses, short, standard] of [
       [["我们", "的", "产品", "叫", 'RTX"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"], { 4: 0.8 },
         '我们的产品叫RTX"Super" | 和"Ultra"两个版本 | 然后我们一起走了很远的路', '我们的产品叫RTX"Super" | 和"Ultra"两个版本然后我们一起走了很远的路'],
