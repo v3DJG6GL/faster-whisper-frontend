@@ -180,8 +180,7 @@ export default function Logs() {
   const [text, setText] = useState("");
   const [wrap, setWrap] = useState(true);
   const [merge, setMerge] = useState(true);
-  // Which merged runs are unfolded, keyed by the run's FIRST seq — stable while
-  // the run keeps growing (the row's own `line.seq` is not).
+  // Which merged runs are unfolded, keyed by `rowKey` (below).
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
