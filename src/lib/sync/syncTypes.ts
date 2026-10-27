@@ -88,10 +88,11 @@ export type SyncRecording = Partial<Pick<RecordingSettings, "recordingsDir" | "a
   Omit<RecordingSettings, ChipField | "recordingsDir" | "audioBaseDir"> &
   Partial<Pick<TranscribeSettings, (typeof DICTATION_HISTORY_FIELDS)[number]>>;
 
-/** The `backends` category. `secrets` ({backendId: apiKey}) is present in the
- *  server blob always (user decision — it's their own server) and in an export
- *  file only when "Include API keys" was checked. The quick-add pin lived here
- *  before the `dictionary` category existed (migrateBlob moves it). */
+/** The `backends` category. `secrets` ({backendId: apiKey}) rides in the server
+ *  blob while the "API keys" switch (manifest id `apiKeys`) is on (it's their own
+ *  server; off, the snapshot's copy passes through or the field stays absent) and
+ *  in an export file only when "Include API keys" was checked. The quick-add pin
+ *  lived here before the `dictionary` category existed (migrateBlob moves it). */
 export interface SyncBackends {
   list: Backend[];
   secrets?: Record<string, string>;
@@ -249,10 +250,10 @@ export interface ImportResult {
   warnings: string[];
 }
 
-/** Local bookkeeping persisted in `<config dir>/sync-state.json` (Rust-opaque).
- *  `snapshot` is the last-synced blob = the 3-way merge base; `version` is the
- *  server version it corresponds to; `hash` lets pushes short-circuit when
- *  nothing sync-relevant changed. */
+/** Local bookkeeping persisted in `<config dir>/sync-state.json` (opaque to Rust
+ *  except the `deviceId` it seeds). `snapshot` is the last-synced blob = the 3-way
+ *  merge base; `version` is the server version it corresponds to; `hash` lets
+ *  pushes short-circuit when nothing sync-relevant changed. */
 export interface SyncState {
   deviceId?: string;
   /** Which sync server the version/hash/snapshot bookkeeping belongs to.
