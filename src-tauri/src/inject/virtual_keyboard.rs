@@ -294,9 +294,9 @@ mod imp {
             let mut emitted = false;
             let last = order.len() - 1;
             // The keymap cap is per UPLOAD, not per job: a long CJK dictation easily has more
-            // distinct symbols, and the portal would skip every character the layout cannot
-            // produce (or is unavailable on wlroots). So the job is typed in consecutive batches,
-            // each with its own keymap.
+            // distinct symbols, and the portal cannot type what the layout lacks (it diverts such
+            // a phrase to the clipboard) or is unavailable on wlroots. So the job is typed in
+            // consecutive batches, each with its own keymap.
             for batch in split_batches(&order, MAX_KEYMAP_SYMBOLS) {
                 // A keymap failure is only "nothing typed yet" for the first batch; after that, a
                 // prefix has landed and the portal must not re-type the whole text.
