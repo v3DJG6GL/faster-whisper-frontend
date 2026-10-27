@@ -1110,7 +1110,8 @@ export function TranscriptViewer({
    *  copy if the original is gone; (2) a second error with the blob loaded means
    *  the webview can't decode the CODEC (Linux WebKitGTK has no AAC/MP4 without
    *  proprietary GStreamer plugins — every retained YouTube audio) — decode to a
-   *  WAV file in Rust and play that; (3) only when the WAV errors too is playback
+   *  WAV file in Rust and play that (a file over Rust's buffer cap skips (1) and
+   *  re-enters here directly); (3) only when the WAV errors too is playback
    *  declared broken. */
   const onAudioError = (reason?: string) => {
     // Async completions that land after a record switch or unmount are discarded.
