@@ -818,14 +818,15 @@ mod imp {
         if code == 0 {
             // HC_ACTION
             let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
-            // LLKHF_INJECTED = SendInput. Drop only OUR OWN synthetic input —
-            // enigo tags its events with EVENT_MARKER in dwExtraInfo (inject/mod.rs
-            // typing/paste, quickadd's win_seed grab); tracking those could break
-            // a live chord mid-inject, wedge the HeldKeys gate, or self-trigger a
-            // chord matching the paste shortcut. THIRD-PARTY injected input is
-            // kept: dictation hardware (SpeechMike-style companion apps, AutoHotkey
-            // remaps) sends its configured chord via VK-only SendInput, and the raw
-            // feed can never see it (hDevice == 0) — this hook is its only path.
+            // LLKHF_INJECTED = SendInput. Drop only OUR OWN synthetic input — it
+            // carries enigo's EVENT_MARKER in dwExtraInfo (enigo's typing/paste in
+            // inject/mod.rs; quickadd's win_seed grab stamps it on its own SendInput);
+            // tracking those could break a live chord mid-inject, wedge the HeldKeys
+            // gate, or self-trigger a chord matching the paste shortcut. THIRD-PARTY
+            // injected input is kept: dictation hardware (SpeechMike-style companion
+            // apps, AutoHotkey remaps) sends its configured chord via VK-only
+            // SendInput, and the raw feed can never see it (hDevice == 0) — this hook
+            // is its only path.
             let own_inject =
                 kb.flags & LLKHF_INJECTED != 0 && kb.dwExtraInfo == enigo::EVENT_MARKER as usize;
             if !own_inject {
