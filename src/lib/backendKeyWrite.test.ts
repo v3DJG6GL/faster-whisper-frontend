@@ -9,7 +9,7 @@ describe("keyWriteOutcome", () => {
   });
 
   it("a discarded new backend is not saved and its fresh keyring entry is rolled back", () => {
-    // Add backend → Save (wallet prompt parks the write) → sidebar / back arrow → Discard → unlock.
+    // Add backend → Save (wallet prompt parks the write) → sidebar or a history Back → Discard → unlock.
     expect(keyWriteOutcome({ left: true, retyped: false, inStore: false })).toEqual({ kind: "abandoned", rollBack: true, keptInStore: false });
   });
 
