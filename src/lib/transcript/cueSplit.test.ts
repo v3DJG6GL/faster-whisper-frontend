@@ -2318,7 +2318,7 @@ describe("cutByShare", () => {
     // Compact initials ("J.K.", "C.S.", "J.R.R.") before a capital are judged as a single initial
     // ("F. Scott") is; a place initialism ("U.S.") never holds.
     const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
-      // After a lowercase word it ends one, as "by F. Scott" does.
+      // After a lowercase word it ends one, as "by F. Scott" does; at the text's start it holds.
       ["The new book by J.K. Rowling came out last week", 30,
         "The new book by J.K. | Rowling came out last week", "The new book by J.K. | Rowling came out last week",
         "The new book by J.K. | Rowling came out last week"],
