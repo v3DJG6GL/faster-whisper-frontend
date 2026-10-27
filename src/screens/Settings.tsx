@@ -730,10 +730,11 @@ export default function Settings() {
               onChange: (v) => updateGeneral({ restoreClipboard: v }),
             })}
             {/* Not gated on the insertion method: "Clipboard only", the no-text-field divert and
-                the recovery writes all put the transcript on the clipboard too. Rust reads the
-                saved value (no IPC argument), so every one of those paths obeys it. The copy
-                differs per OS because the mechanism does — Windows has real per-write flags,
-                elsewhere it is a hint a clipboard manager may or may not honour. */}
+                the recovery writes all put the transcript on the clipboard too. Rust holds it as
+                a process-wide switch set on every save (no per-insert argument), so every one of
+                those paths obeys it. The copy differs per OS because the mechanism does — Windows
+                has real per-write flags, elsewhere it is a hint a clipboard manager may or may
+                not honour. */}
             <SettingRow
               title={SETTING.excludeFromClipboardHistory.label}
               desc={
