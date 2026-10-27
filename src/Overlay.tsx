@@ -300,7 +300,7 @@ export default function Overlay() {
         theme,
         persistentDock: e.payload.persistentDock ?? REC.persistentDock,
         overlayPeek: e.payload.overlayPeek ?? REC.overlayPeek,
-        peekTimeoutSec: finiteIn(e.payload.peekTimeoutSec, 1, 600, REC.peekTimeoutSec),
+        peekTimeoutSec: finiteIn(e.payload.peekTimeoutSec, 0.1, 600, REC.peekTimeoutSec),
         peekWhileActive: e.payload.peekWhileActive ?? REC.peekWhileActive,
         // 0 = never dim.
         dimAfterSec: finiteIn(e.payload.dimAfterSec, 0, 600, REC.dimAfterSec),

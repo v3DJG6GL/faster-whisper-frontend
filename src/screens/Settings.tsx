@@ -1137,9 +1137,9 @@ export default function Settings() {
                 ariaLabel="hide after"
                 value={s.recording.peekTimeoutSec}
                 onChange={(v) => updateRecording({ peekTimeoutSec: v })}
-                min={1}
+                min={0.1}
                 max={600}
-                step={0.5}
+                step={0.1}
                 decimals={1}
                 unit="s"
                 disabled={peekOff}
@@ -1165,7 +1165,7 @@ export default function Settings() {
                 onChange={(v) => updateRecording({ dimAfterSec: v })}
                 min={0}
                 max={600}
-                step={0.5}
+                step={0.1}
                 decimals={1}
                 unit="s"
                 zeroLabel="Never"
