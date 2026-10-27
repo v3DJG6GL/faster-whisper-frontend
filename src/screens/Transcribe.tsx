@@ -3068,8 +3068,6 @@ export default function Transcribe() {
                         ? `${Math.round(runningOverall * 100)}%`
                         : stageLabel(
                             progress,
-                            // A link ending in .srt/.txt is still downloaded and transcribed:
-                            // the same url-first test the pump and the run panel apply.
                             itemSourceKind(it),
                             // The run's separation flag: the same value the pump seeds from.
                             lastOptions?.separateBgm === true,
