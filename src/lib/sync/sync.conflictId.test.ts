@@ -130,9 +130,10 @@ describe("resolveSyncConflicts", () => {
   });
 
   it("the local side of the security review knows this device's backends", async () => {
-    // `c.local` is a COMPOSED blob and omits `backends` whenever the keyring read degraded;
-    // read as "this device has no backends", every server backend — including ones held here
-    // byte-identically — was a "new backend" and parked sync on a review dialog.
+    // `c.local` is a COMPOSED blob: a degraded keyring read re-sends the snapshot's `backends`,
+    // missing when the snapshot holds none. Read as "this device has no backends", every server
+    // backend — including ones held here byte-identically — was a "new backend" and parked sync
+    // on a review dialog.
     raiseConflictForTests({
       categories: ["backends"],
       local: {},
