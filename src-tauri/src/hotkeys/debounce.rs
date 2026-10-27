@@ -4,10 +4,10 @@
 //! A worn keyboard switch can "bounce" on contact: the OS sees a phantom
 //! release + re-press pair (observed: a release ~4-30 ms after the chord
 //! completed, physically impossible for a human). Fed straight into the chord
-//! engine, that pair fires `Stop` then `Start`; the frontend records the Stop
-//! during the ~30 ms start prologue and drops the re-press Start, so a
-//! push-to-talk session dies instantly with 0 audio (and a hands-free chord
-//! double-toggles). This module sits IN FRONT of the backends' held-set:
+//! engine, that pair fires `Stop` then `Start`: a push-to-talk session ends
+//! mid-hold (the frontend's `cancelStopIfStarting` rescues only a bounce
+//! inside the ~1 s start prologue) and a hands-free chord double-toggles. This
+//! module sits IN FRONT of the backends' held-set:
 //! a key-UP for a held key is deferred by [`RELEASE_DEBOUNCE`]; if the same
 //! key comes back down within the window, both events are erased — as if the
 //! key never left. Key-DOWNS are never delayed, so chord-start latency is
