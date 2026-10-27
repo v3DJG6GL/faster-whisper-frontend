@@ -1348,8 +1348,6 @@ fn wipe_records(dir: &Path) -> Result<usize, String> {
 mod tests {
     use super::*;
 
-    /// A `.tmp` source would leave a final copy every sweep takes for an in-progress one, never
-    /// reclaimed once its record goes.
     #[test]
     fn a_media_copy_never_keeps_a_tmp_extension() {
         assert_eq!(media_copy_ext(Path::new("/home/u/capture.tmp")), "bin");
