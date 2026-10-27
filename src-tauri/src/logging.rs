@@ -412,8 +412,6 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
 /// single-file scheme's `fwf.log`/`fwf.prev.log` pair.
 pub fn prune_log_files(dir: &Path, keep_days: u32, except: Option<&Path>) {
     prune_legacy_dir(dir);
-    // The shared sweep clamps the window (see `audio::MAX_RETENTION_DAYS` for the Windows
-    // overflow panic that prevents on every launch, with the value already persisted).
     let _ = crate::audio::prune_older_than(dir, keep_days, |e| {
         let n = e.file_name();
         let n = n.to_string_lossy();
