@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, noteSaveResult, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, setStepProgress, sidecarFiles, sidecarSource, saveResultFor, stampCopyPath, stepProgressFor, tracksAtWrite,
+  legacyTrackIndices, LINK_AUDIO_EXT, linkServerAudioLive, liveSaveResult, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, noteSaveResult, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, setRunningProgress, setStepProgress, sidecarFiles, sidecarSource, stampCopyPath, stepProgressFor, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -150,13 +150,9 @@ export function TranscriptExport({
   const openRef = useRef(open);
   openRef.current = open;
   /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
-   *  retranslate chunk or an edit may have landed since the click. Another record on screen
-   *  by then never lends its result — the click's own stands. Once this panel is unmounted
-   *  its ref is frozen: the record's latest noted result (a remounted panel's) is read. */
+   *  retranslate chunk or an edit may have landed since the click (liveSaveResult). */
   const liveResult = (started: typeof owner) =>
-    !mounted.current
-      ? saveResultFor(started) ?? editedResult
-      : latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
+    liveSaveResult(started, mounted.current, latestResult.current, editedResult);
   // One slot PER record for the steps with no server job (withMediaJob): another record's
   // never overwrites this one's. Kept in mediaExport.ts, as the queued export's progress is:
   // both outlive the panel, so a remount still shows them.

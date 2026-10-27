@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, beginSave, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, endSave, exportStem, fileStem, packageLang,
-  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, noteSaveResult, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, saveResultFor,
+  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, liveSaveResult, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, noteSaveResult, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, runningExportFor, saveResultFor,
   setRunningProgress, setStepProgress, siteDisplayName, stepProgressFor, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
@@ -637,5 +637,24 @@ describe("a Save before it joins the queue", () => {
     expect(saveResultFor("rec-b")).toBeUndefined(); // another record never lends its result
     endSave("rec-a");
     expect(saveResultFor("rec-a")).toBeUndefined();
+  });
+
+  it("writes the record's latest noted result when the mounted panel switched to another record", () => {
+    const atClick: BatchResult = { text: "Hallo" };
+    const translated: BatchResult = { text: "Hallo Welt" };
+    const other: BatchResult = { text: "Andere" };
+    expect(beginSave("rec-a")).toBe(true);
+    noteSaveResult("rec-a", atClick); // the click
+    noteSaveResult("rec-a", translated); // a chunk lands while rec-a still shows
+    noteSaveResult("rec-b", other); // then rec-b opens in the same mounted panel
+    // Still showing rec-a: the panel's latest render.
+    expect(liveSaveResult("rec-a", true, { owner: "rec-a", editedResult: translated }, atClick)).toBe(translated);
+    // Switched to rec-b while mounted: rec-a's own latest result, never rec-b's nor the click's.
+    expect(liveSaveResult("rec-a", true, { owner: "rec-b", editedResult: other }, atClick)).toBe(translated);
+    // Unmounted: the same.
+    expect(liveSaveResult("rec-a", false, { owner: "rec-a", editedResult: atClick }, atClick)).toBe(translated);
+    endSave("rec-a");
+    // No Save running (nothing noted): the click's result.
+    expect(liveSaveResult("rec-a", true, { owner: "rec-b", editedResult: other }, atClick)).toBe(atClick);
   });
 });

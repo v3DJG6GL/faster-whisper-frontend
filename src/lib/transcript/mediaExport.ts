@@ -788,6 +788,16 @@ export function saveResultFor(owner: string): BatchResult | undefined {
   return saveResults.get(owner);
 }
 
+/** The result `started`'s Save writes once its dialog (or a link's video fetch) has been awaited:
+ *  the panel's latest render while it is mounted and still shows `started`; otherwise (another
+ *  record on screen, or the panel unmounted) the record's own latest noted result, else the
+ *  click's `atClick`. Another record's result is never lent. */
+export function liveSaveResult(
+  started: string, mounted: boolean, shown: { owner: string; editedResult: BatchResult }, atClick: BatchResult,
+): BatchResult {
+  return mounted && shown.owner === started ? shown.editedResult : saveResultFor(started) ?? atClick;
+}
+
 /** Set `owner`'s step with no server job; null clears that record's only. */
 export function setStepProgress(owner: string, p: MediaExportProgress | null): void {
   if (p) steps = { ...steps, [owner]: p };
