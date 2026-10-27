@@ -4,9 +4,10 @@
 import type { AppSettings, SyncSettings } from "./types";
 import { DEFAULT_SETTING_SYNC, withLegacySubKeys } from "./settingsManifest";
 
-/** Sync starts off with every category opted in — flipping "Enable sync" is
- *  the single gate; the toggles then subtract. Machine-local by contract
- *  (never travels in a blob/export), so defaults only matter per-device. */
+/** Flipping "Enable sync" is the single gate; the per-setting gates (`sub`) then
+ *  subtract. The legacy `categories` seed stays all-on so `completeGates` folds no
+ *  gate off. Machine-local by contract (never travels in a blob/export), so
+ *  defaults only matter per-device. */
 export const DEFAULT_SYNC: SyncSettings = {
   enabled: false,
   backendId: null,
