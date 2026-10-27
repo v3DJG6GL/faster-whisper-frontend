@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckHold,
+  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold,
   currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs, stepProcessingStamp, type ProcessingStamp,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
@@ -327,5 +327,17 @@ describe("phase helpers", () => {
     expect(phaseClock(59_999)).toBe("0:59");
     expect(phaseClock(62_000)).toBe("1:02");
     expect(phaseClock(3_600_000)).toBe("60:00");
+  });
+});
+
+describe("chipTuckDelayMs", () => {
+  it("waits the user's Hide after when idle", () => {
+    expect(chipTuckDelayMs(false, 5)).toBe(5000);
+    expect(chipTuckDelayMs(false, 0.2)).toBe(200);
+  });
+
+  it("settles a live keep-minimized session quickly, never slower than Hide after", () => {
+    expect(chipTuckDelayMs(true, 30)).toBe(700);
+    expect(chipTuckDelayMs(true, 0.2)).toBe(200);
   });
 });

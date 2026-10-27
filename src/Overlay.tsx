@@ -17,7 +17,7 @@ import {
   type DictationTone,
 } from "@/lib/dictation/dictationVisual";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckHold, currentPhase,
+  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
@@ -207,11 +207,6 @@ const finiteIn = (v: unknown, lo: number, hi: number, d: number) =>
 // chip's leading edge.
 const EDGE_MARGIN = 28;
 const PEEK_TUCK = 29;
-
-// "Stay hidden while dictating" (peekWhileActive): once a session is live, tuck the dot
-// back to the edge after this short settle rather than waiting the full peekTimeoutSec — the
-// chip is meant to stay hidden, so it shouldn't sit expanded for half a minute first.
-const PEEK_ACTIVE_SETTLE_MS = 700;
 
 // While the webview believes the cursor is on the chip, re-ask the windowing system this
 // often whether that's still true — a dropped WebKitGTK pointerleave (see onPointerEnter)
@@ -1115,8 +1110,7 @@ export default function Overlay() {
     if (statusChanged && !keepMin && !endFlash) setPeeked(false);
     // Idle/standby honours the user's full inactivity timeout; a live keep-minimized session
     // tucks promptly instead. A recent hover extends either via the grace floor.
-    const base =
-      keepMin && activeStatus && !standby ? PEEK_ACTIVE_SETTLE_MS : state.peekTimeoutSec * 1000;
+    const base = chipTuckDelayMs(keepMin && activeStatus && !standby, state.peekTimeoutSec);
     const wait = tuckNow.current ? 0 : Math.max(base, peekGraceUntil.current - performance.now());
     const t = setTimeout(() => {
       tuckNow.current = false;

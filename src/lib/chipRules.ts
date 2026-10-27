@@ -84,6 +84,18 @@ export function chipExpansion(a: {
   return phase != null && persists(phase, a.now);
 }
 
+/** "Stay hidden while dictating" (peekWhileActive): once a session is live, tuck the dot back
+ *  to the edge after this short settle rather than the full Hide after — the chip is meant to
+ *  stay hidden, so it shouldn't sit expanded for half a minute first. */
+const PEEK_ACTIVE_SETTLE_MS = 700;
+
+/** How long the chip waits before tucking to the edge: the user's Hide after, or — during a
+ *  live keep-minimized session — the short settle, but never longer than Hide after itself. */
+export function chipTuckDelayMs(liveKeepMin: boolean, peekTimeoutSec: number): number {
+  const idleMs = peekTimeoutSec * 1000;
+  return liveKeepMin ? Math.min(PEEK_ACTIVE_SETTLE_MS, idleMs) : idleMs;
+}
+
 /** Should an ALREADY-TUCKED chip stay tucked through this state?
  *
  *  The hold exists so a minimized chip hides from the edge instead of sliding out to
