@@ -59,7 +59,7 @@ describe("normalizeMediaUrl", () => {
     expect(pastesSeveralLinks("https://a.tld/x https://b.tld/y")).toBe(true);
   });
   it("rejects two links from adjacent spreadsheet cells (tab-separated) but keeps a tab inside one scheme", () => {
-    // An <input type=text> keeps tabs; stripUrlNoise would delete this one and glue the links together.
+    // An <input type=text> keeps tabs; stripMediaUrlNoise would delete this one and glue the links together.
     expect(normalizeMediaUrl("https://a.com/x\thttps://b.com/y")).toBeNull();
     expect(pastesSeveralLinks("https://a.com/x\thttps://b.com/y")).toBe(true);
     expect(normalizeMediaUrl("ht\ttps://x.com/a")).toBe("https://x.com/a");
