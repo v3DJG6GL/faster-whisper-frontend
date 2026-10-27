@@ -28,7 +28,7 @@ describe("store delete confirms re-read their counts on arm", () => {
 
   // Every row renders its Delete… / confirm pair through one helper.
   const control =
-    settingsSrc.match(/const storeDeleteControl = \(kind: StoreKind, confirmLabel: string\) =>([\s\S]*?)\n {4}\);\n/)?.[1] ?? "";
+    settingsSrc.match(/const storeDeleteControl = \(kind: StoreKind, confirmLabel: string\) =>([\s\S]*?)\r?\n {4}\);\r?\n/)?.[1] ?? "";
   const rendersVia = (kind: string) => new RegExp(`storeDeleteControl\\(\\s*"${kind}",`);
 
   it.each(KINDS)("the %s confirm waits for the arm's count", (kind) => {
