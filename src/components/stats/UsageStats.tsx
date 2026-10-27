@@ -1,6 +1,6 @@
 // The usage surfaces: the Home "Usage" strip (four sparkline tiles + small multiples
 // by kind, off the fixed 30-day document) and the Statistics page (one filter bar —
-// range · kind · with-stages — the measure tiles, the stacked columns by kind bucketed to
+// range · kind · with-stages · measure — the measure tiles, the stacked columns by kind bucketed to
 // the window, the Stages / Dictation / Calendar / Busy panels, off the page's own
 // document). Both read from the store (fed by lib/usage.ts); with no backend reporting usage
 // the Home strip hides and the page shows an empty state.
