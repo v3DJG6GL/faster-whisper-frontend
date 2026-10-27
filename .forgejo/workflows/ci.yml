@@ -46,7 +46,7 @@ jobs:
         # Pull requests build on the ephemeral Linux runner ONLY. The windows leg runs
         # host-mode on the self-hosted VM — no container isolation, machine-wide CARGO_HOME
         # shared with up to 5 concurrent jobs (see the rust-cache comment below), and that
-        # same VM builds the release installers. `pnpm build` and `cargo check` execute
+        # same VM builds the release installers. `pnpm build` and `cargo clippy` execute
         # arbitrary third-party build-time code (vite plugins, build.rs, proc-macros), so a
         # fork PR or a Renovate bump carrying a hijacked crate must not run there.
         # Pushes to master still cover MSVC, and release.yml builds windows again before
@@ -174,9 +174,9 @@ jobs:
       # so both legs run it.
       - run: pnpm test
 
-      # clippy runs everything `cargo check` did plus the lints; any warning — compiler or
-      # clippy — fails the job, on both legs (the Windows leg is the only place the
-      # cfg(windows) code gets linted). --all-targets covers the test modules too.
+      # clippy is the compile check (everything `cargo check` does) plus the lints; any
+      # warning — compiler or clippy — fails the job, on both legs (the Windows leg is the
+      # only place the cfg(windows) code gets linted). --all-targets covers the test modules too.
       # The toolchain floats on stable, so a new Rust release can bring a new lint: fix
       # it, or allow it with a reason where it fires.
       - name: cargo clippy
