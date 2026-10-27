@@ -23,7 +23,7 @@ tauri-plugin-dialog = "2"
 # Route CLI trigger flags (e.g. a DE-bound shortcut → `app --toggle`) to the
 # already-running instance. Must be registered first.
 tauri-plugin-single-instance = "2"
-# In-app global hotkeys (Windows / Linux-X11; no-op on native Wayland).
+# In-app global hotkeys on Linux-X11 (no-op on native Wayland; Windows uses hotkeys/windows.rs).
 tauri-plugin-global-shortcut = "2"
 # "Open at login": .desktop autostart entry (Linux) / registry / LaunchAgent.
 tauri-plugin-autostart = "2"
