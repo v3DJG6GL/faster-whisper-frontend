@@ -185,7 +185,7 @@ mod imp {
 
     /// Build chord specs for every enabled Profile whose hotkey maps cleanly, plus the quick-add
     /// window chord; unmappable / empty ones are skipped. Duplicates and nesting are filtered by
-    /// `chord_engine::registration_conflict` (the twin of the Settings screen's hotkeyConflicts.ts),
+    /// `chord_engine::registration_conflict` (the twin of the frontend's hotkeyConflicts.ts),
     /// first in config order wins, so one keypress can't fire two actions: only a hold strictly
     /// inside a hands-free chord registers, and every other clash is dropped with a WARN.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
