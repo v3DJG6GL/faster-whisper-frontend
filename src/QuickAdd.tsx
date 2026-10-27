@@ -531,8 +531,8 @@ export default function QuickAdd() {
     mutate((rs) => [{ id: nextRowId(), k, v }, ...rs]);
     setFind("");
     setInsert("");
-    setOpenOnSummon(false); // refocus the find field, but keep its dropdown out of the way
-    setFocusInsert(false); // after "add another" the find field gets focus (capture the next word)
+    setOpenOnSummon(false);
+    setFocusInsert(false);
     setShowSeq((s) => s + 1);
   }, [find, insert, mutate]);
 
@@ -727,7 +727,6 @@ export default function QuickAdd() {
               <span className="rounded-pill border border-line bg-surface-2 px-2 py-0.5 text-dim">{rows.length}</span>
             </div>
 
-            {/* mappings — inline-editable, newest-first */}
             <div className="min-h-0 flex-1 overflow-auto px-2 pb-2">
               {rows.length === 0 ? (
                 <div className="px-2 py-8 text-center text-[13px] text-faint">No mappings yet — add your first above.</div>
