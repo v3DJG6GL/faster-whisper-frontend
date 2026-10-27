@@ -191,7 +191,7 @@ windows-sys = { version = "0.61", features = [
 # (transport/proxy.rs), from the same SCDynamicStore it reads the proxy from. The version
 # hyper-util's `client-proxy-system` already pulls in, so this adds no new crate.
 [target.'cfg(target_os = "macos")'.dependencies]
-system-configuration = "0.7"
+system-configuration = "0.8"
 
 [lints.rust]
 unused_crate_dependencies = "allow"
