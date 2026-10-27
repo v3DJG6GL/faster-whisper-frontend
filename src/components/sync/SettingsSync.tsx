@@ -357,7 +357,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           <IncomingAddresses list={categories.backends.list} />
         )}
         <KeyFateNotices fates={keyFates} source="file" />
-        {/* These interpolate a backend name straight out of the imported file: sanitized so a bidi
+        {/* The importer's notes, sanitized like everything else on this consent dialog, so a bidi
             override cannot rewrite the sentence the user reads to decide whether to import. */}
         {result.warnings.slice(0, 20).map((w) => (
           <Notice key={w} tone="warn">
