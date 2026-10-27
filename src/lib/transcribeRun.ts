@@ -2720,8 +2720,8 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  server without a translating stage (any standard one, or a full one with translation off)
  *  no T2T slice at all. `translateTo` undefined means "no translating stage" (as
  *  `translationRunOptions` leaves it) and stays undefined: an explicit empty list would make
- *  `linkTranslateTo` turn a site plan's frozen targets back on while the rail (it reads
- *  `runOptions`, where retryFile stores these) shows no Translating stage.
+ *  `linkTranslateTo` turn a site plan's frozen targets back on, for a server with no stage to
+ *  run them.
  *  `translationAvailable` unset = unknown (caps not loaded): only a standard server is
  *  assumed to lack it. */
 export function reconcileRetryOptions(
