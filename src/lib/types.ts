@@ -396,9 +396,11 @@ export interface SyncSettings {
   enabled: boolean;
   /** Which Backend stores the blob (the "sync server"). null = not chosen. */
   backendId: string | null;
-  /** Per-device category toggles — which parts of the config this device
-   *  pushes AND applies from pulls. OFF categories still round-trip through
-   *  pushes untouched (compose/preserve) so this device never erases them. */
+  /** LEGACY per-device category toggles, frozen since the per-setting gates
+   *  (`sub`) replaced the category rows: no UI writes them, and the engine
+   *  derives its categories from the gates (sync.ts `syncCats`). Read only by
+   *  `completeGates`: the upgrade seed for a pre-manifest map, and the fallback
+   *  for a category with no saved gate. */
   categories: Record<SyncCategory, boolean>;
   /** Per-device per-setting sync gates (see SyncSubSettings). Optional:
    *  configs persisted before the gates existed lack it — the store's
@@ -1199,7 +1201,7 @@ export interface PlanStage {
   device?: string | null;
   /** Whisper compute type, or the translation mode ("fluent"/"faithful"). */
   compute?: string | null;
-  /** Active sub-phase label: waiting | analyzing | resolving | downloading | loading. */
+  /** Active sub-phase label: waiting | preparing | analyzing | resolving | downloading | loading. */
   phase?: string | null;
   estS?: number | null;
   tookS?: number | null;
