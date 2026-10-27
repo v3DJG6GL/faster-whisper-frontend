@@ -1121,7 +1121,8 @@ fn clip_stem(stamp: &str, utterance: u32) -> String {
 /// the single session file.
 ///
 /// A clip's `.txt` is written once its text is complete — at the next ordinal `final`, a hard
-/// break, or close — because a release `final` (no ordinal) can still append held-back words.
+/// break, or close — because the closing `final` (`last`, which cuts no clip) can still append
+/// held-back words.
 ///
 /// The cutting is in memory and synchronous; the files are written by the session's
 /// [`ClipWriter`] thread, in order, so a recordings folder on a sleeping disk or an offline share
@@ -1379,8 +1380,8 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
         Some("ready") => {
             on_event(StreamEvent::Ready {
                 // Same 50 × 200 ceiling the batch path applies: it goes to
-                // `stream://overrides-ignored`, where Home renders `join(", ")` in a wrapping span,
-                // and an unbounded `ready` frame froze the main window.
+                // `stream://overrides-ignored`, where the Dashboard renders `join(", ")` in a
+                // wrapping span, and an unbounded `ready` frame froze the main window.
                 overrides_ignored: bounded_str_vec_field(&v, "overrides_ignored"),
             });
             Frame::Continue
