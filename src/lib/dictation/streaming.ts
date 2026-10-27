@@ -765,9 +765,10 @@ async function maybeTranslate(
     // Pair this phrase with ITS OWN capture row before the request goes out. The one-shot
     // claims nothing: it translates the whole transcript, so no single utterance's receipt is
     // its own (taking the latest id would steal the last live phrase's). And only when this
-    // session TOLD the server to hold per-utterance receipts: a hold session declares
-    // `per_utterance: false`, and after an in-place hands-free upgrade (`applyReclassify`) no
-    // `captured` frame ever comes — waiting for one would park every phrase for the full timeout.
+    // session TOLD the server to hold per-utterance receipts: a session that started without
+    // live insertion declares `per_utterance: false`, and after an in-place hands-free upgrade
+    // (`applyReclassify`) no `captured` frame ever comes — waiting for one would park every
+    // phrase for the full timeout.
     const capturedId = await captureIds.take(
       oneShot || !sessionPerUtteranceDeclared ? null : (opts?.utterance ?? null),
     );
@@ -2200,9 +2201,9 @@ async function ensureListeners(): Promise<void> {
       // Snapshot the document synchronously (so it can't change under the queued task), then pick +
       // inject inside the queue after resolving the CURRENT window's rule — so the method/paste-
       // shortcut follow window switches per segment.
-      //   • clipboard → just the CURRENT hard-break window (committedDoc) — everything since your
-      //     last pause; set_clipboard_persistent replaces the prior owner. It resets each boundary,
-      //     so the clipboard never accumulates the whole session.
+      //   • clipboard → just the CURRENT quiet window (committedDoc past clipBaseline) — everything
+      //     since your last pause; set_clipboard_persistent replaces the prior owner. It resets each
+      //     pause and hard break, so the clipboard never accumulates the whole session.
       //   • typed (paste/direct), append-only → only the new suffix beyond what we've TYPED (diffed
       //     in-queue against injectedText, below). Strip the document's leading whitespace (Whisper
       //     prefixes a space) so the first phrase has none; inner spacing preserved. Never revise.
@@ -3757,9 +3758,9 @@ async function startLiveInner(
   // A caller that had to take focus first (the picker) already read this — using its
   // value keeps the session aimed at the app the user was actually in.
   const targetApp = preresolvedTarget !== undefined ? preresolvedTarget : await getFocusedApp();
-  // The Profile's own overrides, frozen for the session. `resolveTarget` re-reads the
-  // app-rule layer per phrase but never this one — a profile does not change mid-session,
-  // and the poll can outlive `activeProfile`.
+  // The Profile's own overrides, frozen for the session (only a chord-family upgrade swaps
+  // them, see applyReclassify). `resolveTarget` re-reads the app-rule layer per phrase but takes
+  // this one from insertCfg, never from the store — the poll can outlive `activeProfile`.
   const profileInsertion: InsertionOverrides = pov?.insertionOverrides ?? {};
   const { rule, notEditable, method } = resolveInjectionTarget(
     targetApp ?? null,
