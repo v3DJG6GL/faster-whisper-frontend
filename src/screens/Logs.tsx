@@ -295,9 +295,8 @@ export default function Logs() {
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
-  // re-measure); when unlatched, count what arrived for the pill.
-  // Counted by seq watermark, not by length: a loosened filter grows the array without
-  // anything arriving, and at buffer cap each batch evicts as many lines as it adds.
+  // re-measure); when unlatched, count what arrived for the pill (by seq watermark,
+  // see countNewer).
   const prevSeq = useRef(-1);
   useEffect(() => {
     const last = lines.length ? lines[lines.length - 1].seq : -1;
