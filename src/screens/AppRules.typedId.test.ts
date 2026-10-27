@@ -56,4 +56,14 @@ describe("ruleAppId", () => {
     expect(appRuleKey(ruleAppId("C:\\x\\Setup.exe.exe", "setup.exe"))).toBe("setup.exe");
     expect(appRuleKey(ruleAppId("Chrome.exe", "setup.exe"))).toBe("chrome");
   });
+
+  it("re-keys a stored Windows id the detector could never have reported", async () => {
+    const { ruleAppId } = await loadModule(true);
+    // Older builds saved a typed path or Task-Manager name verbatim; re-saving must repair it.
+    const path = "C:\\Apps\\Code.exe";
+    expect(appRuleKey(ruleAppId(path, path))).toBe("code");
+    expect(appRuleKey(ruleAppId(`"${path}"`, `"${path}"`))).toBe("code");
+    expect(appRuleKey(ruleAppId("Chrome.exe", "Chrome.exe"))).toBe("chrome");
+    expect(ruleAppId("setup.exe", "setup.exe")).toBe("setup.exe");
+  });
 });

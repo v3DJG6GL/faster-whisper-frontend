@@ -39,12 +39,15 @@ export function typedAppId(raw: string): string {
   return normalizeAppId(visible.replace(/\.exe$/i, ""));
 }
 
-/** The id a rule keys and saves under. `known` is already in the detector's form (the rule's
- *  stored id, or what "Use current" filled in), so only typed text goes through typedAppId: the
- *  detector strips ONE `.exe` (`Setup.exe.exe` reports `setup.exe`), and stripping again would
- *  arm a rule that never matches. */
+/** The id a rule keys and saves under. `known` is the rule's stored id or what "Use current"
+ *  filled in; when it has a shape the detector can report (lower-case, no path separator or
+ *  quote), it is kept as is, since the detector strips ONE `.exe` (`Setup.exe.exe` reports
+ *  `setup.exe`) and stripping again would arm a rule that never matches. Typed text, and a stored
+ *  id the detector could never have reported (a path or `Chrome.exe` saved by an older build),
+ *  go through typedAppId. */
 export function ruleAppId(raw: string, known: string): string {
-  return raw === known ? normalizeAppId(raw) : typedAppId(raw);
+  const detectorShaped = !/[\\/"]/.test(known) && known === known.toLowerCase();
+  return raw === known && detectorShaped ? normalizeAppId(raw) : typedAppId(raw);
 }
 
 function blankAppRule(): AppRule {
