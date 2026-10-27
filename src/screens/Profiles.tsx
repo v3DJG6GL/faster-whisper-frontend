@@ -883,9 +883,9 @@ export default function Profiles() {
     const p = profiles.find((x) => x.id === id);
     if (p) {
       setDraft(p);
-      // Consume the param ONLY once the target profile exists. The store boots with seeded default
-      // profiles and hydrates the real config async; consuming it on a not-yet-found id would strip
-      // the deep link before hydration, so the editor would never open. An invalid id just lingers
+      // Consume the param ONLY once the target profile exists. The store boots with no profiles
+      // and hydrates the real config async; consuming it on a not-yet-found id would strip the
+      // deep link before hydration, so the editor would never open. An invalid id just lingers
       // harmlessly (no state change, no loop).
       setSearchParams({}, { replace: true });
     }
