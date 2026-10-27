@@ -344,8 +344,7 @@ pub fn run() {
             aux_windows::overlay::prewarm_chip_rule(&cfg);
             // Consolidate all stored audio under the single base folder
             // (dictations/, files/, links/) — idempotent, off the main thread like the log
-            // folder's open: the base can sit on a stalled mount. The sweeps wait for it, so
-            // they look in the right place.
+            // folder's open: the base can sit on a stalled mount.
             commands::queue_audio_layout(app.handle(), cfg.clone());
             // Enforce the saved-recording retention window once per launch, so it also applies
             // to a machine that dictated for months and only just enabled it. Skipped while the
