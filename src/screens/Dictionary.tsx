@@ -664,7 +664,7 @@ export default function Dictionary() {
   // The fallback-selection effect sits below `dirty`: a vanished selection is held while edits are unsaved.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const backend = candidates.find((b) => b.id === selectedId) ?? null;
-  // Mirror of selectedId for the imperative load() ([]-deps): after its await it drops a
+  // Mirror of selectedId for the imperative load() (a stable callback): after its await it drops a
   // stale result if the user switched Backend mid-fetch (else it clobbers the new backend's
   // rules + the user's edits). The load-on-change effect below uses its own `cancelled` flag.
   const selectedIdRef = useRef<string | null>(null);
@@ -926,8 +926,8 @@ export default function Dictionary() {
     if (next === "reload" && backend) void load(backend);
     else if (next === "release") setHeld(null);
   }, [held, hasDirty, backend?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  // The same unsaved-work guard the three list editors register: the sticky bar and the
-  // backend pills already refuse to lose edits, but a sidebar click or the chip's
+  // The same unsaved-work guard the three list editors register: Refresh and the backend
+  // pills already refuse to lose edits, but a sidebar click or the chip's
   // app://navigate would unmount this screen and drop them in silence.
   const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
