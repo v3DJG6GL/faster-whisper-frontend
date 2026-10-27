@@ -1448,9 +1448,9 @@ describe("a stop or cancel during the start invoke", () => {
 
 describe("a translating session re-caps its targets once the server's limit is known", () => {
   // startLiveInner caps the targets from whatever caps are cached; absent caps (a failed
-  // earlier fetch) give the app's ceiling, and a list over TRANSLATION_MAX_TARGETS 422s every
-  // phrase. The session's own forced caps probe must shrink them — before the warm early
-  // return, or a session already proven warm would never be re-capped.
+  // earlier fetch) give the app's ceiling, and a list over the server's TRANSLATION_MAX_TARGETS
+  // 422s every phrase. The session's own forced caps probe must shrink them — before the warm
+  // early return, or a session already proven warm would never be re-capped.
   it("startLiveInner's refreshCaps answer re-applies sendableTargets before the warm check", () => {
     const fn = topLevelFunctions(streamingSrc).startLiveInner;
     const probe = found(fn, "refreshCaps(backend, { force: true })", "startLiveInner must probe the caps");
