@@ -1,6 +1,6 @@
 //! Tauri commands exposed to the web UI, one file per domain. Each file's commands are
 //! re-exported here (`pub use x::*`), so the handler list in lib.rs names every command as
-//! `commands::x`. The helpers below are the ones several domains share.
+//! `commands::<name>`, without its file. The helpers below are the ones several domains share.
 
 mod config;
 mod files;
