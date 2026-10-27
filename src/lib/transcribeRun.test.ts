@@ -1406,13 +1406,13 @@ describe("forgetRecord(null) without deleted (the records stay; pending edits ar
 
   it("the open record keeps its overlays, and a later rename saves onto the moved copy", async () => {
     openHistoryRecord(rec);
-    setRename(rec.id, "SPEAKER_00", "Bob"); // pending when the move lands
+    setRename(rec.id, "SPEAKER_00", "Bob"); // still pending in the debounce
     forgetRecord(null);
-    // The pre-move write is dropped, not landed later on the reloaded mirror.
+    // The pending write is dropped, not landed later.
     vi.advanceTimersByTime(900);
     expect(currentRecord(rec.id)?.renames).toEqual({ SPEAKER_00: "Alice" });
     expect(useTranscribeRun.getState().openRecordId).toBe(rec.id);
-    // loadHistory(true) lands the re-homed copy under the same id.
+    // A History reload lands a re-homed copy under the same id.
     useTranscriptHistory.setState({ records: [{ ...rec, sourcePath: "/new/m.mp3" }] });
     setRename(rec.id, "SPEAKER_00", "Carol");
     flushPersistEdits();
