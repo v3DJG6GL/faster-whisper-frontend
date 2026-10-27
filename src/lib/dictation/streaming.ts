@@ -1412,8 +1412,7 @@ export function resolveInjectionTarget(
   appRules: AppRule[],
   g: GeneralSettings,
   /** The running Profile's overrides, FROZEN at session start. Absent for callers with no
-   *  session context (QuickAdd's correct-on-close paste), which then resolve global ← rule
-   *  exactly as they always did. */
+   *  session context (QuickAdd's correct-on-close paste), which then resolve global ← rule. */
   prof?: InsertionOverrides,
 ): {
   rule: AppRule | undefined;
@@ -3462,8 +3461,8 @@ function flashError(message: string): void {
   // backstop already cancelled, so the chip would stay stuck on "warming up…". resetPartialPreview
   // also drops any pending tick so it cannot repaint a preview over the error.
   resetPartialPreview();
-  // Same call as the status move (see settleIdle): the error supersedes whatever
-  // the cold-translate phase was reporting.
+  // `dictationPhase: null` rides the same call as the status move below (see settleIdle):
+  // the error supersedes whatever the cold-translate phase was reporting.
   resetServerWork();
   useApp.getState().setDictation({ status: "error", dictationError: message, level: 0, partial: "", warming: false, serverWork: null, dictationPhase: null, sessionTargets: null, routePending: null });
   // Failure doorway: the dictation error itself lingers only briefly (chip/Home);
