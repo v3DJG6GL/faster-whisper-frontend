@@ -1566,8 +1566,8 @@ mod imp {
                 let _ = notify!(*code, KeyState::Released).await;
             }
             // The held loop only releases keycodes still pressed; a Caps Lock tap is press+release,
-            // so its toggle survives. If we bailed mid lock-char with Caps left flipped, tap it once
-            // more to restore the user's Caps Lock state.
+            // so its toggle survives. If we bailed mid Caps-bracketed char with Caps left flipped,
+            // tap it once more to restore the user's Caps Lock state.
             if caps_flipped {
                 let _ = notify!(KEY_CAPSLOCK, KeyState::Pressed).await;
                 let _ = notify!(KEY_CAPSLOCK, KeyState::Released).await;
