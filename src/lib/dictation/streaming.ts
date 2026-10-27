@@ -2298,9 +2298,10 @@ async function ensureListeners(): Promise<void> {
             try {
               ({ landed } = await copyForTarget(clipOut, t));
             } catch (e) {
-              // A live phrase's clipboard copy failed: surface it AND tear the session down. Once flashError
-              // sets status "error" no further phrase reaches this catch, so without teardown the Rust capture
-              // keeps the mic open + system muted while the rest of the speech is silently dropped.
+              // The inject command itself rejected (a failed clipboard WRITE answers `landed: false` and is
+              // owed below, not here): surface it AND tear the session down. Once flashError sets status
+              // "error" no further phrase reaches this catch, so without teardown the Rust capture keeps the
+              // mic open + system muted while the rest of the speech is silently dropped.
               console.error("live clipboard insert failed:", e);
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't flash a red error or tear down the freshly-started session B.
@@ -2975,7 +2976,8 @@ async function ensureListeners(): Promise<void> {
       // Do NOT clear `warming` here. "ready" is just the WS/model handshake and
       // usually arrives BEFORE a cold (Bluetooth) mic finishes warming up — clearing it
       // here would flip the chip to "listening" while the mic is still silent. Mid-session,
-      // warming is cleared only by real audio (the level handler) or the safety timeout.
+      // warming is cleared only by real audio (stream://mic-live, or the level handler's
+      // fallback gate) or the safety timeout.
       setDictation({ status: "listening", dictationError: null });
     } else if (e.payload === "loading") {
       // Keepalive while the server cold-loads its model (every ~3s): alive,
