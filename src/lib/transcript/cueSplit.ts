@@ -579,6 +579,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
   const out: Tok[] = [];
   let cur = 0;
   let flags: boolean[] | undefined;
+  let tally: QuoteTally | undefined;
   for (const w of words) {
     const tw = w.word.trim();
     if (!tw) continue;
@@ -604,17 +605,13 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po}|(["']))(["'])$/u.exec(tw);
     if (qm && opensAt(text, cur)) {
       flags ??= quoteFlags(text);
+      tally ??= quoteTally(text, flags);
       const j = cur - 1;
-      let n = 0;
+      const n = tally.before(qm[2], j);
       /** Counted quotes of the kind of the ASCII quote before the glued one (qm[1]), through that
        *  quote: even when it closes one. */
-      let np = 0;
-      let later = false;
-      for (let x = 0; x < text.length; x++) {
-        if (!flags[x]) continue;
-        if (text[x] === qm[2]) { if (x < j) n++; else if (x > j) later = true; }
-        if (x < j && text[x] === qm[1]) np++;
-      }
+      const np = qm[1] ? tally.before(qm[1], j) : 0;
+      const later = tally.after(qm[2], j);
       if (flags[j] && n % 2 === 0 && later && (!qm[1] || (flags[j - 1] && np % 2 === 0))
         && !(/[\p{L}\p{N}]/u.test(text[j - 1]) && skippedOpener(text, flags, j))) {
         tok.to = j;
@@ -927,11 +924,42 @@ function mergeOrphans(text: string, groups: Tok[][], L: Budget): Tok[][] {
     const candidates = [prev, next].filter((m): m is Tok[] => !!m && fits(text, m, L));
     if (!candidates.length) continue;
     const m = candidates.reduce((a, b) => (sliceOf(text, a).length <= sliceOf(text, b).length ? a : b));
-    if (m === prev) out.splice(i - 1, 2, m);
-    else out.splice(i, 2, m);
-    i = -1; // restart: a merge can change a neighbour's fate
+    const at = m === prev ? i - 1 : i;
+    out.splice(at, 2, m);
+    // Re-test from the merged group's left neighbour, whose `next` just changed: every group
+    // further left was already found unmergeable and keeps the neighbours it was judged
+    // against, so a restart from 0 would reach the same first merge, only quadratically later.
+    i = Math.max(-1, at - 2);
   }
   return out;
+}
+
+/** Counted quotes (`flags`) of each ASCII kind around an offset of `text`, from prefix sums built
+ *  once per segment: a scan of the whole text per glued quote made a segment of many such words
+ *  quadratic. `before(q, j)`: how many at offsets < j; `after(q, j)`: whether any lies past j. */
+export interface QuoteTally {
+  before(q: string, j: number): number;
+  after(q: string, j: number): boolean;
+}
+export function quoteTally(text: string, flags: readonly boolean[]): QuoteTally {
+  const dq = new Int32Array(text.length + 1);
+  const sq = new Int32Array(text.length + 1);
+  for (let x = 0; x < text.length; x++) {
+    dq[x + 1] = dq[x] + (flags[x] && text[x] === '"' ? 1 : 0);
+    sq[x + 1] = sq[x] + (flags[x] && text[x] === "'" ? 1 : 0);
+  }
+  const of = (q: string) => (q === '"' ? dq : q === "'" ? sq : null);
+  const at = (j: number) => Math.min(Math.max(j, 0), text.length);
+  return {
+    before: (q, j) => {
+      const p = of(q);
+      return p ? p[at(j)] : 0;
+    },
+    after: (q, j) => {
+      const p = of(q);
+      return !!p && p[text.length] - p[at(j + 1)] > 0;
+    },
+  };
 }
 
 /** Timed pieces of one text inside [start, end]: the first and last piece keep
@@ -1027,6 +1055,11 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   const nCuts = Math.min(shares.length - 1, cand.length);
   let done = 0;
   let prev = 0;
+  /** The first candidate past `prev`: cuts only move right, so earlier ones never score again. */
+  let j0 = 0;
+  /** The most any candidate scores above `-|i - target|`: a sentence end (16) plus a spaced
+   *  Thai/Lao/Khmer/Burmese space (9); every other term is a penalty. */
+  const MAX_BONUS = 25;
   /** text[a..b) trimmed holds fewer than two code points — counted in place: slicing and
    *  spreading the part per candidate would make a long text with many shares quadratic per cut. */
   const oneCp = (a: number, b: number): boolean => {
@@ -1040,9 +1073,13 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     const target = (text.length * done) / tot;
     let best = -Infinity;
     let bi = -1;
-    for (let j = 0; j < cand.length - (nCuts - 1 - k); j++) {
+    let bj = -1;
+    for (let j = j0; j < cand.length - (nCuts - 1 - k); j++) {
       const i = cand[j];
       if (i <= prev) continue;
+      // Candidates ascend: once one past the target cannot beat the best even with every bonus,
+      // no later one can (`s > best` is strict, so ties keep the earlier pick as before).
+      if (i > target && target - i + MAX_BONUS <= best) break;
       // Bounded look-back (NOBREAK words are under 9 chars): slicing and folding the whole
       // prefix per candidate would make unspaced CJK text quadratic.
       const back = text.slice(Math.max(0, i - 9), i);
@@ -1082,11 +1119,13 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       if (s > best) {
         best = s;
         bi = i;
+        bj = j;
       }
     }
     if (bi < 0) break;
     cuts.push(bi);
     prev = bi;
+    j0 = bj + 1;
   }
   const out: string[] = [];
   let a = 0;

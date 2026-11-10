@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
@@ -2694,4 +2694,47 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
   it.each(SPLIT_TOK)("split %s", (_, lang, words, spw, preset, want) => expect(split(lang, words, spw, preset, true, true)).toBe(want));
   it.each(WRAP)("wrap %s", (_, text, cpl, lines, reserve, want) => expect(wrapLines(text, cpl, lines, reserve).join(" / ")).toBe(want));
   it.each(CUT)("cut %s", (_, text, shares, want) => expect(cutByShare(text, shares).join(" | ")).toBe(want));
+});
+
+describe("hostile-size segments stay linear", () => {
+  it("quoteTally counts as the per-word scan did", () => {
+    // The earlier per-word scan, as the reference.
+    const reference = (text: string, flags: boolean[], q2: string, q1: string | undefined, j: number) => {
+      let n = 0, np = 0, later = false;
+      for (let x = 0; x < text.length; x++) {
+        if (!flags[x]) continue;
+        if (text[x] === q2) { if (x < j) n++; else if (x > j) later = true; }
+        if (x < j && text[x] === q1) np++;
+      }
+      return { n, np, later };
+    };
+    let seed = 21;
+    const rand = (k: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % k);
+    for (let round = 0; round < 500; round++) {
+      const text = Array.from({ length: rand(16) }, () => ['"', "'", "a", " "][rand(4)]).join("");
+      const flags = Array.from(text, () => rand(3) > 0);
+      const t = quoteTally(text, flags);
+      for (let j = 0; j < text.length; j++) {
+        for (const [q2, q1] of [['"', undefined], ["'", '"'], ['"', "'"]] as const) {
+          expect({ n: t.before(q2, j), np: q1 ? t.before(q1, j) : 0, later: t.after(q2, j) }).toEqual(reference(text, flags, q2, q1, j));
+        }
+      }
+    }
+  });
+
+  it("thousands of glued quotes, zero-length words and shares finish quickly", () => {
+    const n = 8000;
+    const words = Array.from({ length: n }, (_, i) => ({ word: ' a"', start: i * 0.01, end: i * 0.01 }));
+    const text = words.map((w) => w.word).join("") + " b";
+    const r: BatchResult = {
+      text, language: "en", words,
+      segments: [{ start: 0, end: n * 0.01, text, translations: { de: Array.from({ length: 50_000 }, (_, i) => `w${i % 97}`).join(" ") } }],
+    };
+    const t0 = performance.now();
+    const grid = buildCues(r, { length: "standard", timing: "same" }, ["orig", "de"]);
+    expect(grid.cues.length).toBeGreaterThan(0);
+    const many = cutByShare(Array.from({ length: 50_000 }, (_, i) => `w${i % 97}`).join(" "), Array.from({ length: 5000 }, () => 1));
+    expect(many).toHaveLength(5000);
+    expect(performance.now() - t0).toBeLessThan(3_000);
+  });
 });
