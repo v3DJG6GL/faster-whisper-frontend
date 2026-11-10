@@ -343,12 +343,20 @@ async function flushPass(): Promise<void> {
           persist();
           continue;
         }
+        // The "Report the app I dictate into" switch is read again at SEND time: an outcome
+        // queued while it was on (and the server unreachable) must not carry the app id out
+        // after the user turned it off.
+        const reportApp = st.settings.recording?.reportTargetApp !== false;
         let verdict: PostVerdict;
         try {
           const r = await postUsageOutcomes({
             serverUrl: effectiveServerUrl(backend, st.settings),
             backendId: batch.backendId,
-            outcomes: batch.items.map((x) => x.outcome),
+            outcomes: batch.items.map((x) => {
+              if (reportApp || x.outcome.app_id === undefined) return x.outcome;
+              const { app_id: _off, ...outcome } = x.outcome;
+              return outcome;
+            }),
           });
           verdict = verdictFor(r);
         } catch {

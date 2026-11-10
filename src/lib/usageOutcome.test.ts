@@ -8,6 +8,7 @@ const post = vi.hoisted(() => ({
   holdSaves: false,
   saveRelease: [] as (() => void)[],
   calls: [] as { serverUrl: string; backendId: string }[],
+  sent: [] as unknown[][],
 }));
 // The store the flush reads: config loaded, backend "b" at "u" (its address never moved).
 const store = vi.hoisted(() => ({
@@ -15,7 +16,10 @@ const store = vi.hoisted(() => ({
     configLoaded: true,
     configLoadFailed: false,
     backends: [{ id: "b", serverUrl: "u" }] as { id: string; serverUrl: string }[],
-    settings: { sync: { urlOverrides: {} as Record<string, string> } },
+    settings: {
+      sync: { urlOverrides: {} as Record<string, string> },
+      recording: { reportTargetApp: true as boolean | undefined },
+    },
   },
 }));
 vi.mock("./api", async (orig) => ({
@@ -26,8 +30,9 @@ vi.mock("./api", async (orig) => ({
     post.saves.push(q);
     return post.holdSaves ? new Promise<void>((res) => post.saveRelease.push(res)) : Promise.resolve();
   },
-  postUsageOutcomes: (args: { serverUrl: string; backendId: string }) => {
+  postUsageOutcomes: (args: { serverUrl: string; backendId: string; outcomes: unknown[] }) => {
     post.calls.push({ serverUrl: args.serverUrl, backendId: args.backendId });
+    post.sent.push(args.outcomes);
     return new Promise((res) => post.release.push(() => res({ ok: true, status: 200 })));
   },
 }));
@@ -180,6 +185,7 @@ describe("flushOutcomes posts to the backend's current address", () => {
     store.state.configLoaded = true;
     store.state.backends = [{ id: "b", serverUrl: "u" }];
     store.state.settings.sync.urlOverrides = {};
+    store.state.settings.recording.reportTargetApp = true;
   });
 
   it("an outcome recorded at the old address is posted to the repointed one", async () => {
@@ -195,6 +201,27 @@ describe("flushOutcomes posts to the backend's current address", () => {
     enqueueOutcome("b", "http://old.example:8000", oc(hex(11)));
     await settle();
     expect(post.calls).toEqual([{ serverUrl: "http://lan:9000", backendId: "b" }]);
+  });
+
+  it("an app id queued while reporting was on is not sent once the switch is off", async () => {
+    store.state.configLoaded = false;
+    enqueueOutcome("b", "u", oc(hex(13), { app_id: "firefox" }));
+    await settle();
+    store.state.settings.recording.reportTargetApp = false;
+    store.state.configLoaded = true;
+    post.sent.length = 0;
+    await Promise.race([flushOutcomes(), settle()]);
+    expect(post.sent[post.sent.length - 1]).toEqual([oc(hex(13))]);
+  });
+
+  it("with the switch on the queued app id still goes out", async () => {
+    store.state.configLoaded = false;
+    enqueueOutcome("b", "u", oc(hex(14), { app_id: "firefox" }));
+    await settle();
+    store.state.configLoaded = true;
+    post.sent.length = 0;
+    await Promise.race([flushOutcomes(), settle()]);
+    expect(post.sent[post.sent.length - 1]).toEqual([oc(hex(14), { app_id: "firefox" })]);
   });
 
   it("before the config loads nothing is posted and the outcome stays queued", async () => {
