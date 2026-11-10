@@ -340,10 +340,11 @@ describe("editorProbesAllowed", () => {
     expect(backendsScreenSrc).not.toContain("if (info.ok && !testedKey) setTestedUrls(");
   });
 
-  it("the editor's address line keeps a fitting URL whole and shows a long one's parsed host", () => {
+  it("the editor's address line keeps a fitting URL whole and shows a long or userinfo one's parsed host", () => {
     // Tail-keeping the whole URL showed its PATH end, which can read as a trusted host.
-    expect(backendsScreenSrc).toContain("effUrl.length <= 240 && [...effUrl].length <= 120");
-    expect(backendsScreenSrc).toMatch(/\? safeIdentityText\(effUrl, 120\)\s*: safeHostText\(authorityOf\(effUrl\)\?\.host, 120\) \|\| safeIdentityText\(effUrl, 120\);/);
+    expect(backendsScreenSrc).toContain("const effAuth = authorityOf(effUrl);");
+    expect(backendsScreenSrc).toContain("!effAuth?.hasUserinfo && effUrl.length <= 240 && [...effUrl].length <= 120");
+    expect(backendsScreenSrc).toMatch(/\? safeIdentityText\(effUrl, 120\)\s*: safeHostText\(effAuth\?\.host, 120\) \|\| safeIdentityText\(effUrl, 120\);/);
     expect(backendsScreenSrc).not.toContain("safeHostText(effUrl");
     const path = "https://evil.tld/" + "a".repeat(150) + "/sync.trusted.example.com";
     expect(safeHostText(authorityOf(path)?.host, 120)).toBe("evil.tld");

@@ -86,11 +86,14 @@ export function Editor({
   const effUrl = urlOverride.trim() || b.serverUrl;
   // The header's address line. A synced or imported address is uncapped: over 120 code points a
   // head-kept cut could hide its host, and a tail-kept one shows its PATH end (which can read as a
-  // trusted host), so a long one shows the parsed host it actually connects to instead.
+  // trusted host), so a long one shows the parsed host it actually connects to instead. So does
+  // one with userinfo at any length: `http://localhost:8000<filler>@evil.tld/v1` reads as loopback
+  // head first, and the truncate class hides the real host after the last `@`.
+  const effAuth = authorityOf(effUrl);
   const addressLine =
-    effUrl.length <= 240 && [...effUrl].length <= 120
+    !effAuth?.hasUserinfo && effUrl.length <= 240 && [...effUrl].length <= 120
       ? safeIdentityText(effUrl, 120)
-      : safeHostText(authorityOf(effUrl)?.host, 120) || safeIdentityText(effUrl, 120);
+      : safeHostText(effAuth?.host, 120) || safeIdentityText(effUrl, 120);
   // Debounce the typed key and the address before they drive the best-effort capability /
   // decode-default / override-profile lookups, so typing doesn't fire a burst of requests per keystroke.
   const debouncedKey = useDebounced(key, 400);
@@ -525,8 +528,11 @@ export function Editor({
           <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[14px] font-medium text-text">{backendDisplayName(b.name)}</div>
-            <div className="truncate font-mono text-[11.5px] text-faint" title={addressLine || undefined}>
-              {addressLine || "no address yet"}
+            <div className="flex min-w-0 items-center gap-2 font-mono text-[11.5px] text-faint">
+              <span className="truncate" title={addressLine || undefined}>
+                {addressLine || "no address yet"}
+              </span>
+              {effAuth?.hasUserinfo && <Badge tone="warn">address hides the real host</Badge>}
             </div>
           </div>
           <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>
