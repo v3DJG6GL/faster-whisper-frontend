@@ -1141,12 +1141,16 @@ describe("work that must wait for the queue or the cancel", () => {
     const reset = mask(topLevelFunctions(streamingSrc).resetUtteranceHistory);
     expect(reset).toContain("utteranceRecordChars = 0");
     expect(reset).toContain("utteranceRecordCharsWarned = false");
+    expect(reset).toContain("utteranceTranslationChars = 0");
+    expect(reset).toContain("utteranceTranslationCharsWarned = false");
     // The server-authored translation an insert books onto a record (translatedText + every
-    // track) is charged to the same budget; past it only the insert method is booked.
+    // track) is charged to its OWN budget; past it only the insert method is booked, and the
+    // originals' budget is never touched (a long multi-target session keeps recording them).
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
-    expect(book).toMatch(/if \(session && phrase\.translated\) \{\s*let added = phrase\.text\.length;\s*for \(const t of Object\.values\(phrase\.byLang \?\? \{\}\)\) added \+= t\.length;\s*if \(utteranceRecordChars \+ added > MAX_BANKED_DOC\) \{\s*bookTranslation = false;\s*if \(!utteranceRecordCharsWarned\) \{\s*utteranceRecordCharsWarned = true;/);
-    expect(book).toMatch(/\} else \{\s*utteranceRecordChars \+= added;\s*\}/);
-    const charge = book.indexOf("utteranceRecordChars += added;");
+    expect(book).toMatch(/if \(session && phrase\.translated\) \{\s*let added = phrase\.text\.length;\s*for \(const t of Object\.values\(phrase\.byLang \?\? \{\}\)\) added \+= t\.length;\s*if \(utteranceTranslationChars \+ added > MAX_BANKED_DOC\) \{\s*bookTranslation = false;\s*if \(!utteranceTranslationCharsWarned\) \{\s*utteranceTranslationCharsWarned = true;/);
+    expect(book).toMatch(/\} else \{\s*utteranceTranslationChars \+= added;\s*\}/);
+    expect(book).not.toContain("utteranceRecordChars");
+    const charge = book.indexOf("utteranceTranslationChars += added;");
     expect(charge).toBeLessThan(book.indexOf("patchRecord(rec.id"));
     expect(book).toContain("...(bookTranslation ? utteranceInsertTranslation(");
   });

@@ -556,9 +556,10 @@ const MAX_CLIPLESS_UTTERANCES = 1000;
 /** Per-session ceiling on per-utterance History records (over 8 hours of hands-free speech at
  *  one utterance every few seconds). Each record is a file write and a re-sort of the mirror, and
  *  a server can mint one per ~100-byte frame pair; past this, utterances fold into the last
- *  record instead. The records' text, translations included, shares one session budget
- *  (`utteranceRecordChars`, at MAX_BANKED_DOC): past it no record is written or grown — the
- *  typed text and the session's .txt sidecar are unaffected. */
+ *  record instead. The records' original text shares one session budget (`utteranceRecordChars`,
+ *  at MAX_BANKED_DOC): past it no record is written or grown — the typed text and the session's
+ *  .txt sidecar are unaffected. Their translations have a budget of their own
+ *  (`utteranceTranslationChars`), so running it out never stops the originals being recorded. */
 const MAX_UTTERANCE_RECORDS = 10_000;
 let utteranceRecordCount = 0;
 let utteranceRecordCapWarned = false;
@@ -567,6 +568,11 @@ let utteranceRecordCapWarned = false;
  *  hour of dictation is ~50 KB. */
 let utteranceRecordChars = 0;
 let utteranceRecordCharsWarned = false;
+/** Characters of server-authored translation booked onto this session's records (translatedText
+ *  plus every per-language track). Apart from `utteranceRecordChars` because a multi-target
+ *  session books many times its original length: sharing would run the originals' budget out. */
+let utteranceTranslationChars = 0;
+let utteranceTranslationCharsWarned = false;
 /** The last utterance that got a record — what utterances past the ceiling fold into. Apart from
  *  `lastUtterance` because a break clears that one, and only the session's end clears this. */
 let lastRecordedUtterance: UtteranceEntry | null = null;
@@ -583,6 +589,8 @@ function resetUtteranceHistory(): void {
   utteranceRecordCapWarned = false;
   utteranceRecordChars = 0;
   utteranceRecordCharsWarned = false;
+  utteranceTranslationChars = 0;
+  utteranceTranslationCharsWarned = false;
   lastRecordedUtterance = null;
 }
 
@@ -1093,20 +1101,21 @@ function bookUtteranceInsert(
     ? { targets: sessionTranslation.targets, failure: sessionTranslateFailure ?? undefined }
     : null;
   // The translation joins the record's translatedText AND every per-language track, and the
-  // server authors it: charged against the same session budget as the originals, so a huge
-  // answer to a tiny phrase cannot grow the records past it. Over it, only the method is booked.
+  // server authors it: charged against the session's translation budget, so a huge answer to a
+  // tiny phrase cannot grow the records past it. Over it, only the method is booked — the
+  // originals keep their own budget and are still recorded.
   let bookTranslation = true;
   if (session && phrase.translated) {
     let added = phrase.text.length;
     for (const t of Object.values(phrase.byLang ?? {})) added += t.length;
-    if (utteranceRecordChars + added > MAX_BANKED_DOC) {
+    if (utteranceTranslationChars + added > MAX_BANKED_DOC) {
       bookTranslation = false;
-      if (!utteranceRecordCharsWarned) {
-        utteranceRecordCharsWarned = true;
-        console.warn("[dictation] utterance records hit this session's text budget; later translations are not recorded");
+      if (!utteranceTranslationCharsWarned) {
+        utteranceTranslationCharsWarned = true;
+        console.warn("[dictation] utterance records hit this session's translation budget; later translations are not recorded");
       }
     } else {
-      utteranceRecordChars += added;
+      utteranceTranslationChars += added;
     }
   }
   patchRecord(rec.id, (r) => ({
