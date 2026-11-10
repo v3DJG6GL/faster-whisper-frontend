@@ -2590,6 +2590,20 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(translateText.mock.calls.map(([a]) => a.ids)).toEqual([[0], [1], [2]]);
   });
 
+  it("a value far longer than its segment reads as untranslated, like in a re-translate", async () => {
+    // The server's values are bounded only by its response body: each chunk's would otherwise
+    // pile up in the run (and its joined per-language text) before any save refuses the record.
+    translateText.mockImplementation(() =>
+      Promise.resolve({ results: [{ de: "Hallo.", fr: "f".repeat(4097) }, { de: "d".repeat(4096), fr: "Salut." }] }),
+    );
+    const r = await translateParsed(
+      { segments: [{ text: "Hi." }, { text: "Yo." }] }, { translateTo: ["de", "fr"] }, RUN_CTX,
+    );
+    expect(r.segments![0].translations).toEqual({ de: "Hallo." });
+    // The floor: a short source may still take 4096 characters, not one more.
+    expect(r.segments![1].translations).toEqual({ de: "d".repeat(4096), fr: "Salut." });
+  });
+
   it("the per-target translations join the same way", async () => {
     translateText.mockImplementation(() =>
       Promise.resolve({ results: [{ ja: "やあ。", de: "Hallo." }, { ja: "元気？", de: "Wie geht's?" }] }),

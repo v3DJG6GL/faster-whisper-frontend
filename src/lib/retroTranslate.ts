@@ -39,6 +39,12 @@ function dropOversize(tr: Record<string, string>, cap: number): Record<string, s
   return out;
 }
 
+/** `tr` without the values that are oversize for a segment whose source text is `sourceText`:
+ *  one rule for every chunked translate that merges server values per segment. */
+export function boundTranslationValues(tr: Record<string, string>, sourceText: string): Record<string, string> {
+  return dropOversize(tr, Math.max(MAX_TRANSLATION_GROWTH * sourceText.length, MAX_TRANSLATION_FLOOR));
+}
+
 /** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
  *  leaves these behind, and they are the run's resume set. The viewer's other doors
  *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
@@ -415,8 +421,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     const sent: Record<number, string> = {};
     slice.forEach((segIdx, k) => {
       // An oversize value reads as untranslated, like an absent key: the stale/retry paths apply.
-      const cap = Math.max(MAX_TRANSLATION_GROWTH * texts[k].length, MAX_TRANSLATION_FLOOR);
-      const tr = r.results[k] && dropOversize(budget(r.results[k]), cap);
+      const tr = r.results[k] && boundTranslationValues(budget(r.results[k]), texts[k]);
       if (tr && Object.keys(tr).length) {
         patch[segIdx] = tr;
         kept[segIdx] = r.kept?.[k] ?? [];

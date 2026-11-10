@@ -35,7 +35,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { pruneTargets, wireCodes } from "./translationTargets";
-import { TRANSLATE_CHUNK_CHARS, translationKeyBudget } from "./retroTranslate";
+import { TRANSLATE_CHUNK_CHARS, boundTranslationValues, translationKeyBudget } from "./retroTranslate";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
@@ -2148,7 +2148,13 @@ export async function translateParsed(
       progressId: progressId ?? null,
       fileEpochCancel: true,
     });
-    results.push(...r.results.map((tr) => (tr ? budget(tr) : tr)));
+    // The server's values are bounded only by its response body: an oversize one reads as
+    // untranslated, like an absent key (the same rule as retroTranslate's merge).
+    for (let k = 0; k < r.results.length; k++) {
+      const tr = r.results[k];
+      const src = parsed.segments[at + k]?.text ?? "";
+      results.push(tr ? boundTranslationValues(budget(tr), src) : tr);
+    }
     // Dense and aligned with results — a chunk from an older backend that omits
     // `kept` contributes empty arrays, never a shift.
     for (let k = 0; k < r.results.length; k++) keptAll.push(r.kept?.[k] ?? []);
