@@ -1406,6 +1406,26 @@ pub(crate) fn open_regular_file(
     Ok(Some((f, meta)))
 }
 
+/// Copy `inp` to `out`, failing once more than `len` bytes arrive; returns the bytes copied.
+/// `len` is the size the source's handle reported at open: a file in a folder another account
+/// can write to may keep growing for as long as the copy runs, and must fail the copy instead
+/// of filling the target volume and never finishing. Not `InvalidInput`: `move_dir_contents`
+/// skips that kind, and a source that grew must stop the move.
+pub(crate) fn copy_at_most(
+    inp: &mut impl std::io::Read,
+    out: &mut impl std::io::Write,
+    len: u64,
+) -> std::io::Result<u64> {
+    let n = std::io::copy(
+        &mut std::io::Read::take(&mut *inp, len.saturating_add(1)),
+        out,
+    )?;
+    if n > len {
+        return Err(std::io::Error::other("the source grew during the copy"));
+    }
+    Ok(n)
+}
+
 /// Clear the `O_NONBLOCK` a FIFO-refusing open set, once the handle is known to be a regular
 /// file, so later reads and writes behave exactly as a plain open's. A no-op off Unix.
 pub(crate) fn clear_nonblock(f: &std::fs::File) -> std::io::Result<()> {

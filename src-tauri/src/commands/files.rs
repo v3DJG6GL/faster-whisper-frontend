@@ -94,26 +94,9 @@ fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io:
     })?;
     let mtime = meta.modified().ok();
     let mut out = crate::audio::create_new_private(dest)?;
-    copy_at_most(&mut inp, &mut out, meta.len())?;
+    crate::transport::copy_at_most(&mut inp, &mut out, meta.len())?;
     if let Some(t) = mtime {
         let _ = out.set_modified(t);
-    }
-    Ok(())
-}
-
-/// Copy `inp` to `out`, failing once more than `len` bytes arrive. Not `InvalidInput`:
-/// `move_dir_contents` skips that kind, and a source that grew must stop the move.
-fn copy_at_most(
-    inp: &mut impl std::io::Read,
-    out: &mut impl std::io::Write,
-    len: u64,
-) -> std::io::Result<()> {
-    let n = std::io::copy(
-        &mut std::io::Read::take(&mut *inp, len.saturating_add(1)),
-        out,
-    )?;
-    if n > len {
-        return Err(std::io::Error::other("the source grew during the move"));
     }
     Ok(())
 }
@@ -834,14 +817,14 @@ mod tests {
     #[test]
     fn a_cross_volume_move_copy_stops_on_a_source_that_grew() {
         let mut out = Vec::new();
-        let err = super::copy_at_most(&mut &b"RIFFgrown"[..], &mut out, 4).unwrap_err();
+        let err = crate::transport::copy_at_most(&mut &b"RIFFgrown"[..], &mut out, 4).unwrap_err();
         assert_ne!(
             err.kind(),
             std::io::ErrorKind::InvalidInput,
             "must not be skipped"
         );
         let mut out = Vec::new();
-        super::copy_at_most(&mut &b"RIFF"[..], &mut out, 4).unwrap();
+        crate::transport::copy_at_most(&mut &b"RIFF"[..], &mut out, 4).unwrap();
         assert_eq!(out, b"RIFF");
     }
 

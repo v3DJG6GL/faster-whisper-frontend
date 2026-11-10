@@ -745,10 +745,12 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
 /// there is removed and the copy lands in a file this call creates (`open_export_tmp`).
 fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<u64> {
     // Judged on the handle: `src` was checked by path, and could be swapped for a FIFO since.
-    let (mut r, _) = transport::open_regular_file(src)?
+    let (mut r, meta) = transport::open_regular_file(src)?
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a file"))?;
     let mut w = transport::media::open_export_tmp(dest)?;
-    let n = std::io::copy(&mut r, &mut w)?;
+    // Bounded at the size seen at open: `src` may sit in an audio base another account can
+    // append to, which must not keep the export running and filling the destination volume.
+    let n = transport::copy_at_most(&mut r, &mut w, meta.len())?;
     w.sync_all()?;
     Ok(n)
 }
