@@ -350,10 +350,33 @@ fn format_line(l: &LogLine) -> String {
     let level = l.level.to_uppercase();
     // Right-aligned like the live tail (`tracing_subscriber` pads " INFO"/" WARN"), so the
     // replayed head and the rest of the file share one level column.
+    let (target, msg) = (escape_controls(&l.target), escape_controls(&l.msg));
     match &l.tag {
-        Some(tag) => format!("{ts} {level:>5} {}: [{tag}] {}\n", l.target, l.msg),
-        None => format!("{ts} {level:>5} {}: {}\n", l.target, l.msg),
+        Some(tag) => format!("{ts} {level:>5} {target}: [{tag}] {msg}\n"),
+        None => format!("{ts} {level:>5} {target}: {msg}\n"),
     }
+}
+
+/// The replayed head's copy of the live tail's terminal-escape defence: the ring keeps a message
+/// as written, and one may carry a peer's error text (a D-Bus or server error) with ESC sequences
+/// that would act on whoever later `cat`s the support log. Spelled like `tracing_subscriber`'s
+/// (`\x1b`, `\u{9b}`); newlines and tabs stay, so multi-line messages read as in the live tail.
+fn escape_controls(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\n' | '\t' => out.push(c),
+            c if (c as u32) < 0x80 && c.is_control() => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Create a NEW owner-only `fwf-<stamp>.log` in `dir` — never an existing name, so never through
@@ -676,6 +699,23 @@ mod tests {
         );
         // Level right-aligned in a 5-wide column, as `tracing_subscriber` writes the live tail.
         assert!(out[stamp.len()..].starts_with("  INFO t: m"), "{out:?}");
+    }
+
+    #[test]
+    fn the_replayed_head_escapes_terminal_controls_but_keeps_newlines_and_tabs() {
+        let l = LogLine {
+            seq: 1,
+            ts: 1_700_000_000_123,
+            level: "warn",
+            target: "t\x07".into(),
+            tag: Some("atspi".into()),
+            msg: "\x1b[31mred\r\u{9b}2J\x7f\tnext\nline".into(),
+        };
+        let out = format_line(&l);
+        assert!(
+            out.ends_with(" t\\x07: [atspi] \\x1b[31mred\\x0d\\u{9b}2J\\x7f\tnext\nline\n"),
+            "{out:?}"
+        );
     }
 
     #[test]
