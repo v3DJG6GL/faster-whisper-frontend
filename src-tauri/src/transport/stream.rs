@@ -817,7 +817,7 @@ pub async fn run<F>(
         }
         // Read the remaining finals with an idle window that every server frame
         // RESETS — the `loading` keepalives a cold model load emits every ~3 s
-        // count, so an arbitrarily long load can't get the finished transcript
+        // count, so a long load (up to the ceiling below) can't get the finished transcript
         // discarded. The window must comfortably exceed a slow finalize decode
         // (VPN latency + a busy GPU queue). First-frame window is 30 s when the
         // WHOLE session was silent: an old backend without keepalives cold-loads
@@ -825,6 +825,12 @@ pub async fn run<F>(
         // reader task surfaces it as `Closed` and the drain exits immediately. The
         // UI-side stuck-finalize watchdog (STUCK_FINALIZE_MS, streaming.ts) re-arms
         // on the same keepalives, so the two stay ordered: watchdog > idle window.
+        //
+        // The idle window alone never ends a drain whose server keeps sending frames, so the
+        // whole drain also has an absolute ceiling, far beyond any real cold load plus finalize
+        // decode; hitting it exits through the same timed-out path.
+        const DRAIN_CEILING: Duration = Duration::from_secs(600);
+        let drain_end = tokio::time::Instant::now() + DRAIN_CEILING;
         let mut saw_frame = partials_seen > 0;
         let timed_out = loop {
             let idle = if saw_frame {
@@ -834,7 +840,8 @@ pub async fn run<F>(
             };
             // Clips the writer saves meanwhile go straight out, and are no server frame: they
             // don't reset the idle window.
-            let next = tokio::time::timeout(idle, async {
+            let wait_until = (tokio::time::Instant::now() + idle).min(drain_end);
+            let next = tokio::time::timeout_at(wait_until, async {
                 loop {
                     tokio::select! {
                         from = evt_rx.recv() => break from,
@@ -859,10 +866,16 @@ pub async fn run<F>(
             }
         };
         if timed_out {
-            tracing::warn!(
-                "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
-                if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
-            );
+            if tokio::time::Instant::now() >= drain_end {
+                tracing::warn!(
+                    "[stream] drain ceiling hit ({DRAIN_CEILING:?} since Stop) — pending transcript discarded"
+                );
+            } else {
+                tracing::warn!(
+                    "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
+                    if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
+                );
+            }
             // Surface it too: a bare `Closed` reads as a clean close in the UI, so the last
             // phrase would vanish silently. A WARNING, not an `Error`: everything committed
             // before the timeout is good, and the UI's error path would skip the normal close
@@ -1136,6 +1149,10 @@ struct ClipCutter {
     cut_any: bool,
     /// The document offset the last clip's text starts at, awaiting its `.txt`.
     pending_txt: Option<usize>,
+    /// Bytes of clip `.txt` queued this session, against `MAX_SIDECAR_BYTES` (see `take_txt`).
+    txt_bytes: usize,
+    /// The budget refused a `.txt` already (warn once, not per clip).
+    txt_capped: bool,
     /// The writer's queue. Dropping the cutter closes it: the writer finishes what is queued,
     /// then exits and closes the clip channel [`Self::new`] returned.
     jobs: std::sync::mpsc::Sender<ClipIo>,
@@ -1207,6 +1224,8 @@ impl ClipCutter {
             marks: Vec::new(),
             cut_any: false,
             pending_txt: None,
+            txt_bytes: 0,
+            txt_capped: false,
             jobs,
         };
         (cutter, saved_rx)
@@ -1296,15 +1315,32 @@ impl ClipCutter {
 
     /// The pending clip's text, retired: everything the document gained since its `final` began.
     fn take_txt(&mut self, doc: &str) -> Option<String> {
-        self.pending_txt
-            .take()
-            .map(|start| doc.get(start..).unwrap_or("").to_string())
+        self.take_txt_closed(doc, "")
     }
 
     /// [`Self::take_txt`] at a hard break: the document closes with its output suffix, which the
     /// server sends on the `boundary` rather than in any `final`.
+    ///
+    /// Every clip `.txt` passes here, so the session-wide sidecar budget is enforced here, before
+    /// anything is queued: the text is the server's, and a server re-sending a huge document
+    /// with each final would otherwise queue an unbounded copy per clip. Over budget only the
+    /// `.txt` is dropped (the `.wav` and the typed text are untouched), as `bank_doc` does; a
+    /// real session's clip texts add up to its transcript, far below the budget.
     fn take_txt_closed(&mut self, doc: &str, suffix: &str) -> Option<String> {
-        self.take_txt(doc).map(|txt| txt + suffix)
+        let start = self.pending_txt.take()?;
+        let txt = doc.get(start..).unwrap_or("");
+        let len = txt.len() + suffix.len();
+        if self.txt_bytes + len > MAX_SIDECAR_BYTES {
+            if !std::mem::replace(&mut self.txt_capped, true) {
+                tracing::warn!(
+                    "[stream] clip transcript budget ({} MB) reached — dropping clip .txt files",
+                    MAX_SIDECAR_BYTES / 1_048_576
+                );
+            }
+            return None;
+        }
+        self.txt_bytes += len;
+        Some(format!("{txt}{suffix}"))
     }
 
     /// Queue the pending clip's `.txt` now (at close).
@@ -2138,6 +2174,23 @@ mod clip_tests {
                 on_event,
             );
         }
+    }
+
+    /// The clip `.txt` budget is session-wide: once spent, a clip's text is dropped, not queued.
+    #[test]
+    fn clip_texts_share_one_session_budget() {
+        let dir = scratch("fwf-clip-budget");
+        let (mut c, _rx) = ClipCutter::new(&dir);
+        let doc = "x".repeat(super::MAX_SIDECAR_BYTES / 2 + 1);
+        c.pending_txt = Some(0);
+        assert_eq!(c.take_txt(&doc).map(|t| t.len()), Some(doc.len()));
+        c.pending_txt = Some(0);
+        assert_eq!(c.take_txt_closed(&doc, "."), None);
+        assert_eq!(c.pending_txt, None);
+        c.pending_txt = Some(doc.len() - 3);
+        assert_eq!(c.take_txt(&doc).as_deref(), Some("xxx"));
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// One clip per ordinal final, cut at the decode mark; a release final's words reach the
