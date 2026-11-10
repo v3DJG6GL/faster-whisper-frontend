@@ -404,16 +404,28 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
 /// Write the empty heal stamp at the root of the audio base — a user-picked, possibly shared
 /// folder. Never truncating (the stamp is empty, so there is nothing to cut) and, on Linux, never
 /// through a symlink: a link planted as the stamp then fails the write (the heal stays armed)
-/// instead of emptying the file it points at.
+/// instead of emptying the file it points at. A FIFO planted there is refused without waiting
+/// for a reader (non-blocking open, then a regular-file check on the handle): a blocked open
+/// would park the folder move or the layout job every media action waits on.
 fn write_heal_stamp(stamp: &std::path::Path) -> std::io::Result<()> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create(true);
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NOFOLLOW);
+        #[cfg(target_os = "linux")]
+        opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        #[cfg(not(target_os = "linux"))]
+        opts.custom_flags(libc::O_NONBLOCK);
     }
-    opts.open(stamp).map(drop)
+    let f = opts.open(stamp)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the heal stamp is not a regular file",
+        ));
+    }
+    Ok(())
 }
 
 /// Relocate the whole audio store: move every media subfolder (`AUDIO_SUBDIRS`:
@@ -615,8 +627,8 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
 }
 
 /// The body of `save_text_file`. The predictable `<path>.tmp` goes through `open_export_tmp`,
-/// which on Linux refuses a planted symlink there; the cleanup in `replace_via_tmp` then removes
-/// the link itself (never its target), so a retry goes through.
+/// which removes whatever is planted there (a link itself, never its target) and writes a file
+/// it just created.
 fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
     use std::io::Write as _;
     let tmp = crate::transport::media::tmp_sibling(path);
@@ -743,9 +755,7 @@ mod tests {
         let dest = dir.join("transcript.srt");
         let tmp = crate::transport::media::tmp_sibling(&dest);
         std::os::unix::fs::symlink(&victim, &tmp).unwrap();
-        assert!(super::write_text_atomic(&dest, "exported").is_err());
-        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
-        // The planted link is gone, so the retry writes the export.
+        // The planted link is removed, not written through, and the export goes through.
         super::write_text_atomic(&dest, "exported").unwrap();
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "exported");
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
@@ -890,6 +900,28 @@ mod tests {
         assert!(super::write_heal_stamp(&fresh).is_ok());
         assert!(super::write_heal_stamp(&fresh).is_ok());
         assert!(fresh.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A FIFO planted as the heal stamp fails the write at once instead of parking the caller.
+    #[cfg(unix)]
+    #[test]
+    fn the_heal_stamp_never_waits_on_a_planted_fifo() {
+        let dir = crate::config::fresh_test_dir("healstampfifo");
+        let stamp = dir.join(super::HEAL_STAMP);
+        let c = std::ffi::CString::new(stamp.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = stamp.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(super::write_heal_stamp(&p).is_err());
+        });
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if refused.is_err() {
+            // Unblock the parked open so the thread ends, then fail.
+            let _ = std::fs::OpenOptions::new().read(true).open(&stamp);
+        }
+        assert_eq!(refused, Ok(true));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

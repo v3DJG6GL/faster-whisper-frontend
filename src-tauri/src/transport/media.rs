@@ -32,18 +32,22 @@ pub(crate) fn tmp_sibling(p: &Path) -> std::path::PathBuf {
     t.into()
 }
 
-/// Open an export's `tmp_sibling` for writing: created or truncated with the default mode (an
-/// export is meant to be shared), but on Linux never through a symlink at its last component.
-/// The export folder may be shared, and a planted `<name>.tmp` link would otherwise have the
-/// write truncate and overwrite whatever it points at. Such a link fails the export; the
-/// caller's cleanup removes the link itself (never its target), so a retry goes through.
-/// A planted FIFO is refused the same way: the open is non-blocking on Unix (a FIFO with no
-/// reader fails at once instead of parking the thread where no Cancel reaches it), the handle
-/// must be a regular file (a FIFO with a reader would take the export bytes), and the flag is
-/// cleared again so writes behave as a plain open's.
+/// Open an export's `tmp_sibling` for writing: always a file this call just created (exclusive
+/// create, default mode: an export is meant to be shared). The export folder may be shared, and
+/// another account can plant anything at the predictable `<name>.tmp`: a symlink or hard link
+/// (the write would truncate and overwrite the file it names) or a regular file it owns (the
+/// export would land in an inode it can still read and rewrite). So a stale tmp is removed first
+/// (the link itself, never its target) and the open is `create_new`, which fails on anything
+/// planted between the two. A FIFO is removed the same way; the open is still non-blocking on
+/// Unix and the handle must be a regular file, so no FIFO can park the thread or take the bytes,
+/// and the flag is cleared again so writes behave as a plain open's.
 pub(crate) fn open_export_tmp(tmp: &Path) -> std::io::Result<std::fs::File> {
+    match std::fs::remove_file(tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -461,11 +465,11 @@ pub async fn package_to_path(
 mod tests {
     use super::*;
 
-    // A planted FIFO at the export's tmp name fails the export at once instead of parking the
-    // writer until a reader appears; a regular tmp still opens, truncates and writes.
+    // A planted FIFO at the export's tmp name never parks the writer: it is removed and the
+    // export lands in a fresh regular file.
     #[cfg(unix)]
     #[test]
-    fn export_tmp_refuses_a_fifo_without_waiting_for_a_reader() {
+    fn export_tmp_never_waits_on_a_planted_fifo() {
         use std::io::Write as _;
         let dir = crate::config::fresh_test_dir("exporttmpfifo");
         let fifo = dir.join("clip.mkv.tmp");
@@ -474,15 +478,23 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let p = fifo.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(open_export_tmp(&p).is_err());
+            let _ = tx.send(open_export_tmp(&p).is_ok());
         });
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
+        assert!(std::fs::symlink_metadata(&fifo).unwrap().is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+        // A stale regular tmp is replaced by a new inode: a hard link another account kept to
+        // the planted one still reads its old contents.
+        let dir = crate::config::fresh_test_dir("exporttmpplanted");
         let file = dir.join("clip2.mkv.tmp");
+        let kept = dir.join("planted");
         std::fs::write(&file, b"old contents").unwrap();
+        std::fs::hard_link(&file, &kept).unwrap();
         let mut f = open_export_tmp(&file).unwrap();
         f.write_all(b"new").unwrap();
         drop(f);
         assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::read(&kept).unwrap(), b"old contents");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

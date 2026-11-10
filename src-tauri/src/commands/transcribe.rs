@@ -741,8 +741,8 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
 
 /// Byte-copy `src` into a freshly created `dest`, not `fs::copy`: that would carry the
 /// store's owner-only mode onto an export a media server or another user must read.
-/// Still copy_file_range on Linux. `dest` is always the export's tmp, so it is opened without
-/// following a planted symlink (`open_export_tmp`).
+/// Still copy_file_range on Linux. `dest` is always the export's tmp, so whatever is planted
+/// there is removed and the copy lands in a file this call creates (`open_export_tmp`).
 fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<u64> {
     // Judged on the handle: `src` was checked by path, and could be swapped for a FIFO since.
     let (mut r, _) = transport::open_regular_file(src)?
@@ -1041,8 +1041,9 @@ mod tests {
         std::fs::write(&src, b"audio bytes").unwrap();
         std::fs::write(&victim, b"keep").unwrap();
         std::os::unix::fs::symlink(&victim, &tmp).unwrap();
-        assert!(copy_into_fresh(&src, &tmp).is_err());
+        assert_eq!(copy_into_fresh(&src, &tmp).unwrap(), 11);
         assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"audio bytes");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
