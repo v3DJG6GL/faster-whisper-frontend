@@ -348,8 +348,8 @@ pub fn create_dir_private(dir: &Path) -> std::io::Result<()> {
 fn windows_owner_only_logged(path: &Path) {
     if let Err(e) = windows_owner_only_dacl(path) {
         tracing::warn!(
-            "[audio] could not restrict {} to the current user: {e}",
-            path.display()
+            "[audio] could not restrict {:?} to the current user: {e}",
+            path
         );
     }
 }
@@ -479,7 +479,7 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
     let header = wav_header(pcm.len() as u32, sample_rate, 1);
     match write_new_private(&path, &[&header, pcm]) {
         Ok(()) => {
-            tracing::info!("[record] saved {}", path.display());
+            tracing::info!("[record] saved {path:?}");
             Some(path)
         }
         Err(e) => {
@@ -603,7 +603,7 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) -> bool {
         tracing::warn!("[record] could not write transcript sidecar: {e}");
         false
     } else {
-        tracing::info!("[record] transcript saved {}", txt_path.display());
+        tracing::info!("[record] transcript saved {txt_path:?}");
         true
     }
 }

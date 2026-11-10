@@ -383,17 +383,14 @@ fn create_session_file(dir: &Path, stamp: &str) -> std::io::Result<(std::fs::Fil
 /// live folder change — the new file starts with the ring's last `RING_CAP` lines.
 pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
     if let Err(e) = crate::audio::create_dir_private(dir) {
-        tracing::warn!("[log] cannot create session log dir {}: {e}", dir.display());
+        tracing::warn!("[log] cannot create session log dir {dir:?}: {e}");
         return;
     }
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let (mut file, path) = match create_session_file(dir, &stamp) {
         Ok(created) => created,
         Err(e) => {
-            tracing::warn!(
-                "[log] cannot create session log file fwf-{stamp}.log in {}: {e}",
-                dir.display()
-            );
+            tracing::warn!("[log] cannot create session log file fwf-{stamp}.log in {dir:?}: {e}");
             return;
         }
     };

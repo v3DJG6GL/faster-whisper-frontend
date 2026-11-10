@@ -1,7 +1,10 @@
 //! The audio base folder (layout, move, open) and the file I/O commands: media reads
 //! for playback, text save/read, opening a source link, reveal in the file manager.
 
-use super::{audio_base_pref, require_audio_base, resolve_audio_base, AUDIO_SUBDIRS, HEAL_STAMP};
+use super::{
+    audio_base_pref, custom_folder, require_audio_base, resolve_audio_base, AUDIO_SUBDIRS,
+    HEAL_STAMP,
+};
 use crate::config::Config;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -113,11 +116,7 @@ fn move_dir_contents(
         // that already holds a same-named file — a second install pointed at one synced folder,
         // a re-run after a partial move — keeps it, and the record still points at the source.
         if dest.exists() {
-            tracing::warn!(
-                "[audio] not moving {} — {} already exists",
-                src.display(),
-                dest.display()
-            );
+            tracing::warn!("[audio] not moving {:?} — {:?} already exists", src, dest);
             continue;
         }
         move_file(&src, &dest).map_err(|e| format!("could not move {}: {e}", src.display()))?;
@@ -258,15 +257,18 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     // Legacy recordings: the custom folder (which may BE the new base — then
     // its loose dictation files just move down into dictations/) or the old
     // app-data default.
+    // Only an ABSOLUTE preference names a folder (`custom_folder`, as the base itself resolves):
+    // a relative one ("Downloads", from a sync peer) would sweep a folder relative to the
+    // process's working directory. Such a preference has no legacy folder to sweep.
     let legacy_rec = match &pref {
-        Some(p) => PathBuf::from(p),
+        Some(p) => custom_folder(Some(p)),
         None => match app.path().app_data_dir() {
-            Ok(d) => d.join("recordings"),
+            Ok(d) => Some(d.join("recordings")),
             Err(_) => return false,
         },
     };
     let dict = base.join("dictations");
-    if legacy_rec != dict {
+    if let Some(legacy_rec) = legacy_rec.filter(|l| *l != dict) {
         if let Ok(entries) = std::fs::read_dir(&legacy_rec) {
             for entry in entries.flatten() {
                 let src = entry.path();
@@ -333,9 +335,9 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     }
     if !map.is_empty() {
         tracing::info!(
-            "[audio] layout migration moved {} file(s) under {}",
+            "[audio] layout migration moved {} file(s) under {:?}",
             map.len(),
-            base.display()
+            base
         );
         rewrite_media_paths(app, &map);
     }
@@ -351,18 +353,18 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     // heal armed. (A migration that moved something moved it INTO the base, so it is a folder.)
     if !base.is_dir() {
         tracing::info!(
-            "[audio] audio folder {} unavailable; media-path repair left for a later launch",
-            base.display()
+            "[audio] audio folder {:?} unavailable; media-path repair left for a later launch",
+            base
         );
         return !map.is_empty();
     }
     let stamp = base.join(HEAL_STAMP);
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
-        let _ = std::fs::write(&stamp, b"");
+        let _ = write_heal_stamp(&stamp);
     } else if !map.is_empty() || !stamp.exists() {
         let (complete, fixed) = crate::store::transcripts::heal_media_paths(app, &base);
         if complete {
-            let _ = std::fs::write(&stamp, b"");
+            let _ = write_heal_stamp(&stamp);
         } else {
             let _ = std::fs::remove_file(&stamp);
         }
@@ -370,6 +372,21 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
         return !map.is_empty() || fixed > 0;
     }
     !map.is_empty()
+}
+
+/// Write the empty heal stamp at the root of the audio base — a user-picked, possibly shared
+/// folder. Never truncating (the stamp is empty, so there is nothing to cut) and, on Linux, never
+/// through a symlink: a link planted as the stamp then fails the write (the heal stays armed)
+/// instead of emptying the file it points at.
+fn write_heal_stamp(stamp: &std::path::Path) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    opts.open(stamp).map(drop)
 }
 
 /// Relocate the whole audio store: move every media subfolder (`AUDIO_SUBDIRS`:
@@ -415,7 +432,7 @@ pub async fn move_audio_base(
         if !old_stamp.exists() {
             let _ = std::fs::remove_file(&new_stamp);
         } else if std::fs::rename(&old_stamp, &new_stamp).is_err() {
-            let _ = std::fs::write(&new_stamp, b"");
+            let _ = write_heal_stamp(&new_stamp);
             let _ = std::fs::remove_file(&old_stamp);
         }
         let _ = std::fs::remove_dir(&from); // only if empty
@@ -430,15 +447,11 @@ pub async fn move_audio_base(
             let _ = std::fs::remove_file(&new_stamp);
         }
         match &res {
-            Ok(()) => tracing::info!(
-                "[audio] base moved: {} file(s) → {}",
-                map.len(),
-                to.display()
-            ),
+            Ok(()) => tracing::info!("[audio] base moved: {} file(s) → {:?}", map.len(), to),
             Err(e) => tracing::warn!(
-                "[audio] base move stopped after {} file(s) moved to {}: {e}",
+                "[audio] base move stopped after {} file(s) moved to {:?}: {e}",
                 map.len(),
-                to.display()
+                to
             ),
         }
         res
@@ -457,7 +470,17 @@ enum CappedRead {
 /// otherwise hand over a device or a file that grows, and the read itself stops at `cap + 1`.
 fn read_capped(path: &str, cap: u64) -> Result<Vec<u8>, CappedRead> {
     use std::io::Read as _;
-    let f = std::fs::File::open(path).map_err(CappedRead::Io)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    // Non-blocking open: open(2) on a FIFO otherwise waits for a writer, parking this blocking-pool
+    // thread for good; with it the open returns and the fstat below refuses it. It has no effect
+    // on reading a regular file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let f = opts.open(path).map_err(CappedRead::Io)?;
     let meta = f.metadata().map_err(CappedRead::Io)?;
     if !meta.is_file() {
         return Err(CappedRead::NotAFile);
@@ -799,6 +822,58 @@ mod tests {
                 .map(|e| matches!(e, super::CappedRead::TooLarge)),
             Some(true)
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A named pipe is refused at once instead of parking the reader until a writer appears.
+    #[cfg(unix)]
+    #[test]
+    fn read_capped_refuses_a_fifo_without_waiting_for_a_writer() {
+        let dir = crate::config::fresh_test_dir("readfifo");
+        let fifo = dir.join("subs.srt");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = fifo.to_string_lossy().into_owned();
+        std::thread::spawn(move || {
+            let r = super::read_capped(&path, 1024);
+            let _ = tx.send(matches!(r, Err(super::CappedRead::NotAFile)));
+        });
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if refused.is_err() {
+            // Unblock the parked open so the thread ends, then fail.
+            let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        }
+        assert_eq!(refused, Ok(true));
+        // A regular file still reads whole.
+        let file = dir.join("ok.srt");
+        std::fs::write(&file, b"1\n").unwrap();
+        assert_eq!(
+            super::read_capped(&file.to_string_lossy(), 1024)
+                .ok()
+                .as_deref(),
+            Some(&b"1\n"[..])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A link planted as the heal stamp fails the write instead of emptying its target.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_heal_stamp_never_truncates_through_a_planted_link() {
+        let dir = crate::config::fresh_test_dir("healstamp");
+        let target = dir.join("precious.txt");
+        std::fs::write(&target, b"keep me").unwrap();
+        let stamp = dir.join(super::HEAL_STAMP);
+        std::os::unix::fs::symlink(&target, &stamp).unwrap();
+        assert!(super::write_heal_stamp(&stamp).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep me");
+        // A real stamp is created, and rewriting an existing one is fine.
+        let fresh = dir.join("fresh").join(super::HEAL_STAMP);
+        std::fs::create_dir_all(fresh.parent().unwrap()).unwrap();
+        assert!(super::write_heal_stamp(&fresh).is_ok());
+        assert!(super::write_heal_stamp(&fresh).is_ok());
+        assert!(fresh.is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
