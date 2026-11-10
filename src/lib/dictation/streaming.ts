@@ -556,9 +556,9 @@ const MAX_CLIPLESS_UTTERANCES = 1000;
 /** Per-session ceiling on per-utterance History records (over 8 hours of hands-free speech at
  *  one utterance every few seconds). Each record is a file write and a re-sort of the mirror, and
  *  a server can mint one per ~100-byte frame pair; past this, utterances fold into the last
- *  record instead. The records' text shares one session budget (`utteranceRecordChars`, at
- *  MAX_BANKED_DOC): past it no record is written or grown — the typed text and the session's
- *  .txt sidecar are unaffected. */
+ *  record instead. The records' text, translations included, shares one session budget
+ *  (`utteranceRecordChars`, at MAX_BANKED_DOC): past it no record is written or grown — the
+ *  typed text and the session's .txt sidecar are unaffected. */
 const MAX_UTTERANCE_RECORDS = 10_000;
 let utteranceRecordCount = 0;
 let utteranceRecordCapWarned = false;
@@ -1092,10 +1092,27 @@ function bookUtteranceInsert(
   const session = sessionTranslation
     ? { targets: sessionTranslation.targets, failure: sessionTranslateFailure ?? undefined }
     : null;
+  // The translation joins the record's translatedText AND every per-language track, and the
+  // server authors it: charged against the same session budget as the originals, so a huge
+  // answer to a tiny phrase cannot grow the records past it. Over it, only the method is booked.
+  let bookTranslation = true;
+  if (session && phrase.translated) {
+    let added = phrase.text.length;
+    for (const t of Object.values(phrase.byLang ?? {})) added += t.length;
+    if (utteranceRecordChars + added > MAX_BANKED_DOC) {
+      bookTranslation = false;
+      if (!utteranceRecordCharsWarned) {
+        utteranceRecordCharsWarned = true;
+        console.warn("[dictation] utterance records hit this session's text budget; later translations are not recorded");
+      }
+    } else {
+      utteranceRecordChars += added;
+    }
+  }
   patchRecord(rec.id, (r) => ({
     ...r,
     insertMethod: r.insertMethod === "typed" ? "typed" : how,
-    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, first: rec.first, phrase }, session),
+    ...(bookTranslation ? utteranceInsertTranslation(r, { sent, delta: rec.delta, first: rec.first, phrase }, session) : {}),
   }));
 }
 
