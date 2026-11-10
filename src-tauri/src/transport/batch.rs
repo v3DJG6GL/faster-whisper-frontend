@@ -615,6 +615,48 @@ mod wire_field_tests {
         assert!(r.segments.is_empty());
     }
 
+    /// A server spreading new language keys over the segments cannot grow the result's track
+    /// set past the key budget; a real run's ten targets all survive.
+    #[test]
+    fn translation_keys_share_one_budget_across_the_result() {
+        let langs = |r: &super::BatchResult| {
+            let mut all = std::collections::BTreeSet::new();
+            for m in r
+                .translations
+                .iter()
+                .chain(r.segments.iter().filter_map(|s| s.translations.as_ref()))
+            {
+                all.extend(m.keys().cloned());
+            }
+            all
+        };
+        let ten: serde_json::Map<String, serde_json::Value> = [
+            "de", "fr", "it", "es", "pt-BR", "nl", "pl", "sv", "he", "ja",
+        ]
+        .iter()
+        .map(|l| (l.to_string(), serde_json::json!("x")))
+        .collect();
+        let raw = serde_json::json!({
+            "text": "a", "translations": ten,
+            "segments": [{"start": 0.0, "end": 1.0, "text": "a", "translations": ten}]
+        });
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert_eq!(langs(&r).len(), 10);
+        assert_eq!(r.segments[0].translations.as_ref().unwrap().len(), 10);
+
+        let segs: Vec<serde_json::Value> = (0..50)
+            .map(|i| {
+                let m: serde_json::Map<String, serde_json::Value> = (0..8)
+                    .map(|j| (format!("x{i}-{j}"), serde_json::json!("")))
+                    .collect();
+                serde_json::json!({"start": 0.0, "end": 1.0, "text": "a", "translations": m})
+            })
+            .collect();
+        let raw = serde_json::json!({"text": "a", "segments": segs});
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert_eq!(langs(&r).len(), super::MAX_TRANSLATION_KEYS);
+    }
+
     /// The translating model is provenance (stored, exported): kept whole up to the model-id
     /// cap, dropped past it — never cut into a name no server knows.
     #[test]
@@ -1512,6 +1554,11 @@ async fn post(
 /// included). `text` is deliberately untouched — that IS the output. Shared with
 /// `transport::jobs` (the stored result of a run the app lost the connection to).
 pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
+    // One key budget for the whole result: the top-level map first, then every segment's.
+    let mut langs = std::collections::BTreeSet::new();
+    let translations = parsed
+        .translations
+        .map(|m| bound_translation_keys(m, &mut langs));
     BatchResult {
         text: parsed.text,
         language: parsed
@@ -1531,7 +1578,9 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
                     .map(|sp| super::bounded_server_text(&sp, SPEAKER_MAX));
                 // Translation values are output (untouched, like `text`);
                 // the language-code keys are identity-adjacent — bound them.
-                s.translations = s.translations.map(bound_translation_keys);
+                s.translations = s
+                    .translations
+                    .map(|m| bound_translation_keys(m, &mut langs));
                 // Kept-original markers are language codes too — same bound,
                 // capped at the translate target ceiling.
                 s.translations_kept = s
@@ -1562,7 +1611,7 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
         source_video_error: parsed
             .source_video_error
             .map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
-        translations: parsed.translations.map(bound_translation_keys),
+        translations,
         translation: parsed.translation.map(|t| TranslationInfo {
             // Stored and exported as provenance: the model-id rule, kept whole or dropped.
             model: t
@@ -1578,13 +1627,28 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
     }
 }
 
+/// Most distinct translation language keys one result may carry, across all its maps. A real
+/// result carries only the run's targets, which the server caps at its TRANSLATION_MAX_TARGETS
+/// (at most 10; an inherited TRANSLATE_TO can reach that, past this client's own MAX_TARGETS),
+/// so this leaves headroom. The keys come from the server, and every distinct one becomes a
+/// track the viewer builds and sorts as soon as the result is shown.
+const MAX_TRANSLATION_KEYS: usize = 16;
+
 /// Re-key a translations map through the server-string bound (values are the
-/// translated output and stay untouched, like `text`).
+/// translated output and stay untouched, like `text`). `langs` is the keys the result kept so
+/// far: a key already in it stays, a new one only while it holds fewer than
+/// `MAX_TRANSLATION_KEYS`.
 pub(crate) fn bound_translation_keys(
     m: std::collections::BTreeMap<String, String>,
+    langs: &mut std::collections::BTreeSet<String>,
 ) -> std::collections::BTreeMap<String, String> {
     m.into_iter()
-        .map(|(k, v)| (super::bounded_server_text(&k, LANG_CODE_MAX), v))
+        .filter_map(|(k, v)| {
+            let k = super::bounded_server_text(&k, LANG_CODE_MAX);
+            let keep = langs.contains(&k)
+                || (langs.len() < MAX_TRANSLATION_KEYS && langs.insert(k.clone()));
+            keep.then_some((k, v))
+        })
         .collect()
 }
 

@@ -186,7 +186,7 @@ fn wire_ids(ids: Option<&[usize]>, len: usize) -> anyhow::Result<Vec<usize>> {
 /// Re-order the server's segments by id into dense lists aligned with the input
 /// (`wire_ids[i]` names input i); an id the request did not carry is ignored, a
 /// skipped input keeps an empty map. Translation VALUES are output (untouched), the
-/// language-code keys get bounded.
+/// language-code keys get bounded, in length and in how many distinct ones the result holds.
 fn align_segments(
     segments: Vec<SegmentOut>,
     wire_ids: &[usize],
@@ -199,11 +199,12 @@ fn align_segments(
     let mut results: Vec<BTreeMap<String, String>> =
         (0..wire_ids.len()).map(|_| BTreeMap::new()).collect();
     let mut kept: Vec<Vec<String>> = (0..wire_ids.len()).map(|_| Vec::new()).collect();
+    let mut langs = std::collections::BTreeSet::new();
     for seg in segments {
         let Some(&at) = index.get(&seg.id) else {
             continue;
         };
-        results[at] = super::batch::bound_translation_keys(seg.translations);
+        results[at] = super::batch::bound_translation_keys(seg.translations, &mut langs);
         // Kept-original markers are language codes — bound like the
         // translation keys, capped at the target ceiling.
         kept[at] = super::batch::bound_texts(&seg.kept_original, MAX_TARGETS, LANG_CODE_MAX);
