@@ -978,10 +978,12 @@ pub async fn save_transcript_media(
     let dir = files_media_dir(&app, audio_base)?;
     crate::commands::blocking(move || {
         let src = PathBuf::from(&source_path);
-        let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
-        if !meta.is_file() {
-            return Err("not a file".into());
-        }
+        // Judged on the opened handle and copied from it: the picked file's folder may be
+        // writable by another account, which could swap the path for a FIFO or a link to an
+        // endless device between a stat and a reopen, or keep appending past the cap.
+        let (mut inp, meta) = crate::transport::open_regular_file(&src)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "not a file".to_string())?;
         if meta.len() > MAX_MEDIA_BYTES {
             tracing::info!("[transcripts] media copy skipped (over cap): {source_path:?}");
             return Ok(None);
@@ -997,8 +999,14 @@ pub async fn save_transcript_media(
             // in a shared tree, and a link planted at the tmp name must not be written through.
             // A stale tmp (or such a link) is unlinked first, never followed.
             let _ = std::fs::remove_file(t);
+            use std::io::Read as _;
             let mut out = crate::audio::create_new_private(t)?;
-            std::io::copy(&mut std::fs::File::open(&src)?, &mut out)?;
+            let copied = std::io::copy(&mut (&mut inp).take(MAX_MEDIA_BYTES + 1), &mut out)?;
+            if copied > MAX_MEDIA_BYTES {
+                return Err(std::io::Error::other(
+                    "the media file grew past the copy cap",
+                ));
+            }
             Ok(())
         })
         .map_err(|e| e.to_string())?;

@@ -70,9 +70,15 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 /// `dest` is created fresh and owner-only: every caller has checked nothing is there, and the
 /// target base may be a shared folder where a link planted in between must not be written
 /// through (the open fails instead, and `move_file` unlinks the link).
+///
+/// The source is judged on the opened handle and copied from it: the old base may be writable
+/// by another account, which could swap an entry for a FIFO or a link to an endless device
+/// after the caller's check. Anything not a regular file fails with `InvalidInput`.
 fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
-    let mtime = std::fs::metadata(src).and_then(|m| m.modified()).ok();
-    let mut inp = std::fs::File::open(src)?;
+    let (mut inp, meta) = crate::transport::open_regular_file(src)?.ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file")
+    })?;
+    let mtime = meta.modified().ok();
     let mut out = crate::audio::create_new_private(dest)?;
     std::io::copy(&mut inp, &mut out)?;
     if let Some(t) = mtime {
@@ -119,7 +125,11 @@ fn move_dir_contents(
             tracing::warn!("[audio] not moving {:?} — {:?} already exists", src, dest);
             continue;
         }
-        move_file(&src, &dest).map_err(|e| format!("could not move {}: {e}", src.display()))?;
+        match move_file(&src, &dest) {
+            // Swapped for a non-file after the check above: skipped like one found at the check.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => continue,
+            r => r.map_err(|e| format!("could not move {}: {e}", src.display()))?,
+        }
         map.push((
             src.to_string_lossy().into_owned(),
             dest.to_string_lossy().into_owned(),
