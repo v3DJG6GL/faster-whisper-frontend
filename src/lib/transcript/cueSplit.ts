@@ -867,16 +867,22 @@ function fits(text: string, ts: Tok[], L: Budget): boolean {
  *  a two-word side off one end nest one level per cut, past the call stack's depth. */
 function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
   const out: Tok[][] = [];
+  // Each range costs work in its size, and those peeling cuts make the total quadratic: minutes
+  // for a 100k-word segment. Past this budget a range is cut at its middle instead, which bounds
+  // the rest to n log n. Real segments split far inside it (balanced cuts scan ~n log2 n).
+  const budget = 64 * all.length + 4096;
+  let scanned = 0;
   // Right half pushed first, so the left one pops first and the groups come out in text order.
   const stack: [number, number][] = [[0, all.length]];
   for (let r = stack.pop(); r; r = stack.pop()) {
     const [lo, hi] = r;
+    scanned += hi - lo;
     const ts = all.slice(lo, hi);
     if (ts.length < 2 || fits(text, ts, L)) {
       out.push(ts);
       continue;
     }
-    const bi = bestSeam(text, ts, L);
+    const bi = scanned > budget ? Math.floor(ts.length / 2) : bestSeam(text, ts, L);
     stack.push([lo + bi, hi], [lo, lo + bi]);
   }
   return out;

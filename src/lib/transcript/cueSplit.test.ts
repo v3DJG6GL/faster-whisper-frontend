@@ -2777,7 +2777,8 @@ describe("splitTokens on a server-sized segment", () => {
   // Seam k scores breakScore(word k-1) + 120 × the pause before word k, less a balance term of up
   // to 30. Words and pauses picked so that score falls like 62·ln(n / (n - k)) keep the two-word
   // cut at the left end the best one at every level: about n/2 nested splits, which overflowed
-  // the call stack of the recursive version at this size.
+  // the call stack of the recursive version past ~10k words, and with best seams all the way
+  // took quadratic time (20k words: ~25 s).
   function peelingSegment(n: number): BatchResult {
     const tiers: [string, number][] = [["x.", 100], ["x,", 40], ["xx", 0], ["to", -80]];
     const target = (k: number) => 160 - 62 * Math.log(n / Math.max(1, n - k));
@@ -2795,10 +2796,13 @@ describe("splitTokens on a server-sized segment", () => {
     return { text, language: "en", words, segments: [{ start: 0, end: t, text }] };
   }
 
-  it("splits a deeply nesting segment without running out of stack, covering every word in order", () => {
-    const r = peelingSegment(10_000);
+  it("splits a deeply nesting segment without running out of stack, in bounded time, covering every word in order", () => {
+    const r = peelingSegment(20_000);
+    const t0 = performance.now();
     const { cues } = buildCues(r, { length: "standard", timing: "same" }, ["orig"]);
-    expect(cues.length).toBeGreaterThan(4_000);
+    expect(performance.now() - t0).toBeLessThan(2_000);
+    // Split all the way down (a cue holds a few dozen of these words), not cut short.
+    expect(cues.length).toBeGreaterThan(2_000);
     expect(cues.map((c) => c.text).join(" ")).toBe(r.text.trim());
-  }, 60_000);
+  });
 });
