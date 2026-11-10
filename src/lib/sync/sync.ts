@@ -3606,17 +3606,43 @@ export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
       ? FOLDER_DETAIL_MAX
       : 200;
 
+/** Rust `char::is_whitespace` (the Unicode White_Space property): JS `\s` plus U+0085, minus
+ *  U+FEFF. */
+const isRustWhitespace = (c: number): boolean =>
+  (c >= 0x09 && c <= 0x0d) || c === 0x20 || c === 0x85 || c === 0xa0 || c === 0x1680 ||
+  (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
+
+/** `s` with its edges trimmed as Rust `str::trim` trims them (every White_Space code point is in
+ *  the BMP, so a UTF-16 walk sees each one whole). A loop, not a `\s+$` regex: that one restarts
+ *  at every offset of a long blank run. */
+function trimRustWhitespace(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && isRustWhitespace(s.charCodeAt(a))) a++;
+  while (b > a && isRustWhitespace(s.charCodeAt(b - 1))) b--;
+  return a === 0 && b === s.length ? s : s.slice(a, b);
+}
+
 /** The folder a synced path names once the OS has collapsed its `.` / `..` components and
  *  repeated separators — lexically, with Windows rules for a drive-letter or UNC path (either
  *  separator; `..` never climbs above `C:\` or `\\host\share`) and POSIX rules otherwise (never
  *  above `/`). The peer writes the path, and both OSes resolve these before opening it, so a `..`
  *  hidden between padding walls would otherwise move the destination unseen. A path with none of
  *  them (every folder-picker path) is returned unchanged, character for character; so is a
- *  verbatim `\\?\` path, which Windows opens as written. */
-export function resolvedFolderPath(p: string): string {
+ *  verbatim `\\?\` path, which Windows opens as written. Edge whitespace goes first, as Rust trims
+ *  it before opening. */
+export function resolvedFolderPath(raw: string): string {
+  // No OS opens a path this long (Windows caps one at 32767 UTF-16 units even as `\\?\`, Linux
+  // at 4096 bytes), so a move to it fails wherever it points; the display helper bounds the rest.
+  // Without this every render of the row would split and rejoin a peer's multi-MB path.
+  if (raw.length > 32767) return raw;
+  // Rust trims the stored path (`str::trim`, Unicode White_Space) before it opens it, so a peer's
+  // leading blank must not keep the root tests below from seeing the path it pads.
+  const p = trimRustWhitespace(raw);
   const drive = /^[A-Za-z]:[\\/]/.test(p);
-  // `//host/share` is a UNC path only where Windows opens it; Linux reads it as `/host/share`.
-  const unc = !drive && /^[\\/]{2}[^\\/]/.test(p) && (IS_WINDOWS || p.slice(0, 2).includes("\\"));
+  // `//host/share` is a UNC path only where Windows opens it; Linux reads it as `/host/share`, and
+  // `/\host\share` as `/` plus a `\host\share` file name.
+  const unc = !drive && /^[\\/]{2}[^\\/]/.test(p) && (IS_WINDOWS || !p.startsWith("/"));
   const win = drive || unc;
   if (unc && /^[\\/]{2}\?[\\/]/.test(p)) return p;
   let root: string;

@@ -177,6 +177,39 @@ describe("securityChanges: folder moves", () => {
     // A verbatim path is opened as written: shown as written.
     expect(resolvedFolderPath("\\\\?\\C:\\a\\..\\b")).toBe("\\\\?\\C:\\a\\..\\b");
   });
+  it("resolves the path Rust opens: edges trimmed as `str::trim` trims them", () => {
+    // A leading blank kept the root tests from seeing the path, so its `..` showed unresolved.
+    const evil = " /home/me/Music/../../../tmp/evil";
+    expect(resolvedFolderPath(evil)).toBe("/tmp/evil");
+    expect(consentDetailText({ kind: "audio-folder", detail: evil })).toBe("/tmp/evil");
+    expect(consentDetailTitle({ kind: "audio-folder", detail: evil })).toBe(safeIdentityText(evil, 4096));
+    expect(resolvedFolderPath("\t\\\\host\\share\\a\\..\\..\\other")).toBe("\\\\host\\share\\other");
+    // U+0085 is White_Space to Rust but not to JS `\s`.
+    expect(resolvedFolderPath("\u0085C:\\Users\\me\\..\\..\\Public")).toBe("C:\\Public");
+    expect(resolvedFolderPath("\u3000/a/b/..\u00a0")).toBe("/a");
+    // A trailing "..  " is a `..` once trimmed.
+    expect(resolvedFolderPath("/home/me/rec/..  ")).toBe("/home/me");
+    // A padded path with nothing to resolve still differs from the raw one, so the tooltip shows it.
+    expect(resolvedFolderPath(" /home/me/rec ")).toBe("/home/me/rec");
+    expect(consentDetailTitle({ kind: "log-folder", detail: " /home/me/rec " })).toBeDefined();
+    // U+FEFF is not White_Space: Rust keeps it, so the path stays relative and unresolved.
+    expect(resolvedFolderPath("\ufeff/a/../b")).toBe("\ufeff/a/../b");
+  });
+  it("reads a `/\\` path by POSIX rules off Windows", () => {
+    // Linux opens `/` + a `\home\me` file name, not a UNC share.
+    expect(resolvedFolderPath("/\\home\\me/../tmp")).toBe("/tmp");
+    expect(resolvedFolderPath("/\\home\\me/a/../../../tmp/evil")).toBe("/tmp/evil");
+  });
+  it("leaves a path no OS opens as it is, without resolving it", () => {
+    const huge = "/" + "./".repeat(20000) + "../tmp";
+    const t0 = performance.now();
+    expect(resolvedFolderPath(huge)).toBe(huge);
+    expect(performance.now() - t0).toBeLessThan(50);
+    // One at the Windows limit still resolves.
+    const edge = "/a/.." + "/b".repeat((32767 - 5) / 2);
+    expect(edge.length).toBe(32767);
+    expect(resolvedFolderPath(edge)).toBe("/b".repeat((32767 - 5) / 2));
+  });
 });
 
 describe("an unattended pull that moves a synced folder", () => {
