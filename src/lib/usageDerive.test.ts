@@ -371,6 +371,32 @@ describe("usageDerive", () => {
     expect(sumKinds(m.cells).all.words).toBe(450);
   });
 
+  it("rhythmModel months: an unchecked window stays bounded; side bars match the per-row filter count", () => {
+    const started = performance.now();
+    const huge = rhythmModel("months", { series: [pt(20_000, 100)] }, "all", "words", 0, 9_999_999);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(huge.layout.rows).toBe(100);
+    expect(huge.layout.rowLabel(0)).toBe("1970");
+    // The occurrence counts the side bars divide by, as the earlier filter-per-row/column read them.
+    const indexOf = (tot: readonly number[], occ: readonly number[], sum: number) => {
+      const so = occ.reduce((a, v) => a + v, 0);
+      return tot.map((v, i) => (sum > 0 && so > 0 && occ[i] > 0 ? v / occ[i] / (sum / so) : 0));
+    };
+    let seed = 11;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 200; round++) {
+      const from = 19_000 + rand(2_000);
+      const to = from + rand(2_500);
+      const series = Array.from({ length: rand(12) }, () => pt(from - 30 + rand(to - from + 60), 1 + rand(500)));
+      const m = rhythmModel("months", { series }, "all", "words", from, to);
+      const active = m.cells.filter((c) => c.inWindow);
+      const rowOcc = Array.from({ length: m.layout.rows }, (_, r) => active.filter((x) => x.row === r).length);
+      const colOcc = Array.from({ length: 12 }, (_, c) => active.filter((x) => x.col === c).length);
+      expect(m.rowIndex).toEqual(indexOf(m.rowTotals, rowOcc, m.sum));
+      expect(m.colIndex).toEqual(indexOf(m.colTotals, colOcc, m.sum));
+    }
+  });
+
   it("rhythmModel months: months the window does not touch are out of the window, not zero months", () => {
     // 15 Aug – 13 Sep 2026 (30 days): two live months, ten unreachable ones in the 2026 row.
     const aug15 = 20_680, sep13 = 20_709;

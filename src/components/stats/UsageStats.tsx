@@ -413,7 +413,11 @@ export function StatisticsView({
     // a real echo always spans at least one day, so anything else resolves locally.
     const r = stats?.range;
     // An out-of-range day would throw in the date formatters, so the echo must be whole.
-    const echoed = fresh && !!r && isDay(r.from) && isDay(r.to) && r.to > 0 && r.to >= r.from && r.days === r.to - r.from + 1;
+    // Nor may it end later than asked: today (+1 for a server a time zone ahead), or a custom
+    // span's own end.
+    const latest = Math.max(today + 1, query.range === "custom" && query.to !== undefined ? query.to : 0);
+    const echoed =
+      fresh && !!r && isDay(r.from) && isDay(r.to) && r.to > 0 && r.to >= r.from && r.to <= latest && r.days === r.to - r.from + 1;
     if (echoed) return { from: r!.from, to: r!.to, days: r!.days, bounded: true };
     // "All time" resolves to today..today until the first day is known: a stand-in, not a span.
     const first = r?.first_day;

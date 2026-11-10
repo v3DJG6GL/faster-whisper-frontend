@@ -706,6 +706,9 @@ export function sumKinds(cells: readonly KindSplit[]): UsageKinds {
   return out;
 }
 
+/** Year rows the months rhythm draws at most (from the window's first year). */
+const MAX_RHYTHM_YEARS = 100;
+
 const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 
 /** `loose` (days only): the document does not fit `from`..`to` — a stand-in span, or data
@@ -731,7 +734,10 @@ function rhythmLayout(rhythm: Rhythm, from: number, to: number, loose = false): 
     };
   }
   if (rhythm === "months") {
-    const years = Math.max(1, ty - fy + 1);
+    // Capped like the days branch's span: an unchecked window ({from: 0, to: 9999999}) would
+    // otherwise build ~27k year rows on the main thread. The server clamps every window it
+    // echoes to ten years, so a real grid is far below the cap.
+    const years = Math.min(Math.max(1, ty - fy + 1), MAX_RHYTHM_YEARS);
     return {
       rows: years, cols: 12, y0: fy, colOcc: null,
       rowLabel: (r) => String(fy + r),
@@ -904,11 +910,14 @@ export function rhythmModel(
   // A side bar compares its average per occurrence with the flat one: a year has twelve
   // 1sts but seven 31sts, a 30-day window five of two weekdays and four of the rest, and a
   // month the window never touches does not occur at all.
-  const monthOcc = (at: (c: RhythmCell) => number, i: number) => active.filter((x) => at(x) === i).length;
+  // One counting pass (not a filter per row and column, which is rows × cells).
+  const monthColOcc = new Array<number>(L.cols).fill(0);
+  const monthRowOcc = new Array<number>(L.rows).fill(0);
+  if (rhythm === "months") for (const x of active) { monthColOcc[x.col]++; monthRowOcc[x.row]++; }
   const colOcc = Array.from({ length: L.cols }, (_, c) =>
-    L.colOcc ? L.colOcc[c] : rhythm === "months" ? monthOcc((x) => x.col, c) : 1);
+    L.colOcc ? L.colOcc[c] : rhythm === "months" ? monthColOcc[c] : 1);
   const rowOcc = Array.from({ length: L.rows }, (_, r) =>
-    wd ? wd[r] : rhythm === "months" ? monthOcc((x) => x.row, r) : 1);
+    wd ? wd[r] : rhythm === "months" ? monthRowOcc[r] : 1);
   const index = (tot: readonly number[], occ: readonly number[]) => {
     const so = occ.reduce((a, v) => a + v, 0);
     return tot.map((v, i) => (sum > 0 && so > 0 && occ[i] > 0 ? v / occ[i] / (sum / so) : 0));
