@@ -2772,3 +2772,33 @@ describe("input-sized text stays off the call stack and linear", () => {
     expect(performance.now() - t0).toBeLessThan(800);
   });
 });
+
+describe("splitTokens on a server-sized segment", () => {
+  // Seam k scores breakScore(word k-1) + 120 × the pause before word k, less a balance term of up
+  // to 30. Words and pauses picked so that score falls like 62·ln(n / (n - k)) keep the two-word
+  // cut at the left end the best one at every level: about n/2 nested splits, which overflowed
+  // the call stack of the recursive version at this size.
+  function peelingSegment(n: number): BatchResult {
+    const tiers: [string, number][] = [["x.", 100], ["x,", 40], ["xx", 0], ["to", -80]];
+    const target = (k: number) => 160 - 62 * Math.log(n / Math.max(1, n - k));
+    const words: TranscriptWord[] = [];
+    let t = 0;
+    let prevScore = 0;
+    for (let k = 0; k < n; k++) {
+      t += k === 0 ? 0 : Math.min(0.4999, Math.max(0, (target(k) - prevScore) / 120));
+      const [word, score] = tiers.find(([, b]) => b <= target(k + 1)) ?? tiers[tiers.length - 1];
+      prevScore = score;
+      words.push({ word: " " + word, start: t, end: t + 0.6 });
+      t += 0.6;
+    }
+    const text = words.map((w) => w.word).join("");
+    return { text, language: "en", words, segments: [{ start: 0, end: t, text }] };
+  }
+
+  it("splits a deeply nesting segment without running out of stack, covering every word in order", () => {
+    const r = peelingSegment(10_000);
+    const { cues } = buildCues(r, { length: "standard", timing: "same" }, ["orig"]);
+    expect(cues.length).toBeGreaterThan(4_000);
+    expect(cues.map((c) => c.text).join(" ")).toBe(r.text.trim());
+  }, 60_000);
+});

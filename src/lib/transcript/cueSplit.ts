@@ -564,7 +564,7 @@ interface Tok {
   s: number;
   e: number;
   /** Cached breakScore of the gap before this token — it depends only on the two
-   *  adjacent tokens and the words either side, read from the text, which every recursion level
+   *  adjacent tokens and the words either side, read from the text, which every level
    *  of splitTokens shares. */
   bs?: number;
   /** An opening quote split off the word it was glued to (tokensOf): no cue ends on it. */
@@ -862,9 +862,28 @@ function fits(text: string, ts: Tok[], L: Budget): boolean {
   return wrapLines(s, L.cpl, L.lines, L.reserve, L.q?.(at, at + s.length), L.lang).length <= L.lines;
 }
 
-/** Recursive best-gap split until every piece fits. */
-function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
-  if (ts.length < 2 || fits(text, ts, L)) return [ts];
+/** Best-gap split until every piece fits. A loop over an explicit stack of [lo, hi) ranges, not
+ *  recursion: a server-supplied segment carries any number of words, and timings that keep cutting
+ *  a two-word side off one end nest one level per cut, past the call stack's depth. */
+function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
+  const out: Tok[][] = [];
+  // Right half pushed first, so the left one pops first and the groups come out in text order.
+  const stack: [number, number][] = [[0, all.length]];
+  for (let r = stack.pop(); r; r = stack.pop()) {
+    const [lo, hi] = r;
+    const ts = all.slice(lo, hi);
+    if (ts.length < 2 || fits(text, ts, L)) {
+      out.push(ts);
+      continue;
+    }
+    const bi = bestSeam(text, ts, L);
+    stack.push([lo + bi, hi], [lo, lo + bi]);
+  }
+  return out;
+}
+
+/** The index in `ts` of the seam splitTokens cuts at. */
+function bestSeam(text: string, ts: Tok[], L: Budget): number {
   const total = sliceOf(text, ts).length || 1;
   let best = -Infinity;
   let bi = -1;
@@ -909,7 +928,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     }
   }
   if (bi < 0) bi = Math.floor(ts.length / 2);
-  return [...splitTokens(text, ts.slice(0, bi), L), ...splitTokens(text, ts.slice(bi), L)];
+  return bi;
 }
 
 /** A one-word or too-short piece joins its shorter neighbour when the merge still fits. */
