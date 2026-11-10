@@ -983,7 +983,7 @@ pub async fn save_transcript_media(
             return Err("not a file".into());
         }
         if meta.len() > MAX_MEDIA_BYTES {
-            tracing::info!("[transcripts] media copy skipped (over cap): {source_path}");
+            tracing::info!("[transcripts] media copy skipped (over cap): {source_path:?}");
             return Ok(None);
         }
         crate::audio::create_dir_private(&dir)

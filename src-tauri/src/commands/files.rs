@@ -558,7 +558,7 @@ pub async fn reveal_in_folder(path: String) -> Result<(), String> {
 pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, String> {
     super::blocking(move || {
         crate::audio::decode::decode_to_cached_wav(&app, &path).map_err(|e| {
-            tracing::warn!("[playback] decode failed for {path}: {e}");
+            tracing::warn!("[playback] decode failed for {path:?}: {e}");
             e
         })
     })
