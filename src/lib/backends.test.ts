@@ -4,6 +4,7 @@ import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 import { backend } from "./sync/syncTestFixtures";
 import backendsScreenSrc from "../screens/Backends.tsx?raw";
+import { safeHostText } from "./sanitize";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -337,6 +338,15 @@ describe("editorProbesAllowed", () => {
     // A keyless Test confirms nothing for a key a pull adds later; keyless probes pass on `!keyStored`.
     expect(backendsScreenSrc).toContain("if (info.ok && !testedKey && hadKey) setTestedUrls(");
     expect(backendsScreenSrc).not.toContain("if (info.ok && !testedKey) setTestedUrls(");
+  });
+
+  it("the editor's address line keeps a fitting URL whole and shows a long one's parsed host", () => {
+    // Tail-keeping the whole URL showed its PATH end, which can read as a trusted host.
+    expect(backendsScreenSrc).toContain("effUrl.length <= 240 && [...effUrl].length <= 120");
+    expect(backendsScreenSrc).toMatch(/\? safeIdentityText\(effUrl, 120\)\s*: safeHostText\(authorityOf\(effUrl\)\?\.host, 120\) \|\| safeIdentityText\(effUrl, 120\);/);
+    expect(backendsScreenSrc).not.toContain("safeHostText(effUrl");
+    const path = "https://evil.tld/" + "a".repeat(150) + "/sync.trusted.example.com";
+    expect(safeHostText(authorityOf(path)?.host, 120)).toBe("evil.tld");
   });
 
   it("a typed key, or no stored key, has nothing to carry", () => {
