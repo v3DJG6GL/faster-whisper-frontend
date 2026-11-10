@@ -10,6 +10,8 @@ import {
   peerDeviceName,
   profileDisplayName,
   ruleListLabel,
+  safeDisplayText,
+  safeHostText,
   safeIdentityText,
   stripControlChars,
   trimLeadingInvisible,
@@ -93,6 +95,70 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("a" + " ".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
     expect(safeIdentityText("a" + "\u2800".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
     expect(performance.now() - t0).toBeLessThan(1000);
+  });
+});
+
+// The implementation before the pre-cut, as the reference: the same passes over the whole string.
+// Its private predicates are read through the public ones (no character is in two of the classes).
+function identityReference(s: unknown, max = 80): string {
+  const dropped = (ch: string) => safeDisplayText(ch, 2) === "";
+  const invisible = (ch: string) => ch !== "\u200c" && ch !== "\u200d" && trimLeadingInvisible(ch) === "";
+  const raw = typeof s === "string" ? trimLeadingInvisible(s) : "";
+  const defanged = [...raw]
+    .map((ch) => (/\s/.test(ch) ? " " : dropped(ch) ? "" : invisible(ch) ? " " : ch))
+    .join("");
+  const collapsed = defanged
+    .replace(/[\u200c\u200d]+/g, (m, off: number, str: string) =>
+      /\s/.test(str[off - 1] ?? "") || /\s/.test(str[off + m.length] ?? "") ? " " : m[0],
+    )
+    .replace(/\s+/g, " ");
+  const t = safeDisplayText(collapsed.trim(), max + 1);
+  const chars = [...t];
+  return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
+}
+
+describe("safeIdentityText's pre-cut", () => {
+  it("renders exactly what the whole-string passes rendered", () => {
+    const alphabet = ["a", "é", "😀", " ", "\t", "\u2800", "\u200d", "\u200c", "\u200b", "\u0001", "\ufe0f", "\ud800", "."];
+    let seed = 5;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 5000; round++) {
+      const s = Array.from({ length: rand(24) }, () => alphabet[rand(alphabet.length)]).join("");
+      const max = 1 + rand(8);
+      expect(safeIdentityText(s, max), JSON.stringify([s, max])).toBe(identityReference(s, max));
+      // The reference itself agrees with the uncut path (a max no 24-character input reaches).
+      expect(identityReference(s, 1000)).toBe(safeIdentityText(s, 1000));
+    }
+    for (const s of ["konsole" + " \u200b".repeat(100) + "evil", "a".repeat(80) + " evil", "Work" + " \u200d".repeat(100) + " Evil"]) {
+      expect(safeIdentityText(s)).toBe(identityReference(s));
+    }
+  });
+
+  it("returns fast for a 4 MiB name, and padding longer than any window still collapses", () => {
+    const t0 = performance.now();
+    expect(safeIdentityText("x".repeat(4 * 1024 * 1024))).toBe("x".repeat(80) + "…");
+    expect(safeIdentityText("a b ".repeat(1_000_000))).toBe(identityReference("a b ".repeat(100)));
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(safeIdentityText("konsole" + " ".repeat(100_000) + "evil")).toBe("konsole evil");
+  });
+});
+
+describe("safeHostText", () => {
+  it("renders a host within the cap exactly as safeIdentityText does", () => {
+    for (const h of ["sync.example.com", "10.0.0.2:8000", "[::1]:9000", "a".repeat(80)]) {
+      expect(safeHostText(h, 80)).toBe(safeIdentityText(h, 80));
+    }
+  });
+
+  it("keeps the END of a long host, from a label boundary, port included", () => {
+    const host = "sync.internal.corp.example.com." + "pad.".repeat(40) + "evil.tld";
+    const shown = safeHostText(host, 80);
+    expect(shown.startsWith("…")).toBe(true);
+    expect(shown.endsWith(".evil.tld")).toBe(true);
+    expect(shown).not.toContain("example.com");
+    expect([...shown].length).toBeLessThanOrEqual(80);
+    expect(shown.slice(1).startsWith("pad.")).toBe(true);
+    expect(safeHostText(host + ":8443", 80).endsWith("evil.tld:8443")).toBe(true);
   });
 });
 

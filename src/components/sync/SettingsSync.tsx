@@ -54,7 +54,7 @@ import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
 import { everyWhileVisible } from "@/lib/windowVisibility";
-import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeHostText, safeIdentityText } from "@/lib/sanitize";
 import type { Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -200,7 +200,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
           <Notice key={`moved-${b.id}`} tone="warn">
             &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
             <span className="font-mono font-semibold">
-              {auth ? safeIdentityText(auth.host, HOST_CAP) : "an unreadable address"}
+              {auth ? safeHostText(auth.host, HOST_CAP) : "an unreadable address"}
             </span>
             {auth?.hasUserinfo ? " (the address hides the real host behind a username)" : ""}.
           </Notice>
@@ -604,7 +604,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
                   length cap on the sync/import path, and the plain filter's markerless 80-code-point
                   cut would show a padded hostname (`sync.internal.corp.example.com.<padding>.evil.tld`)
                   as a trusted-looking PREFIX of itself on the dialog that discloses where dictation goes. */}
-              <span className="font-semibold">{auth ? safeIdentityText(auth.host, HOST_CAP) : "unreadable address"}</span>
+              <span className="font-semibold">{auth ? safeHostText(auth.host, HOST_CAP) : "unreadable address"}</span>
               {auth?.hasUserinfo ? " · address hides the real host behind a username" : ""}
               {warn ? ` · ${warn}` : ""}
             </li>
@@ -746,7 +746,7 @@ function SecurityReviewDialog() {
               <div className="text-[13.5px] font-semibold text-text">{label(c)}</div>
               {auth && (
                 <div className="mt-1 text-[12.5px] text-text">
-                  Would connect to <span className="font-mono font-semibold">{safeIdentityText(auth.host, HOST_CAP)}</span>
+                  Would connect to <span className="font-mono font-semibold">{safeHostText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim">

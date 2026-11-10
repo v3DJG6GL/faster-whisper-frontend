@@ -185,7 +185,11 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // next to whitespace, or a second one in a row, joins nothing, so such a run is folded first: one
   // touching whitespace becomes a space, a bare run keeps only its first joiner. Emoji and script
   // sequences (a single joiner between two visible characters) are untouched.
-  const raw = typeof s === "string" ? trimLeadingInvisible(s) : "";
+  const head = typeof s === "string" ? trimLeadingInvisible(s) : "";
+  // A synced name is unbounded (only the 4 MiB blob cap), and the passes below copy it whole
+  // several times per render. Its first max+2 "ordinary" characters already decide the output
+  // (see identityCutAt), so the rest is cut before those passes — the output is identical.
+  const raw = head.length > max + 1 ? head.slice(0, identityCutAt(head, max)) : head;
   const defanged = [...raw]
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
@@ -209,6 +213,52 @@ export function safeIdentityText(s: unknown, max = 80): string {
   const t = safeDisplayText(collapsed.trim(), max + 1);
   const chars = [...t];
   return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
+}
+
+/** The UTF-16 offset just past `raw`'s (max+2)-th ORDINARY code point — one `safeIdentityText`
+ *  keeps as itself (not whitespace, not the invisible class it folds to a space, not one the
+ *  display filter deletes, not a joiner) — or `raw.length` when it has fewer. Cutting there never
+ *  changes `safeIdentityText`'s output: both of its passes (the joiner-run fold, the whitespace
+ *  collapse) only rewrite runs between ordinary characters, reading at most the next one, so
+ *  everything up to the last kept ordinary character comes out the same — and max+1 code points
+ *  already decide the cut and the ellipsis (one more is kept as a spare for a fractional `max`).
+ *  `raw` starts with an ordinary character (`trimLeadingInvisible`), so the leading trim is
+ *  unaffected too. */
+function identityCutAt(raw: string, max: number): number {
+  let ordinary = 0;
+  for (let i = 0; i < raw.length; ) {
+    const code = raw.codePointAt(i) ?? 0;
+    const len = code > 0xffff ? 2 : 1;
+    // ASCII fast path (a padding run is usually spaces): ordinary is exactly 0x21..0x7e.
+    const plain =
+      code < 0x80
+        ? code > 0x20 && code !== 0x7f
+        : !(
+            /\s/.test(raw.slice(i, i + len)) ||
+            isInvisibleKeyChar(code) ||
+            isDisplayDropped(code) ||
+            code === 0x200c ||
+            code === 0x200d
+          );
+    i += len;
+    if (plain && ++ordinary > max + 1) return i;
+  }
+  return raw.length;
+}
+
+/** `safeIdentityText` for a HOST: the part that names who receives the request is its END, so a
+ *  host over `max` keeps its last labels (and any `:port`) behind a leading "…" — never the
+ *  trusted-looking head of `sync.example.com.<padding>.evil.tld`. A host within `max` renders
+ *  exactly as `safeIdentityText` renders it. */
+export function safeHostText(s: unknown, max = 80): string {
+  const full = safeIdentityText(s, Number.MAX_SAFE_INTEGER);
+  const chars = [...full];
+  if (chars.length <= max) return full;
+  let tail = chars.slice(chars.length - Math.max(1, max - 1));
+  // Start at a label boundary when one is in reach, so no label shows cut.
+  const dot = tail.indexOf(".");
+  if (dot >= 0 && dot < tail.length - 1) tail = tail.slice(dot + 1);
+  return "…" + tail.join("").trimStart();
 }
 
 /** `s` without the leading characters that render as nothing — whitespace, the invisible class

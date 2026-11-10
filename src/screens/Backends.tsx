@@ -29,7 +29,7 @@ import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedKeyPresent, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
-import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, peerDeviceName, safeDisplayText, safeHostText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps, requestCredentialGen, stillRoutesTo } from "@/lib/capabilities";
@@ -518,7 +518,7 @@ export function Editor({
           open={showConnection}
           onToggle={() => setShowConnection((v) => !v)}
           title="Connection"
-          summary={<span className="text-faint">· {safeIdentityText(authorityOf(storedTypedUrl(effUrl))?.host, 60) || "no address"}</span>}
+          summary={<span className="text-faint">· {safeHostText(authorityOf(storedTypedUrl(effUrl))?.host, 60) || "no address"}</span>}
         >
           <OverrideHeader title="Name" env={false}>
             <div className={OVERRIDE_CONTROL_W}>
@@ -1330,7 +1330,7 @@ export default function Backends() {
                             (`effectiveServerUrl` prefers a per-backend override, sync on or off),
                             flagged when it isn't the configured one. */}
                         <span className="truncate" title={safeDisplayText(eff, 200)}>
-                          {safeIdentityText(auth?.host, 80) || safeIdentityText(eff, 80)}
+                          {safeHostText(auth?.host, 80) || safeIdentityText(eff, 80)}
                         </span>
                         {auth?.hasUserinfo && (
                           <Badge tone="warn">address hides the real host</Badge>
