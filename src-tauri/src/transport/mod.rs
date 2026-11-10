@@ -1381,6 +1381,51 @@ mod legacy_path_tests {
     }
 }
 
+/// Open `path` for reading if it is a regular file, judged on the opened handle (no stat-then-open
+/// race); `None` for anything else. Media paths come from records and a base folder another user
+/// or a sync peer may write to, and open(2) on a FIFO waits for a writer, parking the thread for
+/// good where no Cancel reaches it. So the open is non-blocking on Unix, and the flag is cleared
+/// again once the handle is known to be a regular file: reads then behave exactly as a plain
+/// open's.
+pub(crate) fn open_regular_file(
+    path: &std::path::Path,
+) -> std::io::Result<Option<(std::fs::File, std::fs::Metadata)>> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        opts.custom_flags(libc::O_NONBLOCK);
+    }
+    let f = opts.open(path)?;
+    let meta = f.metadata()?;
+    if !meta.is_file() {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd as _;
+        let fd = f.as_raw_fd();
+        // SAFETY: `fd` belongs to `f`, which stays open across both calls.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(Some((f, meta)))
+}
+
+/// `open_regular_file` for an async caller, on the blocking pool as `tokio::fs::File::open` is.
+pub(crate) async fn open_regular_file_async(
+    path: &std::path::Path,
+) -> std::io::Result<Option<(tokio::fs::File, std::fs::Metadata)>> {
+    let path = path.to_path_buf();
+    let opened = tokio::task::spawn_blocking(move || open_regular_file(&path))
+        .await
+        .map_err(std::io::Error::other)??;
+    Ok(opened.map(|(f, meta)| (tokio::fs::File::from_std(f), meta)))
+}
+
 /// A file as a stream of 1 MiB chunks for a request body — the upload is
 /// never resident (a MEDIA_MAX_BYTES video is gigabytes). `on_read` sees the
 /// running byte count after every chunk (progress).
@@ -1404,4 +1449,78 @@ pub(crate) fn file_stream(
             Err(e) => Some((Err(e), (f, sent, cb))),
         }
     })
+}
+
+#[cfg(test)]
+mod open_regular_file_tests {
+    // A named pipe is refused at once instead of parking the opener until a writer appears.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_waiting_for_a_writer() {
+        let dir = crate::config::fresh_test_dir("openfifo");
+        let fifo = dir.join("talk.m4a");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(matches!(super::open_regular_file(&path), Ok(None)));
+        });
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(5));
+        if refused.is_err() {
+            // Unblock the parked open so the thread ends, then fail.
+            let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        }
+        assert_eq!(refused, Ok(true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_directory_is_refused_and_a_regular_file_reads_whole() {
+        use std::io::Read as _;
+        let dir = crate::config::fresh_test_dir("openregular");
+        assert!(!matches!(super::open_regular_file(&dir), Ok(Some(_))));
+        let file = dir.join("talk.m4a");
+        std::fs::write(&file, b"audio bytes").unwrap();
+        let (mut f, meta) = super::open_regular_file(&file).unwrap().unwrap();
+        assert_eq!(meta.len(), 11);
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, b"audio bytes");
+        // The handle is back to blocking, as a plain open's.
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd as _;
+            let flags = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETFL) };
+            assert_eq!(flags & libc::O_NONBLOCK, 0);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_async_open_hands_back_a_tokio_file() {
+        use tokio::io::AsyncReadExt as _;
+        let dir = crate::config::fresh_test_dir("openregularasync");
+        let file = dir.join("talk.m4a");
+        std::fs::write(&file, b"audio bytes").unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let (mut f, meta) = super::open_regular_file_async(&file)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(meta.len(), 11);
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf).await.unwrap();
+            assert_eq!(buf, b"audio bytes");
+            assert!(super::open_regular_file_async(&dir)
+                .await
+                .ok()
+                .flatten()
+                .is_none());
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

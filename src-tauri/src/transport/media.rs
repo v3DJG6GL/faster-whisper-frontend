@@ -212,13 +212,12 @@ pub async fn upload_media(
         .map(|e| e.to_ascii_lowercase())
         .filter(|e| (1..=5).contains(&e.len()) && e.bytes().all(|b| b.is_ascii_alphanumeric()))
         .unwrap_or_else(|| "bin".into());
-    let file = tokio::fs::File::open(path)
+    let Some((file, meta)) = super::open_regular_file_async(path)
         .await
-        .with_context(|| format!("opening {}", path.display()))?;
-    let meta = file.metadata().await.context("reading the file")?;
-    if !meta.is_file() {
+        .with_context(|| format!("opening {}", path.display()))?
+    else {
         bail!("not a file");
-    }
+    };
     let len = meta.len();
     if len > max_bytes {
         return Ok(UploadOutcome::Http {

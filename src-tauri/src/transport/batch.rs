@@ -1245,14 +1245,13 @@ pub async fn transcribe(
     // Streamed, never resident: the media cap is 10 GB, and reading a file
     // that size into a Vec would take the app down with it. The length is
     // declared so the server's early 413 fires before a byte is sent.
-    let file = tokio::fs::File::open(path)
+    let Some((file, meta)) = super::open_regular_file_async(path)
         .await
-        .with_context(|| format!("opening {file_path}"))?;
-    let len = file
-        .metadata()
-        .await
-        .with_context(|| format!("reading {file_path}"))?
-        .len();
+        .with_context(|| format!("opening {file_path}"))?
+    else {
+        bail!("{file_path} is not a file");
+    };
+    let len = meta.len();
     check_upload_size(len, options.as_ref().and_then(|o| o.media_max_bytes))?;
     let body = reqwest::Body::wrap_stream(super::file_stream(file, None));
     let part = Part::stream_with_length(body, len)

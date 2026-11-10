@@ -744,7 +744,9 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
 /// Still copy_file_range on Linux. `dest` is always the export's tmp, so it is opened without
 /// following a planted symlink (`open_export_tmp`).
 fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<u64> {
-    let mut r = std::fs::File::open(src)?;
+    // Judged on the handle: `src` was checked by path, and could be swapped for a FIFO since.
+    let (mut r, _) = transport::open_regular_file(src)?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a file"))?;
     let mut w = transport::media::open_export_tmp(dest)?;
     let n = std::io::copy(&mut r, &mut w)?;
     w.sync_all()?;

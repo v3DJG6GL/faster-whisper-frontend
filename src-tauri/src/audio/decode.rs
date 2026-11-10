@@ -231,7 +231,9 @@ fn prune_cache_to(dir: &std::path::Path, keep: &std::path::Path, max_bytes: u64)
 /// Decode any symphonia-supported audio file to 16-bit interleaved WAV
 /// bytes at the source rate and channel count.
 pub fn decode_to_wav(path: &str) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let (file, _) = crate::transport::open_regular_file(std::path::Path::new(path))
+        .map_err(|e| e.to_string())?
+        .ok_or("not a file")?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = std::path::Path::new(path)

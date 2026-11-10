@@ -470,21 +470,10 @@ enum CappedRead {
 /// otherwise hand over a device or a file that grows, and the read itself stops at `cap + 1`.
 fn read_capped(path: &str, cap: u64) -> Result<Vec<u8>, CappedRead> {
     use std::io::Read as _;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true);
-    // Non-blocking open: open(2) on a FIFO otherwise waits for a writer, parking this blocking-pool
-    // thread for good; with it the open returns and the fstat below refuses it. It has no effect
-    // on reading a regular file.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NONBLOCK);
-    }
-    let f = opts.open(path).map_err(CappedRead::Io)?;
-    let meta = f.metadata().map_err(CappedRead::Io)?;
-    if !meta.is_file() {
-        return Err(CappedRead::NotAFile);
-    }
+    // A FIFO is refused without waiting for a writer (see open_regular_file).
+    let (f, meta) = crate::transport::open_regular_file(std::path::Path::new(path))
+        .map_err(CappedRead::Io)?
+        .ok_or(CappedRead::NotAFile)?;
     if meta.len() > cap {
         return Err(CappedRead::TooLarge);
     }
