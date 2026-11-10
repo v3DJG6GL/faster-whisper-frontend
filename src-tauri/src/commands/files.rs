@@ -101,11 +101,40 @@ fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io:
     Ok(())
 }
 
-/// A Windows sharing violation on the rename or on the copy's open: a dictation save holds the
-/// file with share mode 0 while it writes it (`audio::write_new_private`). `move_file` then
-/// leaves the source where it was. 32 is EPIPE elsewhere, which never means this.
+/// A Windows sharing violation on the rename, the copy's open or the source's removal: a
+/// dictation save holds the file with share mode 0 while it writes it
+/// (`audio::write_new_private`), and so may a media player, a virus scanner or a sync client.
+/// `move_file` then leaves the source where it was. 32 is EPIPE elsewhere, which never means this.
 fn held_open_elsewhere(e: &std::io::Error) -> bool {
     cfg!(windows) && e.raw_os_error() == Some(32)
+}
+
+/// How often and how far apart [`move_file_waiting_out_a_save`] retries a held file: about two
+/// seconds, well past a dictation save's write + sync.
+const HELD_RETRIES: u32 = 20;
+const HELD_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// `move_file`, retried for a short while when the source is held unshared, so a dictation save
+/// writing it right now does not fail the whole relocation. A file still held after that (a
+/// player, a scanner, a sync client keeping it open) fails the move like any other error rather
+/// than being skipped: left in the old base, it would sit outside every delete and retention
+/// sweep, which only look under the current base. Runs on the move's blocking thread.
+fn move_file_waiting_out_a_save(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+) -> std::io::Result<()> {
+    let mut tries = 0;
+    loop {
+        match move_file(src, dest) {
+            // The never-clobber check is redone each round: the rename replaces an existing
+            // destination on Windows, and the wait widens the gap since the caller looked.
+            Err(e) if held_open_elsewhere(&e) && tries < HELD_RETRIES && !dest.exists() => {
+                tries += 1;
+                std::thread::sleep(HELD_RETRY_GAP);
+            }
+            r => return r,
+        }
+    }
 }
 
 /// Move every regular file from `from` into `to`, recording old→new paths.
@@ -148,15 +177,9 @@ fn move_dir_contents(
             tracing::warn!("[audio] not moving {:?} — {:?} already exists", src, dest);
             continue;
         }
-        match move_file(&src, &dest) {
+        match move_file_waiting_out_a_save(&src, &dest) {
             // Swapped for a non-file after the check above: skipped like one found at the check.
             Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => continue,
-            // Held unshared by a dictation save writing it right now: left in the old base
-            // like an in-progress copy, where the record that save writes points at it.
-            Err(e) if held_open_elsewhere(&e) => {
-                tracing::warn!("[audio] not moving {:?} — it is being written", src);
-                continue;
-            }
             r => r.map_err(|e| format!("could not move {}: {e}", src.display()))?,
         }
         map.push((
@@ -1028,12 +1051,12 @@ mod tests {
         assert!(!super::held_open_elsewhere(&std::io::Error::other("x")));
     }
 
-    // A dictation file a save holds unshared mid-write stays in the old base; the rest moves.
+    // A file a dictation save holds unshared for a moment is moved once the save lets go.
     #[cfg(windows)]
     #[test]
-    fn move_dir_contents_leaves_a_file_held_unshared_behind() {
+    fn move_dir_contents_waits_out_a_file_held_briefly() {
         use std::os::windows::fs::OpenOptionsExt as _;
-        let base = crate::config::fresh_test_dir("move-dir-held");
+        let base = crate::config::fresh_test_dir("move-dir-held-brief");
         let from = base.join("from");
         let to = base.join("to");
         std::fs::create_dir_all(&from).unwrap();
@@ -1044,15 +1067,47 @@ mod tests {
             .share_mode(0)
             .open(from.join("b.wav"))
             .unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            drop(held);
+        });
 
         let mut map = Vec::new();
         move_dir_contents(&from, &to, &mut map).unwrap();
-        drop(held);
+        release.join().unwrap();
 
         assert!(to.join("a.wav").is_file());
+        assert!(to.join("b.wav").is_file());
+        assert!(!from.join("b.wav").exists());
+        assert_eq!(map.len(), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A file held unshared for longer than the retry (a player, a scanner) fails the move loudly
+    // instead of being left behind in a base no sweep or delete looks at.
+    #[cfg(windows)]
+    #[test]
+    fn move_dir_contents_fails_on_a_file_held_past_the_retry() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let base = crate::config::fresh_test_dir("move-dir-held-long");
+        let from = base.join("from");
+        let to = base.join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(from.join("b.wav"))
+            .unwrap();
+
+        let mut map = Vec::new();
+        let res = move_dir_contents(&from, &to, &mut map);
+        drop(held);
+
+        assert!(res.is_err_and(|e| e.contains("could not move")));
         assert!(from.join("b.wav").is_file());
         assert!(!to.join("b.wav").exists());
-        assert_eq!(map.len(), 1);
+        assert!(map.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 
