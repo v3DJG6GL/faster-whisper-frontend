@@ -230,6 +230,61 @@ describe("securityChanges: folder moves", () => {
     // Other rows are untouched.
     expect(consentDetailText({ kind: "save-recordings", detail: "a\u200bb" })).toBe("ab");
   });
+  it("writes out a `..` lookalike, a repeated space and a joiner that shapes nothing", () => {
+    const row = (detail: string) => consentDetailText({ kind: "audio-folder", detail });
+    // A component that only reads as `..`: every code point but its ASCII dots is written out.
+    expect(row("/tmp/\u2025/\u2025/home/u/Recordings")).toBe("/tmp/\\u{2025}/\\u{2025}/home/u/Recordings");
+    expect(row("/tmp/\u2024\u2024/home/u/Recordings")).toBe("/tmp/\\u{2024}\\u{2024}/home/u/Recordings");
+    expect(row("/tmp/..\u0307/..\u0323/home/u/Recordings")).toBe("/tmp/..\\u{0307}/..\\u{0323}/home/u/Recordings");
+    expect(row("/tmp/\uff0e/rec")).toBe("/tmp/\\u{FF0E}/rec");
+    expect(consentDetailTitle({ kind: "audio-folder", detail: "/tmp/\u2025/rec" })).toBe("/tmp/\\u{2025}/rec");
+    // `...`, a dotted name and an ellipsis are names, not climbs.
+    for (const plain of ["/home/u/...", "/home/u/.config", "/home/u/\u2026"]) expect(row(plain)).toBe(plain);
+    // The display collapses a space run: its 2nd..Nth spaces are written out.
+    expect(row("/home/u/My  Recordings")).toBe("/home/u/My \\u{0020}Recordings");
+    expect(row("/home/u/My   Recordings")).toBe("/home/u/My \\u{0020}\\u{0020}Recordings");
+    // A joiner after a Latin, Cyrillic or CJK letter, a second one in a row, or one before a
+    // separator joins nothing; a VS16 after a letter is not an emoji.
+    expect(row("/home/j\u00fc\u200drgen/Aufnahmen")).toBe("/home/j\u00fc\\u{200D}rgen/Aufnahmen");
+    expect(row("/home/\u65e5\u200c\u672c")).toBe("/home/\u65e5\\u{200C}\u672c");
+    expect(row("/home/u/\u00e9\u200d\u200d/x")).toBe("/home/u/\u00e9\\u{200D}\\u{200D}/x");
+    expect(row("/home/\u044e\u0440\u0438\u0439/\u0417\u0430\u043f\u0438\ufe0f\u0441\u0438")).toBe(
+      "/home/\u044e\u0440\u0438\u0439/\u0417\u0430\u043f\u0438\\u{FE0F}\u0441\u0438",
+    );
+    expect(row("/home/u/\u0628\u200c/x")).toBe("/home/u/\u0628\\u{200C}/x");
+    expect(row("/home/u/\u0628\u200c x")).toBe("/home/u/\u0628\\u{200C} x");
+    expect(row("/home/u/\u{1F44D}\u200d\u200d\u{1F44D}")).toBe("/home/u/\u{1F44D}\\u{200D}\\u{200D}\u{1F44D}");
+    expect(row("/home/u/\u2764\ufe0f\ufe0f")).toBe("/home/u/\u2764 \\u{FE0F}") // the display draws the kept VS16 as a space;
+    // A tag run off a flag, an unclosed one, and a keycap VS16 without its keycap stay escaped.
+    expect(row("/home/u/a\u{E0067}\u{E007F}")).toBe("/home/u/a\\u{E0067}\\u{E007F}");
+    expect(row("/home/u/\u{1F3F4}\u{E0067}\u{E0062}")).toBe("/home/u/\u{1F3F4}\\u{E0067}\\u{E0062}");
+    expect(row("/home/u/1\ufe0fx")).toBe("/home/u/1\\u{FE0F}x");
+  });
+  it("renders legitimate script, emoji, flag and keycap folder names as before", () => {
+    for (const plain of [
+      "/home/u/\u0646\u0627\u0645\u0647\u200c\u0647\u0627", // Persian ZWNJ
+      "/home/u/\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645",
+      "/home/u/\u0915\u094d\u200d\u0937", // Devanagari conjunct
+      "/home/u/\u0915\u094d\u200c\u0937",
+      "/home/u/\u{1F468}\u200d\u{1F469}\u200d\u{1F467}", // family
+      "/home/u/\u{1F469}\u{1F3FD}\u200d\u{1F4BB}", // skin tone + ZWJ
+      "/home/u/\u2764\ufe0f\u200d\u{1F525}", // VS16 then ZWJ
+      "/home/u/\u{1F3F3}\ufe0f\u200d\u{1F308}", // rainbow flag
+      "/home/u/\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}", // England
+      "/home/u/\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} x", // Scotland
+      "/home/u/1\ufe0f\u20e3", // keycap
+      "/home/u/#\ufe0f\u20e3 Takes",
+      "/home/u/Musik \u2764\ufe0f",
+      "/home/u/My Recordings",
+      "/home/u/\u65e5\u672c\u8a9e/\u97f3\u58f0",
+      "/home/u/\u05d4\u05e7\u05dc\u05d8\u05d5\u05ea",
+      "C:\\Users\\me\\My Music",
+    ]) {
+      expect(consentDetailText({ kind: "audio-folder", detail: plain })).toBe(safeIdentityText(plain, 4096));
+      expect(consentDetailTitle({ kind: "audio-folder", detail: plain })).toBeUndefined();
+      expect(folderPathText(plain, 200)).toBe(safeIdentityText(plain, 200));
+    }
+  });
   it("the Settings folder readouts render a path as the consent row does", () => {
     for (const plain of ["~/Recordings", "C:\\Users\\me\\My Music", "/home/me/Musik ❤️"]) {
       expect(folderPathText(plain, 200)).toBe(safeIdentityText(plain, 200));

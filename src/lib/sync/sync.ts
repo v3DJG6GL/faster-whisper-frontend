@@ -3680,35 +3680,92 @@ export function resolvedFolderPath(raw: string): string {
   return root + kept.join(joiner);
 }
 
+/** A base a ZWJ or emoji variation selector (VS16) shapes with: an emoji or a skin-tone modifier. */
+const EMOJI_BASE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
+/** A letter or mark of a script whose shaping a ZWNJ/ZWJ steers: the joining scripts (Arabic,
+ *  Syriac, NKo, Mongolian) and the Brahmic ones (U+0900–U+0DFF, Myanmar, Khmer). Anywhere else a
+ *  joiner renders as nothing. */
+const JOINING_LETTER =
+  /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Nko}\p{scx=Mongolian}\p{scx=Myanmar}\p{scx=Khmer}ऀ-෿]$/u;
+
+/** Whether a path component that is not literally `.` or `..` reads as one: once compatibility-
+ *  decomposed and stripped of combining marks and hidden characters, `‥` (U+2025), `․․` and `..`
+ *  plus a combining dot all draw as `..`, yet each is a real directory name the OS creates. */
+function looksLikeDotComponent(comp: string): boolean {
+  if (comp === "." || comp === ".." || comp === "") return false;
+  let bare = "";
+  for (const ch of comp.normalize("NFKD")) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (/\p{M}/u.test(ch) || isHiddenChar(code) || code === 0x200c || code === 0x200d) continue;
+    bare += ch;
+    if (bare.length > 2) return false;
+  }
+  return bare === "." || bare === "..";
+}
+
 /** `p` with every code point that would render as nothing written out as `\u{XXXX}`: the
- *  display filter deletes or blanks them, and a peer's `..\u200b` component (a real directory
+ *  display filter deletes or blanks them, and a peer's `..​` component (a real directory
  *  name, not a climb) would otherwise read as `..`. Escaped: the hidden set (`isHiddenChar`),
  *  whitespace other than a space, a space touching a separator or the path's edge (`.. ` is a
- *  name too), and a joiner or variation selector unless it follows a visible non-ASCII code point
- *  (an emoji or script sequence, which renders as itself). A path with none of them (every
- *  folder-picker path) is returned unchanged; one no OS opens is left as it is, so the walk stays
- *  bounded. */
+ *  name too) or following another space (the display collapses the run), every code point but
+ *  the ASCII dots of a component that only reads as `.` / `..` (`looksLikeDotComponent`), and a
+ *  joiner or variation selector that shapes nothing. Kept: a ZWJ or VS16 right after an emoji
+ *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
+ *  mark of a script it shapes (`JOINING_LETTER`) — each only before a visible code point, as a
+ *  joiner before a separator, a blank or another joiner joins nothing — plus a keycap's VS16
+ *  (`1️⃣`) and a subdivision flag's tag run (`🏴` + tags + U+E007F). A path with none of the
+ *  escaped ones (every folder-picker path, emoji and script names included) is returned
+ *  unchanged; one no OS opens is left as it is, so the walk stays bounded. */
 function escapeHiddenPathChars(p: string): string {
   if (p.length > MAX_OPENABLE_PATH) return p;
   const cps = [...p];
   const isSep = (ch: string | undefined) => ch === undefined || ch === "/" || ch === "\\";
+  // Per code point: inside a `..`-lookalike component, or a subdivision flag's tag run.
+  const dotLike = new Array<boolean>(cps.length).fill(false);
+  const flagTag = new Array<boolean>(cps.length).fill(false);
+  for (let i = 0, start = 0; i <= cps.length; i++) {
+    if (i < cps.length && !isSep(cps[i])) {
+      if (cps[i] === "\u{1F3F4}") {
+        let j = i + 1;
+        for (let c = cps[j]?.codePointAt(0) ?? 0; c >= 0xe0020 && c <= 0xe007e; c = cps[j]?.codePointAt(0) ?? 0) j++;
+        if (j > i + 1 && cps[j] === "\u{E007F}") {
+          flagTag.fill(true, i + 1, j + 1);
+          i = j;
+        }
+      }
+      continue;
+    }
+    if (looksLikeDotComponent(cps.slice(start, i).join(""))) dotLike.fill(true, start, i);
+    start = i + 1;
+  }
+  const visible = (ch: string | undefined) =>
+    !isSep(ch) && !/\s/.test(ch ?? "") && ch !== "‌" && ch !== "‍" && !isHiddenChar(ch?.codePointAt(0) ?? 0);
   let out = "";
   let changed = false;
-  let afterVisibleNonAscii = false;
+  // What the previous code point, if kept, lets a joiner or VS16 shape with; "selected" is an
+  // emoji's kept VS16, which a ZWJ may follow but a second selector may not.
+  let base: "emoji" | "selected" | "script" | null = null;
   for (let i = 0; i < cps.length; i++) {
     const ch = cps[i];
     const code = ch.codePointAt(0) ?? 0;
-    const modifier = code === 0x200c || code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f);
-    const hide: boolean = modifier
-      ? !afterVisibleNonAscii
-      : code === 0x20
-        ? isSep(cps[i - 1]) || isSep(cps[i + 1])
-        : isHiddenChar(code) || /\s/.test(ch);
+    let hide: boolean;
+    if (dotLike[i]) hide = ch !== ".";
+    else if (flagTag[i]) hide = false;
+    else if (code === 0x200c || code === 0x200d)
+      hide = !(code === 0x200d ? base !== null : base === "script") || !visible(cps[i + 1]);
+    else if (code >= 0xfe00 && code <= 0xfe0f)
+      hide = !(code === 0xfe0f && (base === "emoji" || (/^[0-9#*]$/.test(cps[i - 1] ?? "") && cps[i + 1] === "⃣")));
+    else if (code === 0x20) hide = isSep(cps[i - 1]) || isSep(cps[i + 1]) || cps[i - 1] === " ";
+    else hide = isHiddenChar(code) || /\s/.test(ch);
     if (hide) {
       out += `\\u{${code.toString(16).toUpperCase().padStart(4, "0")}}`;
       changed = true;
     } else out += ch;
-    afterVisibleNonAscii = !hide && code >= 0x80;
+    base = hide
+      ? null
+      : code === 0xfe0f
+        ? base === "emoji" ? "selected" : null
+        : EMOJI_BASE.test(ch) ? "emoji" : JOINING_LETTER.test(ch) ? "script" : null;
   }
   return changed ? out : p;
 }
