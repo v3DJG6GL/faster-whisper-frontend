@@ -202,12 +202,24 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     // key cap. Every real code is a `KeyboardEvent.code`-style token well under 32 bytes, so this
     // rejects only forgeries.
     const MAX_CHORD_CODE_LEN: usize = 64;
-    let meta = std::fs::metadata(path).map_err(|e| format!("Could not read the file: {e}"))?;
+    // Judged on the opened handle and read through a cap: the picked file is untrusted (an
+    // extracted archive can carry a `settings.json` link to /dev/zero, or a FIFO), and a device
+    // or pipe reports length 0, so a path stat alone let an endless read or a hang through.
+    let too_large = || "That file is too large to be a settings export.".to_string();
+    let (f, meta) = crate::transport::open_regular_file(std::path::Path::new(path))
+        .map_err(|e| format!("Could not read the file: {e}"))?
+        .ok_or("Could not read the file: not a regular file")?;
     if meta.len() > MAX_IMPORT_BYTES {
-        return Err("That file is too large to be a settings export.".into());
+        return Err(too_large());
     }
-    let text =
-        std::fs::read_to_string(path).map_err(|e| format!("Could not read the file: {e}"))?;
+    use std::io::Read as _;
+    let mut text = String::new();
+    f.take(MAX_IMPORT_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("Could not read the file: {e}"))?;
+    if text.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(too_large());
+    }
     // An export re-saved by an editor as "UTF-8 with BOM" is still valid JSON to the user.
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut doc: serde_json::Value =
@@ -417,6 +429,27 @@ mod tests {
             .unwrap();
         // Past the JSON parse: it fails on the missing formatVersion, not as invalid JSON.
         assert!(err.contains("formatVersion"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A FIFO posing as an export is refused at once instead of parking the import thread.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_posing_as_an_export_is_refused_without_waiting() {
+        let dir = crate::config::fresh_test_dir("import-fifo");
+        let fifo = dir.join("settings.json");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = fifo.to_string_lossy().into_owned();
+        std::thread::spawn(move || {
+            let _ = tx.send(super::import_settings_file_inner(&p).err());
+        });
+        let err = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert!(err.starts_with("Could not read the file"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
