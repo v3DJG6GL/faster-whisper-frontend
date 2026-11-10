@@ -478,7 +478,10 @@ export async function initOverlayController(): Promise<void> {
     // than the linger, so any unrelated write in that gap would re-show the error just hidden.
     const errorEdge =
       state.status === "error" && (prev.status !== "error" || state.dictationError !== prev.dictationError);
-    if (visible || (pos !== "off" && errorEdge)) {
+    // A note can land on a HIDDEN chip too: Quick-Add's "correction copied" comes with no
+    // session to have shown it. Shown on the note's edge only, for the reason the error is.
+    const noteEdge = !!state.sessionNote && state.sessionNote !== prev.sessionNote;
+    if (visible || (pos !== "off" && (errorEdge || noteEdge))) {
       // The linger is already armed with the right delay: an unrelated write (a document
       // translation's 1 s progress tick, the level meter) must not re-arm it, or the chip
       // never hides while that runs. Re-arm only when an input of the delay or the error changes.

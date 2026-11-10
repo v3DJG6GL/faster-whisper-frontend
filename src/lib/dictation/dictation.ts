@@ -15,7 +15,7 @@ import { profileDisplayName } from "../sanitize";
 import { shownChipTag } from "../profileTag";
 import { effectiveLanguage, effectiveTranslationModel } from "../backends";
 import { sessionShape } from "./sessionShape";
-import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
+import { isActiveDictation, isGracefulStop, isProcessing, sessionNoteHoldMs } from "./dictationVisual";
 import { configuredRouteTargets } from "./chipController";
 import { wireCodes } from "../translationTargets";
 import { rememberRecent } from "../recent";
@@ -414,6 +414,36 @@ export type RoutePending = ReturnType<typeof useApp.getState>["routePending"];
  *  both read it ahead of startOffHint, so neither offers a dead click. */
 export function pickerOffHint(routePending: RoutePending, status: DictationStatus): string {
   return routePending === "choosing" && status === "idle" ? "Answer the target picker first" : "";
+}
+
+let correctionNoteTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Quick-Add's correct-on-close was diverted to the clipboard (focus moved, a chord held, or
+ *  Wayland can't type it): the word stayed uncorrected and the user's clipboard was replaced.
+ *  Quick-Add is hidden by then, so the chip says it, as an end-of-session note with the
+ *  clipboard pulse — through the same store fields, so it shows, holds and hides as one does.
+ *  Arrives via `quickadd://correction-copied` (see api.ts / App.tsx). */
+export function showCorrectionCopiedNote(): void {
+  const s = useApp.getState();
+  // Never over a session: its own outcome and note are on those fields. "idle" is not enough —
+  // the start prologue and the target picker both run at idle.
+  if (s.status !== "idle" || isStarting() || s.routePending === "choosing") {
+    console.info("[quick-add] correction-copied note skipped: a dictation session is active");
+    return;
+  }
+  clearTimeout(correctionNoteTimer);
+  // A repeat inside the hold: drop the note first so the chip sees a fresh edge.
+  if (s.sessionNote === "correction-copied") s.setDictation({ sessionNote: null });
+  // translateFailure would turn the clipboard pulse into the "untranslated" one, and the last
+  // session's words would hold the label slot once the note ends.
+  s.setDictation({ sessionOutcome: "clipboard", sessionNote: "correction-copied", translateFailure: null, partial: "" });
+  // No session will reset it soon, and an unchanged note sends the chip no edge, so the NEXT
+  // divert would show nothing: drop it once the chip and its window (hold + 200 ms) are done.
+  correctionNoteTimer = setTimeout(() => {
+    correctionNoteTimer = undefined;
+    const now = useApp.getState();
+    if (now.sessionNote === "correction-copied") now.setDictation({ sessionNote: null });
+  }, sessionNoteHoldMs({ sessionNote: "correction-copied" }) + 500);
 }
 
 /** Run a dictation action requested from the overlay chip. The chip is a separate

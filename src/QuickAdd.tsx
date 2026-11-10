@@ -30,7 +30,7 @@ import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
   readConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
-  getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
+  getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri, emitCorrectionCopied,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/dictation/streaming";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -801,8 +801,8 @@ export default function QuickAdd() {
  *  the typing method only — if its edges carry a line break that typing would turn into Enter.
  *  Paste replaces the active selection; the prior clipboard is restored afterwards when the
  *  resolved restore-clipboard setting says so — unless Rust diverts to the clipboard (focus moved,
- *  or untypeable text on Wayland), in which case the correction stays on the clipboard and the
- *  selection is left as it was. */
+ *  or untypeable text on Wayland), in which case the correction stays on the clipboard, the
+ *  selection is left as it was, and the dictation chip says so. */
 async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
@@ -850,7 +850,12 @@ async function replaceSelectionAfterClose(
   });
   // Neither outcome throws, so closeNow's catch never sees them — log them like the skips above.
   if (!out.landed) console.info("[quick-add] correct-on-close wrote nothing (our own window had focus, or the insert could not run — see the inject log)");
-  else if (out.diverted) console.info("[quick-add] correct-on-close diverted: the correction is on the clipboard, the selection was not replaced");
+  else if (out.diverted) {
+    console.info("[quick-add] correct-on-close diverted: the correction is on the clipboard, the selection was not replaced");
+    // This window is already hidden, and the divert just replaced the user's clipboard:
+    // the main window's chip says so (showCorrectionCopiedNote).
+    void emitCorrectionCopied().catch((e) => console.error("correction-copied emit failed:", e));
+  }
 }
 
 function errTitle(f: PipelineFetch | null): string {

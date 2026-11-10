@@ -11,9 +11,9 @@ import { initUsageController } from "@/lib/usage";
 import { initCapsController } from "@/lib/capabilities";
 import { initJobReconcile } from "@/lib/jobsReconcile";
 import {
-  noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate, onBeforeQuit, onSessionEnding, quitReady,
+  noteRoute, onTrigger, onSystemResumed, onOverlayAction, onCorrectionCopied, onAppNavigate, onBeforeQuit, onSessionEnding, quitReady,
 } from "@/lib/api";
-import { dictate, runOverlayAction } from "@/lib/dictation/dictation";
+import { dictate, runOverlayAction, showCorrectionCopiedNote } from "@/lib/dictation/dictation";
 import { cancelLive, flushFoldWrites, requestStopIfStarting } from "@/lib/dictation/streaming";
 import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
@@ -339,6 +339,9 @@ export default function App() {
   // Dictation actions requested from the overlay chip's quick-launch (a separate
   // window) arrive as `overlay://action` events — run them here.
   useTauriListener(() => onOverlayAction((kind) => runOverlayAction(kind)), []);
+
+  // Quick-Add's correct-on-close landed on the clipboard after its window hid: the chip says so.
+  useTauriListener(() => onCorrectionCopied(() => showCorrectionCopiedNote()), []);
 
   // After the machine resumes from suspend, the mic/WebSocket of any in-flight
   // dictation is dead — reset it so the chip doesn't hang at "finalizing…". (Rust has

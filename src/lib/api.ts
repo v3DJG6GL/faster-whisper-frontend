@@ -1440,6 +1440,20 @@ export async function onOverlayAction(cb: (kind: string) => void): Promise<() =>
   return subscribe<{ kind: string }>("overlay://action", (p) => cb(p.kind));
 }
 
+/** Tell the main window that Quick-Add's correct-on-close landed on the clipboard instead of
+ *  over the selection. Quick-Add is hidden by then, so the main window's chip says it. No
+ *  payload: the chip must never show what is on the clipboard. */
+export async function emitCorrectionCopied(): Promise<void> {
+  if (!isTauri) return;
+  const { emit } = await import("@tauri-apps/api/event");
+  await emit("quickadd://correction-copied");
+}
+
+/** Subscribe (in the main window) to Quick-Add's correction-copied notice. Returns an unlisten fn. */
+export async function onCorrectionCopied(cb: () => void): Promise<() => void> {
+  return subscribe<unknown>("quickadd://correction-copied", () => cb());
+}
+
 /** Subscribe (in the main window) to navigate requests from show_main_at_screen.
  *  Returns an unlisten fn. */
 export async function onAppNavigate(cb: (screen: string) => void): Promise<() => void> {

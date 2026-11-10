@@ -372,8 +372,10 @@ interface AppState {
    *  (the chip is edge-triggered on that), "-saved" only when a History record was actually
    *  written. "incomplete" can accompany ANY outcome (typed / clipboard / none): the stream
    *  ended short (the drain timed out before the server's last final) but some text landed
-   *  or was kept — the last phrase may be missing. null = no such note. */
-  sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
+   *  or was kept — the last phrase may be missing. "correction-copied" stands alone, outside any
+   *  session: Quick-Add's correct-on-close was diverted to the clipboard (showCorrectionCopiedNote).
+   *  null = no such note. */
+  sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | "correction-copied" | null;
   /** The RESOLVED translation targets of the active session — what will actually be injected,
    *  not what the Profile is configured with. The two diverge once a per-session picker can
    *  change them, and the authoritative value (`sessionTranslation` in streaming.ts) lives in
@@ -566,7 +568,7 @@ interface AppState {
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
       sessionOutcome: "typed" | "clipboard" | "none" | null;
-      sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
+      sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | "correction-copied" | null;
       sessionTargets: string[] | null;
       routePending: "undecided" | "choosing" | "original" | null;
       translateFailure: TranslateFailure | null;

@@ -108,7 +108,8 @@ interface ChipState {
   // was inserted. Shown once, briefly, in the status-label slot. "incomplete": the stream
   // ended short (the server's last final never came) but text landed or was kept — the
   // last phrase may be missing. Shown the same way, a little longer, as a warning.
-  sessionNote?: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
+  // "correction-copied": no session — Quick-Add's correct-on-close went to the clipboard.
+  sessionNote?: "not-inserted" | "not-inserted-saved" | "incomplete" | "correction-copied" | null;
   // Overlay-chip behaviour, forwarded from settings via dictation://update.
   persistentDock: boolean;
   overlayPeek: boolean;
@@ -169,6 +170,10 @@ const TONE_GLOW: Record<DictationTone, string> = {
 // the dot — so the last words you spoke remain readable instead of vanishing the
 // instant you pause. Stacks on top of the store detector's SILENCE_HOLD_MS (lib/dictation/speaking).
 const COLLAPSE_LINGER_MS = 2000;
+// How long the end-of-session typed / clipboard pulse plays.
+const OUTCOME_PULSE_MS = 1100;
+// Quick-Add's diverted correction. Names no word: the chip never shows clipboard contents.
+const CORRECTION_COPIED_LABEL = "Correction copied — paste it with Ctrl+V";
 
 // The chip morph: one element fluidly grows from a calm dot into the full pill
 // (Motion `layout` → FLIP/transform, smooth on WebKit). No backdrop-blur: on WebKitGTK
@@ -829,7 +834,7 @@ export default function Overlay() {
       setPulse(warnHold ? "untranslated" : o);
       pulseHoldUntil.current = warnHold ? Date.now() + warnHold : 0;
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
-      pulseTimer.current = setTimeout(() => setPulse(null), warnHold || 1100);
+      pulseTimer.current = setTimeout(() => setPulse(null), warnHold || OUTCOME_PULSE_MS);
     } else {
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       pulseHoldUntil.current = 0;
@@ -841,7 +846,7 @@ export default function Overlay() {
   // or "incomplete" on any outcome). Its own edge + timer, like the untranslated pulse: it
   // qualifies an outcome — including "none", which the pulse machinery above deliberately
   // shows nothing for — and can show alongside a pulse, so it cannot ride `pulse`.
-  const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | "incomplete" | null>(null);
+  const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | "incomplete" | "correction-copied" | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNote = useRef(state.sessionNote);
   useEffect(() => {
@@ -858,6 +863,14 @@ export default function Overlay() {
       const hold = sessionNoteHoldMs({ sessionNote: n });
       noteHoldUntil.current = Date.now() + hold;
       noteTimer.current = setTimeout(() => setNote(null), hold);
+      // The correction's clipboard pulse: its outcome often already read "clipboard" (the
+      // last session's), so the outcome effect above sees no edge to pulse on.
+      if (n === "correction-copied") {
+        if (pulseTimer.current) clearTimeout(pulseTimer.current);
+        pulseHoldUntil.current = 0;
+        setPulse("clipboard");
+        pulseTimer.current = setTimeout(() => setPulse(null), OUTCOME_PULSE_MS);
+      }
     } else {
       noteHoldUntil.current = 0;
       setNote(null); // a fresh session clears it
@@ -911,7 +924,9 @@ export default function Overlay() {
       ? "last phrase may be missing"
       : note === "not-inserted-saved"
         ? "not inserted · saved to History"
-        : "not inserted";
+        : note === "correction-copied"
+          ? CORRECTION_COPIED_LABEL
+          : "not inserted";
   // "incomplete" and the untranslated pulse are COMBINED (as the sr-only status does): both land
   // on the same edge with the same 2600 ms hold, so one slot has to carry both — the untranslated
   // outcome first, the possibly lost phrase after it.
@@ -1266,15 +1281,18 @@ export default function Overlay() {
               : // No cause: the note stands for every incomplete end (a slow server, a restart,
                 // a lost connection), and the chip's own label names none either.
                 "The last phrase may be missing"
-            : pulse === "typed"
-              ? "Inserted"
-              : pulse === "clipboard"
-                ? "Copied to clipboard"
-                : pulse === "untranslated"
-                  ? untranslatedPhrase
-                  : note
-                    ? noteLabel
-                    : ""}
+            : // Ahead of the pulse it plays with, so it is announced once, not after "Copied".
+              note === "correction-copied"
+              ? CORRECTION_COPIED_LABEL
+              : pulse === "typed"
+                ? "Inserted"
+                : pulse === "clipboard"
+                  ? "Copied to clipboard"
+                  : pulse === "untranslated"
+                    ? untranslatedPhrase
+                    : note
+                      ? noteLabel
+                      : ""}
         </span>
         <motion.div
           ref={chipRef}
@@ -1445,9 +1463,11 @@ export default function Overlay() {
                               className={cn(
                                 "whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em]",
                                 // The not-inserted note is a quiet qualifier, not a warning: faint,
-                                // not dim. An untranslated landing and "incomplete" (words may be
-                                // lost) ARE warnings: dim.
-                                pulse === "untranslated" || note === "incomplete" ? "text-dim" : "text-faint",
+                                // not dim. An untranslated landing, "incomplete" (words may be
+                                // lost) and a correction left on the clipboard ARE warnings: dim.
+                                pulse === "untranslated" || note === "incomplete" || note === "correction-copied"
+                                  ? "text-dim"
+                                  : "text-faint",
                               )}
                             >
                               {label}
