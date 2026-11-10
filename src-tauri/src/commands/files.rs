@@ -63,7 +63,16 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
         // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
         // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
         crate::audio::restrict_file_private(dest);
-        std::fs::remove_file(src)
+        // A source held without delete sharing (a player with a video open for reading) is
+        // only found out here, after the whole copy: not a sharing violation the caller should
+        // retry, or it would copy the file again on every round.
+        std::fs::remove_file(src).map_err(|e| {
+            if held_open_elsewhere(&e) {
+                std::io::Error::other(e)
+            } else {
+                e
+            }
+        })
     });
     // Both callers checked `dest` did not exist, so whatever a failed copy (a full disk) or an
     // unremovable source left there is ours: kept, it would trip their never-clobber check on
