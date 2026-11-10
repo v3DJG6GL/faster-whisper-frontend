@@ -828,8 +828,9 @@ pub async fn run<F>(
         //
         // The idle window alone never ends a drain whose server keeps sending frames, so the
         // whole drain also has an absolute ceiling, far beyond any real cold load plus finalize
-        // decode; hitting it exits through the same timed-out path.
-        const DRAIN_CEILING: Duration = Duration::from_secs(600);
+        // decode — the server's keepalives also cover a first-use model DOWNLOAD (gigabytes over
+        // a slow link), hence 30 min; hitting it exits through the same timed-out path.
+        const DRAIN_CEILING: Duration = Duration::from_secs(30 * 60);
         let drain_end = tokio::time::Instant::now() + DRAIN_CEILING;
         let mut saw_frame = partials_seen > 0;
         let timed_out = loop {
@@ -866,7 +867,8 @@ pub async fn run<F>(
             }
         };
         if timed_out {
-            if tokio::time::Instant::now() >= drain_end {
+            let ceiling = tokio::time::Instant::now() >= drain_end;
+            if ceiling {
                 tracing::warn!(
                     "[stream] drain ceiling hit ({DRAIN_CEILING:?} since Stop) — pending transcript discarded"
                 );
@@ -880,9 +882,17 @@ pub async fn run<F>(
             // phrase would vanish silently. A WARNING, not an `Error`: everything committed
             // before the timeout is good, and the UI's error path would skip the normal close
             // tail (no stop-mode insert, no pending phrase-end Enter) for one slow final.
-            on_event(StreamEvent::Incomplete(format!(
-                "The server did not finish the transcript in time; {LAST_PHRASE_MISSING}"
-            )));
+            // The ceiling names itself: the server was still working (often still loading the
+            // model), so the cut may cost far more than one slow final. Same suffix either way —
+            // the webview's `incompleteFlashMessage` swaps it when nothing survived.
+            on_event(StreamEvent::Incomplete(if ceiling {
+                format!(
+                    "The server was still working {} min after Stop, so the wait for its transcript ended; {LAST_PHRASE_MISSING}",
+                    DRAIN_CEILING.as_secs() / 60
+                )
+            } else {
+                format!("The server did not finish the transcript in time; {LAST_PHRASE_MISSING}")
+            }));
         }
     }
 
