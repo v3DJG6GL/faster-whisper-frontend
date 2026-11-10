@@ -154,6 +154,23 @@ fn transcripts_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Create `transcripts/` owner-only, and once per run restate 0700 on one that already exists:
+/// it holds every transcript, and creating `dictation/` first makes it with the default mode
+/// (`create_dir_private` only restricts the leaf), as older builds did. The folder is always the app's own (under app_data_dir), never a
+/// user pick, so tightening it changes nothing a user sees.
+fn private_transcripts_root(top: &Path) -> std::io::Result<()> {
+    crate::audio::create_dir_private(top)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        static HEALED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !HEALED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let _ = std::fs::set_permissions(top, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    Ok(())
+}
+
 /// Dictation-session records live in a subdirectory so their (stricter)
 /// retention window can sweep independently of file transcriptions. The
 /// top-level listing skips non-`.json` entries, so the subdir is invisible
@@ -711,13 +728,17 @@ pub fn save_transcript_record(
     if record.len() as u64 > MAX_RECORD_BYTES {
         return Err("transcript record too large".into());
     }
-    let dir = if dictation.unwrap_or(false) {
-        dictations_dir(&app)?
-    } else {
-        transcripts_dir(&app)?
-    };
-    crate::audio::create_dir_private(&dir)
+    let top = transcripts_dir(&app)?;
+    private_transcripts_root(&top)
         .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
+    let dir = if dictation.unwrap_or(false) {
+        let d = dictations_dir(&app)?;
+        crate::audio::create_dir_private(&d)
+            .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
+        d
+    } else {
+        top
+    };
     let path = dir.join(format!("{id}.json"));
     let _io = record_io_lock();
     // A record from a listing taken before this session's move or heal may name a dead path.
@@ -1349,6 +1370,20 @@ fn wipe_records(dir: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_transcripts_root_is_created_and_healed_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::config::fresh_test_dir("transcripts-root");
+        let top = dir.join("transcripts");
+        std::fs::create_dir(&top).unwrap();
+        std::fs::set_permissions(&top, std::fs::Permissions::from_mode(0o755)).unwrap();
+        private_transcripts_root(&top).unwrap();
+        let mode = std::fs::metadata(&top).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_media_copy_never_keeps_a_tmp_extension() {
