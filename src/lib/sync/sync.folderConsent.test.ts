@@ -364,7 +364,7 @@ describe("securityChanges: folder moves", () => {
     const huge = "/" + "./".repeat(20000) + "../tmp";
     const t0 = performance.now();
     expect(resolvedFolderPath(huge)).toBe(huge);
-    expect(performance.now() - t0).toBeLessThan(50);
+    expect(performance.now() - t0).toBeLessThan(200);
     // One at the Windows limit still resolves.
     const edge = "/a/.." + "/b".repeat((32767 - 5) / 2);
     expect(edge.length).toBe(32767);

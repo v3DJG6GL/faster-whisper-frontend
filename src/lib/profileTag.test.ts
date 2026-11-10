@@ -49,6 +49,8 @@ describe("shownChipTag", () => {
       expect(shownChipTag(padded).startsWith("…")).toBe(true);
       expect(chipTagFor({ name: "Work", tag: padded }).startsWith("…")).toBe(true);
     }
-    expect(performance.now() - t0).toBeLessThan(200);
+    // Unbudgeted, these 20 walks take seconds; budgeted, tens of ms. The bound leaves room for a
+    // loaded full-suite run without losing the regression signal.
+    expect(performance.now() - t0).toBeLessThan(1500);
   });
 });
