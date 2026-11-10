@@ -751,16 +751,12 @@ function SecurityReviewDialog() {
                   Would connect to <span className="font-mono font-semibold">{safeHostText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
-              <div
-                className="mt-0.5 font-mono text-[11px] break-all text-dim"
-                // A folder row's detail IS the path: a long one is cut at the row cap, so the
-                // tooltip carries it whole (still through the same invisible-character fold).
-                title={c.kind === "audio-folder" || c.kind === "log-folder" ? safeIdentityText(c.detail, 4096) : undefined}
-              >
+              <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
                 {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
                     identity while it decides whether a plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
-                    a padded suffix. `consentDetailCap`: a typed-text row shows the whole value. */}
+                    a padded suffix. `consentDetailCap`: a typed-text or folder row shows the whole value
+                    (`break-all` wraps a long path). */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
                 {safeIdentityText(c.detail, consentDetailCap(c.kind))}
               </div>

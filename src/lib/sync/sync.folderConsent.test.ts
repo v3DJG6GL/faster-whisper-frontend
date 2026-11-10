@@ -7,12 +7,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   approvePendingReview,
   categorySelection,
+  consentDetailCap,
   getPendingReview,
   pullNow,
   pushNow,
   resetSyncState,
   securityChanges,
 } from "./sync";
+import { safeIdentityText } from "../sanitize";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
@@ -77,6 +79,19 @@ describe("securityChanges: folder moves", () => {
         recording: false,
       }, on as never),
     ).toEqual([]);
+  });
+  it("the row shows a long padded path whole, destination included", () => {
+    // Visible padding a head-kept 200 cut would leave in front of the "…".
+    const padded = "\\\\fileserver.corp.example.com." + "x.".repeat(120) + "evil.tld\\share\\" + "./".repeat(200) + "rec";
+    const [row] = securityChanges(
+      { recording: { audioBaseDir: padded } } as never,
+      { recording: {} } as never,
+      CATS,
+      { audioFolder: true } as never,
+    );
+    const shown = safeIdentityText(row.detail, consentDetailCap(row.kind));
+    expect(shown).toBe(padded);
+    expect(consentDetailCap("log-folder")).toBe(consentDetailCap("audio-folder"));
   });
 });
 

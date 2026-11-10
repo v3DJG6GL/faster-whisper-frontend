@@ -3590,12 +3590,21 @@ const TYPED_TEXT_DETAIL_MAX = Math.max(
   ...[...TYPED_TEXT_KEYS].map((k) => typedTextDetail(k, "").length + 6 * (keySpec(k).maxLen ?? 512)),
 );
 
+/** The longest folder path a folder-move consent row shows whole. */
+export const FOLDER_DETAIL_MAX = 4096;
+
 /** How many code points of a consent row's `detail` the review dialog shows. A typed-text row is
  *  the user's only view of what would be typed into the focused window after every dictation, so
  *  it is never cut: at the 200 every other row uses, a peer's 512-character suffix could put a
- *  harmless head in front and the escaped newline plus command behind the "…". */
+ *  harmless head in front and the escaped newline plus command behind the "…". A folder row's
+ *  detail IS the peer's path, so it is shown whole too: a head-kept cut would let visible padding
+ *  (`./` runs, a long UNC host) push the real destination past the "…". */
 export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
-  kind === "typed-text" ? TYPED_TEXT_DETAIL_MAX : 200;
+  kind === "typed-text"
+    ? TYPED_TEXT_DETAIL_MAX
+    : kind === "audio-folder" || kind === "log-folder"
+      ? FOLDER_DETAIL_MAX
+      : 200;
 
 /** Report only the security-relevant differences between what a pull would apply and what this
  *  device holds. `local` is the freshly composed local blob, so its `backends.secrets` already
