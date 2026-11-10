@@ -9,10 +9,12 @@ import {
   categorySelection,
   consentDetailCap,
   consentDetailText,
+  consentDetailTitle,
   getPendingReview,
   pullNow,
   pushNow,
   resetSyncState,
+  resolvedFolderPath,
   securityChanges,
 } from "./sync";
 import { safeIdentityText } from "../sanitize";
@@ -92,28 +94,88 @@ describe("securityChanges: folder moves", () => {
     );
     const shown = safeIdentityText(row.detail, consentDetailCap(row.kind));
     expect(shown).toBe(padded);
-    expect(consentDetailText(row)).toBe(padded);
+    // Its `./` runs resolve away: the row shows the share folder Windows opens.
+    expect(consentDetailText(row)).toBe("\\\\fileserver.corp.example.com." + "x.".repeat(120) + "evil.tld\\share\\rec");
     expect(consentDetailCap("log-folder")).toBe(consentDetailCap("audio-folder"));
   });
   it("a path past the cap shows its head and its destination's end", () => {
-    // Windows collapses the `.\` runs of a path this long and opens the real destination, which a
-    // head-kept cut would leave behind the "…".
-    const padded = "C:\\Users\\me\\Recordings\\" + ".\\".repeat(2100) + "..\\..\\..\\Users\\Public\\x";
+    // A long path with nothing to resolve: a head-kept cut would leave its end behind the "…".
+    const long = "C:\\Users\\me\\" + "ab\\".repeat(1500) + "Users\\Public\\x";
     const [row] = securityChanges(
-      { recording: { audioBaseDir: padded } } as never,
+      { recording: { audioBaseDir: long } } as never,
       { recording: {} } as never,
       CATS,
       { audioFolder: true } as never,
     );
     const shown = consentDetailText(row);
-    expect(shown.startsWith("C:\\Users\\me\\Recordings\\.\\")).toBe(true);
-    expect(shown.endsWith("..\\..\\..\\Users\\Public\\x")).toBe(true);
+    expect(shown.startsWith("C:\\Users\\me\\ab\\")).toBe(true);
+    expect(shown.endsWith("ab\\Users\\Public\\x")).toBe(true);
     expect(shown).toContain(" … ");
     expect([...shown].length).toBeLessThanOrEqual(4096 + 3);
+    expect(consentDetailTitle(row)).toBeUndefined();
     // The same holds for a log folder; an exact-cap path still renders whole.
-    expect(consentDetailText({ kind: "log-folder", detail: padded })).toBe(shown);
+    expect(consentDetailText({ kind: "log-folder", detail: long })).toBe(shown);
     const fits = "C:\\" + "a".repeat(4093);
     expect(consentDetailText({ kind: "audio-folder", detail: fits })).toBe(fits);
+  });
+  it("a path whose `..` hides between padding walls shows the folder it really opens", () => {
+    // Head and tail are both `.\` walls; the `..` components that move the destination sit in
+    // the middle a head+tail cut leaves out. Windows resolves them before opening the folder.
+    const both = "C:\\Users\\me\\Recordings\\" + ".\\".repeat(1100) + "..\\..\\..\\Public\\" + ".\\".repeat(1100) + "Users\\me\\Recordings";
+    const [row] = securityChanges(
+      { recording: { audioBaseDir: both } } as never,
+      { recording: {} } as never,
+      CATS,
+      { audioFolder: true } as never,
+    );
+    expect(consentDetailText(row)).toBe("C:\\Public\\Users\\me\\Recordings");
+    expect(consentDetailText({ kind: "log-folder", detail: both })).toBe("C:\\Public\\Users\\me\\Recordings");
+    // The raw path stays reachable as the row's tooltip, capped head+tail like the row.
+    const title = consentDetailTitle(row)!;
+    expect(title.startsWith("C:\\Users\\me\\Recordings\\.\\")).toBe(true);
+    expect(title).toContain(" … ");
+    // One-sided padding resolves too; a path still past the cap once resolved keeps head+tail.
+    const one = "C:\\Users\\me\\Recordings\\" + ".\\".repeat(2100) + "..\\..\\..\\Users\\Public\\x";
+    expect(consentDetailText({ kind: "audio-folder", detail: one })).toBe("C:\\Users\\Public\\x");
+    const stillLong = "C:\\" + "ab\\".repeat(1500) + ".\\x";
+    const shown = consentDetailText({ kind: "audio-folder", detail: stillLong });
+    expect(shown.startsWith("C:\\ab\\ab\\")).toBe(true);
+    expect(shown.endsWith("ab\\x")).toBe(true);
+    expect(shown).toContain(" … ");
+  });
+  it("resolves `.`, `..` and separator runs lexically, never above the root", () => {
+    // Nothing to resolve: returned character for character (mixed and trailing separators too).
+    for (const plain of [
+      "C:\\Users\\me\\Recordings",
+      "C:/Users/me/Recordings/",
+      "D:\\",
+      "\\\\fileserver\\share\\rec",
+      "/home/me/recordings",
+      "/home/me/recordings/",
+      "/",
+      "/home/me/.config/app",
+      "C:\\a\\..b\\c.\\...",
+    ]) {
+      expect(resolvedFolderPath(plain)).toBe(plain);
+      expect(consentDetailText({ kind: "audio-folder", detail: plain })).toBe(plain);
+      expect(consentDetailTitle({ kind: "audio-folder", detail: plain })).toBeUndefined();
+    }
+    // POSIX rules for a POSIX path.
+    expect(resolvedFolderPath("/home/me/recordings/../../../etc/cron.d")).toBe("/etc/cron.d");
+    expect(consentDetailText({ kind: "log-folder", detail: "/home/me/logs/./../../../../tmp/x" })).toBe("/tmp/x");
+    expect(resolvedFolderPath("//home///me/./x/")).toBe("/home/me/x");
+    expect(resolvedFolderPath("/a/b\\..\\c")).toBe("/a/b\\..\\c");
+    // Windows rules for a drive or UNC path: either separator, `..` stops at the drive / share.
+    expect(resolvedFolderPath("C:\\a\\..\\..\\..\\b")).toBe("C:\\b");
+    expect(resolvedFolderPath("C:/a//b/./c")).toBe("C:\\a\\b\\c");
+    expect(resolvedFolderPath("C:\\\\a")).toBe("C:\\a");
+    expect(resolvedFolderPath("\\\\host\\share\\a\\..\\..\\other")).toBe("\\\\host\\share\\other");
+    expect(resolvedFolderPath("\\\\host/share/a/../b")).toBe("\\\\host\\share\\b");
+    // A forward-slash `//host` is UNC only on Windows; elsewhere it is the POSIX `/host`.
+    expect(resolvedFolderPath("//host/share/a/../b")).toBe("/host/share/b");
+    expect(resolvedFolderPath("\\\\host\\share\\..")).toBe("\\\\host\\share");
+    // A verbatim path is opened as written: shown as written.
+    expect(resolvedFolderPath("\\\\?\\C:\\a\\..\\b")).toBe("\\\\?\\C:\\a\\..\\b");
   });
 });
 

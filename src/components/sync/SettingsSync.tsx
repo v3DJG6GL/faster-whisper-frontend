@@ -30,6 +30,7 @@ import {
   approvePendingReview,
   backendKeyFates,
   consentDetailText,
+  consentDetailTitle,
   deleteAnswerRuntime,
   dismissSyncConflict,
   disableConflictingProfiles,
@@ -751,12 +752,13 @@ function SecurityReviewDialog() {
                   Would connect to <span className="font-mono font-semibold">{safeHostText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
-              <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
+              <div className="mt-0.5 font-mono text-[11px] break-all text-dim" title={consentDetailTitle(c)}>
                 {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
                     identity while it decides whether a plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
                     a padded suffix. `consentDetailText`: a typed-text or folder row shows the whole value
-                    (`break-all` wraps a long path), a folder past its cap its head and tail. */}
+                    (`break-all` wraps a long path), resolved of `.`/`..` (the raw path is the
+                    tooltip), and one past its cap its head and tail. */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
                 {consentDetailText(c)}
               </div>

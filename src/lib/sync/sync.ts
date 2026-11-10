@@ -3606,14 +3606,58 @@ export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
       ? FOLDER_DETAIL_MAX
       : 200;
 
+/** The folder a synced path names once the OS has collapsed its `.` / `..` components and
+ *  repeated separators — lexically, with Windows rules for a drive-letter or UNC path (either
+ *  separator; `..` never climbs above `C:\` or `\\host\share`) and POSIX rules otherwise (never
+ *  above `/`). The peer writes the path, and both OSes resolve these before opening it, so a `..`
+ *  hidden between padding walls would otherwise move the destination unseen. A path with none of
+ *  them (every folder-picker path) is returned unchanged, character for character; so is a
+ *  verbatim `\\?\` path, which Windows opens as written. */
+export function resolvedFolderPath(p: string): string {
+  const drive = /^[A-Za-z]:[\\/]/.test(p);
+  // `//host/share` is a UNC path only where Windows opens it; Linux reads it as `/host/share`.
+  const unc = !drive && /^[\\/]{2}[^\\/]/.test(p) && (IS_WINDOWS || p.slice(0, 2).includes("\\"));
+  const win = drive || unc;
+  if (unc && /^[\\/]{2}\?[\\/]/.test(p)) return p;
+  let root: string;
+  if (drive) root = `${p.slice(0, 2)}\\`;
+  else if (unc) root = (/^[\\/]{2}[^\\/]+(?:[\\/][^\\/]+)?/.exec(p)?.[0] ?? "").replace(/\//g, "\\");
+  else if (p.startsWith("/")) root = "/";
+  else return p;
+  // Drive and POSIX roots end in their one separator; a UNC root ends before the next one.
+  const rest = p.slice(drive ? 3 : unc ? root.length : 1);
+  const sep = win ? /[\\/]+/ : /\/+/;
+  const parts = rest.split(sep);
+  // A separator run anywhere past the root (a drive or POSIX root's own one counts as its start).
+  const dirty = (win ? /[\\/]{2}/ : /\/\//).test(unc ? rest : `/${rest}`);
+  if (!dirty && !parts.some((x) => x === "." || x === "..")) return p;
+  const kept: string[] = [];
+  for (const x of parts) {
+    if (x === "" || x === ".") continue;
+    if (x === "..") kept.pop();
+    else kept.push(x);
+  }
+  const joiner = win ? "\\" : "/";
+  if (unc) return kept.length ? `${root}${joiner}${kept.join(joiner)}` : root;
+  return root + kept.join(joiner);
+}
+
 /** A consent row's `detail` as the review dialog shows it (`consentDetailCap`). A folder path is
- *  uncapped (only `is_absolute` is checked), and on Windows a padded one over the cap still opens
- *  (`.\` runs collapse to the real destination), so one past the cap keeps its head AND its tail:
- *  the destination's end stays in view. A path within the cap renders whole, as every other row. */
+ *  uncapped (only `is_absolute` is checked) and the OS opens it with its `.` / `..` components
+ *  resolved, so the row shows the resolved path (`resolvedFolderPath`); one still past the cap
+ *  keeps its head AND its tail, so the destination's end stays in view. A path within the cap
+ *  with nothing to resolve renders whole, as every other row. */
 export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail">): string =>
   c.kind === "audio-folder" || c.kind === "log-folder"
-    ? safeHeadTailText(c.detail, FOLDER_DETAIL_MAX)
+    ? safeHeadTailText(resolvedFolderPath(c.detail), FOLDER_DETAIL_MAX)
     : safeIdentityText(c.detail, consentDetailCap(c.kind));
+
+/** The path as the peer wrote it, for the row's tooltip — only for a folder row whose shown path
+ *  was resolved (`consentDetailText`), so the user can still see what was sent. */
+export const consentDetailTitle = (c: Pick<SecurityChange, "kind" | "detail">): string | undefined =>
+  (c.kind === "audio-folder" || c.kind === "log-folder") && resolvedFolderPath(c.detail) !== c.detail
+    ? safeHeadTailText(c.detail, FOLDER_DETAIL_MAX)
+    : undefined;
 
 /** Report only the security-relevant differences between what a pull would apply and what this
  *  device holds. `local` is the freshly composed local blob, so its `backends.secrets` already
