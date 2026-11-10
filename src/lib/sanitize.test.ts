@@ -92,8 +92,9 @@ describe("safeIdentityText", () => {
     const t0 = performance.now();
     // Interior blanks (and U+2800, which the defang turns into spaces) before a later joiner:
     // a `\s*` pattern restarts at every blank offset and backtracks, seconds on this input.
-    expect(safeIdentityText("a" + " ".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
-    expect(safeIdentityText("a" + "\u2800".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
+    // A cap above the run, so the scan budget leaves the whole run to the passes.
+    expect(safeIdentityText("a" + " ".repeat(100000) + "b\u200dc", 200_000)).toBe("a b\u200dc");
+    expect(safeIdentityText("a" + "\u2800".repeat(100000) + "b\u200dc", 200_000)).toBe("a b\u200dc");
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
@@ -134,12 +135,34 @@ describe("safeIdentityText's pre-cut", () => {
     }
   });
 
-  it("returns fast for a 4 MiB name, and padding longer than any window still collapses", () => {
+  it("returns fast for a 4 MiB name, and padding longer than the window still collapses", () => {
     const t0 = performance.now();
     expect(safeIdentityText("x".repeat(4 * 1024 * 1024))).toBe("x".repeat(80) + "…");
     expect(safeIdentityText("a b ".repeat(1_000_000))).toBe(identityReference("a b ".repeat(100)));
     expect(performance.now() - t0).toBeLessThan(200);
-    expect(safeIdentityText("konsole" + " ".repeat(100_000) + "evil")).toBe("konsole evil");
+    // Within the scan budget (8 × 80 + 1024 code points) the run collapses as before.
+    expect(safeIdentityText("konsole" + " ".repeat(1500) + "evil")).toBe("konsole evil");
+    // Past it the cut is marked: never the bare "konsole" the padding was built to show.
+    expect(safeIdentityText("konsole" + " ".repeat(100_000) + "evil")).toBe("konsole…");
+  });
+
+  it("stays fast on a name made of non-ordinary padding, and marks the cut", () => {
+    for (const pad of ["\u2800", "\u200b", " \u200d", "\u00a0", "\u2800 \u200b\u00a0\u200d\ufe0f"]) {
+      const run = pad.repeat(Math.ceil(1_000_000 / pad.length));
+      const name = "Work" + run + " Evil";
+      const t0 = performance.now();
+      const shown = safeIdentityText(name);
+      const host = safeHostText("sync.example.com" + run + ".evil.tld");
+      const hostHead = safeHostText("evil.tld" + run);
+      expect(performance.now() - t0, JSON.stringify(pad)).toBeLessThan(50);
+      expect(shown).toBe("Work…");
+      // The tail scan ran out inside the padding: the host's end shows, its head is marked cut.
+      expect(host).toBe("….evil.tld");
+      expect(hostHead).toBe("…");
+      // Under the budget the output is the reference's.
+      const short = "Work" + pad.repeat(Math.floor(1500 / pad.length)) + " Evil";
+      expect(safeIdentityText(short)).toBe(identityReference(short));
+    }
   });
 });
 

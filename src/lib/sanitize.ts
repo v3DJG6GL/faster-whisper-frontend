@@ -188,8 +188,11 @@ export function safeIdentityText(s: unknown, max = 80): string {
   const head = typeof s === "string" ? trimLeadingInvisible(s) : "";
   // A synced name is unbounded (only the 4 MiB blob cap), and the passes below copy it whole
   // several times per render. Its first max+2 "ordinary" characters already decide the output
-  // (see identityCutAt), so the rest is cut before those passes — the output is identical.
-  const raw = head.length > max + 1 ? head.slice(0, identityCutAt(head, max)) : head;
+  // (see identityCutAt), so the rest is cut before those passes — the output is identical. A name
+  // that is mostly padding has too few of them to stop the scan early, so the scan also stops
+  // after a budget of code points; that cut is marked below whatever the passes leave of it.
+  const cut = head.length > max + 1 ? identityCutAt(head, max) : null;
+  const raw = cut ? head.slice(0, cut.at) : head;
   const defanged = [...raw]
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
@@ -212,8 +215,17 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // render as its own 80-char prefix with no ellipsis.
   const t = safeDisplayText(collapsed.trim(), max + 1);
   const chars = [...t];
-  return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
+  if (chars.length > max) return chars.slice(0, max).join("").trimEnd() + "…";
+  // A budget cut hid the rest of the name: mark it, so the padded name still never renders as a
+  // strict prefix of itself.
+  return cut?.overBudget ? t.trimEnd() + "…" : t;
 }
+
+/** How many code points `identityCutAt` / `identityTailAt` scan at most. A real name or host
+ *  reaches its max+2 ordinary characters long before this; only a run of padding many times the
+ *  display cap does not, and scanning (then copying) all of it would make every render of an
+ *  untrusted multi-MB name slow. */
+const identityScanBudget = (max: number) => 8 * max + 1024;
 
 /** The UTF-16 offset just past `raw`'s (max+2)-th ORDINARY code point — one `safeIdentityText`
  *  keeps as itself (not whitespace, not the invisible class it folds to a space, not one the
@@ -223,34 +235,43 @@ export function safeIdentityText(s: unknown, max = 80): string {
  *  everything up to the last kept ordinary character comes out the same — and max+1 code points
  *  already decide the cut and the ellipsis (one more is kept as a spare for a fractional `max`).
  *  `raw` starts with an ordinary character (`trimLeadingInvisible`), so the leading trim is
- *  unaffected too. */
-function identityCutAt(raw: string, max: number): number {
+ *  unaffected too. `overBudget`: the scan hit `identityScanBudget` first and cut there instead —
+ *  that cut DOES change the output, so the caller marks it. */
+function identityCutAt(raw: string, max: number): { at: number; overBudget: boolean } {
   let ordinary = 0;
+  let budget = identityScanBudget(max);
   for (let i = 0; i < raw.length; ) {
+    // Out of budget with code points left: cut here, and the caller marks the cut.
+    if (budget-- <= 0) return { at: i, overBudget: true };
     const code = raw.codePointAt(i) ?? 0;
     const len = code > 0xffff ? 2 : 1;
     const plain = isIdentityOrdinary(code, raw, i, len);
     i += len;
-    if (plain && ++ordinary > max + 1) return i;
+    if (plain && ++ordinary > max + 1) return { at: i, overBudget: false };
   }
-  return raw.length;
+  return { at: raw.length, overBudget: false };
 }
 
 /** `identityCutAt` from the END: the UTF-16 offset where `raw`'s (max+2)-th ordinary code point
  *  from the end starts, or 0 when it has fewer. `safeIdentityText` of the suffix from there is
  *  exactly the end of `safeIdentityText` of the whole (same passes; the suffix starts on an
- *  ordinary character, so only the dropped head differs) and holds over `max` code points. */
-function identityTailAt(raw: string, max: number): number {
+ *  ordinary character, so only the dropped head differs) and holds over `max` code points.
+ *  `overBudget` as in `identityCutAt`. */
+function identityTailAt(raw: string, max: number): { at: number; overBudget: boolean } {
   let ordinary = 0;
+  let budget = identityScanBudget(max);
   for (let i = raw.length; i > 0; ) {
+    if (budget-- <= 0) return { at: i, overBudget: true };
     // Pair a low surrogate with the high one before it, as forward iteration does.
     const lo = raw.charCodeAt(i - 1);
     const hi = i >= 2 ? raw.charCodeAt(i - 2) : 0;
     const len = lo >= 0xdc00 && lo <= 0xdfff && hi >= 0xd800 && hi <= 0xdbff ? 2 : 1;
     i -= len;
-    if (isIdentityOrdinary(raw.codePointAt(i) ?? 0, raw, i, len) && ++ordinary > max + 1) return i;
+    if (isIdentityOrdinary(raw.codePointAt(i) ?? 0, raw, i, len) && ++ordinary > max + 1) {
+      return { at: i, overBudget: false };
+    }
   }
-  return 0;
+  return { at: 0, overBudget: false };
 }
 
 /** A code point `safeIdentityText` keeps as itself: not whitespace, not the invisible class it
@@ -275,10 +296,13 @@ function isIdentityOrdinary(code: number, raw: string, i: number, len: number): 
 export function safeHostText(s: unknown, max = 80): string {
   // A synced or imported host is unbounded, and only its end is shown: cut it to the suffix that
   // decides that end (identityTailAt) before the whole-string passes — the output is identical.
-  const src = typeof s === "string" && s.length > max + 1 ? s.slice(identityTailAt(s, max)) : s;
+  // A tail scan that ran out of budget (padding many times the cap) cut the head off: mark it.
+  const cut = typeof s === "string" && s.length > max + 1 ? identityTailAt(s, max) : null;
+  const src = cut && typeof s === "string" ? s.slice(cut.at) : s;
   const full = safeIdentityText(src, Number.MAX_SAFE_INTEGER);
   const chars = [...full];
-  if (chars.length <= max) return full;
+  if (chars.length <= max && !cut?.overBudget) return full;
+  if (chars.length < max) return "…" + full;
   let tail = chars.slice(chars.length - Math.max(1, max - 1));
   // Start at a label boundary when one is in reach, so no label shows cut.
   const dot = tail.indexOf(".");
