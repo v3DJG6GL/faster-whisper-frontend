@@ -548,6 +548,19 @@ export function RestoreFromServer({
 
 /** Maximum change rows shown in the SecurityReviewDialog. */
 const MAX_REVIEW_ROWS = 50;
+
+/** The rows the SecurityReviewDialog shows, and how many it leaves out. Over the cap the peer's
+ *  blob order would decide which rows stay in view, so 50 decoy servers or profiles listed first
+ *  could push a repoint of the active server behind "…and N more": the rows that each move one
+ *  thing this device already uses (an address, a key, a folder, a switch) are kept first, then
+ *  changed typed text, then new servers — stably, so each group keeps its own order. Within the
+ *  cap the rows show as listed. */
+export function reviewRows(changes: readonly SecurityChange[]): { shown: SecurityChange[]; hidden: number } {
+  if (changes.length <= MAX_REVIEW_ROWS) return { shown: [...changes], hidden: 0 };
+  const rank = (c: SecurityChange) => (c.kind === "new-backend" ? 2 : c.kind === "typed-text" ? 1 : 0);
+  const shown = [...changes].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_REVIEW_ROWS);
+  return { shown, hidden: changes.length - shown.length };
+}
 /** Alias for `safeDisplayText` — every string this screen renders through it came from an untrusted blob or file. */
 const safeText = safeDisplayText;
 
@@ -722,8 +735,7 @@ function SecurityReviewDialog() {
     "log-folder": "Log folder would move",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
-  const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
-  const hidden = pending.changes.length - shown.length;
+  const { shown, hidden } = reviewRows(pending.changes);
   // Only a new server or a moved address carries a `url`: a retention, history or key row
   // sends nothing anywhere new, so the footer must not warn about "the new address" for it.
   const repoints = pending.changes.some((c) => !!c.url);
