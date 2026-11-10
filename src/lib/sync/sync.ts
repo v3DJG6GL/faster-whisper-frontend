@@ -3624,14 +3624,20 @@ const isRustWhitespace = (c: number): boolean =>
   (c >= 0x09 && c <= 0x0d) || c === 0x20 || c === 0x85 || c === 0xa0 || c === 0x1680 ||
   (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
 
-/** `s` with its edges trimmed as Rust `str::trim` trims them (every White_Space code point is in
- *  the BMP, so a UTF-16 walk sees each one whole). A loop, not a `\s+$` regex: that one restarts
- *  at every offset of a long blank run. */
-function trimRustWhitespace(s: string): string {
+/** The UTF-16 bounds `[a, b)` of what Rust `str::trim` keeps of `s` (every White_Space code point
+ *  is in the BMP, so a UTF-16 walk sees each one whole). A loop, not a `\s+$` regex: that one
+ *  restarts at every offset of a long blank run. */
+function rustTrimBounds(s: string): [number, number] {
   let a = 0;
   let b = s.length;
   while (a < b && isRustWhitespace(s.charCodeAt(a))) a++;
   while (b > a && isRustWhitespace(s.charCodeAt(b - 1))) b--;
+  return [a, b];
+}
+
+/** `s` with its edges trimmed as Rust `str::trim` trims them (`rustTrimBounds`). */
+function trimRustWhitespace(s: string): string {
+  const [a, b] = rustTrimBounds(s);
   return a === 0 && b === s.length ? s : s.slice(a, b);
 }
 
@@ -3644,13 +3650,16 @@ function trimRustWhitespace(s: string): string {
  *  verbatim `\\?\` path, which Windows opens as written. Edge whitespace goes first, as Rust trims
  *  it before opening. */
 export function resolvedFolderPath(raw: string): string {
-  // No OS opens a path this long (Windows caps one at 32767 UTF-16 units even as `\\?\`, Linux
-  // at 4096 bytes), so a move to it fails wherever it points; the display helper bounds the rest.
-  // Without this every render of the row would split and rejoin a peer's multi-MB path.
-  if (raw.length > MAX_OPENABLE_PATH) return raw;
   // Rust trims the stored path (`str::trim`, Unicode White_Space) before it opens it, so a peer's
   // leading blank must not keep the root tests below from seeing the path it pads.
   const p = trimRustWhitespace(raw);
+  // No OS opens a path this long (Windows caps one at 32767 UTF-16 units even as `\\?\`, Linux
+  // at 4096 bytes), so a move to it fails wherever it points; the display helper bounds the rest.
+  // Without this every render of the row would split and rejoin a peer's multi-MB path. The
+  // TRIMMED length counts, as that is what Rust opens: blank padding past the cap must not get a
+  // short `..` path shown raw. (The trim walk stops at the first non-blank code point, so a long
+  // path that is not padding costs nothing extra.)
+  if (p.length > MAX_OPENABLE_PATH) return raw;
   const drive = /^[A-Za-z]:[\\/]/.test(p);
   // `//host/share` is a UNC path only where Windows opens it; Linux reads it as `/host/share`, and
   // `/\host\share` as `/` plus a `\host\share` file name.
@@ -3688,19 +3697,56 @@ const EMOJI_BASE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
 const JOINING_LETTER =
   /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Nko}\p{scx=Mongolian}\p{scx=Myanmar}\p{scx=Khmer}ऀ-෿]$/u;
 
+/** Code points that draw as a lone `.` yet have no decomposition to one, so NFKD keeps them:
+ *  Lisu tone mya ti, the Arabic-Indic and Persian zeros, the Syriac supralinear and sublinear
+ *  full stops, the Vai full stop, the Kharoshthi dot. */
+const DOT_LOOKALIKES = new Set([0xa4f8, 0x0660, 0x06f0, 0x0701, 0x0702, 0xa60e, 0x10a50]);
+
+/** Code points that draw as a `/` or `\` yet separate nothing: inside one component they would
+ *  draw a component boundary (`x∕..∕home` reads as a climb but is one directory name). */
+const SEP_LOOKALIKES = new Set([
+  0x2044, 0x2215, 0x2216, 0x2571, 0x2572, 0x29f5, 0x29f8, 0x29f9, 0xfe68, 0xff0f, 0xff3c,
+]);
+
 /** Whether a path component that is not literally `.` or `..` reads as one: once compatibility-
  *  decomposed and stripped of combining marks and hidden characters, `‥` (U+2025), `․․` and `..`
- *  plus a combining dot all draw as `..`, yet each is a real directory name the OS creates. */
+ *  plus a combining dot all draw as `..`, yet each is a real directory name the OS creates. A
+ *  `DOT_LOOKALIKES` code point counts as a `.` here, so only a component made of nothing but
+ *  dot-likes matches: a name with an Arabic or Persian zero among other digits or letters does not. */
 function looksLikeDotComponent(comp: string): boolean {
   if (comp === "." || comp === ".." || comp === "") return false;
   let bare = "";
   for (const ch of comp.normalize("NFKD")) {
     const code = ch.codePointAt(0) ?? 0;
     if (/\p{M}/u.test(ch) || isHiddenChar(code) || code === 0x200c || code === 0x200d) continue;
-    bare += ch;
+    bare += DOT_LOOKALIKES.has(code) ? "." : ch;
     if (bare.length > 2) return false;
   }
   return bare === "." || bare === "..";
+}
+
+/** `code` written out as `\u{XXXX}`. */
+const escapedCodePoint = (code: number): string => `\\u{${code.toString(16).toUpperCase().padStart(4, "0")}}`;
+
+/** How many runs of one blank code point a folder path's edge is written out as: the padding is
+ *  peer-written and unbounded (only the blob cap), and a longer head would push the path itself
+ *  past the display's head/tail cut. */
+const EDGE_RUNS_SHOWN = 8;
+
+/** A blank edge `s` written out compactly: each run of one code point as `\u{XXXX}`, or
+ *  `\u{XXXX}×N` for N > 1, and whatever follows the first `EDGE_RUNS_SHOWN` runs as `…×N`. */
+function edgeBlankText(s: string): string {
+  let out = "";
+  let i = 0;
+  for (let runs = 0; i < s.length && runs < EDGE_RUNS_SHOWN; runs++) {
+    const c = s.charCodeAt(i);
+    let j = i + 1;
+    while (j < s.length && s.charCodeAt(j) === c) j++;
+    out += escapedCodePoint(c) + (j - i > 1 ? `×${j - i}` : "");
+    i = j;
+  }
+  // Every White_Space code point is in the BMP, so the UTF-16 units left are code points.
+  return i < s.length ? `${out}…×${s.length - i}` : out;
 }
 
 /** `p` with every code point that would render as nothing written out as `\u{XXXX}`: the
@@ -3708,17 +3754,21 @@ function looksLikeDotComponent(comp: string): boolean {
  *  name, not a climb) would otherwise read as `..`. Escaped: the hidden set (`isHiddenChar`),
  *  whitespace other than a space, a space touching a separator or the path's edge (`.. ` is a
  *  name too) or following another space (the display collapses the run), every code point but
- *  the ASCII dots of a component that only reads as `.` / `..` (`looksLikeDotComponent`), and a
- *  joiner or variation selector that shapes nothing. Kept: a ZWJ or VS16 right after an emoji
+ *  the ASCII dots of a component that only reads as `.` / `..` (`looksLikeDotComponent`), a
+ *  separator lookalike (`SEP_LOOKALIKES`), and a joiner or variation selector that shapes nothing.
+ *  The blank edges Rust trims are written out compactly (`edgeBlankText`). Kept: a ZWJ or VS16 right after an emoji
  *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
  *  mark of a script it shapes (`JOINING_LETTER`) — each only before a visible code point, as a
  *  joiner before a separator, a blank or another joiner joins nothing — plus a keycap's VS16
  *  (`1️⃣`) and a subdivision flag's tag run (`🏴` + tags + U+E007F). A path with none of the
  *  escaped ones (every folder-picker path, emoji and script names included) is returned
- *  unchanged; one no OS opens is left as it is, so the walk stays bounded. */
+ *  unchanged; one no OS opens even once trimmed is left as it is, so the walk stays bounded. */
 function escapeHiddenPathChars(p: string): string {
-  if (p.length > MAX_OPENABLE_PATH) return p;
-  const cps = [...p];
+  // Rust opens the trimmed path, so the cap applies to it (`resolvedFolderPath`); blank padding
+  // past the cap is written out in a few runs rather than walked code point by code point.
+  const [a, b] = rustTrimBounds(p);
+  if (b - a > MAX_OPENABLE_PATH) return p;
+  const cps = [...p.slice(a, b)];
   const isSep = (ch: string | undefined) => ch === undefined || ch === "/" || ch === "\\";
   // Per code point: inside a `..`-lookalike component, or a subdivision flag's tag run.
   const dotLike = new Array<boolean>(cps.length).fill(false);
@@ -3739,7 +3789,12 @@ function escapeHiddenPathChars(p: string): string {
     start = i + 1;
   }
   const visible = (ch: string | undefined) =>
-    !isSep(ch) && !/\s/.test(ch ?? "") && ch !== "‌" && ch !== "‍" && !isHiddenChar(ch?.codePointAt(0) ?? 0);
+    !isSep(ch) &&
+    !/\s/.test(ch ?? "") &&
+    ch !== "‌" &&
+    ch !== "‍" &&
+    !isHiddenChar(ch?.codePointAt(0) ?? 0) &&
+    !SEP_LOOKALIKES.has(ch?.codePointAt(0) ?? 0);
   let out = "";
   let changed = false;
   // What the previous code point, if kept, lets a joiner or VS16 shape with; "selected" is an
@@ -3751,6 +3806,7 @@ function escapeHiddenPathChars(p: string): string {
     let hide: boolean;
     if (dotLike[i]) hide = ch !== ".";
     else if (flagTag[i]) hide = false;
+    else if (SEP_LOOKALIKES.has(code)) hide = true;
     else if (code === 0x200c || code === 0x200d)
       hide = !(code === 0x200d ? base !== null : base === "script") || !visible(cps[i + 1]);
     else if (code >= 0xfe00 && code <= 0xfe0f)
@@ -3758,7 +3814,7 @@ function escapeHiddenPathChars(p: string): string {
     else if (code === 0x20) hide = isSep(cps[i - 1]) || isSep(cps[i + 1]) || cps[i - 1] === " ";
     else hide = isHiddenChar(code) || /\s/.test(ch);
     if (hide) {
-      out += `\\u{${code.toString(16).toUpperCase().padStart(4, "0")}}`;
+      out += escapedCodePoint(code);
       changed = true;
     } else out += ch;
     base = hide
@@ -3767,7 +3823,8 @@ function escapeHiddenPathChars(p: string): string {
         ? base === "emoji" ? "selected" : null
         : EMOJI_BASE.test(ch) ? "emoji" : JOINING_LETTER.test(ch) ? "script" : null;
   }
-  return changed ? out : p;
+  if (a === 0 && b === p.length) return changed ? out : p;
+  return edgeBlankText(p.slice(0, a)) + out + edgeBlankText(p.slice(b));
 }
 
 /** A folder path as the app shows it — the consent row and the Settings folder readouts alike:

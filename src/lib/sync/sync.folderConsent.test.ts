@@ -300,6 +300,66 @@ describe("securityChanges: folder moves", () => {
     expect(resolvedFolderPath("/\\home\\me/../tmp")).toBe("/tmp");
     expect(resolvedFolderPath("/\\home\\me/a/../../../tmp/evil")).toBe("/tmp/evil");
   });
+  it("counts the trimmed length against the openable cap, and writes blank edges out compactly", () => {
+    // Rust trims before it opens, so padding past the cap must not get the path shown raw.
+    const core = "/tmp/..​/..​/home/u/Recordings";
+    const shown = "/tmp/..\\u{200B}/..\\u{200B}/home/u/Recordings";
+    for (const detail of [core + " ".repeat(33000), " ".repeat(33000) + core]) {
+      expect(consentDetailText({ kind: "audio-folder", detail })).toBe(shown);
+      const title = consentDetailTitle({ kind: "audio-folder", detail });
+      expect(title).toBe(detail.startsWith(" ") ? `\\u{0020}×33000${shown}` : `${shown}\\u{0020}×33000`);
+      expect(folderPathText(detail, 4096)).toBe(title);
+    }
+    expect(resolvedFolderPath("/a/../tmp" + " ".repeat(40000))).toBe("/tmp");
+    // A mixed edge: runs of one code point each, then the rest counted.
+    expect(consentDetailTitle({ kind: "log-folder", detail: "\t\t /x/../y" })).toBe("\\u{0009}×2\\u{0020}/x/../y");
+    const mixed = " \t".repeat(20) + "/x";
+    expect(consentDetailTitle({ kind: "log-folder", detail: mixed })).toBe(
+      "\\u{0020}\\u{0009}".repeat(4) + "…×32/x",
+    );
+    // Megabytes of padding stay cheap to render.
+    const padded = " 　".repeat(1 << 20) + core + " ".repeat(1 << 21);
+    const t0 = performance.now();
+    expect(consentDetailText({ kind: "audio-folder", detail: padded })).toBe(shown);
+    expect(consentDetailTitle({ kind: "audio-folder", detail: padded })).toContain("…×");
+    expect(performance.now() - t0).toBeLessThan(500);
+    // A core still past the cap once trimmed is left raw: no OS opens it.
+    const huge = " " + "/" + "./".repeat(20000) + "../tmp";
+    expect(resolvedFolderPath(huge)).toBe(huge);
+  });
+  it("writes out a component made only of dot lookalikes NFKD keeps", () => {
+    const row = (detail: string) => consentDetailText({ kind: "audio-folder", detail });
+    for (const dot of ["ꓸ", "٠", "۰", "܁", "܂", "꘎", "\u{10A50}"]) {
+      const esc = `\\u{${dot.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}}`;
+      expect(row(`/tmp/${dot}${dot}/${dot}${dot}/home/u/Recordings`)).toBe(`/tmp/${esc}${esc}/${esc}${esc}/home/u/Recordings`);
+      expect(row(`/tmp/.${dot}/rec`)).toBe(`/tmp/.${esc}/rec`);
+      expect(row(`/tmp/${dot}/rec`)).toBe(`/tmp/${esc}/rec`);
+    }
+    // A real Arabic or Persian name with those zeros among letters or digits renders unchanged.
+    for (const plain of [
+      "/home/u/ملف٠١", // ملف٠١
+      "/home/u/٢٠٢٤", // ٢٠٢٤
+      "/home/u/۱۰", // ۱۰
+      "/home/u/۱۴۰۰/ضبط", // ۱۴۰۰/ضبط
+      "/home/u/ضبط ۰۲",
+    ]) {
+      expect(row(plain)).toBe(safeIdentityText(plain, 4096));
+      expect(consentDetailTitle({ kind: "audio-folder", detail: plain })).toBeUndefined();
+    }
+  });
+  it("writes out a separator lookalike anywhere in a folder path", () => {
+    const row = (detail: string) => consentDetailText({ kind: "audio-folder", detail });
+    for (const sep of ["⁄", "∕", "∖", "╱", "╲", "⧵", "⧸", "⧹", "﹨", "／", "＼"]) {
+      const esc = `\\u{${sep.codePointAt(0)!.toString(16).toUpperCase()}}`;
+      const detail = `/tmp/x${sep}..${sep}home${sep}u${sep}Recordings`;
+      const shown = `/tmp/x${esc}..${esc}home${esc}u${esc}Recordings`;
+      expect(row(detail)).toBe(shown);
+      expect(consentDetailTitle({ kind: "log-folder", detail })).toBe(shown);
+      expect(folderPathText(detail, 200)).toBe(shown);
+    }
+    // A joiner before one joins nothing.
+    expect(row("/home/u/ب‍∕x")).toBe("/home/u/ب\\u{200D}\\u{2215}x");
+  });
   it("leaves a path no OS opens as it is, without resolving it", () => {
     const huge = "/" + "./".repeat(20000) + "../tmp";
     const t0 = performance.now();
