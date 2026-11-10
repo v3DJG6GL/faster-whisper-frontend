@@ -308,8 +308,10 @@ export function Editor({
         setResult(info);
         // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
         if (info.ok) setTestGen((n) => n + 1);
-        // A successful Test with the stored key is the user confirming this address for it.
-        if (info.ok && !testedKey) setTestedUrls((s) => new Set(s).add(typedServerUrl(testedUrl)));
+        // A successful Test with the stored key is the user confirming this address for it. Only
+        // when a key WAS stored (stillLive kept that unchanged): a keyless Test confirms nothing,
+        // and a key a pull adds later must not inherit it. Keyless probes need no entry anyway.
+        if (info.ok && !testedKey && hadKey) setTestedUrls((s) => new Set(s).add(typedServerUrl(testedUrl)));
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
         // verdict describes what the list card routes to — a Test-then-Cancel on an unedited
@@ -516,7 +518,10 @@ export function Editor({
           <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[14px] font-medium text-text">{backendDisplayName(b.name)}</div>
-            <div className="truncate font-mono text-[11.5px] text-faint">{safeIdentityText(effUrl, 120) || "no address yet"}</div>
+            {/* Tail-kept: a long synced address cut at the head would hide the host it ends in. */}
+            <div className="truncate font-mono text-[11.5px] text-faint" title={safeHostText(effUrl, 120) || undefined}>
+              {safeHostText(effUrl, 120) || "no address yet"}
+            </div>
           </div>
           <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>
             {conn?.ok

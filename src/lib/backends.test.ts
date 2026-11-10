@@ -3,6 +3,7 @@ import { backendForAddress, backendLabel, editorProbesAllowed, backendLabelById,
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 import { backend } from "./sync/syncTestFixtures";
+import backendsScreenSrc from "../screens/Backends.tsx?raw";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -113,6 +114,15 @@ describe("backendOptions", () => {
       // The joiner touches whitespace, so the identity fold drops it; the separator left behind forces the real host suffix.
       expect(opts.map((o) => o.label)).toEqual(["Work", "Work \u00b7 good.tld \u00b7 evil.tld"]);
     }
+  });
+  it("a long host suffix keeps its end, a real-length one renders unchanged", () => {
+    const long = "good.example.com." + "pad.".repeat(40) + "evil.tld";
+    const opts = backendOptions([be("aaaaaaaa11", "Work", "http://good.example.com"), be("bbbbbbbb22", "Work", `http://${long}`)]);
+    expect(opts[1].label.startsWith("Work \u00b7 …")).toBe(true);
+    expect(opts[1].label.endsWith(".evil.tld")).toBe(true);
+    const real = "transcription-server.department.company.example.com:8000";
+    const two = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "Work", `http://${real}`)]);
+    expect(two[1].label).toBe(`Work \u00b7 ${real}`);
   });
   it("backendLabels maps each id to its picker label, cached per list", () => {
     const all = [be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "Work", "http://b.lan")];
@@ -321,6 +331,12 @@ describe("editorProbesAllowed", () => {
     const tested = new Set([typedServerUrl("http://other.example:8000")]);
     expect(gate({ probeUrl: "other.example:8000", testedUrls: tested })).toBe(true);
     expect(gate({ probeUrl: "http://third.example:8000", testedUrls: tested })).toBe(false);
+  });
+
+  it("the editor records a tested address only when the Test used a stored key", () => {
+    // A keyless Test confirms nothing for a key a pull adds later; keyless probes pass on `!keyStored`.
+    expect(backendsScreenSrc).toContain("if (info.ok && !testedKey && hadKey) setTestedUrls(");
+    expect(backendsScreenSrc).not.toContain("if (info.ok && !testedKey) setTestedUrls(");
   });
 
   it("a typed key, or no stored key, has nothing to carry", () => {

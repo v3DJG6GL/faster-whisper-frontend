@@ -4,7 +4,7 @@
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
-import { backendDisplayName, dropJoiners, safeIdentityText } from "./sanitize";
+import { backendDisplayName, dropJoiners, safeHostText, safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
@@ -407,7 +407,9 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
     // The stored address, not the effective one: a per-device URL override is machine-local and
     // rarely set, and this only has to tell two same-named entries apart. A blanked serverUrl (one
     // `isStorableServerUrl` refused) has no host, so fall back to an id fragment.
-    const host = authorityOf(b.serverUrl)?.host;
+    // The host comes from a synced or imported address: an unbounded one would render whole in
+    // every picker, and a head-kept cut could hide its real end — keep the tail, as consent rows do.
+    const host = safeHostText(authorityOf(b.serverUrl)?.host, 80);
     const suffix = host || `#${b.id.slice(0, 8)}`;
     // A blank name reads "Untitled backend" as backendDisplayName shows it on the Backends list,
     // not a bare host; the raw `label` above still decides the branch, so a blank name always
