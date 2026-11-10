@@ -1702,6 +1702,7 @@ mod handshake_auth_tests {
 
     #[test]
     fn a_bad_key_is_refused_without_echoing_any_credential() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let e = handshake_auth_headers("wss://u:secret@h/x", Some("k\nx")).unwrap_err();
         assert!(e.starts_with("Invalid API key"), "{e}");
         assert!(!e.contains("secret") && !e.contains("k\nx"), "{e}");
