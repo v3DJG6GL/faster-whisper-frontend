@@ -32,6 +32,11 @@
  *  ordinal it knows is id-less (see `spent` / `highWater`). */
 export const CAPTURE_ID_WAIT_MS = 1_500;
 
+/** Ceiling on ids held for phrases that haven't asked yet. A real session holds a handful (each
+ *  is taken within seconds of its final); a server streaming `captured` frames for ordinals no
+ *  phrase ever takes would otherwise grow the book for the whole session. */
+const MAX_ARRIVED = 256;
+
 export interface CaptureIdBook {
   /** A `captured` frame landed. */
   resolve(utterance: number, id: string): void;
@@ -94,6 +99,14 @@ export function newCaptureIdBook(
         return;
       }
       arrived.set(utterance, id);
+      // Over the ceiling, drop the LOWEST ordinal: phrases take in order, so that is the one a
+      // real session is done with, and it is below `highWater`, so a late take of it answers
+      // null at once instead of parking the queue. Bounded whichever way a server orders them.
+      if (arrived.size > MAX_ARRIVED) {
+        let lowest = Infinity;
+        for (const ord of arrived.keys()) if (ord < lowest) lowest = ord;
+        arrived.delete(lowest);
+      }
     },
 
     take(utterance) {

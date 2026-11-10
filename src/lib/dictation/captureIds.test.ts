@@ -21,6 +21,21 @@ describe("newCaptureIdBook", () => {
     expect(await b.take(2)).toBe("cap-2");
   });
 
+  it("ids nobody takes are bounded, dropping the lowest ordinal whichever way they arrive", async () => {
+    // A long wait: a dropped id must answer at once (below highWater), never park.
+    const up = newCaptureIdBook({ waitMs: 60_000 });
+    for (let i = 0; i < 1000; i++) up.resolve(i, `cap-${i}`);
+    expect(await up.take(0)).toBeNull();
+    expect(await up.take(743)).toBeNull();
+    expect(await up.take(744)).toBe("cap-744");
+    expect(await up.take(999)).toBe("cap-999");
+    const down = newCaptureIdBook({ waitMs: 60_000 });
+    for (let i = 999; i >= 0; i--) down.resolve(i, `cap-${i}`);
+    expect(await down.take(743)).toBeNull();
+    expect(await down.take(744)).toBe("cap-744");
+    expect(await down.take(999)).toBe("cap-999");
+  });
+
   it("an id is handed out exactly once", async () => {
     const b = newCaptureIdBook({ waitMs: 5 });
     b.resolve(3, "cap-3");
