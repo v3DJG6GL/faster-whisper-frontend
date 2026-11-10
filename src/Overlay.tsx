@@ -183,7 +183,14 @@ const CORRECTION_COPIED_LABEL = "Correction copied — paste it with Ctrl+V";
 // past its target and bounces back, which re-rasterizes the rounded clip many times
 // on WebKitGTK (the morph "flicker"). A brief ease-out is smooth and too quick to
 // perceive any residual edge re-raster.
-const MORPH = { type: "tween", duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
+//
+// ONE clock for the whole tuck ↔ open change: the edge slide, the dot's size, the pill's
+// widths and its fill / border / shadow all run this duration and curve (the CSS ones via
+// CHIP_EASE_CLASS). On separate clocks the dot drifted against the pill around it: the pill
+// grows from its centre and pushed the dot sideways faster than the dot slid or resized.
+const MORPH = { type: "tween", duration: 0.3, ease: [0.22, 1, 0.36, 1] } as const;
+// MORPH's duration and curve for the CSS-transitioned parts (Tailwind needs the literal).
+const CHIP_EASE_CLASS = "duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]";
 
 // The chip's own band inside the overlay window, in CSS px: the pill's width cap and the
 // transient hover hold (see reportBounds). The window itself is larger — overlay.rs sizes it
@@ -1343,7 +1350,7 @@ export default function Overlay() {
           // re-rasterizes). reducedMotion="user" turns this into an instant set. Full opacity
           // when tucked so the lone half-dot stays crisp at the border.
           animate={{ opacity: peeked ? 1 : dimmed ? 0.4 : 1, y: slideY }}
-          transition={{ opacity: { duration: 0.7 }, y: { duration: 0.5, ease: [0.4, 0, 0.2, 1] } }}
+          transition={{ opacity: { duration: 0.7 }, y: MORPH }}
           // Width-driven morph — NOT Motion `layout`/FLIP. Children animate their WIDTH
           // (0 ↔ auto) and the content-sized pill reflows around them. Reflow is crisp:
           // no transform-scale (which re-rasterized/shimmered the small mono text), no
@@ -1360,8 +1367,10 @@ export default function Overlay() {
             // 64px = 32px a side: the shadow below reaches 32px sideways (40 blur − 8 spread), and
             // the transparent window CLIPS what is painted past its edge — any less and a
             // full-width pill's shadow ends in a hard vertical cut.
-            "inline-flex h-[42px] max-w-[calc(min(100vw,820px)-64px)] items-center overflow-hidden border px-3.5 transition-colors duration-300",
-            // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border.
+            "inline-flex h-[42px] max-w-[calc(min(100vw,820px)-64px)] items-center overflow-hidden border px-3.5 transition-[color,background-color,border-color,box-shadow]",
+            CHIP_EASE_CLASS,
+            // Tucked: drop the pill chrome so ONLY the bare dot peeks below the border. The shadow
+            // fades with the fill and border (the transition above) rather than snapping.
             peeked
               ? "border-transparent bg-transparent shadow-none"
               : "border-line bg-panel/95 shadow-[0_10px_40px_-8px_rgba(0,0,0,0.55)]",
@@ -1376,7 +1385,8 @@ export default function Overlay() {
             className={cn(
               // width/height join the colour transition so the tucked ↔ open size change
               // (dotK) eases instead of snapping.
-              "shrink-0 rounded-full transition-[width,height,color,background-color,border-color] duration-300",
+              "shrink-0 rounded-full transition-[width,height,color,background-color,border-color]",
+              CHIP_EASE_CLASS,
               // A landed phrase / session end flashes the dot: green = typed, amber = clipboard,
               // amber = landed untranslated (the words arrived, just not in the asked-for language).
               pulse === "typed"
@@ -1395,16 +1405,31 @@ export default function Overlay() {
             )}
           />
 
-          {idGroups.length > 0 && !peeked && (
-            <div className="ml-2 flex shrink-0 items-center gap-2.5 font-mono text-[11px] leading-none tracking-[0.12em]">
-              {idGroups.map((g, i) => (
-                <Fragment key={i}>
-                  {i > 0 && <span className="h-3 w-px shrink-0 bg-line-strong" aria-hidden />}
-                  {g}
-                </Fragment>
-              ))}
-            </div>
-          )}
+          {/* The tag / stats / target readout grows and shrinks with the body's morph (WIDTH
+              0 ↔ auto, clipped) instead of popping in and out when the chip tucks or un-tucks.
+              The margin lives inside the clip so it animates with the width. */}
+          <AnimatePresence initial={false} onExitComplete={reportBounds}>
+            {idGroups.length > 0 && !peeked && (
+              <motion.div
+                key="id"
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: "auto", opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={MORPH}
+                onAnimationComplete={reportBounds}
+                className="shrink-0 overflow-hidden"
+              >
+                <div className="ml-2 flex items-center gap-2.5 font-mono text-[11px] leading-none tracking-[0.12em]">
+                  {idGroups.map((g, i) => (
+                    <Fragment key={i}>
+                      {i > 0 && <span className="h-3 w-px shrink-0 bg-line-strong" aria-hidden />}
+                      {g}
+                    </Fragment>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Body (waveform + transcript) reveals by animating its WIDTH 0 → auto,
               clipping the inner row so the content is revealed — never squished or
