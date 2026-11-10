@@ -542,23 +542,14 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
     super::blocking(move || write_text_atomic(&PathBuf::from(path), &contents)).await
 }
 
-/// The body of `save_text_file`. On Linux the predictable `<path>.tmp` is opened without
-/// following a symlink at its last component, as `config::write_private` does for the same
-/// reason: the export folder may be shared, and a planted `<name>.tmp` link would otherwise have
-/// this truncate and overwrite whatever it points at. Such a link fails the export, and the
-/// cleanup below removes the link itself (never its target), so a retry goes through.
+/// The body of `save_text_file`. The predictable `<path>.tmp` goes through `open_export_tmp`,
+/// which on Linux refuses a planted symlink there; the cleanup in `replace_via_tmp` then removes
+/// the link itself (never its target), so a retry goes through.
 fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
     use std::io::Write as _;
     let tmp = crate::transport::media::tmp_sibling(path);
     let write = |t: &std::path::Path| -> std::io::Result<()> {
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.custom_flags(libc::O_NOFOLLOW);
-        }
-        let mut f = opts.open(t)?;
+        let mut f = crate::transport::media::open_export_tmp(t)?;
         f.write_all(contents.as_bytes())?;
         f.sync_all()
     };

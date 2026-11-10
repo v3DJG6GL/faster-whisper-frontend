@@ -741,10 +741,11 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
 
 /// Byte-copy `src` into a freshly created `dest`, not `fs::copy`: that would carry the
 /// store's owner-only mode onto an export a media server or another user must read.
-/// Still copy_file_range on Linux.
+/// Still copy_file_range on Linux. `dest` is always the export's tmp, so it is opened without
+/// following a planted symlink (`open_export_tmp`).
 fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<u64> {
     let mut r = std::fs::File::open(src)?;
-    let mut w = std::fs::File::create(dest)?;
+    let mut w = transport::media::open_export_tmp(dest)?;
     let n = std::io::copy(&mut r, &mut w)?;
     w.sync_all()?;
     Ok(n)
@@ -1025,6 +1026,21 @@ mod tests {
             std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
             plain
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_media_export_never_writes_through_a_planted_tmp_symlink() {
+        let dir = scratch("tmp-link");
+        let src = dir.join("store.m4a");
+        let victim = dir.join("victim");
+        let tmp = transport::media::tmp_sibling(&dir.join("export.m4a"));
+        std::fs::write(&src, b"audio bytes").unwrap();
+        std::fs::write(&victim, b"keep").unwrap();
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+        assert!(copy_into_fresh(&src, &tmp).is_err());
+        assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

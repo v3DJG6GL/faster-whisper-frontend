@@ -32,6 +32,22 @@ pub(crate) fn tmp_sibling(p: &Path) -> std::path::PathBuf {
     t.into()
 }
 
+/// Open an export's `tmp_sibling` for writing: created or truncated with the default mode (an
+/// export is meant to be shared), but on Linux never through a symlink at its last component.
+/// The export folder may be shared, and a planted `<name>.tmp` link would otherwise have the
+/// write truncate and overwrite whatever it points at. Such a link fails the export; the
+/// caller's cleanup removes the link itself (never its target), so a retry goes through.
+pub(crate) fn open_export_tmp(tmp: &Path) -> std::io::Result<std::fs::File> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.custom_flags(libc::O_NOFOLLOW);
+    }
+    opts.open(tmp)
+}
+
 /// One subtitle track as the webview sends it (already-generated SRT text).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -382,9 +398,8 @@ pub async fn package_to_path(
         use tokio::io::AsyncWriteExt;
         // Synchronous for the rename's reason below: an awaited create could land on the
         // blocking pool after a Cancel drop and its cleanup, leaving a stray empty tmp.
-        let mut f = tokio::fs::File::from_std(
-            std::fs::File::create(&tmp).context("creating the export file")?,
-        );
+        let mut f =
+            tokio::fs::File::from_std(open_export_tmp(&tmp).context("creating the export file")?);
         while let Some(chunk) = resp
             .chunk()
             .await
