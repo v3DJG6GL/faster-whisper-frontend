@@ -115,14 +115,36 @@ pub fn merge_general(writer: &str, reader: &str, group: &str) {
     set_key(writer, "General", "rules", &list.join(","));
 }
 
+/// The window class KWin reports for this app's windows. The app sets no GTK application id, so
+/// GTK names the Wayland app id after the program (`g_get_prgname`, argv[0]'s file name) — the
+/// same for the deb, the AppImage and a dev build: `faster-whisper-frontend`.
+fn own_wm_class() -> &'static str {
+    static CLASS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CLASS.get_or_init(|| {
+        std::env::args_os()
+            .next()
+            .and_then(|a| {
+                std::path::Path::new(&a)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "faster-whisper-frontend".to_string())
+    })
+}
+
 /// The keep-above / skip-taskbar rule body (strength 2 = "Force") matched on an exact window
-/// title. The quick-add window and language picker install exactly this; the chip extends it.
-pub fn keep_above_keys<'a>(description: &'a str, title: &'a str) -> [(&'a str, &'a str); 8] {
+/// title AND this app's window class. The quick-add window and language picker install exactly
+/// this; the chip extends it. Title alone let any other program name a window `fwf-dictation-chip`
+/// and get a ready-made always-on-top, switcher-hidden surface from our rule.
+pub fn keep_above_keys<'a>(description: &'a str, title: &'a str) -> [(&'a str, &'a str); 10] {
     [
         ("Description", description),
         ("title", title),
-        ("titlematch", "1"),   // exact title match
-        ("wmclassmatch", "0"), // ignore window class
+        ("titlematch", "1"), // exact title match
+        ("wmclass", own_wm_class()),
+        ("wmclassmatch", "1"),        // exact window-class match
+        ("wmclasscomplete", "false"), // the class alone, not "name class"
         ("above", "true"),
         ("aboverule", "2"),
         ("skiptaskbar", "true"),
@@ -152,4 +174,18 @@ pub fn install_keep_above_once(
         set_key(writer, group, k, v);
     }
     reconfigure();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn keep_above_rule_matches_the_title_and_this_apps_window_class() {
+        let keys = super::keep_above_keys("d", "fwf-quick-add");
+        let get = |k: &str| keys.iter().find(|(key, _)| *key == k).map(|(_, v)| *v);
+        assert_eq!(get("title"), Some("fwf-quick-add"));
+        assert_eq!(get("titlematch"), Some("1"));
+        assert_eq!(get("wmclassmatch"), Some("1"));
+        assert_eq!(get("wmclasscomplete"), Some("false"));
+        assert!(get("wmclass").is_some_and(|c| !c.is_empty() && !c.contains('/')));
+    }
 }
