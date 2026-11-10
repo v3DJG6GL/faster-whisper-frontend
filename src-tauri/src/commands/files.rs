@@ -101,6 +101,13 @@ fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io:
     Ok(())
 }
 
+/// A Windows sharing violation on the rename or on the copy's open: a dictation save holds the
+/// file with share mode 0 while it writes it (`audio::write_new_private`). `move_file` then
+/// leaves the source where it was. 32 is EPIPE elsewhere, which never means this.
+fn held_open_elsewhere(e: &std::io::Error) -> bool {
+    cfg!(windows) && e.raw_os_error() == Some(32)
+}
+
 /// Move every regular file from `from` into `to`, recording old→new paths.
 /// Stops on the first error; already-moved files stay moved and are in `map`,
 /// which the caller rewrites into the records even on failure (they store
@@ -144,6 +151,12 @@ fn move_dir_contents(
         match move_file(&src, &dest) {
             // Swapped for a non-file after the check above: skipped like one found at the check.
             Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => continue,
+            // Held unshared by a dictation save writing it right now: left in the old base
+            // like an in-progress copy, where the record that save writes points at it.
+            Err(e) if held_open_elsewhere(&e) => {
+                tracing::warn!("[audio] not moving {:?} — it is being written", src);
+                continue;
+            }
             r => r.map_err(|e| format!("could not move {}: {e}", src.display()))?,
         }
         map.push((
@@ -1005,6 +1018,41 @@ mod tests {
             .iter()
             .any(|(old, new)| old.ends_with("a.wav") && new.ends_with("a.wav")));
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn only_a_windows_sharing_violation_counts_as_held_open() {
+        let e = std::io::Error::from_raw_os_error(32);
+        assert_eq!(super::held_open_elsewhere(&e), cfg!(windows));
+        assert!(!super::held_open_elsewhere(&std::io::Error::other("x")));
+    }
+
+    // A dictation file a save holds unshared mid-write stays in the old base; the rest moves.
+    #[cfg(windows)]
+    #[test]
+    fn move_dir_contents_leaves_a_file_held_unshared_behind() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let base = crate::config::fresh_test_dir("move-dir-held");
+        let from = base.join("from");
+        let to = base.join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("a.wav"), b"riff").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .share_mode(0)
+            .open(from.join("b.wav"))
+            .unwrap();
+
+        let mut map = Vec::new();
+        move_dir_contents(&from, &to, &mut map).unwrap();
+        drop(held);
+
+        assert!(to.join("a.wav").is_file());
+        assert!(from.join("b.wav").is_file());
+        assert!(!to.join("b.wav").exists());
+        assert_eq!(map.len(), 1);
         let _ = std::fs::remove_dir_all(&base);
     }
 
