@@ -1118,6 +1118,17 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("utteranceByOrdinal.clear()");
   });
 
+  it("past the record ceiling a break does not reopen record writes", () => {
+    // The fold target is the last RECORDED entry: a break nulls lastUtterance, so keying the fold
+    // on it let a server alternating finals and breaks write one record per pair past the ceiling.
+    const at = anchorAt(streamingSrc, "function recordUtteranceFinal(", "recordUtteranceFinal");
+    const body = mask(bodyAfter(streamingSrc.slice(at), "delta: string }"));
+    expect(body).toContain("recordCapFold(utteranceRecordCount, MAX_UTTERANCE_RECORDS, lastRecordedUtterance)");
+    expect(body).toContain("lastRecordedUtterance = utt;");
+    expect(mask(boundaryBody)).not.toContain("lastRecordedUtterance");
+    expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("lastRecordedUtterance = null");
+  });
+
   it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
     // An inline arrow in the final handler shares the dropped task's closure scope (target,
     // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.

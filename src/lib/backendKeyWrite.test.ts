@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adoptWrittenKey, keyWriteOutcome } from "./backendKeyWrite";
+import { adoptWrittenKey, KEY_TOO_LONG, keyWriteOutcome, MAX_SECRET_LEN } from "./backendKeyWrite";
+import configRs from "../../src-tauri/src/commands/config.rs?raw";
 import type { Backend } from "./types";
 
 describe("keyWriteOutcome", () => {
@@ -53,5 +54,13 @@ describe("adoptWrittenKey (a kept key on a saved backend whose draft was not sav
     adoptWrittenKey("b2", { backends: [backend(false)], upsertBackend }, forget);
     expect(upsertBackend).not.toHaveBeenCalled();
     expect(forget).not.toHaveBeenCalled();
+  });
+});
+
+describe("MAX_SECRET_LEN", () => {
+  it("is the bound Rust's set_backend_key refuses past, with the same words", () => {
+    expect(configRs).toContain(`const MAX_SECRET_UTF16: usize = ${MAX_SECRET_LEN};`);
+    expect(KEY_TOO_LONG).toBe(`The API key is longer than ${MAX_SECRET_LEN} characters, so it was not stored.`);
+    expect(configRs).toContain('"The API key is longer than {MAX_SECRET_UTF16} characters, so it was not stored."');
   });
 });

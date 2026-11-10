@@ -160,6 +160,44 @@ describe("safeHostText", () => {
     expect(shown.slice(1).startsWith("pad.")).toBe(true);
     expect(safeHostText(host + ":8443", 80).endsWith("evil.tld:8443")).toBe(true);
   });
+
+  // The implementation before the tail pre-cut, as the reference: the passes over the whole host.
+  const hostReference = (s: unknown, max = 80): string => {
+    const full = safeIdentityText(s, Number.MAX_SAFE_INTEGER);
+    const chars = [...full];
+    if (chars.length <= max) return full;
+    let tail = chars.slice(chars.length - Math.max(1, max - 1));
+    const dot = tail.indexOf(".");
+    if (dot >= 0 && dot < tail.length - 1) tail = tail.slice(dot + 1);
+    return "…" + tail.join("").trimStart();
+  };
+
+  it("renders exactly what the whole-host passes rendered", () => {
+    const alphabet = ["a", "é", "😀", " ", "\t", "\u2800", "\u200d", "\u200c", "\u200b", "\u0001", "\ufe0f", "\ud800", "\udc00", ".", ":"];
+    let seed = 11;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 20000; round++) {
+      const s = Array.from({ length: rand(32) }, () => alphabet[rand(alphabet.length)]).join("");
+      const max = 1 + rand(10);
+      expect(safeHostText(s, max), JSON.stringify([s, max])).toBe(hostReference(s, max));
+    }
+    for (const s of [
+      "a" + " ".repeat(500) + "b",
+      "sync.example.com" + "\u2800".repeat(300) + ".evil.tld",
+      "x".repeat(200) + " \u200d".repeat(100) + "y",
+      "\ud83d\ude00".repeat(100),
+    ]) {
+      expect(safeHostText(s)).toBe(hostReference(s));
+    }
+  });
+
+  it("returns fast for a multi-MB host", () => {
+    const host = "sync.example.com." + "pad.".repeat(1_000_000) + "evil.tld";
+    const t0 = performance.now();
+    for (let i = 0; i < 20; i++) expect(safeHostText(host).endsWith("pad.evil.tld")).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(safeHostText(host)).toBe(hostReference("pad.".repeat(100) + "evil.tld"));
+  });
 });
 
 describe("profileDisplayName / backendDisplayName", () => {

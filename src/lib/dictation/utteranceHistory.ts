@@ -147,3 +147,12 @@ export function routeUtteranceClip(
   } else utt.clip = clip;
   return true;
 }
+
+/** Past the per-session record ceiling, the entry a new utterance folds its text into instead of
+ *  writing another record: the last one that got a record. The caller keeps that entry apart from
+ *  its "last utterance", which a break clears — keyed on that, a server alternating finals with
+ *  breaks wrote one record per pair past the ceiling. Null below the ceiling (or before any record
+ *  exists): the utterance gets its own record. */
+export function recordCapFold(count: number, max: number, lastRecorded: UtteranceEntry | null): UtteranceEntry | null {
+  return count >= max && lastRecorded?.id ? lastRecorded : null;
+}

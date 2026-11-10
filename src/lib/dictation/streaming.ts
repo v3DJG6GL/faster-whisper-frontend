@@ -24,7 +24,7 @@
 import { useApp } from "../store";
 import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
-import { appendDelta, finalDelta, routeUtteranceClip, utteranceInsertTranslation, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
+import { appendDelta, finalDelta, recordCapFold, routeUtteranceClip, utteranceInsertTranslation, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
 import { authoredChipTag } from "../profileTag";
@@ -560,6 +560,9 @@ const MAX_CLIPLESS_UTTERANCES = 1000;
 const MAX_UTTERANCE_RECORDS = 10_000;
 let utteranceRecordCount = 0;
 let utteranceRecordCapWarned = false;
+/** The last utterance that got a record — what utterances past the ceiling fold into. Apart from
+ *  `lastUtterance` because a break clears that one, and only the session's end clears this. */
+let lastRecordedUtterance: UtteranceEntry | null = null;
 
 function resetUtteranceHistory(): void {
   sessionPerUtterance = false;
@@ -571,6 +574,7 @@ function resetUtteranceHistory(): void {
   utteranceByOrdinal.clear();
   utteranceRecordCount = 0;
   utteranceRecordCapWarned = false;
+  lastRecordedUtterance = null;
 }
 
 // Dictation translation (per-profile "Translate output"), frozen per session from
@@ -987,8 +991,11 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
     utteranceOpenedAt.delete(ordinal);
     // The server's ordinals only grow: an `open` below this final will never get one.
     for (const k of utteranceOpenedAt.keys()) if (k < ordinal) utteranceOpenedAt.delete(k);
-    if (utteranceRecordCount >= MAX_UTTERANCE_RECORDS && lastUtterance?.id) {
-      // Past the record ceiling: this utterance's text appends to the last record below.
+    const fold = recordCapFold(utteranceRecordCount, MAX_UTTERANCE_RECORDS, lastRecordedUtterance);
+    if (fold) {
+      // Past the record ceiling: this utterance's text appends to the last record below — also
+      // right after a break, which cleared `lastUtterance`.
+      lastUtterance = fold;
       if (!utteranceRecordCapWarned) {
         utteranceRecordCapWarned = true;
         console.warn(`[dictation] ${MAX_UTTERANCE_RECORDS} utterance records this session; later utterances join the last one`);
@@ -1026,6 +1033,7 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
       includeOriginal: sessionTranslation?.includeOriginal || undefined,
     });
     utteranceRecordCount += 1;
+    lastRecordedUtterance = utt;
   } catch (e) {
     console.error("dictation history capture failed:", e);
     return { id: null, first: false, delta };

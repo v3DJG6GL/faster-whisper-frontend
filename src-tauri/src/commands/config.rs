@@ -253,10 +253,26 @@ fn sync_autostart_if_changed(app: &AppHandle, enabled: bool) {
 /// thread never does.
 static KEYRING_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Longest secret `set_backend_key` stores, in UTF-16 code units: backendKeyWrite.ts's
+/// MAX_SECRET_LEN, the bound sync applies to a synced key. A longer local key would be left out
+/// of this device's own snapshot stash, and a later push would erase it for every peer.
+const MAX_SECRET_UTF16: usize = 4096;
+
+/// The refusal for a key over MAX_SECRET_UTF16 — backendKeyWrite.ts's KEY_TOO_LONG, word for word.
+fn check_secret_len(key: &str) -> Result<(), String> {
+    if key.encode_utf16().count() > MAX_SECRET_UTF16 {
+        return Err(format!(
+            "The API key is longer than {MAX_SECRET_UTF16} characters, so it was not stored."
+        ));
+    }
+    Ok(())
+}
+
 // Keyring writes can park behind a locked-wallet prompt; off the main thread so the app does
 // not freeze meanwhile (same reason as `read_backend_keys`).
 #[tauri::command]
 pub async fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
+    check_secret_len(&key)?;
     let _guard = KEYRING_WRITE_LOCK.lock().await;
     super::blocking(move || config::keys::set(&backend_id, &key).map_err(|e| e.to_string())).await
 }
@@ -270,4 +286,21 @@ pub async fn delete_backend_key(backend_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    // Counted in UTF-16 units, as the webview's `key.length`: an astral character counts two.
+    #[test]
+    fn a_key_over_the_sync_bound_is_refused() {
+        assert!(super::check_secret_len(&"k".repeat(4096)).is_ok());
+        assert!(super::check_secret_len("").is_ok());
+        let long = super::check_secret_len(&"k".repeat(4097)).unwrap_err();
+        assert_eq!(
+            long,
+            "The API key is longer than 4096 characters, so it was not stored."
+        );
+        assert!(super::check_secret_len(&"\u{1F511}".repeat(2048)).is_ok());
+        assert!(super::check_secret_len(&format!("k{}", "\u{1F511}".repeat(2048))).is_err());
+    }
 }

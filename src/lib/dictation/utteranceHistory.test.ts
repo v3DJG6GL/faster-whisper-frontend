@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, routeUtteranceClip, utteranceInsertTranslation,
+  appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, recordCapFold, routeUtteranceClip, utteranceInsertTranslation,
   type UtteranceClip, type UtteranceEntry,
 } from "./utteranceHistory";
 
@@ -212,5 +212,34 @@ describe("routeUtteranceClip", () => {
     byOrdinal.set(2, { ordinal: 2, id: "rec-2", openedAt: 0 });
     expect(routeUtteranceClip(byOrdinal, 7, clip1, attach)).toBe(false);
     expect(attached).toEqual([]);
+  });
+});
+
+describe("recordCapFold", () => {
+  const recorded: UtteranceEntry = { ordinal: 4, id: "rec-4", openedAt: 0 };
+
+  it("below the ceiling every utterance gets its own record", () => {
+    expect(recordCapFold(0, 3, null)).toBeNull();
+    expect(recordCapFold(2, 3, recorded)).toBeNull();
+  });
+
+  it("at the ceiling folds into the last recorded entry, which a break does not clear", () => {
+    // streaming.ts mirrors its writes: a break nulls `lastUtterance`, never the recorded entry,
+    // so final/break/final/break past the ceiling keeps folding instead of writing a record a pair.
+    let count = 3;
+    let lastUtterance: UtteranceEntry | null = recorded;
+    for (let pair = 0; pair < 50; pair++) {
+      const fold = recordCapFold(count, 3, recorded);
+      if (fold) lastUtterance = fold;
+      else count += 1;
+      expect(lastUtterance).toBe(recorded);
+      lastUtterance = null; // the break
+    }
+    expect(count).toBe(3);
+  });
+
+  it("never folds into an entry that has no record", () => {
+    expect(recordCapFold(3, 3, null)).toBeNull();
+    expect(recordCapFold(3, 3, { ordinal: 1, id: null, openedAt: 0 })).toBeNull();
   });
 });

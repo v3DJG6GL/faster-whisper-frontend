@@ -38,7 +38,7 @@ import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
-import { adoptWrittenKey, keyWriteOutcome } from "@/lib/backendKeyWrite";
+import { adoptWrittenKey, KEY_TOO_LONG, keyWriteOutcome, MAX_SECRET_LEN } from "@/lib/backendKeyWrite";
 
 export function Editor({
   initial,
@@ -356,6 +356,10 @@ export function Editor({
   };
   const saveOnce = async (): Promise<boolean> => {
     setKeyError(null);
+    if (key.length > MAX_SECRET_LEN) {
+      setKeyError(KEY_TOO_LONG);
+      return false; // nothing persisted, as for a keyring failure below
+    }
     if (key) {
       setSavingKey(true);
       try {
@@ -892,6 +896,11 @@ function ConnectStep({
             ? "Enter an address like http://host:8000 — that scheme isn’t supported."
             : "Enter an address like http://host:8000 — the port after “:” must be a number.",
       );
+      return;
+    }
+    // Refused before the test, not after it: the restore's keyring write would fail on it.
+    if (typedKey.length > MAX_SECRET_LEN) {
+      setError(KEY_TOO_LONG);
       return;
     }
     const run = { url: typedUrl, key: typedKey };

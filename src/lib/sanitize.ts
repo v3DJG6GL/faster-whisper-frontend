@@ -229,21 +229,43 @@ function identityCutAt(raw: string, max: number): number {
   for (let i = 0; i < raw.length; ) {
     const code = raw.codePointAt(i) ?? 0;
     const len = code > 0xffff ? 2 : 1;
-    // ASCII fast path (a padding run is usually spaces): ordinary is exactly 0x21..0x7e.
-    const plain =
-      code < 0x80
-        ? code > 0x20 && code !== 0x7f
-        : !(
-            /\s/.test(raw.slice(i, i + len)) ||
-            isInvisibleKeyChar(code) ||
-            isDisplayDropped(code) ||
-            code === 0x200c ||
-            code === 0x200d
-          );
+    const plain = isIdentityOrdinary(code, raw, i, len);
     i += len;
     if (plain && ++ordinary > max + 1) return i;
   }
   return raw.length;
+}
+
+/** `identityCutAt` from the END: the UTF-16 offset where `raw`'s (max+2)-th ordinary code point
+ *  from the end starts, or 0 when it has fewer. `safeIdentityText` of the suffix from there is
+ *  exactly the end of `safeIdentityText` of the whole (same passes; the suffix starts on an
+ *  ordinary character, so only the dropped head differs) and holds over `max` code points. */
+function identityTailAt(raw: string, max: number): number {
+  let ordinary = 0;
+  for (let i = raw.length; i > 0; ) {
+    // Pair a low surrogate with the high one before it, as forward iteration does.
+    const lo = raw.charCodeAt(i - 1);
+    const hi = i >= 2 ? raw.charCodeAt(i - 2) : 0;
+    const len = lo >= 0xdc00 && lo <= 0xdfff && hi >= 0xd800 && hi <= 0xdbff ? 2 : 1;
+    i -= len;
+    if (isIdentityOrdinary(raw.codePointAt(i) ?? 0, raw, i, len) && ++ordinary > max + 1) return i;
+  }
+  return 0;
+}
+
+/** A code point `safeIdentityText` keeps as itself: not whitespace, not the invisible class it
+ *  folds to a space, not one the display filter deletes, not a joiner. */
+function isIdentityOrdinary(code: number, raw: string, i: number, len: number): boolean {
+  // ASCII fast path (a padding run is usually spaces): ordinary is exactly 0x21..0x7e.
+  return code < 0x80
+    ? code > 0x20 && code !== 0x7f
+    : !(
+        /\s/.test(raw.slice(i, i + len)) ||
+        isInvisibleKeyChar(code) ||
+        isDisplayDropped(code) ||
+        code === 0x200c ||
+        code === 0x200d
+      );
 }
 
 /** `safeIdentityText` for a HOST: the part that names who receives the request is its END, so a
@@ -251,7 +273,10 @@ function identityCutAt(raw: string, max: number): number {
  *  trusted-looking head of `sync.example.com.<padding>.evil.tld`. A host within `max` renders
  *  exactly as `safeIdentityText` renders it. */
 export function safeHostText(s: unknown, max = 80): string {
-  const full = safeIdentityText(s, Number.MAX_SAFE_INTEGER);
+  // A synced or imported host is unbounded, and only its end is shown: cut it to the suffix that
+  // decides that end (identityTailAt) before the whole-string passes — the output is identical.
+  const src = typeof s === "string" && s.length > max + 1 ? s.slice(identityTailAt(s, max)) : s;
+  const full = safeIdentityText(src, Number.MAX_SAFE_INTEGER);
   const chars = [...full];
   if (chars.length <= max) return full;
   let tail = chars.slice(chars.length - Math.max(1, max - 1));
