@@ -12,6 +12,12 @@ import type { BatchProgress } from "../types";
 import { newProgressId } from "../ids";
 import { translateSourceCode } from "../languages";
 
+/** The longest translation a dictation phrase accepts per target, mirroring Rust's
+ *  MAX_TRANSCRIPT (transport/stream.rs) on the transcript fields themselves: Rust passes
+ *  translation VALUES through untouched (only the 32 MiB body cap), and this text is typed
+ *  into the focused app and banked for History. */
+const MAX_DICTATION_TRANSLATION = 4 * 1024 * 1024;
+
 /** The translation mode a dictation request must use.
  *
  *  A LIVE phrase is always faithful, whatever the profile asks for. Live sends
@@ -341,7 +347,8 @@ export async function runDictationTranslate(
     const byLang: Record<string, string> = {};
     for (const lang of req.targets) {
       const t = last[lang]?.trim();
-      if (t && !kept.has(lang)) byLang[lang] = t;
+      // An oversize value reads as missing too, rather than typing a partial cut of it.
+      if (t && !kept.has(lang) && t.length <= MAX_DICTATION_TRANSLATION) byLang[lang] = t;
     }
     const parts = Object.values(byLang);
     if (!parts.length) throw new EmptyTranslation("empty translation");

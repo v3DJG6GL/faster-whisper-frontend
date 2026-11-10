@@ -217,6 +217,17 @@ describe("runDictationTranslate", () => {
     expect(r.cause).toBe("empty");
   });
 
+  it("an oversize translation reads as missing, never typed in part", async () => {
+    const huge = "x".repeat(4 * 1024 * 1024 + 1);
+    const d = deps((a) => Promise.resolve({ results: a.texts.map(() => ({ en: huge, fr: "Salut" })) }));
+    const r = await runDictationTranslate(req({ text: "Hallo", targets: ["en", "fr"] }), d);
+    expect(r.ok).toBe(true);
+    expect(r.byLang).toEqual({ fr: "Salut" });
+    const only = deps((a) => Promise.resolve({ results: a.texts.map(() => ({ en: huge })) }));
+    const none = await runDictationTranslate(req({ text: "Hallo", targets: ["en"] }), only);
+    expect(none).toMatchObject({ text: "Hallo", ok: false, cause: "empty" });
+  });
+
   it("sends only a language code as the source, the shared rule every T2T sender uses", async () => {
     // The text route 422s a word: a synced "english" or an invisible value would fail every
     // phrase's translation, so they go out as null (auto-detect); a padded code is trimmed.
