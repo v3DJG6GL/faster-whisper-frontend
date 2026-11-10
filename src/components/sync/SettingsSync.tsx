@@ -29,7 +29,7 @@ import {
   applyBlob,
   approvePendingReview,
   backendKeyFates,
-  consentDetailCap,
+  consentDetailText,
   deleteAnswerRuntime,
   dismissSyncConflict,
   disableConflictingProfiles,
@@ -755,10 +755,10 @@ function SecurityReviewDialog() {
                 {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
                     identity while it decides whether a plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
-                    a padded suffix. `consentDetailCap`: a typed-text or folder row shows the whole value
-                    (`break-all` wraps a long path). */}
+                    a padded suffix. `consentDetailText`: a typed-text or folder row shows the whole value
+                    (`break-all` wraps a long path), a folder past its cap its head and tail. */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
-                {safeIdentityText(c.detail, consentDetailCap(c.kind))}
+                {consentDetailText(c)}
               </div>
               {auth?.hasUserinfo && (
                 <div className="mt-1 text-[12px] font-semibold text-rec">

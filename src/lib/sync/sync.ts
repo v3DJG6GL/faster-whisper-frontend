@@ -38,7 +38,7 @@ import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
 import { MAX_SECRET_LEN } from "../backendKeyWrite";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
-import { appRuleKey, capCodePoints, normalizeAppId, safeDisplayText, safeIdentityText } from "../sanitize";
+import { appRuleKey, capCodePoints, normalizeAppId, safeDisplayText, safeHeadTailText, safeIdentityText } from "../sanitize";
 import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
 import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
@@ -3605,6 +3605,15 @@ export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
     : kind === "audio-folder" || kind === "log-folder"
       ? FOLDER_DETAIL_MAX
       : 200;
+
+/** A consent row's `detail` as the review dialog shows it (`consentDetailCap`). A folder path is
+ *  uncapped (only `is_absolute` is checked), and on Windows a padded one over the cap still opens
+ *  (`.\` runs collapse to the real destination), so one past the cap keeps its head AND its tail:
+ *  the destination's end stays in view. A path within the cap renders whole, as every other row. */
+export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail">): string =>
+  c.kind === "audio-folder" || c.kind === "log-folder"
+    ? safeHeadTailText(c.detail, FOLDER_DETAIL_MAX)
+    : safeIdentityText(c.detail, consentDetailCap(c.kind));
 
 /** Report only the security-relevant differences between what a pull would apply and what this
  *  device holds. `local` is the freshly composed local blob, so its `backends.secrets` already

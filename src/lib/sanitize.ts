@@ -159,6 +159,11 @@ function isInvisibleKeyChar(code: number): boolean {
  *  padded value to render as a strict prefix of itself. Display only — the stored key stays
  *  `normalizeAppId`'s output, which is what keeps it agreeing with the producer side. */
 export function safeIdentityText(s: unknown, max = 80): string {
+  return identityText(s, max).text;
+}
+
+/** `safeIdentityText`, plus whether it cut (and marked) the text. */
+function identityText(s: unknown, max: number): { text: string; cut: boolean } {
   // Collapse BEFORE bounding. The other order is inert for exactly the case above: a padding run
   // longer than `max` is cut inside the padding, the collapse then shrinks the remainder back under
   // the cap, and the marker never gets appended — leaving the render byte-identical to the
@@ -215,10 +220,23 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // render as its own 80-char prefix with no ellipsis.
   const t = safeDisplayText(collapsed.trim(), max + 1);
   const chars = [...t];
-  if (chars.length > max) return chars.slice(0, max).join("").trimEnd() + "…";
+  if (chars.length > max) return { text: chars.slice(0, max).join("").trimEnd() + "…", cut: true };
   // A budget cut hid the rest of the name: mark it, so the padded name still never renders as a
   // strict prefix of itself.
-  return cut?.overBudget ? t.trimEnd() + "…" : t;
+  return cut?.overBudget ? { text: t.trimEnd() + "…", cut: true } : { text: t, cut: false };
+}
+
+/** `safeIdentityText` that, over `max`, keeps the head AND the tail (half of `max` each, joined by
+ *  " … ") instead of the head alone: for a value whose end decides what it names (a folder path),
+ *  visible padding in the middle cannot push that end out of view. Within `max` it renders exactly
+ *  as `safeIdentityText`. */
+export function safeHeadTailText(s: unknown, max = 80): string {
+  const whole = identityText(s, max);
+  if (!whole.cut) return whole.text;
+  const half = Math.max(1, Math.floor(max / 2));
+  const head = safeIdentityText(s, half).replace(/…$/, "");
+  const tail = identityTail(s, half, false).replace(/^…/, "");
+  return `${head} … ${tail}`;
 }
 
 /** How many code points `identityCutAt` / `identityTailAt` scan at most. A real name or host
@@ -294,6 +312,12 @@ function isIdentityOrdinary(code: number, raw: string, i: number, len: number): 
  *  trusted-looking head of `sync.example.com.<padding>.evil.tld`. A host within `max` renders
  *  exactly as `safeIdentityText` renders it. */
 export function safeHostText(s: unknown, max = 80): string {
+  return identityTail(s, max, true);
+}
+
+/** The tail-kept `safeIdentityText` behind `safeHostText` (`labels`: start at a label boundary)
+ *  and `safeHeadTailText`. */
+function identityTail(s: unknown, max: number, labels: boolean): string {
   // A synced or imported host is unbounded, and only its end is shown: cut it to the suffix that
   // decides that end (identityTailAt) before the whole-string passes — the output is identical.
   // A tail scan that ran out of budget (padding many times the cap) cut the head off: mark it.
@@ -305,7 +329,7 @@ export function safeHostText(s: unknown, max = 80): string {
   if (chars.length < max) return "…" + full;
   let tail = chars.slice(chars.length - Math.max(1, max - 1));
   // Start at a label boundary when one is in reach, so no label shows cut.
-  const dot = tail.indexOf(".");
+  const dot = labels ? tail.indexOf(".") : -1;
   if (dot >= 0 && dot < tail.length - 1) tail = tail.slice(dot + 1);
   return "…" + tail.join("").trimStart();
 }

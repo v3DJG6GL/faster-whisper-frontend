@@ -8,6 +8,7 @@ import {
   approvePendingReview,
   categorySelection,
   consentDetailCap,
+  consentDetailText,
   getPendingReview,
   pullNow,
   pushNow,
@@ -91,7 +92,28 @@ describe("securityChanges: folder moves", () => {
     );
     const shown = safeIdentityText(row.detail, consentDetailCap(row.kind));
     expect(shown).toBe(padded);
+    expect(consentDetailText(row)).toBe(padded);
     expect(consentDetailCap("log-folder")).toBe(consentDetailCap("audio-folder"));
+  });
+  it("a path past the cap shows its head and its destination's end", () => {
+    // Windows collapses the `.\` runs of a path this long and opens the real destination, which a
+    // head-kept cut would leave behind the "…".
+    const padded = "C:\\Users\\me\\Recordings\\" + ".\\".repeat(2100) + "..\\..\\..\\Users\\Public\\x";
+    const [row] = securityChanges(
+      { recording: { audioBaseDir: padded } } as never,
+      { recording: {} } as never,
+      CATS,
+      { audioFolder: true } as never,
+    );
+    const shown = consentDetailText(row);
+    expect(shown.startsWith("C:\\Users\\me\\Recordings\\.\\")).toBe(true);
+    expect(shown.endsWith("..\\..\\..\\Users\\Public\\x")).toBe(true);
+    expect(shown).toContain(" … ");
+    expect([...shown].length).toBeLessThanOrEqual(4096 + 3);
+    // The same holds for a log folder; an exact-cap path still renders whole.
+    expect(consentDetailText({ kind: "log-folder", detail: padded })).toBe(shown);
+    const fits = "C:\\" + "a".repeat(4093);
+    expect(consentDetailText({ kind: "audio-folder", detail: fits })).toBe(fits);
   });
 });
 
