@@ -50,7 +50,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, fatesAfterSuppliedKey } from "@/lib/backends";
+import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, fatesAfterSuppliedKey, normalizeUrl } from "@/lib/backends";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -575,9 +575,16 @@ export function IncomingAddresses({ list }: { list: unknown }) {
   // element or a non-string address would throw in this render body and unmount the dialog that
   // lets the user refuse the blob), at the address this device would CONNECT to (a surviving id's
   // "Address on this device" override wins over the canonical one).
-  const settings = useApp.getState().settings;
+  const { settings, backends: held } = useApp.getState();
   const all = sanitizeBackends(list).map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, settings) }));
-  const backends = all.slice(0, MAX_SHOWN_ADDRESSES);
+  // The blob picks the ORDER, so 20 decoys in front would push a repointed id this device already
+  // holds into "…and N more". Every such repoint is listed (at most one row per held backend),
+  // then new ids, then unchanged ones, each in blob order, under the same row cap.
+  const heldUrl = new Map(held.map((b) => [b.id, normalizeUrl(effectiveServerUrl(b, settings))]));
+  const repointed = all.filter((b) => heldUrl.has(b.id) && heldUrl.get(b.id) !== normalizeUrl(b.serverUrl));
+  const added = all.filter((b) => !heldUrl.has(b.id));
+  const unchanged = all.filter((b) => heldUrl.get(b.id) === normalizeUrl(b.serverUrl));
+  const backends = [...repointed, ...[...added, ...unchanged].slice(0, Math.max(0, MAX_SHOWN_ADDRESSES - repointed.length))];
   if (backends.length === 0) return null;
   return (
     <Notice>
