@@ -1402,6 +1402,13 @@ pub(crate) fn open_regular_file(
     if !meta.is_file() {
         return Ok(None);
     }
+    clear_nonblock(&f)?;
+    Ok(Some((f, meta)))
+}
+
+/// Clear the `O_NONBLOCK` a FIFO-refusing open set, once the handle is known to be a regular
+/// file, so later reads and writes behave exactly as a plain open's. A no-op off Unix.
+pub(crate) fn clear_nonblock(f: &std::fs::File) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd as _;
@@ -1412,7 +1419,9 @@ pub(crate) fn open_regular_file(
             return Err(std::io::Error::last_os_error());
         }
     }
-    Ok(Some((f, meta)))
+    #[cfg(not(unix))]
+    let _ = f;
+    Ok(())
 }
 
 /// `open_regular_file` for an async caller, on the blocking pool as `tokio::fs::File::open` is.

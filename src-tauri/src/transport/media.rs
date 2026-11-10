@@ -37,15 +37,30 @@ pub(crate) fn tmp_sibling(p: &Path) -> std::path::PathBuf {
 /// The export folder may be shared, and a planted `<name>.tmp` link would otherwise have the
 /// write truncate and overwrite whatever it points at. Such a link fails the export; the
 /// caller's cleanup removes the link itself (never its target), so a retry goes through.
+/// A planted FIFO is refused the same way: the open is non-blocking on Unix (a FIFO with no
+/// reader fails at once instead of parking the thread where no Cancel reaches it), the handle
+/// must be a regular file (a FIFO with a reader would take the export bytes), and the flag is
+/// cleared again so writes behave as a plain open's.
 pub(crate) fn open_export_tmp(tmp: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.custom_flags(libc::O_NOFOLLOW);
+        #[cfg(target_os = "linux")]
+        opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        #[cfg(not(target_os = "linux"))]
+        opts.custom_flags(libc::O_NONBLOCK);
     }
-    opts.open(tmp)
+    let f = opts.open(tmp)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "the export's temporary file is not a regular file",
+        ));
+    }
+    super::clear_nonblock(&f)?;
+    Ok(f)
 }
 
 /// One subtitle track as the webview sends it (already-generated SRT text).
@@ -445,6 +460,31 @@ pub async fn package_to_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A planted FIFO at the export's tmp name fails the export at once instead of parking the
+    // writer until a reader appears; a regular tmp still opens, truncates and writes.
+    #[cfg(unix)]
+    #[test]
+    fn export_tmp_refuses_a_fifo_without_waiting_for_a_reader() {
+        use std::io::Write as _;
+        let dir = crate::config::fresh_test_dir("exporttmpfifo");
+        let fifo = dir.join("clip.mkv.tmp");
+        let c = std::ffi::CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let p = fifo.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(open_export_tmp(&p).is_err());
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
+        let file = dir.join("clip2.mkv.tmp");
+        std::fs::write(&file, b"old contents").unwrap();
+        let mut f = open_export_tmp(&file).unwrap();
+        f.write_all(b"new").unwrap();
+        drop(f);
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn error_code_reads_structured_and_plain_details() {
