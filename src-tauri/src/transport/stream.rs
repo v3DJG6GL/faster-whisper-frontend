@@ -521,8 +521,8 @@ pub async fn run<F>(
     // written in the drain, like the batch path: a session superseded by cancel/suspend never
     // delivers its epoch-gated `recording-saved` emit, so the frontend can't write it. Mirrors the
     // frontend's per-hard-break join: `transcript_cur` is the running document; a Boundary banks
-    // it into `transcript_docs`.
-    let mut transcript_docs: Vec<String> = Vec::new();
+    // it into `transcript_docs` (the banked documents, newline-joined as they are banked).
+    let mut transcript_docs = String::new();
     let mut transcript_cur = String::new();
     let save_dir = params.save_dir.as_deref();
     let detached = params.detached.clone();
@@ -998,9 +998,8 @@ pub async fn run<F>(
                 // recording still gets its sibling .txt (a Cancel after stop discards it above,
                 // matching the batch path).
                 bank_doc(&mut transcript_docs, &transcript_cur);
-                let transcript = transcript_docs.join("\n");
-                if !transcript.is_empty() {
-                    crate::audio::save_transcript_sidecar(&path, &transcript);
+                if !transcript_docs.is_empty() {
+                    crate::audio::save_transcript_sidecar(&path, &transcript_docs);
                 }
                 Some((path, pcm_duration_ms(saved.len())))
             })
@@ -1085,7 +1084,7 @@ fn forward_saved<F: Fn(StreamEvent)>(
     discard: &AtomicBool,
     saved: &mut Vec<u8>,
     clips: &mut Option<ClipCutter>,
-    docs: &mut Vec<String>,
+    docs: &mut String,
     current: &mut String,
     on_event: &F,
 ) {
@@ -1163,6 +1162,8 @@ struct ClipCutter {
     txt_bytes: usize,
     /// The budget refused a `.txt` already (warn once, not per clip).
     txt_capped: bool,
+    /// The ordinal of the last `final` that cut (see [`Self::advances`]).
+    last_cut: Option<u32>,
     /// The writer's queue. Dropping the cutter closes it: the writer finishes what is queued,
     /// then exits and closes the clip channel [`Self::new`] returned.
     jobs: std::sync::mpsc::Sender<ClipIo>,
@@ -1236,6 +1237,7 @@ impl ClipCutter {
             pending_txt: None,
             txt_bytes: 0,
             txt_capped: false,
+            last_cut: None,
             jobs,
         };
         (cutter, saved_rx)
@@ -1275,7 +1277,7 @@ impl ClipCutter {
                 utterance: Some(n),
                 last: false,
                 ..
-            } => {
+            } if self.advances(*n) => {
                 // The previous clip's text ends here: this final opens the next utterance's.
                 io.txt = self.take_txt(doc);
                 self.cut_any = true;
@@ -1306,14 +1308,26 @@ impl ClipCutter {
     fn observe_discarded(&mut self, e: &StreamEvent, doc: &str) -> ClipIo {
         let txt = match e {
             StreamEvent::Final {
-                utterance: Some(_),
+                utterance: Some(n),
                 last: false,
                 ..
-            } => self.take_txt(doc),
+            } if self.advances(*n) => self.take_txt(doc),
             StreamEvent::Boundary { suffix, .. } => self.take_txt_closed(doc, suffix),
             _ => None,
         };
         ClipIo { txt, clip: None }
+    }
+
+    /// Whether ordinal `n` moves past the last cut, recording it if so. The server's ordinals on
+    /// these finals only ever increase; a repeated or older one is untrusted input that would cut
+    /// one tiny clip per frame under the same name (each a longer collision probe in the folder),
+    /// so it cuts nothing: its audio stays buffered for the next real cut or the close.
+    fn advances(&mut self, n: u32) -> bool {
+        if self.last_cut.is_some_and(|l| n <= l) {
+            return false;
+        }
+        self.last_cut = Some(n);
+        true
     }
 
     /// The decode mark of utterance `n`, retiring it and any older ones.
@@ -1372,7 +1386,7 @@ async fn recv_clip(rx: &mut Option<mpsc::UnboundedReceiver<StreamEvent>>) -> Opt
 /// mirroring the frontend's per-hard-break archive: a `Final` replaces the current document with
 /// `committed + tail`; a `Boundary` banks the (trimmed, non-empty) current document, closed with its
 /// output suffix as the frontend's bank closes it, and resets it.
-fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut String) {
+fn accumulate_transcript(e: &StreamEvent, docs: &mut String, current: &mut String) {
     match e {
         StreamEvent::Final {
             committed, tail, ..
@@ -1393,14 +1407,20 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
 /// Bank one finished document (trimmed, non-empty) into the session transcript — the ONE push
 /// site for both a hard break and the end of the drain, so both share the budget. The budget is
 /// session-wide: each field is capped at MAX_TRANSCRIPT, but a server looping final/boundary
-/// could bank unboundedly many documents, and `join("\n")` allocates the whole thing again.
-/// Only the `.txt` sidecar clips: the `.wav` and the typed text are untouched, and 8 MiB is well
-/// over a million words.
-fn bank_doc(docs: &mut Vec<String>, doc: &str) {
+/// could bank unboundedly many documents. Only the `.txt` sidecar clips: the `.wav` and the typed
+/// text are untouched, and 8 MiB is well over a million words.
+///
+/// `docs` is the sidecar text itself, each document joined on by a newline as it is banked: a
+/// list re-summed on every bank made a server streaming millions of one-byte documents
+/// quadratic, and held a separate allocation per document.
+fn bank_doc(docs: &mut String, doc: &str) {
     let trimmed = doc.trim();
-    let banked: usize = docs.iter().map(|d| d.len()).sum();
-    if !trimmed.is_empty() && banked + trimmed.len() <= MAX_SIDECAR_BYTES {
-        docs.push(trimmed.to_string());
+    let sep = usize::from(!docs.is_empty());
+    if !trimmed.is_empty() && docs.len() + sep + trimmed.len() <= MAX_SIDECAR_BYTES {
+        if sep == 1 {
+            docs.push('\n');
+        }
+        docs.push_str(trimmed);
     }
 }
 
@@ -1786,7 +1806,7 @@ mod emit_message_tests {
     }
 
     /// The sidecar's documents for "Hello" ‹boundary frame› "World".
-    fn sidecar_docs(boundary: serde_json::Value) -> Vec<String> {
+    fn sidecar_docs(boundary: serde_json::Value) -> String {
         let mut events = Vec::new();
         for frame in [
             serde_json::json!({ "type": "final", "committed": "Hello", "tail": "" }),
@@ -1797,7 +1817,7 @@ mod emit_message_tests {
             emit_message(&frame.to_string(), &|e| seen.borrow_mut().push(e));
             events.extend(seen.into_inner());
         }
-        let (mut docs, mut current) = (Vec::new(), String::new());
+        let (mut docs, mut current) = (String::new(), String::new());
         for e in &events {
             accumulate_transcript(e, &mut docs, &mut current);
         }
@@ -1810,10 +1830,10 @@ mod emit_message_tests {
         let docs = sidecar_docs(serde_json::json!({
             "type": "boundary", "separator": " -- sig\n\n", "suffix": " -- sig",
         }));
-        assert_eq!(docs, ["Hello -- sig", "World"]);
+        assert_eq!(docs, "Hello -- sig\nWorld");
         // A server that sends no suffix field (no output suffix set) banks the bare text.
         let docs = sidecar_docs(serde_json::json!({ "type": "boundary", "separator": "\n\n" }));
-        assert_eq!(docs, ["Hello", "World"]);
+        assert_eq!(docs, "Hello\nWorld");
     }
 
     #[test]
@@ -2150,7 +2170,7 @@ mod clip_tests {
         saved: Vec<u8>,
         clips: Option<ClipCutter>,
         rx: UnboundedReceiver<StreamEvent>,
-        docs: Vec<String>,
+        docs: String,
         cur: String,
         discard: AtomicBool,
     }
@@ -2163,7 +2183,7 @@ mod clip_tests {
                 saved,
                 clips: Some(cutter),
                 rx,
-                docs: Vec::new(),
+                docs: String::new(),
                 cur: String::new(),
                 discard: AtomicBool::new(false),
             }
@@ -2240,6 +2260,42 @@ mod clip_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A repeated or older ordinal on a non-closing final cuts no clip: its audio stays buffered
+    /// for the next real cut.
+    #[test]
+    fn a_repeated_ordinal_cuts_no_further_clip() {
+        let dir = scratch("fwf-clips-repeat");
+        let mut s = Session::new(&dir, vec![0u8; 32_000]);
+        s.feed(fin(" Eins", Some(1)));
+        assert!(s.saved.is_empty());
+        for n in [1, 0, 1] {
+            s.saved.extend(vec![0u8; 3_200]);
+            s.feed(fin(" Eins", Some(n)));
+        }
+        assert_eq!(s.saved.len(), 9_600);
+        s.feed(fin(" Eins zwei", Some(2)));
+        assert!(s.saved.is_empty());
+        let seen = finish(s.clips, s.rx);
+        let cuts: Vec<_> = seen.iter().map(|c| (c.1, c.2)).collect();
+        assert_eq!(cuts, [(Some(1), 1_000), (Some(2), 300)]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The sidecar text is the banked documents newline-joined, held to the session budget.
+    #[test]
+    fn banked_documents_join_on_newlines_within_the_budget() {
+        let mut docs = String::new();
+        super::bank_doc(&mut docs, "  one ");
+        super::bank_doc(&mut docs, "   ");
+        super::bank_doc(&mut docs, "two");
+        assert_eq!(docs, "one\ntwo");
+        let big = "x".repeat(super::MAX_SIDECAR_BYTES - docs.len() - 1);
+        super::bank_doc(&mut docs, &big);
+        assert_eq!(docs.len(), super::MAX_SIDECAR_BYTES);
+        super::bank_doc(&mut docs, "y");
+        assert_eq!(docs.len(), super::MAX_SIDECAR_BYTES);
+    }
+
     /// The phrase is forwarded BEFORE its clip touches the disk, so a sleeping recordings disk or an
     /// offline share cannot hold the utterance's `Final` (shown and typed) behind the `.wav` write,
     /// or a hard break behind the previous clip's `.txt`. Both files still land, in order, right after.
@@ -2305,7 +2361,7 @@ mod clip_tests {
         let wav = std::path::Path::new(&seen[0].0);
         let txt = std::fs::read_to_string(wav.with_extension("txt")).unwrap();
         assert!(txt.starts_with("Hallo Welt -- sig"), "{txt:?}");
-        assert_eq!(s.docs, ["Hallo Welt -- sig"]);
+        assert_eq!(s.docs, "Hallo Welt -- sig");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
