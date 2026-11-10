@@ -279,6 +279,12 @@ describe("trimLeadingInvisible", () => {
     expect(deviceDisplayName(name)).toBe("a");
     // Unbudgeted ~0.2 s; budgeted well under a millisecond.
     expect(performance.now() - t0).toBeLessThan(150);
+    // What only the budget produces (the timing alone is a weak signal on a fast machine): a
+    // visible character past the budget's run of deleted ones is never reached.
+    const tail = "a" + "\u200b".repeat(big) + "b";
+    expect(safeDisplayText(tail)).toBe("a");
+    expect(profileDisplayName(tail)).toBe("a");
+    expect(deviceDisplayName(tail)).toBe("a");
     // Under the budget the output is unchanged.
     expect(safeDisplayText("a" + "\u200b".repeat(2000) + "b")).toBe("ab");
     expect(profileDisplayName("\u200b".repeat(1500) + "Work")).toBe("Work");
