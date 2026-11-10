@@ -81,6 +81,12 @@ function unspacedEdge(s: string, end: boolean): boolean {
  *  its own may borrow a character from another piece's word ("ค่ะ"'s tone mark from a
  *  later "ชื่อ") and cut a syllable. `opens[k]` marks a token that follows whitespace or
  *  starts the text. */
+/** Ceiling on one LCS table's cells (old × new tokens, or characters). A Whisper segment is at most
+ *  30 s — a few hundred words or CJK characters, under 1e5 cells — and even a 4000 × 4000 segment
+ *  fits; a server-shaped segment of 50k words would allocate billions. Over it, the edit aligns as
+ *  one unmatched run: its tokens share the segment's span by length, as an inserted run does. */
+const MAX_LCS_CELLS = 16_000_000;
+
 function charTokens(oldWords: TranscriptWord[], text: string): { toks: string[]; opens: boolean[] } {
   const oldChars: string[] = [];
   const owner: number[] = [];
@@ -95,17 +101,20 @@ function charTokens(oldWords: TranscriptWord[], text: string): { toks: string[];
   const newChars = pieces.flatMap((p) => Array.from(p));
   const m = oldChars.length;
   const n = newChars.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      dp[i][j] = oldChars[i] === newChars[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
   const own = new Array<number>(n).fill(-1);
-  for (let i = 0, j = 0; i < m && j < n; ) {
-    if (oldChars[i] === newChars[j]) own[j++] = owner[i++];
-    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
-    else j++;
+  // Over the ceiling no character is matched (every one reads as inserted).
+  if ((m + 1) * (n + 1) <= MAX_LCS_CELLS) {
+    const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+    for (let i = m - 1; i >= 0; i--) {
+      for (let j = n - 1; j >= 0; j--) {
+        dp[i][j] = oldChars[i] === newChars[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    for (let i = 0, j = 0; i < m && j < n; ) {
+      if (oldChars[i] === newChars[j]) own[j++] = owner[i++];
+      else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+      else j++;
+    }
   }
   const toks: string[] = [];
   const opens: boolean[] = [];
@@ -165,11 +174,11 @@ export function alignSegmentWords(
   const b = newToks.map(norm);
   const m = a.length;
   const n = b.length;
-  // LCS lengths of suffixes — segments are short, the quadratic table is fine.
-  const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    new Array<number>(n + 1).fill(0),
-  );
-  for (let i = m - 1; i >= 0; i--) {
+  // LCS lengths of suffixes — segments are short, the quadratic table is fine (up to the
+  // ceiling: past it nothing is matched, and the loop below flushes one run over the span).
+  const lcs = (m + 1) * (n + 1) <= MAX_LCS_CELLS;
+  const dp: number[][] = lcs ? Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0)) : [];
+  if (lcs) for (let i = m - 1; i >= 0; i--) {
     for (let j = n - 1; j >= 0; j--) {
       dp[i][j] =
         a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
@@ -223,7 +232,7 @@ export function alignSegmentWords(
   let j = 0;
   let oi = 0;
   let nj = 0;
-  while (i < m && j < n) {
+  while (lcs && i < m && j < n) {
     if (a[i] === b[j]) {
       // Taking an equal pair is always LCS-optimal.
       flush(oi, i, nj, j);

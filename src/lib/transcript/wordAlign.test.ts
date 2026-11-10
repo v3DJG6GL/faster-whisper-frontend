@@ -236,6 +236,35 @@ describe("alignSegmentWords", () => {
   });
 });
 
+describe("alignSegmentWords' LCS ceiling", () => {
+  const words = (n: number, tag: string): TranscriptWord[] =>
+    Array.from({ length: n }, (_, i) => ({ word: ` ${tag}${i}`, start: i, end: i + 1 }));
+
+  it("a 2000-word segment still aligns word by word", () => {
+    const old = words(2000, "w");
+    const edited = old.map((w, i) => (i === 7 ? "fixed" : w.word.trim())).join(" ");
+    const out = alignSegmentWords(old, edited);
+    expect(out).toHaveLength(2000);
+    expect(out[6]).toBe(old[6]);
+    expect(out[7]).toMatchObject({ word: " fixed", start: 7, end: 8 });
+  });
+
+  it("past it, the edit spreads over the segment's span as one run, without the table", () => {
+    const old = words(5000, "w");
+    const t0 = performance.now();
+    const out = alignSegmentWords(old, Array.from({ length: 5000 }, (_, i) => `n${i}`).join(" "));
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(out).toHaveLength(5000);
+    expect(out[0].start).toBe(0);
+    expect(out[out.length - 1].end).toBeCloseTo(5000);
+    // Unspaced text over the ceiling: no character matched, still one run over the span.
+    const cjk = Array.from({ length: 5000 }, (_, i) => ({ word: "字", start: i, end: i + 1 }));
+    const cut = alignSegmentWords(cjk, "字".repeat(5000));
+    expect(cut[0].start).toBe(0);
+    expect(cut[cut.length - 1].end).toBeCloseTo(5000);
+  });
+});
+
 describe("segmentWordRanges", () => {
   it("gives a word on an exact segment boundary to the segment it starts", () => {
     // From a real transcript: both segments meet at 34.27 and "den" starts there, so it
