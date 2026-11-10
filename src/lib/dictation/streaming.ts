@@ -570,7 +570,10 @@ let utteranceRecordChars = 0;
 let utteranceRecordCharsWarned = false;
 /** Characters of server-authored translation booked onto this session's records (translatedText
  *  plus every per-language track). Apart from `utteranceRecordChars` because a multi-target
- *  session books many times its original length: sharing would run the originals' budget out. */
+ *  session books many times its original length: sharing would run the originals' budget out.
+ *  Four times the originals' budget: eight targets book ~18x the original, so this still covers a
+ *  day and a half of continuous hands-free speech. */
+const MAX_UTTERANCE_TRANSLATION_CHARS = 4 * MAX_BANKED_DOC;
 let utteranceTranslationChars = 0;
 let utteranceTranslationCharsWarned = false;
 /** The last utterance that got a record — what utterances past the ceiling fold into. Apart from
@@ -1108,7 +1111,7 @@ function bookUtteranceInsert(
   if (session && phrase.translated) {
     let added = phrase.text.length;
     for (const t of Object.values(phrase.byLang ?? {})) added += t.length;
-    if (utteranceTranslationChars + added > MAX_BANKED_DOC) {
+    if (utteranceTranslationChars + added > MAX_UTTERANCE_TRANSLATION_CHARS) {
       bookTranslation = false;
       if (!utteranceTranslationCharsWarned) {
         utteranceTranslationCharsWarned = true;

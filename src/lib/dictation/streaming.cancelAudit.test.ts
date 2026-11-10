@@ -1147,7 +1147,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // track) is charged to its OWN budget; past it only the insert method is booked, and the
     // originals' budget is never touched (a long multi-target session keeps recording them).
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
-    expect(book).toMatch(/if \(session && phrase\.translated\) \{\s*let added = phrase\.text\.length;\s*for \(const t of Object\.values\(phrase\.byLang \?\? \{\}\)\) added \+= t\.length;\s*if \(utteranceTranslationChars \+ added > MAX_BANKED_DOC\) \{\s*bookTranslation = false;\s*if \(!utteranceTranslationCharsWarned\) \{\s*utteranceTranslationCharsWarned = true;/);
+    expect(book).toMatch(/if \(session && phrase\.translated\) \{\s*let added = phrase\.text\.length;\s*for \(const t of Object\.values\(phrase\.byLang \?\? \{\}\)\) added \+= t\.length;\s*if \(utteranceTranslationChars \+ added > MAX_UTTERANCE_TRANSLATION_CHARS\) \{\s*bookTranslation = false;\s*if \(!utteranceTranslationCharsWarned\) \{\s*utteranceTranslationCharsWarned = true;/);
     expect(book).toMatch(/\} else \{\s*utteranceTranslationChars \+= added;\s*\}/);
     expect(book).not.toContain("utteranceRecordChars");
     const charge = book.indexOf("utteranceTranslationChars += added;");
