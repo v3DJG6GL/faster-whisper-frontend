@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   appendChunk, appendDelta, appendTranslation, applyFoldWrites, finalDelta, mergeTracks, queueFoldText, recordCapFold,
-  routeUtteranceClip, utteranceInsertTranslation, type FoldWrite, type UtteranceClip, type UtteranceEntry,
+  routeUtteranceClip, utteranceInsertTranslation, type FoldBatch, type FoldWrite, type UtteranceClip, type UtteranceEntry,
 } from "./utteranceHistory";
 import type { TranscriptRecord } from "../transcript/transcriptHistory";
 
@@ -252,31 +252,80 @@ describe("queueFoldText / applyFoldWrites", () => {
     const text = appendDelta(r.result?.text ?? "", delta);
     return { ...r, result: { ...r.result, text }, wordCount: text.split(/\s+/).filter(Boolean).length } as TranscriptRecord;
   };
-  // A booking that reads the text the appends left (as utteranceInsertTranslation does).
+  // A patch that reads the text the appends left (as utteranceInsertTranslation does). Not
+  // translatedText: only a booking may read that mid-batch (applyFoldWrites).
   const book = (how: string) => (r: TranscriptRecord): TranscriptRecord =>
-    ({ ...r, insertMethod: how, translatedText: `${r.translatedText ?? ""}|${how}:${r.result?.text ?? ""}` }) as TranscriptRecord;
+    ({ ...r, insertMethod: how, profileTag: `${r.profileTag ?? ""}|${how}:${r.result?.text ?? ""}` }) as TranscriptRecord;
   const rec = (text: string): TranscriptRecord =>
     ({ id: "r", result: { text, segments: [], language: "de", duration: 1 }, wordCount: 1, insertMethod: "none" }) as unknown as TranscriptRecord;
 
-  // Deterministic PRNG: the matrix is the same on every run.
+  // Deterministic PRNG: the matrix is the same on every run. From the high bits: an LCG's low
+  // bits cycle (the lowest alternates), which kept rand(2)/rand(4) choices in lockstep.
   let seed = 0x2f6e2b1;
   const rand = (n: number) => {
-    seed = (seed * 1103515245 + 12345) >>> 0;
-    return seed % n;
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+    return Math.floor((seed / 2 ** 32) * n);
   };
   const pieces = [" Hallo", ",", " Welt ", "  und\n", " weiter.", "!", "\tTab", " a  b ", "x", " \u00a0Kurz", "Satz \n\n"];
   const starts = ["Hallo", "", "  lead", "trail  ", "eins zwei"];
+  const pick = <T,>(xs: readonly T[]): T => xs[rand(xs.length)];
+  const words = ["Bonjour", " le monde ", "Hallo", "", "  ", "Welt\n", "x"];
+  const langs = ["fr", "de", "es", "it"];
+  const tracksOf = (): Record<string, string> | undefined => {
+    if (rand(4) === 0) return undefined;
+    const out: Record<string, string> = {};
+    for (let k = 1 + rand(3); k > 0; k--) out[pick(langs)] = pick(words);
+    return out;
+  };
+  // A record opened by a (possibly multi-target, possibly includeOriginal) translated session.
+  const translatedRec = (text: string): TranscriptRecord => {
+    const r = rec(text);
+    const translations = tracksOf();
+    return {
+      ...r,
+      translationTargets: rand(4) === 0 ? undefined : pick([["fr"], ["fr", "de"], ["de", "fr", "es"]]),
+      includeOriginal: rand(2) === 0 || undefined,
+      translatedText: rand(4) === 0 ? undefined : translations ? Object.values(translations).join("\n\n") : pick(words),
+      translations,
+    } as TranscriptRecord;
+  };
+  // A real booking (streaming.ts's bookUtteranceInsert), for the record as it stands when it is
+  // queued: an insert of this final's words, of the record's whole text, or of something else.
+  const realBook = (now: TranscriptRecord, s: number) => {
+    let delta = "";
+    for (let k = 1 + rand(2); k > 0; k--) delta += pieces[rand(pieces.length)];
+    if (!delta.trim()) delta = " Wort";
+    const whole = now.result?.text ?? "";
+    const sent = pick([delta, ` ${delta.trim()}\n`, whole, ` ${whole} `, "anders"]);
+    const byLang = tracksOf();
+    const phrase = { text: byLang ? Object.values(byLang).join("\n\n") : pick(words), translated: rand(4) !== 0, byLang };
+    const session = { targets: pick([["fr"], ["fr", "de"], ["es", "de"]]), failure: rand(2) ? "timeout" : undefined };
+    const how = rand(2) ? "typed" : "clipboard";
+    const first = s === 0 && rand(2) === 0;
+    return (r: TranscriptRecord, batch?: FoldBatch): TranscriptRecord => ({
+      ...r,
+      insertMethod: r.insertMethod === "typed" ? "typed" : how,
+      ...utteranceInsertTranslation(r, { sent, delta, first, phrase }, session, batch),
+    });
+  };
 
   it("lands every mix of appends and bookings exactly as one write per step did", () => {
     for (let round = 0; round < 2000; round++) {
-      const start = rec(starts[rand(starts.length)]);
+      const start = rand(2) ? translatedRec(pick(starts)) : rec(pick(starts));
       let oneByOne = start;
       const ops: FoldWrite[] = [];
-      const steps = 1 + rand(12);
+      const steps = 1 + rand(16);
       for (let s = 0; s < steps; s++) {
-        if (rand(12) === 0) {
+        if (rand(3) === 0) {
+          // Its one-by-one write has no batch: utteranceInsertTranslation's own path.
+          const fn = realBook(oneByOne, s);
+          oneByOne = fn(oneByOne);
+          ops.push(fn);
+        } else if (rand(12) === 0) {
           // Another writer replacing the text (a History edit): later appends go onto its text.
-          const fn = (r: TranscriptRecord) => ({ ...r, result: { ...r.result, text: ` edited${s} ` } }) as TranscriptRecord;
+          // Sometimes its translation too, over one a booking may be holding back.
+          const translated = rand(2) === 0 ? { translatedText: `\u00fcbersetzt${s}` } : {};
+          const fn = (r: TranscriptRecord) => ({ ...r, result: { ...r.result, text: ` edited${s} ` }, ...translated }) as TranscriptRecord;
           oneByOne = fn(oneByOne);
           ops.push(fn);
         } else if (rand(3) === 0) {
@@ -306,7 +355,7 @@ describe("queueFoldText / applyFoldWrites", () => {
     expect(ops).toEqual([" eins zwei", fn, ","]);
     const out = applyFoldWrites(rec("null"), ops);
     expect(out.result?.text).toBe("null eins zwei,");
-    expect(out.translatedText).toBe("|typed:null eins zwei");
+    expect(out.profileTag).toBe("|typed:null eins zwei");
     expect(out.wordCount).toBe(3);
   });
 

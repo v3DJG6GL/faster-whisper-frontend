@@ -26,7 +26,7 @@ import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation, type TranscriptRecord } from "../transcript/transcriptHistory";
 import {
   appendDelta, applyFoldWrites, finalDelta, queueFoldText, recordCapFold, routeUtteranceClip, utteranceInsertTranslation,
-  type FoldWrite, type UtteranceClip, type UtteranceEntry,
+  type FoldBatch, type FoldWrite, type UtteranceClip, type UtteranceEntry,
 } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
@@ -624,7 +624,7 @@ export function flushFoldWrites(): void {
 
 /** patchRecord for an utterance record. The fold record's patch queues behind its pending
  *  appends: it may read the text they add (utteranceInsertTranslation does). */
-function patchUtteranceRecord(id: string, fn: (r: TranscriptRecord) => TranscriptRecord): void {
+function patchUtteranceRecord(id: string, fn: (r: TranscriptRecord, batch?: FoldBatch) => TranscriptRecord): void {
   if (isFoldRecord(id)) foldQueue(id).push(fn);
   else patchRecord(id, fn);
 }
@@ -1177,10 +1177,10 @@ function bookUtteranceInsert(
       utteranceTranslationChars += added;
     }
   }
-  patchUtteranceRecord(rec.id, (r) => ({
+  patchUtteranceRecord(rec.id, (r, batch) => ({
     ...r,
     insertMethod: r.insertMethod === "typed" ? "typed" : how,
-    ...(bookTranslation ? utteranceInsertTranslation(r, { sent, delta: rec.delta, first: rec.first, phrase }, session) : {}),
+    ...(bookTranslation ? utteranceInsertTranslation(r, { sent, delta: rec.delta, first: rec.first, phrase }, session, batch) : {}),
   }));
 }
 

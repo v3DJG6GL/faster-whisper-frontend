@@ -1275,7 +1275,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // Its History record takes the whole window's translation when the window is exactly its text
     // (utteranceInsertTranslation — its rule is tested in utteranceHistory.test.ts).
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
-    expect(book).toMatch(/\.\.\.\(bookTranslation \? utteranceInsertTranslation\(r, \{ sent, delta: rec\.delta, first: rec\.first, phrase \}, session\) : \{\}\)/);
+    expect(book).toMatch(/\.\.\.\(bookTranslation \? utteranceInsertTranslation\(r, \{ sent, delta: rec\.delta, first: rec\.first, phrase \}, session, batch\) : \{\}\)/);
     // New committed speech ends the chance (the ordinal final above), so does a hard break;
     // every start and abandon.
     expect(mask(boundaryBody)).toMatch(/clipBaseline =\s+;\s+clipClosed = null;/);

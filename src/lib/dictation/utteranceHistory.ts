@@ -54,16 +54,28 @@ export function appendTranslation(
   add: Record<string, string> | undefined,
   o: { targets: readonly string[]; original?: string },
 ): { text: string; tracks: Record<string, string> | undefined } {
+  const { tracks, blocks } = planTranslation(prev, add, o);
+  return { text: blocks ? joinTranslationBlocks(blocks, o.original) : appendChunk(prev.text, chunk), tracks };
+}
+
+/** appendTranslation's merged tracks and how its text is formed: rebuilt from `blocks` (in
+ *  order, `original` above them), or (null) appendChunk onto the record's. Reads `prev.text`
+ *  only for whether it is set. */
+function planTranslation(
+  prev: { text: string | undefined; tracks: Record<string, string> | undefined },
+  add: Record<string, string> | undefined,
+  o: { targets: readonly string[]; original?: string },
+): { tracks: Record<string, string> | undefined; blocks: string[] | null } {
   const tracks = mergeTracks(prev.tracks, add);
   // Without the earlier tracks (or this chunk's) the merged map is not the whole record: a
   // rebuild from it would drop text, so join with appendChunk.
-  if (!prev.text || !prev.tracks || !add || !tracks) return { text: appendChunk(prev.text, chunk), tracks };
+  if (!prev.text || !prev.tracks || !add || !tracks) return { tracks, blocks: null };
   const langs = [
     ...o.targets.filter((l) => hasOwn(tracks, l)),
     ...Object.keys(tracks).filter((l) => !o.targets.includes(l)),
   ];
-  if (langs.length + (o.original != null ? 1 : 0) < 2) return { text: appendChunk(prev.text, chunk), tracks };
-  return { text: joinTranslationBlocks(langs.map((l) => tracks[l]), o.original), tracks };
+  if (langs.length + (o.original != null ? 1 : 0) < 2) return { tracks, blocks: null };
+  return { tracks, blocks: langs.map((l) => tracks[l]) };
 }
 
 type InsertTranslation = Pick<
@@ -81,26 +93,28 @@ export function utteranceInsertTranslation(
   r: Pick<TranscriptRecord, "result" | "insertMethod" | "translatedText" | "translations" | "translationTargets" | "includeOriginal">,
   ins: { sent: string; delta: string; first?: boolean; phrase: { text: string; translated: boolean; byLang?: Record<string, string> } },
   session: { targets: readonly string[]; failure?: string } | null,
+  batch?: FoldBatch,
 ): InsertTranslation {
   if (!session) return {};
   const { phrase } = ins;
   const sent = ins.sent.trim();
   const delta = ins.delta.trim();
-  const text = (r.result?.text ?? "").trim();
   if (sent !== delta) {
     // An insert that carried this record's whole text, not just this final's words — a release
     // final's clipboard copy of its whole window (reopened, see streaming.ts's clipClosed, or
     // never closed because the session stopped inside the pause), or a record skipped in our own
     // window and then typed whole: its translation covers the record's earlier words too and
-    // replaces theirs.
-    return phrase.translated && sent === text
-      ? {
-          translatedText: phrase.text.trim(),
-          translations: phrase.byLang ?? r.translations,
-          translationInjected: true,
-          translationAttempted: true,
-        }
-      : {};
+    // replaces theirs. The record's text is trimmed only here, where it is compared: a trim
+    // copies the whole text, and the fold record's can be the session's whole text budget.
+    const raw = r.result?.text ?? "";
+    if (!phrase.translated || sent !== (batch ? batch.trimmed(raw) : raw.trim())) return {};
+    batch?.replaced();
+    return {
+      translatedText: phrase.text.trim(),
+      translations: phrase.byLang ?? r.translations,
+      translationInjected: true,
+      translationAttempted: true,
+    };
   }
   if (!phrase.translated) return { translationAttempted: true, translationFailure: session.failure };
   // A release final's held-back words on a record that holds no translation of its earlier
@@ -115,11 +129,74 @@ export function utteranceInsertTranslation(
   if (!r.translatedText && !ins.first) return {};
   // A release final's own words: its translation joins the record's per language — a
   // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
-  const out = appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {
-    targets: r.translationTargets ?? session.targets,
-    original: r.includeOriginal ? (r.result?.text ?? "") : undefined,
-  });
-  return { translatedText: out.text, translations: out.tracks, translationInjected: true, translationAttempted: true };
+  const prev = { text: r.translatedText, tracks: r.translations };
+  const o = { targets: r.translationTargets ?? session.targets, original: r.includeOriginal ? (r.result?.text ?? "") : undefined };
+  if (!batch) {
+    const out = appendTranslation(prev, phrase.text, phrase.byLang, o);
+    return { translatedText: out.text, translations: out.tracks, translationInjected: true, translationAttempted: true };
+  }
+  const { tracks, blocks } = planTranslation(prev, phrase.byLang, o);
+  const translatedText = batch.appended(r.translatedText, blocks, o.original, phrase.text);
+  return { translatedText, translations: tracks, translationInjected: true, translationAttempted: true };
+}
+
+/** What applyFoldWrites lends the fold record's bookings (utteranceInsertTranslation), so one
+ *  booking's cost does not grow with the record: its text can reach the session's whole text
+ *  budget and its translation four times that, and a server can have one booked per tiny final.
+ *  The record's text is trimmed once per distinct text, and a multi-block translatedText rebuild
+ *  (with what later bookings append to it) is held back and formed once, at the batch's end. */
+export class FoldBatch {
+  private raw: string | null = null;
+  private trim = "";
+  /** The held-back translatedText: `blocks` joined (`original` above them), then `tail`. It is
+   *  the record's while its translatedText is still `stale`, the value that stands in for it. */
+  private pending: { stale: string; blocks: string[]; original: string | undefined; tail: string } | null = null;
+
+  /** `text`, trimmed. */
+  trimmed(text: string): string {
+    if (text !== this.raw) {
+      this.raw = text;
+      this.trim = text.trim();
+    }
+    return this.trim;
+  }
+
+  /** `text` is already trimmed (an append left it). */
+  knowTrimmed(text: string): void {
+    this.raw = text;
+    this.trim = text;
+  }
+
+  /** A booking replaced the record's translatedText outright. */
+  replaced(): void {
+    this.pending = null;
+  }
+
+  /** The translatedText to store for a booking that joins `chunk` onto `prev` (planTranslation's
+   *  `blocks`): `prev` itself (truthy, as the real text is) while the real text is held back. */
+  appended(prev: string | undefined, blocks: string[] | null, original: string | undefined, chunk: string): string {
+    if (blocks) {
+      // planTranslation rebuilds only onto a set text.
+      const stale = prev as string;
+      this.pending = { stale, blocks, original, tail: "" };
+      return stale;
+    }
+    if (this.pending && prev === this.pending.stale) {
+      // appendChunk onto the held-back text, which is never empty (two or more blocks).
+      this.pending.tail += ` ${chunk.trim()}`;
+      return prev;
+    }
+    this.pending = null;
+    return appendChunk(prev, chunk);
+  }
+
+  /** `r` with the held-back translatedText formed, when it is still the record's. */
+  settle(r: TranscriptRecord): TranscriptRecord {
+    const p = this.pending;
+    this.pending = null;
+    if (!p || r.translatedText !== p.stale) return r;
+    return { ...r, translatedText: joinTranslationBlocks(p.blocks, p.original) + p.tail };
+  }
 }
 
 /** A per-utterance clip: its .wav and measured length (null = unmeasured). */
@@ -158,8 +235,8 @@ export function recordCapFold(count: number, max: number, lastRecorded: Utteranc
 }
 
 /** One queued write to the fold record (streaming.ts batches them): a run of appended finals'
- *  text (queueFoldText), or a patch. */
-export type FoldWrite = string | ((r: TranscriptRecord) => TranscriptRecord);
+ *  text (queueFoldText), or a patch (handed the batch, for utteranceInsertTranslation). */
+export type FoldWrite = string | ((r: TranscriptRecord, batch: FoldBatch) => TranscriptRecord);
 
 /** Queue one final's text for the fold record. appendDelta trims after every append and the
  *  delta holds a word (the caller skips a blank one), so a run of appends lands exactly as the
@@ -173,20 +250,22 @@ export function queueFoldText(ops: FoldWrite[], delta: string): void {
 
 /** Apply the fold record's queued writes in order, leaving it exactly as one patchRecord per
  *  write would have — but with one text copy and one word count per batch, not per append. A
- *  patch that throws is dropped alone, as its own patchRecord call would have been. */
+ *  patch that throws is dropped alone, as its own patchRecord call would have been. A patch
+ *  other than a booking must not read translatedText: mid-batch it can be FoldBatch's stand-in. */
 export function applyFoldWrites(r: TranscriptRecord, ops: readonly FoldWrite[]): TranscriptRecord {
   let lastText = -1;
   ops.forEach((op, i) => {
     if (typeof op === "string") lastText = i;
   });
   let cur = r;
+  const batch = new FoldBatch();
   // The text the previous append left: trimmed and non-empty, so the next run (which ends in a
   // word) joins it with no trim of its own. Any other text goes through appendDelta.
   let appended: string | null = null;
   ops.forEach((op, i) => {
     if (typeof op !== "string") {
       try {
-        cur = op(cur);
+        cur = op(cur, batch);
       } catch (e) {
         console.error("dictation history update failed:", e);
       }
@@ -195,6 +274,7 @@ export function applyFoldWrites(r: TranscriptRecord, ops: readonly FoldWrite[]):
     const prev = cur.result?.text ?? "";
     const text: string = appended !== null && prev === appended ? appended + op : appendDelta(prev, op);
     appended = text;
+    batch.knowTrimmed(text);
     cur = {
       ...cur,
       result: { ...cur.result, text },
@@ -202,5 +282,5 @@ export function applyFoldWrites(r: TranscriptRecord, ops: readonly FoldWrite[]):
       ...(i === lastText ? { wordCount: text.split(/\s+/).filter(Boolean).length } : {}),
     };
   });
-  return cur;
+  return batch.settle(cur);
 }
