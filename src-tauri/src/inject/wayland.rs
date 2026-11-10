@@ -59,7 +59,6 @@ mod imp {
         remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
         PersistMode,
     };
-    use ashpd::enumflags2::BitFlags;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::process::Command;
@@ -1210,7 +1209,7 @@ mod imp {
             .await
             .map_err(|e| e.to_string())?;
         let opts = SelectDevicesOptions::default()
-            .set_devices(BitFlags::from(DeviceType::Keyboard))
+            .set_devices(DeviceType::KEYBOARD)
             .set_persist_mode(PersistMode::ExplicitlyRevoked)
             .set_restore_token(token.as_deref());
         proxy
