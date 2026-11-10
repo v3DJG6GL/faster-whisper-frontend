@@ -10,6 +10,7 @@ import {
   dialogFilterExts,
   fixBroadcasterText,
   isAcceptedSourcePath,
+  leadOverlap,
   isTextSourcePath,
   parseImportedText,
 } from "./subtitleImport";
@@ -1091,5 +1092,34 @@ describe("markup shape matrix", () => {
   it.each(rows)("%s %j", (fmt, input, speaker, text) => {
     const segs = parseImportedText(fmt, cue(fmt, input)).segments;
     expect(segs.map((s) => [s.speaker ?? null, s.text])).toEqual([[speaker, text]]);
+  });
+});
+
+describe("leadOverlap", () => {
+  it("finds the overlap the try-every-length scan found, in linear time", () => {
+    // The earlier scan, as the reference (on lines its markup strip leaves as they are).
+    const reference = (before: string[], lines: string[]) => {
+      let k = Math.min(lines.length, before.length);
+      while (k > 0 && before.slice(-k).join("\n") !== lines.slice(0, k).join("\n")) k--;
+      return k;
+    };
+    const alphabet = ["a", "b", "", "a b"];
+    let seed = 9;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 3000; round++) {
+      const before = Array.from({ length: rand(7) }, () => alphabet[rand(alphabet.length)]);
+      const lines = Array.from({ length: rand(7) }, () => alphabet[rand(alphabet.length)]);
+      expect(leadOverlap(before, lines), JSON.stringify([before, lines])).toBe(reference(before, lines));
+    }
+    expect(leadOverlap(["x", "<i>one</i>", "two"], ["one", "two", "three"])).toBe(2);
+  });
+
+  it("two long contiguous cues that share no line parse quickly", () => {
+    const cue = (n: number, from: string, to: string, tag: string) =>
+      `${n}\n${from} --> ${to}\n` + Array.from({ length: 8000 }, (_, i) => `${tag} ${i}`).join("\n");
+    const srt = [cue(1, "00:00:01,000", "00:00:02,000", "a"), cue(2, "00:00:02,000", "00:00:03,000", "b")].join("\n\n");
+    const t0 = performance.now();
+    parseImportedText("srt", srt);
+    expect(performance.now() - t0).toBeLessThan(1_000);
   });
 });

@@ -230,6 +230,33 @@ export interface RawCue {
   lines: string[];
 }
 
+/** How many leading lines of `lines` repeat the last lines of `before` (markup-free and
+ *  whitespace-collapsed): 1 for a two-line roll-up, 2 for a three-line one — the longest suffix
+ *  of `before` that is a prefix of `lines`. KMP over the stripped lines, linear in both: trying
+ *  every overlap length was quadratic for two long cues sharing none, and the roll-up scan asks
+ *  this of every contiguous multi-line pair of a file (or a site's subtitle track). Comparing
+ *  line by line equals comparing the "\n"-joined runs: a stripped line holds no "\n". */
+export function leadOverlap(before: string[], lines: string[]): number {
+  const mine = lines.map(stripMarkup);
+  const theirs = before.map(stripMarkup);
+  const m = mine.length;
+  if (m === 0) return 0;
+  // fail[i]: the longest proper prefix of mine[0..i] that is also its suffix.
+  const fail = new Array<number>(m).fill(0);
+  for (let i = 1, k = 0; i < m; i++) {
+    while (k > 0 && mine[i] !== mine[k]) k = fail[k - 1];
+    if (mine[i] === mine[k]) k++;
+    fail[i] = k;
+  }
+  let j = 0;
+  for (const line of theirs) {
+    if (j === m) j = fail[j - 1];
+    while (j > 0 && line !== mine[j]) j = fail[j - 1];
+    if (line === mine[j]) j++;
+  }
+  return j;
+}
+
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
  *  two or three times. In a file where such a freeze cue bridges a roll: drop each ≤100 ms
@@ -251,15 +278,6 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   // of 0.1 (1.1 − 1 > 0.1, 3723.5 − 3723.4 < 0.1), so it would count only by its position.
   const isFreeze = (c: RawCue, i: number): boolean =>
     c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 + 1e-6 && repeatsNeighbour(i);
-  /** How many leading lines of `lines` repeat the last lines of `before` (markup-free and
-   *  whitespace-collapsed): 1 for a two-line roll-up, 2 for a three-line one. */
-  const leadOverlap = (before: string[], lines: string[]): number => {
-    const mine = lines.map(stripMarkup);
-    const theirs = before.map(stripMarkup);
-    let k = Math.min(mine.length, theirs.length);
-    while (k > 0 && theirs.slice(-k).join("\n") !== mine.slice(0, k).join("\n")) k--;
-    return k;
-  };
   const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
   const textLines = (c: RawCue): string[] => c.lines.filter((l) => stripMarkup(l));
   const contiguousAfter = (prev: RawCue, cue: RawCue): boolean =>
