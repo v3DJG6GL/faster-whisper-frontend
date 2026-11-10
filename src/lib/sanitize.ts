@@ -357,6 +357,7 @@ function identityTail(s: unknown, max: number, labels: boolean): string {
 export function trimLeadingInvisible(s: string, budget = Infinity): string {
   // Walk the head only and cut by UTF-16 offset: spreading the whole name would copy an unbounded
   // synced string twice per render before the display cap applied.
+  const keep = 2 * budget;
   let off = 0;
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
@@ -365,8 +366,10 @@ export function trimLeadingInvisible(s: string, budget = Infinity): string {
     if (!(/\s/.test(ch) || isInvisibleKeyChar(code) || isDisplayDropped(code) || joiner)) break;
     // A render caller's budget (`leadingTrimBudget`): a synced name's MBs of leading padding
     // would otherwise be walked on every render. Out of it with padding left, the head is marked
-    // as cut rather than dropped, so a name behind the padding never reads as "Untitled".
-    if (budget-- <= 0) return "…" + s.slice(off);
+    // as cut rather than dropped, so a name behind the padding never reads as "Untitled". Only
+    // `budget` code points of the rest are kept (the render scans after this stop within that),
+    // so the marker is not prepended to, and copies of, the whole MBs.
+    if (budget-- <= 0) return "…" + s.slice(off, off + keep);
     off += ch.length;
   }
   return s.slice(off);
