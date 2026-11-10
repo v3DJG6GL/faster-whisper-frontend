@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally, lowOpenAt,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
@@ -2736,5 +2736,39 @@ describe("hostile-size segments stay linear", () => {
     const many = cutByShare(Array.from({ length: 50_000 }, (_, i) => `w${i % 97}`).join(" "), Array.from({ length: 5000 }, () => 1));
     expect(many).toHaveLength(5000);
     expect(performance.now() - t0).toBeLessThan(3_000);
+  });
+});
+
+describe("input-sized text stays off the call stack and linear", () => {
+  it("wraps a single huge word without a stack overflow", () => {
+    expect(() => wrapLines("a".repeat(300_000), 42, 2)).not.toThrow();
+    expect(() => wrapLines("hello " + "a".repeat(300_000), 42, 2)).not.toThrow();
+  });
+
+  it("lowOpenAt answers exactly as the whole-head scan did", () => {
+    const reference = (t: string, j: number, low: string, open: true | undefined): boolean => {
+      const l = t.lastIndexOf(low, j);
+      const h = t.lastIndexOf(t[j], j - 1);
+      return l < 0 && h < 0 ? !!open : l > h;
+    };
+    const alphabet = ["\u201e", "\u201a", "\u201c", "\u2018", "\u201d", "a"];
+    let seed = 7;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 3000; round++) {
+      const t = Array.from({ length: rand(14) }, () => alphabet[rand(alphabet.length)]).join("");
+      for (let j = 0; j < t.length; j++) {
+        for (const low of ["\u201e", "\u201a"]) {
+          for (const open of [true, undefined] as const) {
+            expect(lowOpenAt(t, j, low, open), JSON.stringify([t, j, low, open])).toBe(reference(t, j, low, open));
+          }
+        }
+      }
+    }
+  });
+
+  it("cuts a long run of quotes with no low opener in linear time", () => {
+    const t0 = performance.now();
+    expect(cutByShare("a\u201c\u4eac\u201d".repeat(40_000), [1, 1, 1])).toHaveLength(3);
+    expect(performance.now() - t0).toBeLessThan(800);
   });
 });

@@ -1184,7 +1184,9 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
       .flatMap((w) => (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]));
     words.forEach((w, k) => {
       const parts = w.length > cpl ? tokenUnits(w, hyphen) : [w];
-      toks.push(...parts);
+      // A loop, not a spread: one long word (server or file text) splits into an argument list
+      // that overflows the call stack.
+      for (const x of parts) toks.push(x);
       parts.forEach((_, j) => gaps.push(j === 0 && k > 0));
     });
     if (toks.length > words.length) {
@@ -1201,7 +1203,7 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
       // A no-break run longer than a line splits at its spaces, as above: tokenUnits would drop them.
       (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]).forEach((x, i) => {
         const parts = x.length > cpl ? tokenUnits(x, hyphen) : [x];
-        toks.push(...parts);
+        for (const u of parts) toks.push(u);
         if (spaced) parts.forEach((_, j) => gaps.push(j === 0 && (i > 0 || m.gaps[k])));
       });
     });
@@ -1336,11 +1338,13 @@ function singleCloses(t: string, from: number, next?: string): boolean | undefin
 }
 
 /** Whether a German low opener `low` („ or ‚) is open at `t[j]`, a “ or ‘: it comes after the
- *  last of `t[j]`'s kind before j; with neither before j, the segment's (`open`, QuoteCtx.lowOpen). */
-function lowOpenAt(t: string, j: number, low: string, open: true | undefined): boolean {
-  const l = t.lastIndexOf(low, j);
+ *  last of `t[j]`'s kind before j; with neither before j, the segment's (`open`, QuoteCtx.lowOpen).
+ *  Scans back only to that previous quote: a `lastIndexOf(low)` over the whole head made a run of
+ *  quotes with no low opener quadratic. (Exported for its reference test.) */
+export function lowOpenAt(t: string, j: number, low: string, open: true | undefined): boolean {
   const h = t.lastIndexOf(t[j], j - 1);
-  return l < 0 && h < 0 ? !!open : l > h;
+  for (let k = j; k > h; k--) if (t[k] === low) return true;
+  return h < 0 ? !!open : false;
 }
 
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
@@ -1612,7 +1616,7 @@ function wrapTokens(
       // A token holding a no-break space ("東京 avait", "さ !") is at most cpl long and
       // stays whole too: units() drops whitespace, so the per-character wrap would delete
       // it and cut where the no-break space holds.
-      out.push(...wrapTokens(units(toks[lo]), [], cpl, toks[lo].length + reserve, reserve));
+      for (const l of wrapTokens(units(toks[lo]), [], cpl, toks[lo].length + reserve, reserve)) out.push(l);
     } else out.push(join(lo, bi));
     lo = bi;
     reserve = 0;
@@ -1690,10 +1694,11 @@ export function buildCues(
           const o = tAt[k];
           const tq = o < 0 ? undefined : qa(o, o + texts[k].length);
           const q = o < 0 ? undefined : (a: number, e: number) => qa(o + a, o + e);
-          parts.push(...timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end, tq), sp.start, sp.end, { ...LL, q }));
+          const pieces = timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end, tq), sp.start, sp.end, { ...LL, q });
+          for (const p of pieces) parts.push(p);
         });
         const pq = quoteCtxs(t, parts.map((p) => p.text));
-        own[lang].push(...parts.map((p, k) => ({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(pq[k] ? { q: pq[k] } : {}) })));
+        parts.forEach((p, k) => own[lang].push({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(pq[k] ? { q: pq[k] } : {}) }));
       } else {
         const parts = cutByShare(t, mine.map((c) => Math.max(1, c.text.length)), lang);
         const pq = quoteCtxs(t, parts);
@@ -1703,7 +1708,7 @@ export function buildCues(
         });
       }
     }
-    cues.push(...mine);
+    for (const c of mine) cues.push(c);
   });
 
   for (const tt of result.timedTracks ?? []) {

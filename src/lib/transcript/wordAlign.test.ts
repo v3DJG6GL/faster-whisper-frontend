@@ -327,6 +327,14 @@ describe("applyTextEdits", () => {
     expect(words.slice(3)).toEqual(r.words!.slice(2));
   });
 
+  it("handles a server-sized word list without a stack overflow", () => {
+    const tail = Array.from({ length: 300_000 }, (_, i) => w("x", 10 + i, 10.5 + i));
+    const big: BatchResult = { ...result, words: [...result.words!, ...tail] };
+    const words = applyTextEdits(big, { 1: "Auch das ein bisschen später" });
+    expect(words).toHaveLength(big.words!.length);
+    expect(words[words.length - 1]).toBe(tail[tail.length - 1]);
+  });
+
   it("returns the original array when no edit applies", () => {
     expect(applyTextEdits(result, {})).toBe(result.words);
     expect(applyTextEdits(result, undefined)).toBe(result.words);

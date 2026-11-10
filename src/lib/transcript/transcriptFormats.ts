@@ -87,13 +87,24 @@ export function prettySpeaker(label: string): string {
   return m ? `Speaker ${parseInt(m[1], 10) + 1}` : label;
 }
 
-/** Distinct speaker labels in first-appearance order. */
+/** The most distinct speaker labels `speakerOrder` lists — far above any diarizer (the server
+ *  clamps to 32) or a plausible imported script. The list drives the legend, the reassign popover
+ *  and a per-segment `indexOf`, so a server- or file-sized one would make each render quadratic.
+ *  A label past it still renders, with the first palette colour (`speakerColorIndex`). */
+export const MAX_SPEAKER_ORDER = 256;
+
+/** Distinct speaker labels in first-appearance order, at most `MAX_SPEAKER_ORDER`. */
 export function speakerOrder(result: BatchResult): string[] {
-  if (result.speakers?.length) return result.speakers;
+  if (result.speakers?.length) {
+    return result.speakers.length > MAX_SPEAKER_ORDER ? result.speakers.slice(0, MAX_SPEAKER_ORDER) : result.speakers;
+  }
   // A Set keeps insertion order and stays linear: the segment count and its distinct labels are
   // the server's (one response can carry ~500k of each), and History renders this per row.
   const seen = new Set<string>();
-  for (const s of result.segments ?? []) if (s.speaker) seen.add(s.speaker);
+  for (const s of result.segments ?? []) {
+    if (seen.size >= MAX_SPEAKER_ORDER) break;
+    if (s.speaker) seen.add(s.speaker);
+  }
   return [...seen];
 }
 

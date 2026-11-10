@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, speakerName, tracksOf,
   generateExports, joinSegmentTexts, writesCue, writtenCues,
-  prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
+  prettySpeaker, speakerColorIndex, speakerHex, speakerOrder, MAX_SPEAKER_ORDER,
   type ExportOptions,
 } from "./transcriptFormats";
 import { parseImportedText } from "./subtitleImport";
@@ -69,8 +69,24 @@ describe("prettySpeaker / speakerOrder", () => {
       segments: Array.from({ length: 200_000 }, (_, i) => ({ start: 0, end: 0, text: "", speaker: `s${i}` })),
     } as unknown as BatchResult;
     const started = performance.now();
-    expect(speakerOrder(many)).toHaveLength(200_000);
+    expect(speakerOrder(many)).toEqual(Array.from({ length: MAX_SPEAKER_ORDER }, (_, i) => `s${i}`));
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+  it("caps the distinct labels at MAX_SPEAKER_ORDER on both arms, first appearance kept", () => {
+    const labels = Array.from({ length: 1000 }, (_, i) => `L${i}`);
+    const derived = {
+      text: "",
+      speakers: [],
+      segments: labels.map((speaker) => ({ start: 0, end: 0, text: "", speaker })),
+    } as unknown as BatchResult;
+    expect(MAX_SPEAKER_ORDER).toBe(256);
+    expect(speakerOrder(derived)).toEqual(labels.slice(0, 256));
+    expect(speakerOrder({ text: "", speakers: labels } as unknown as BatchResult)).toEqual(labels.slice(0, 256));
+    // A real list is returned as is (same array).
+    const real = { text: "", speakers: ["SPEAKER_00", "SPEAKER_01"] } as unknown as BatchResult;
+    expect(speakerOrder(real)).toBe(real.speakers);
+    // A label past the cap still resolves, to the first palette colour.
+    expect(speakerColorIndex(speakerOrder(derived), undefined, "L999")).toBe(0);
   });
 });
 

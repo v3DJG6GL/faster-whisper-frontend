@@ -502,7 +502,9 @@ function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCu
       // " " line is text, not a cue of its own (which would lose it).
       const t = timesOf(lines);
       const real = !!t && parseClock(t.times[1]) !== undefined && parseClock(t.times[2]) !== undefined;
-      if (prev && !real) prev.push(...lines);
+      // A loop, not a spread: an imported file's block can hold enough lines to overflow the
+      // call stack as an argument list.
+      if (prev && !real) for (const l of lines) prev.push(l);
       else blocks.push((prev = lines));
     }
   }
@@ -573,7 +575,7 @@ function parseLrc(body: string): ImportedText {
     );
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });
-    } else stops.push(...starts);
+    } else for (const start of starts) stops.push(start);
   }
   // Multi-tag lines scatter segments out of source order — sort by time.
   segments.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));

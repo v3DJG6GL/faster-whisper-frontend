@@ -277,10 +277,15 @@ export function applyTextEdits(
   if (!edited.size) return words;
   const ranges = segmentWordRanges(segs, words);
   const out: TranscriptWord[] = [];
+  // A loop, not `out.push(...slice)`: the word list is the server's, and a spread of a few hundred
+  // thousand arguments overflows the call stack.
+  const append = (src: readonly TranscriptWord[], a = 0, b = src.length) => {
+    for (let k = a; k < b; k++) out.push(src[k]);
+  };
   let wi = 0;
   segs.forEach((_seg, i) => {
     const [from, to] = ranges[i];
-    if (from > wi) out.push(...words.slice(wi, from)); // words between segments
+    if (from > wi) append(words, wi, from); // words between segments
     wi = Math.max(wi, to);
     if (edited.has(i)) {
       // A word appended at the tail starts at the last word's end — at or past
@@ -288,15 +293,15 @@ export function applyTextEdits(
       // would hand it to the next line. Clamp such a word just inside this one.
       const next = segs[i + 1];
       const s = next ? Math.max(segs[i].start, next.start - 0.001) : 0;
-      out.push(
-        ...alignSegmentWords(words.slice(from, to), edits[i]).map((w) =>
+      for (const w of alignSegmentWords(words.slice(from, to), edits[i])) {
+        out.push(
           next && w.start >= next.start
             ? { ...w, start: s, end: Math.max(s, Math.min(w.end, next.start)) }
             : w,
-        ),
-      );
-    } else out.push(...words.slice(from, to));
+        );
+      }
+    } else append(words, from, to);
   });
-  out.push(...words.slice(wi));
+  append(words, wi);
   return out;
 }
