@@ -1499,15 +1499,19 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
+const MAX_SECRET_LEN = 4096;
+
 /** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` writes it: a non-empty
  *  string, own property of a plain-object container. `secrets` has no shape check on either side
  *  (Rust forwards the blob as opaque JSON), so a STRING container iterated with `Object.entries`
  *  expands per code unit — seconds of frozen main thread on the unattended startup/focus pull.
  *  Own-property because `secrets.constructor` is otherwise a truthy function. `securityChanges`
- *  reads through this too, so it never raises an api-key row whose approval would write nothing. */
+ *  reads through this too, so it never raises an api-key row whose approval would write nothing.
+ *  A key over MAX_SECRET_LEN is dropped too: real API keys and JWTs are far shorter, and 500 huge
+ *  keys would flood the keyring with thousands of stash-chunk writes on every persist. */
 function inboundSecret(secrets: unknown, id: string): string | undefined {
   const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
-  return typeof key === "string" && key ? key : undefined;
+  return typeof key === "string" && key && key.length <= MAX_SECRET_LEN ? key : undefined;
 }
 
 /** What an import or a restore does to each incoming backend's API key — the disclosure both
