@@ -3705,7 +3705,8 @@ const DOT_LOOKALIKES = new Set([0xa4f8, 0x0660, 0x06f0, 0x0701, 0x0702, 0xa60e, 
 /** Code points that draw as a `/` or `\` yet separate nothing: inside one component they would
  *  draw a component boundary (`x∕..∕home` reads as a climb but is one directory name). */
 const SEP_LOOKALIKES = new Set([
-  0x2044, 0x2215, 0x2216, 0x2571, 0x2572, 0x29f5, 0x29f8, 0x29f9, 0xfe68, 0xff0f, 0xff3c,
+  0x1735, 0x2044, 0x2215, 0x2216, 0x2571, 0x2572, 0x27cb, 0x27cd, 0x29f5, 0x29f8, 0x29f9, 0xfe68,
+  0xff0f, 0xff3c,
 ]);
 
 /** Whether a path component that is not literally `.` or `..` reads as one: once compatibility-
@@ -3761,8 +3762,8 @@ function edgeBlankText(s: string): string {
  *  mark of a script it shapes (`JOINING_LETTER`) — each only before a visible code point, as a
  *  joiner before a separator, a blank or another joiner joins nothing — plus a keycap's VS16
  *  (`1️⃣`) and a subdivision flag's tag run (`🏴` + tags + U+E007F). A path with none of the
- *  escaped ones (every folder-picker path, emoji and script names included) is returned
- *  unchanged; one no OS opens even once trimmed is left as it is, so the walk stays bounded. */
+ *  escaped ones (folder-picker paths, emoji and script names included, except a rare name
+ *  holding a slash lookalike such as a fullwidth `AC／DC`) is returned unchanged; one no OS opens even once trimmed is left as it is, so the walk stays bounded. */
 function escapeHiddenPathChars(p: string): string {
   // Rust opens the trimmed path, so the cap applies to it (`resolvedFolderPath`); blank padding
   // past the cap is written out in a few runs rather than walked code point by code point.

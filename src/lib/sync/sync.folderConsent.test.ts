@@ -349,7 +349,7 @@ describe("securityChanges: folder moves", () => {
   });
   it("writes out a separator lookalike anywhere in a folder path", () => {
     const row = (detail: string) => consentDetailText({ kind: "audio-folder", detail });
-    for (const sep of ["⁄", "∕", "∖", "╱", "╲", "⧵", "⧸", "⧹", "﹨", "／", "＼"]) {
+    for (const sep of ["⁄", "∕", "∖", "╱", "╲", "⧵", "⧸", "⧹", "﹨", "／", "＼", "⟋", "⟍", "᜵"]) {
       const esc = `\\u{${sep.codePointAt(0)!.toString(16).toUpperCase()}}`;
       const detail = `/tmp/x${sep}..${sep}home${sep}u${sep}Recordings`;
       const shown = `/tmp/x${esc}..${esc}home${esc}u${esc}Recordings`;
