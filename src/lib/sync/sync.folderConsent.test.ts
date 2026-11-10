@@ -182,7 +182,7 @@ describe("securityChanges: folder moves", () => {
     const evil = " /home/me/Music/../../../tmp/evil";
     expect(resolvedFolderPath(evil)).toBe("/tmp/evil");
     expect(consentDetailText({ kind: "audio-folder", detail: evil })).toBe("/tmp/evil");
-    expect(consentDetailTitle({ kind: "audio-folder", detail: evil })).toBe(safeIdentityText(evil, 4096));
+    expect(consentDetailTitle({ kind: "audio-folder", detail: evil })).toBe("\\u{0020}" + evil.slice(1));
     expect(resolvedFolderPath("\t\\\\host\\share\\a\\..\\..\\other")).toBe("\\\\host\\share\\other");
     // U+0085 is White_Space to Rust but not to JS `\s`.
     expect(resolvedFolderPath("\u0085C:\\Users\\me\\..\\..\\Public")).toBe("C:\\Public");
@@ -194,6 +194,40 @@ describe("securityChanges: folder moves", () => {
     expect(consentDetailTitle({ kind: "log-folder", detail: " /home/me/rec " })).toBeDefined();
     // U+FEFF is not White_Space: Rust keeps it, so the path stays relative and unresolved.
     expect(resolvedFolderPath("\ufeff/a/../b")).toBe("\ufeff/a/../b");
+  });
+  it("writes out what a folder path hides, so a `..`-lookalike reads as the name it is", () => {
+    // Each component is a real directory name the display filter would draw as `..`.
+    for (const [hidden, esc] of [
+      ["\u200b", "\\u{200B}"],
+      ["\u00ad", "\\u{00AD}"],
+      ["\u2060", "\\u{2060}"],
+      ["\u200d", "\\u{200D}"],
+      ["\ufe0f", "\\u{FE0F}"],
+      ["\u2800", "\\u{2800}"],
+      ["\u00a0", "\\u{00A0}"],
+      [" ", "\\u{0020}"],
+    ]) {
+      const detail = `/tmp/..${hidden}/..${hidden}/home/u/Recordings`;
+      const shown = `/tmp/..${esc}/..${esc}/home/u/Recordings`;
+      expect(consentDetailText({ kind: "audio-folder", detail })).toBe(shown);
+      expect(consentDetailTitle({ kind: "log-folder", detail })).toBe(shown);
+    }
+    // Resolved AND escaped: the row shows the resolved path, the tooltip the raw one, both escaped.
+    const both = "C:\\Users\\me\\..\\x\u200b\\rec";
+    expect(consentDetailText({ kind: "audio-folder", detail: both })).toBe("C:\\Users\\x\\u{200B}\\rec");
+    expect(consentDetailTitle({ kind: "audio-folder", detail: both })).toBe("C:\\Users\\me\\..\\x\\u{200B}\\rec");
+    // Emoji and script sequences render as themselves, so they render as before; inner spaces too.
+    for (const plain of [
+      "/home/me/Musik ❤️",
+      "/home/me/👨‍👩‍👧 photos",
+      "C:\\Users\\me\\My Music\\क्‍ष",
+      "/home/me/Ünïcödé/日本語",
+    ]) {
+      expect(consentDetailText({ kind: "audio-folder", detail: plain })).toBe(safeIdentityText(plain, 4096));
+      expect(consentDetailTitle({ kind: "audio-folder", detail: plain })).toBeUndefined();
+    }
+    // Other rows are untouched.
+    expect(consentDetailText({ kind: "save-recordings", detail: "a\u200bb" })).toBe("ab");
   });
   it("reads a `/\\` path by POSIX rules off Windows", () => {
     // Linux opens `/` + a `\home\me` file name, not a UNC share.

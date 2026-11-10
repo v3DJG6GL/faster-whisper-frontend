@@ -145,6 +145,12 @@ function isInvisibleKeyChar(code: number): boolean {
   );
 }
 
+/** A code point the display helpers delete or render as nothing (`isDisplayDropped` or
+ *  `isInvisibleKeyChar`), for a surface that must show it instead (a folder path, where `..​`
+ *  is a real directory name that would read as `..`). ZWNJ/ZWJ are in neither set: the caller
+ *  decides about those, as it does for whitespace. */
+export const isHiddenChar = (code: number): boolean => isDisplayDropped(code) || isInvisibleKeyChar(code);
+
 /** An identity string rendered NEXT TO a trust decision — an app-rule key, a parsed host.
  *
  *  `safeDisplayText` truncates at `max` with no marker at all, unlike its Rust twin

@@ -38,7 +38,15 @@ import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
 import { MAX_SECRET_LEN } from "../backendKeyWrite";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
-import { appRuleKey, capCodePoints, normalizeAppId, safeDisplayText, safeHeadTailText, safeIdentityText } from "../sanitize";
+import {
+  appRuleKey,
+  capCodePoints,
+  isHiddenChar,
+  normalizeAppId,
+  safeDisplayText,
+  safeHeadTailText,
+  safeIdentityText,
+} from "../sanitize";
 import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
 import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
@@ -3606,6 +3614,10 @@ export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
       ? FOLDER_DETAIL_MAX
       : 200;
 
+/** The longest path either OS opens, in UTF-16 units (Windows' cap, even as `\\?\`; Linux's
+ *  PATH_MAX of 4096 bytes is shorter). */
+const MAX_OPENABLE_PATH = 32767;
+
 /** Rust `char::is_whitespace` (the Unicode White_Space property): JS `\s` plus U+0085, minus
  *  U+FEFF. */
 const isRustWhitespace = (c: number): boolean =>
@@ -3635,7 +3647,7 @@ export function resolvedFolderPath(raw: string): string {
   // No OS opens a path this long (Windows caps one at 32767 UTF-16 units even as `\\?\`, Linux
   // at 4096 bytes), so a move to it fails wherever it points; the display helper bounds the rest.
   // Without this every render of the row would split and rejoin a peer's multi-MB path.
-  if (raw.length > 32767) return raw;
+  if (raw.length > MAX_OPENABLE_PATH) return raw;
   // Rust trims the stored path (`str::trim`, Unicode White_Space) before it opens it, so a peer's
   // leading blank must not keep the root tests below from seeing the path it pads.
   const p = trimRustWhitespace(raw);
@@ -3668,6 +3680,39 @@ export function resolvedFolderPath(raw: string): string {
   return root + kept.join(joiner);
 }
 
+/** `p` with every code point that would render as nothing written out as `\u{XXXX}`: the
+ *  display filter deletes or blanks them, and a peer's `..\u200b` component (a real directory
+ *  name, not a climb) would otherwise read as `..`. Escaped: the hidden set (`isHiddenChar`),
+ *  whitespace other than a space, a space touching a separator or the path's edge (`.. ` is a
+ *  name too), and a joiner or variation selector unless it follows a visible non-ASCII code point
+ *  (an emoji or script sequence, which renders as itself). A path with none of them (every
+ *  folder-picker path) is returned unchanged; one no OS opens is left as it is, so the walk stays
+ *  bounded. */
+function escapeHiddenPathChars(p: string): string {
+  if (p.length > MAX_OPENABLE_PATH) return p;
+  const cps = [...p];
+  const isSep = (ch: string | undefined) => ch === undefined || ch === "/" || ch === "\\";
+  let out = "";
+  let changed = false;
+  let afterVisibleNonAscii = false;
+  for (let i = 0; i < cps.length; i++) {
+    const ch = cps[i];
+    const code = ch.codePointAt(0) ?? 0;
+    const modifier = code === 0x200c || code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f);
+    const hide: boolean = modifier
+      ? !afterVisibleNonAscii
+      : code === 0x20
+        ? isSep(cps[i - 1]) || isSep(cps[i + 1])
+        : isHiddenChar(code) || /\s/.test(ch);
+    if (hide) {
+      out += `\\u{${code.toString(16).toUpperCase().padStart(4, "0")}}`;
+      changed = true;
+    } else out += ch;
+    afterVisibleNonAscii = !hide && code >= 0x80;
+  }
+  return changed ? out : p;
+}
+
 /** A consent row's `detail` as the review dialog shows it (`consentDetailCap`). A folder path is
  *  uncapped (only `is_absolute` is checked) and the OS opens it with its `.` / `..` components
  *  resolved, so the row shows the resolved path (`resolvedFolderPath`); one still past the cap
@@ -3675,15 +3720,19 @@ export function resolvedFolderPath(raw: string): string {
  *  with nothing to resolve renders whole, as every other row. */
 export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail">): string =>
   c.kind === "audio-folder" || c.kind === "log-folder"
-    ? safeHeadTailText(resolvedFolderPath(c.detail), FOLDER_DETAIL_MAX)
+    ? safeHeadTailText(escapeHiddenPathChars(resolvedFolderPath(c.detail)), FOLDER_DETAIL_MAX)
     : safeIdentityText(c.detail, consentDetailCap(c.kind));
 
-/** The path as the peer wrote it, for the row's tooltip — only for a folder row whose shown path
- *  was resolved (`consentDetailText`), so the user can still see what was sent. */
-export const consentDetailTitle = (c: Pick<SecurityChange, "kind" | "detail">): string | undefined =>
-  (c.kind === "audio-folder" || c.kind === "log-folder") && resolvedFolderPath(c.detail) !== c.detail
-    ? safeHeadTailText(c.detail, FOLDER_DETAIL_MAX)
+/** The path as the peer wrote it (hidden characters escaped), for the row's tooltip — only for a
+ *  folder row whose shown path was resolved or escaped (`consentDetailText`), so the user can still
+ *  see what was sent. */
+export function consentDetailTitle(c: Pick<SecurityChange, "kind" | "detail">): string | undefined {
+  if (c.kind !== "audio-folder" && c.kind !== "log-folder") return undefined;
+  const escaped = escapeHiddenPathChars(c.detail);
+  return resolvedFolderPath(c.detail) !== c.detail || escaped !== c.detail
+    ? safeHeadTailText(escaped, FOLDER_DETAIL_MAX)
     : undefined;
+}
 
 /** Report only the security-relevant differences between what a pull would apply and what this
  *  device holds. `local` is the freshly composed local blob, so its `backends.secrets` already
