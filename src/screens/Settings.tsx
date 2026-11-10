@@ -44,6 +44,7 @@ import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 import { SETTING } from "@/lib/settingsManifest";
 import { patchTranscribe } from "@/lib/useDisplayToggles";
 import { SyncTab } from "@/components/sync/SettingsSync";
+import { FOLDER_DETAIL_MAX, folderPathText, resolvedFolderPath } from "@/lib/sync/sync";
 import {
   DICTATION_RETENTION_OPTIONS,
   HISTORY_RETENTION_OPTIONS,
@@ -495,14 +496,17 @@ export default function Settings() {
   useEffect(() => {
     // Change… then Reset race two lookups; only the latest may land.
     let live = true;
-    void audioDirPath(basePref)
+    // A synced folder is peer-written: shown with its `.`/`..` resolved, as the consent row showed
+    // it (the OS resolves them on open). A picked folder has none, so it is passed as is.
+    const shown = basePref ? resolvedFolderPath(basePref) : basePref;
+    void audioDirPath(shown)
       .then((p) => {
         if (live) setRecDirDisplay(p);
       })
       .catch((e) => {
         // Don't hang forever on "resolving…" if the path lookup fails.
         console.error("resolve audio dir:", e);
-        if (live) setRecDirDisplay(basePref ?? "—");
+        if (live) setRecDirDisplay(shown ?? "—");
       });
     return () => {
       live = false;
@@ -883,10 +887,10 @@ export default function Settings() {
                 </>
               )}
               <div
-                title={recDirDisplay ?? undefined}
+                title={recDirDisplay === null ? undefined : folderPathText(recDirDisplay, FOLDER_DETAIL_MAX)}
                 className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
               >
-                {recDirDisplay ?? "resolving…"}
+                {recDirDisplay === null ? "resolving…" : folderPathText(recDirDisplay, 200)}
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {AUDIO_STORE_TYPES.map((t) => (

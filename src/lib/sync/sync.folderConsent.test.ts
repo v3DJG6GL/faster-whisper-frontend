@@ -10,6 +10,7 @@ import {
   consentDetailCap,
   consentDetailText,
   consentDetailTitle,
+  folderPathText,
   getPendingReview,
   pullNow,
   pushNow,
@@ -228,6 +229,16 @@ describe("securityChanges: folder moves", () => {
     }
     // Other rows are untouched.
     expect(consentDetailText({ kind: "save-recordings", detail: "a\u200bb" })).toBe("ab");
+  });
+  it("the Settings folder readouts render a path as the consent row does", () => {
+    for (const plain of ["~/Recordings", "C:\\Users\\me\\My Music", "/home/me/Musik ❤️"]) {
+      expect(folderPathText(plain, 200)).toBe(safeIdentityText(plain, 200));
+    }
+    expect(folderPathText("/tmp/..\u200b/rec", 120)).toBe("/tmp/..\\u{200B}/rec");
+    const long = "/" + "ab/".repeat(100) + "tmp/evil";
+    const shown = folderPathText(long, 120);
+    expect(shown.startsWith("/ab/ab/")).toBe(true);
+    expect(shown.endsWith("ab/tmp/evil")).toBe(true);
   });
   it("reads a `/\\` path by POSIX rules off Windows", () => {
     // Linux opens `/` + a `\home\me` file name, not a UNC share.

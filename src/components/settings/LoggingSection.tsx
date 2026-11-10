@@ -8,6 +8,7 @@ import { errorText } from "@/lib/errors";
 import { SETTING } from "@/lib/settingsManifest";
 import { LOG_RETENTION_OPTIONS, withCurrentDay } from "@/lib/retentionOptions";
 import { DEFAULT_SETTINGS } from "@/lib/defaults";
+import { folderPathText, resolvedFolderPath } from "@/lib/sync/sync";
 
 const LOG_DEFAULTS = DEFAULT_SETTINGS.logging!;
 
@@ -38,7 +39,9 @@ export function LoggingSection() {
     window.clearTimeout(openTimerRef.current);
     // Change… then Reset race two lookups; only the latest may land.
     let live = true;
-    void logFolderPath(logDir).then((p) => {
+    // A synced folder is peer-written: shown with its `.`/`..` resolved, as the consent row showed
+    // it (the OS resolves them on open). A picked folder has none, so it is passed as is.
+    void logFolderPath(logDir ? resolvedFolderPath(logDir) : logDir).then((p) => {
       if (live) setFolder(p);
     });
     return () => {
@@ -108,7 +111,7 @@ export function LoggingSection() {
       </SettingRow>
       <SettingRow
         title={SETTING.logFolder.label}
-        desc={folder ? safeDisplayText(folder, 120) : "One file per app session."}
+        desc={folder ? folderPathText(folder, 120) : "One file per app session."}
         last
       >
         <div className="flex items-center gap-2">

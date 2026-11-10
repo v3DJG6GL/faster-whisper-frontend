@@ -3713,6 +3713,11 @@ function escapeHiddenPathChars(p: string): string {
   return changed ? out : p;
 }
 
+/** A folder path as the app shows it — the consent row and the Settings folder readouts alike:
+ *  hidden characters written out (`escapeHiddenPathChars`) and, over `max`, head AND tail kept
+ *  (`safeHeadTailText`). A folder-picker path within `max` renders as `safeIdentityText`. */
+export const folderPathText = (p: string, max: number): string => safeHeadTailText(escapeHiddenPathChars(p), max);
+
 /** A consent row's `detail` as the review dialog shows it (`consentDetailCap`). A folder path is
  *  uncapped (only `is_absolute` is checked) and the OS opens it with its `.` / `..` components
  *  resolved, so the row shows the resolved path (`resolvedFolderPath`); one still past the cap
@@ -3720,7 +3725,7 @@ function escapeHiddenPathChars(p: string): string {
  *  with nothing to resolve renders whole, as every other row. */
 export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail">): string =>
   c.kind === "audio-folder" || c.kind === "log-folder"
-    ? safeHeadTailText(escapeHiddenPathChars(resolvedFolderPath(c.detail)), FOLDER_DETAIL_MAX)
+    ? folderPathText(resolvedFolderPath(c.detail), FOLDER_DETAIL_MAX)
     : safeIdentityText(c.detail, consentDetailCap(c.kind));
 
 /** The path as the peer wrote it (hidden characters escaped), for the row's tooltip — only for a
