@@ -547,6 +547,19 @@ let lastUtterance: UtteranceEntry | null = null;
  *  objects `lastUtterance` points at). A clip lands whenever Rust's writer thread finishes it —
  *  after later finals or a break — so it is paired by ordinal; cleared only with the session. */
 const utteranceByOrdinal = new Map<number, UtteranceEntry>();
+/** Ceilings on the two ordinal maps above. Both are keyed by server-chosen ordinals, and a
+ *  server sending `open`s or finals that never complete would grow them for the whole session.
+ *  A real session holds a few in-flight `open`s, and a clip lags its final by seconds, never by
+ *  a thousand utterances; the oldest entry goes first. */
+const MAX_OPEN_UTTERANCES = 256;
+const MAX_CLIPLESS_UTTERANCES = 1000;
+/** Per-session ceiling on per-utterance History records (over 8 hours of hands-free speech at
+ *  one utterance every few seconds). Each record is a file write and a re-sort of the mirror, and
+ *  a server can mint one per ~100-byte frame pair; past this, utterances fold into the last
+ *  record instead, so no text is lost. */
+const MAX_UTTERANCE_RECORDS = 10_000;
+let utteranceRecordCount = 0;
+let utteranceRecordCapWarned = false;
 
 function resetUtteranceHistory(): void {
   sessionPerUtterance = false;
@@ -556,6 +569,8 @@ function resetUtteranceHistory(): void {
   lastUtteranceFinalAt = 0;
   lastUtterance = null;
   utteranceByOrdinal.clear();
+  utteranceRecordCount = 0;
+  utteranceRecordCapWarned = false;
 }
 
 // Dictation translation (per-profile "Translate output"), frozen per session from
@@ -947,9 +962,22 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
     // No `open` seen (a forced commit's second half, say): it began after the previous final.
     const openedAt = utteranceOpenedAt.get(ordinal) ?? (lastUtteranceFinalAt || sessionMeta?.startedAt || now);
     utteranceOpenedAt.delete(ordinal);
-    lastUtteranceFinalAt = now;
-    lastUtterance = { ordinal, id: null, openedAt };
-    utteranceByOrdinal.set(ordinal, lastUtterance);
+    // The server's ordinals only grow: an `open` below this final will never get one.
+    for (const k of utteranceOpenedAt.keys()) if (k < ordinal) utteranceOpenedAt.delete(k);
+    if (utteranceRecordCount >= MAX_UTTERANCE_RECORDS && lastUtterance?.id) {
+      // Past the record ceiling: this utterance's text appends to the last record below.
+      if (!utteranceRecordCapWarned) {
+        utteranceRecordCapWarned = true;
+        console.warn(`[dictation] ${MAX_UTTERANCE_RECORDS} utterance records this session; later utterances join the last one`);
+      }
+    } else {
+      lastUtteranceFinalAt = now;
+      lastUtterance = { ordinal, id: null, openedAt };
+      utteranceByOrdinal.set(ordinal, lastUtterance);
+      if (utteranceByOrdinal.size > MAX_CLIPLESS_UTTERANCES) {
+        utteranceByOrdinal.delete(utteranceByOrdinal.keys().next().value!);
+      }
+    }
   }
   const utt = lastUtterance;
   const meta = historyMeta();
@@ -974,6 +1002,7 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
       translationTargets: sessionTranslation ? [...sessionTranslation.targets] : undefined,
       includeOriginal: sessionTranslation?.includeOriginal || undefined,
     });
+    utteranceRecordCount += 1;
   } catch (e) {
     console.error("dictation history capture failed:", e);
     return { id: null, first: false, delta };
@@ -2691,8 +2720,12 @@ async function ensureListeners(): Promise<void> {
     const ordinal = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
     // Per-utterance History: when the utterance began is its record's time (the first `open`).
     if (sessionPerUtterance && ordinal !== null && inSession()) {
-      if (state === "open" && !utteranceOpenedAt.has(ordinal)) utteranceOpenedAt.set(ordinal, Date.now());
-      else if (state === "dropped") utteranceOpenedAt.delete(ordinal);
+      if (state === "open" && !utteranceOpenedAt.has(ordinal)) {
+        if (utteranceOpenedAt.size >= MAX_OPEN_UTTERANCES) {
+          utteranceOpenedAt.delete(utteranceOpenedAt.keys().next().value!);
+        }
+        utteranceOpenedAt.set(ordinal, Date.now());
+      } else if (state === "dropped") utteranceOpenedAt.delete(ordinal);
     }
     if (!isCapturing()) {
       // The post-stop drain: the chip already reads "finalizing…", and nothing here may
