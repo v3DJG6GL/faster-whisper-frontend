@@ -242,14 +242,21 @@ pub fn prune_older_than(
 ///
 /// `parts` are written back to back, so a `.wav` goes out as header + the caller's PCM without
 /// copying a recording (up to the multi-hundred-MB cap) into one buffer.
+///
+/// On Windows the handle is opened unshared for the whole write: the owner-only DACL lands only
+/// after the create, and a handle another local account opened in that gap (through the folder's
+/// inherited DACL) would stay valid and read the recording as it is written. Sharing checks only
+/// cover data/delete access, so applying the DACL by name through our own handle still works.
 fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
-    let mut f = create_new_private(path)?;
+    let mut f = open_new_private(path, true)?;
     if let Err(e) = parts
         .iter()
         .try_for_each(|p| f.write_all(p))
         .and_then(|_| f.sync_all())
     {
+        // Closed first: an unshared handle would make the delete fail and leave the partial file.
+        drop(f);
         let _ = std::fs::remove_file(path);
         return Err(e);
     }
@@ -257,8 +264,14 @@ fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
 }
 
 /// The open half of `write_new_private`: a NEW owner-only file (never an existing name, symlink
-/// included), handed back open — for a writer that keeps it, like the session log.
+/// included), handed back open — for a writer that keeps it, like the session log. Shared as
+/// usual, since these handles live long and the app (or the user) reads the file meanwhile.
 pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> {
+    open_new_private(path, false)
+}
+
+/// `create_new_private`, optionally (`exclusive`, Windows only) with share mode 0.
+fn open_new_private(path: &Path, exclusive: bool) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
@@ -266,6 +279,13 @@ pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> 
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
+    #[cfg(windows)]
+    if exclusive {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.share_mode(0);
+    }
+    #[cfg(not(windows))]
+    let _ = exclusive;
     let f = opts.open(path)?;
     // The Windows half of "owner-only", per FILE: a file inherits its folder's DACL, and
     // `create_dir_private` deliberately leaves a folder that already existed alone. Applied while
