@@ -73,13 +73,22 @@ pub(crate) fn non_blank(s: Option<&str>) -> Option<&str> {
     s.map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// A custom FOLDER preference: set only when non-blank and absolute on this platform. The value
+/// can arrive from a sync peer (another OS, or a crafted one), and a relative path would resolve
+/// against the process's current directory, or a URL would reach the file manager as a link; the
+/// folder picker only ever returns absolute paths, so treating anything else as unset (the
+/// default folder) changes nothing for a real pick.
+pub(crate) fn custom_folder(s: Option<&str>) -> Option<PathBuf> {
+    non_blank(s).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
 /// The one base folder for all stored audio (the `AUDIO_SUBDIRS` live inside it). A non-empty
 /// `custom` (audioBaseDir, with the legacy recordingsDir as fallback — the caller passes the
-/// effective preference) wins; otherwise the default lives under the app data dir. None only if
-/// neither can be resolved.
+/// effective preference) wins when absolute (`custom_folder`); otherwise the default lives under
+/// the app data dir. None only if neither can be resolved.
 pub(crate) fn resolve_audio_base(app: &AppHandle, custom: Option<String>) -> Option<PathBuf> {
-    if let Some(c) = non_blank(custom.as_deref()) {
-        return Some(PathBuf::from(c));
+    if let Some(c) = custom_folder(custom.as_deref()) {
+        return Some(c);
     }
     app.path().app_data_dir().ok().map(|d| d.join("audio"))
 }
@@ -192,6 +201,34 @@ pub(crate) async fn read_selection_bounded(
     match tokio::time::timeout(std::time::Duration::from_millis(400), task).await {
         Ok(Ok(v)) => v,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod custom_folder_tests {
+    use super::custom_folder;
+
+    #[test]
+    fn only_an_absolute_custom_folder_counts_as_set() {
+        assert_eq!(custom_folder(None), None);
+        assert_eq!(custom_folder(Some("  ")), None);
+        assert_eq!(custom_folder(Some("audio")), None);
+        assert_eq!(custom_folder(Some("../x")), None);
+        assert_eq!(custom_folder(Some("https://example.com/x")), None);
+        #[cfg(unix)]
+        assert_eq!(
+            custom_folder(Some(" /home/u/audio ")),
+            Some(std::path::PathBuf::from("/home/u/audio"))
+        );
+        #[cfg(unix)]
+        assert_eq!(custom_folder(Some("C:\\Users\\u")), None);
+        #[cfg(windows)]
+        assert_eq!(
+            custom_folder(Some("D:\\Audio")),
+            Some(std::path::PathBuf::from("D:\\Audio"))
+        );
+        #[cfg(windows)]
+        assert_eq!(custom_folder(Some("/home/u/audio")), None);
     }
 }
 

@@ -308,14 +308,14 @@ fn level_directive(level: LogLevel) -> String {
     format!("faster_whisper_frontend_lib={l},{other}")
 }
 
-/// The log directory: the user's custom folder when set, else `<app_local_data>/logs` —
-/// on Windows `%LOCALAPPDATA%\org.fasterwhisper.frontend\logs`. Local, not
-/// Roaming (`app_data_dir` is `%APPDATA%` on Windows): logs must not sync between
+/// The log directory: the user's custom folder when set (absolute only, see `custom_folder`),
+/// else `<app_local_data>/logs` — on Windows `%LOCALAPPDATA%\org.fasterwhisper.frontend\logs`.
+/// Local, not Roaming (`app_data_dir` is `%APPDATA%` on Windows): logs must not sync between
 /// machines. This is NOT the pre-viewer `%LOCALAPPDATA%\faster-whisper-frontend\logs`;
 /// `prune_legacy_dir` clears that folder's pair out.
 pub fn log_dir(app: &AppHandle, config: &Config) -> Option<PathBuf> {
-    if let Some(dir) = crate::commands::non_blank(config.settings.logging.log_dir.as_deref()) {
-        return Some(PathBuf::from(dir));
+    if let Some(dir) = crate::commands::custom_folder(config.settings.logging.log_dir.as_deref()) {
+        return Some(dir);
     }
     app.path().app_local_data_dir().ok().map(|d| d.join("logs"))
 }
@@ -582,8 +582,8 @@ pub fn get_log_status(ring: State<'_, LogRing>) -> LogTail {
 /// reads `settings.logging.log_dir`, so inlining its logic avoids the destructive
 /// recovery path that `config::load` triggers on an unreadable or corrupt config.
 fn resolve_log_dir(app: &AppHandle, custom: Option<String>) -> Option<std::path::PathBuf> {
-    if let Some(dir) = crate::commands::non_blank(custom.as_deref()) {
-        return Some(std::path::PathBuf::from(dir));
+    if let Some(dir) = crate::commands::custom_folder(custom.as_deref()) {
+        return Some(dir);
     }
     app.path().app_local_data_dir().ok().map(|d| d.join("logs"))
 }
