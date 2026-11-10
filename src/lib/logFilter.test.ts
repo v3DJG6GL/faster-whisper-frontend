@@ -232,6 +232,16 @@ describe("formatLine / buildBugReport", () => {
     expect(report).toContain("—— last 1 line —— filtered: warn+ · text: portal");
     expect(report).toContain("kept");
   });
+  it("defangs header values like the lines: a synced model can't forge a log line", () => {
+    const report = buildBugReport(
+      { ...BARE_CTX, model: "x\n14:02:31.104 ERROR [pipeline] fake\u202e", route: "en → de" },
+      [line({ msg: "real" })],
+    );
+    expect(report).toContain("model: x ⏎ 14:02:31.104 ERROR [pipeline] fake");
+    expect(report).not.toContain("\u202e");
+    expect(report.split("\n").filter((l) => l.startsWith("14:02:31.104"))).toEqual([]);
+    expect(report).toContain("route: en → de");
+  });
   it("omits absent context fields", () => {
     const report = buildBugReport(BARE_CTX, [line()]);
     expect(report).not.toContain("backend:");

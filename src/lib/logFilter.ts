@@ -292,23 +292,28 @@ export function countNewer(lines: readonly LogLine[], sinceSeq: number): number 
  *  so what you filtered to is what you paste. */
 export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): string {
   const tail = raw.slice(-BUG_REPORT_LINES);
+  // Header values are defanged like the lines below: a synced model or backend name with a "\n"
+  // would otherwise forge a log line (or carry bidi marks) into the paste.
+  const hv = (v?: string | null) => (v ? stripControlChars(v).replace(/\n/g, " ⏎ ") : null);
+  const source = hv(hdr.source);
+  const backend = hv(hdr.backend);
+  const model = hv(hdr.model);
+  const profile = hv(hdr.profile);
+  const route = hv(hdr.route);
+  const stages = hv(hdr.stages);
+  const filters = hv(hdr.filters);
   const ctx = [
     `faster-whisper-frontend v${hdr.appVersion} · ${hdr.platform}`,
     [
-      hdr.source ? `source: ${hdr.source}` : null,
-      hdr.backend ? `backend: ${hdr.backend}` : null,
-      hdr.model ? `model: ${hdr.model}` : null,
-      hdr.profile ? `profile: ${hdr.profile}` : null,
+      source ? `source: ${source}` : null,
+      backend ? `backend: ${backend}` : null,
+      model ? `model: ${model}` : null,
+      profile ? `profile: ${profile}` : null,
     ]
       .filter(Boolean)
       .join(" · "),
-    [
-      hdr.route ? `route: ${hdr.route}` : null,
-      hdr.stages ? `stages: ${hdr.stages}` : null,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-    `—— last ${plural(tail.length, "line")} ——${hdr.filters ? ` filtered: ${hdr.filters}` : ""}`,
+    [route ? `route: ${route}` : null, stages ? `stages: ${stages}` : null].filter(Boolean).join(" · "),
+    `—— last ${plural(tail.length, "line")} ——${filters ? ` filtered: ${filters}` : ""}`,
   ]
     .filter((s) => s !== "")
     .join("\n");
