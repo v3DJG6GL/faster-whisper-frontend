@@ -695,6 +695,25 @@ describe("foldProgress no longer learns; it stamps per-language clocks", () => {
     expect(useTranscribeRun.getState().stageMeta.translating?.unitStarts).toEqual({ en: 1_000, fr: 5_000 });
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
   });
+
+  it("keeps at most 64 unit clocks; a known unit keeps its start", () => {
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      for (let i = 0; i < 100; i++) foldProgress({ stage: "translating", progress: 0.1, target: `t${i}` });
+      vi.setSystemTime(9_000);
+      foldProgress({ stage: "translating", progress: 0.2, target: "t0" });
+    } finally {
+      vi.useRealTimers();
+    }
+    const starts = useTranscribeRun.getState().stageMeta.translating?.unitStarts ?? {};
+    expect(Object.keys(starts)).toHaveLength(64);
+    expect(starts.t0).toBe(1_000);
+    expect(starts.t63).toBe(1_000);
+    expect("t64" in starts).toBe(false);
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+  });
 });
 
 describe("selectPath keeps a same-path open record", () => {

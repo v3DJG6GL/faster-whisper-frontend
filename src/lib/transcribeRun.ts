@@ -92,6 +92,10 @@ export interface StageTime {
   observed?: boolean;
 }
 
+/** The most per-unit clocks (`StageMeta.unitStarts`) one stage keeps: well above the translation
+ *  targets (MAX_TRANSLATION_KEYS) plus the few diarization steps. */
+const MAX_UNIT_STARTS = 64;
+
 /** Model/device chips observed for a stage — kept after the stage finishes
  *  so done rows hold their evidence. */
 export interface StageMeta {
@@ -1816,9 +1820,11 @@ export function foldProgress(p: BatchProgress) {
     }
     // Per-unit clock (a translation target, a diarization step): the first
     // poll naming it starts its ledger line's elapsed ticker (the server's
-    // elapsed_s only moves per poll).
+    // elapsed_s only moves per poll). The target names are the server's, so
+    // the map is capped: a unit past it shows the server's elapsed_s instead.
     if (p.target && (cur === "translating" || cur === "diarizing") &&
-        !ownProp(stageMeta[cur]?.unitStarts, p.target)) {
+        !ownProp(stageMeta[cur]?.unitStarts, p.target) &&
+        Object.keys(stageMeta[cur]?.unitStarts ?? {}).length < MAX_UNIT_STARTS) {
       stageMeta = stageMetaWith(stageMeta, cur, {
         unitStarts: { ...stageMeta[cur]?.unitStarts, [p.target]: now },
       });

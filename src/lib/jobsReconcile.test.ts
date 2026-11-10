@@ -38,7 +38,7 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
-const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR, BACKEND_GONE_ERROR } =
+const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJobs, stopOrphan, tookMsOf, watchOrphan, NOT_FOUND_ERROR, BACKEND_GONE_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
   await import("./transcribeRun");
@@ -164,6 +164,22 @@ async function persistLost(state: Partial<TranscribeRunState> = {}): Promise<Led
   useTranscribeRun.setState({ ...state, queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
   return r;
 }
+
+describe("tookMsOf", () => {
+  it("trusts the server's delta only within our own elapsed time", () => {
+    // beforeEach: the clock reads T0 + 60 s.
+    const r = { startedAt: T0 };
+    const s = T0 / 1000;
+    expect(tookMsOf({ createdAt: s, finishedAt: s + 42 }, r)).toBe(42_000);
+    expect(tookMsOf({ createdAt: s, finishedAt: s + 64 }, r)).toBe(64_000); // within the 5 s slack
+    // Longer than the run can have taken, negative, non-finite, or a stamp missing: ours.
+    expect(tookMsOf({ createdAt: s, finishedAt: s + 66 }, r)).toBe(60_000);
+    expect(tookMsOf({ createdAt: s, finishedAt: s + 1e300 }, r)).toBe(60_000);
+    expect(tookMsOf({ createdAt: s + 5, finishedAt: s }, r)).toBe(60_000);
+    expect(tookMsOf({ createdAt: -Infinity, finishedAt: s }, r)).toBe(60_000);
+    expect(tookMsOf({ finishedAt: s }, r)).toBe(60_000);
+  });
+});
 
 describe("reconcileJobs", () => {
   it("a done row ingests one record with createdAt = startedAt and forgets the row", async () => {
@@ -388,13 +404,14 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().progress?.stage).toBe("transcribing");
     // Next poll: done → result → the queue row settles and the record opens.
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", createdAt: T0 / 1000,
-      finishedAt: T0 / 1000 + 90, resultAvailable: true }));
+      finishedAt: T0 / 1000 + 50, resultAvailable: true }));
     getJobResult.mockResolvedValue(ok(RESULT));
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.advanceTimersByTimeAsync(0);
     const after = useTranscribeRun.getState();
     expect(after.running).toBe(false);
-    expect(after.queue[0]).toMatchObject({ status: "done", tookMs: 90_000 });
+    // The server's own 50 s (within the 61 s since the row started), not our wall clock.
+    expect(after.queue[0]).toMatchObject({ status: "done", tookMs: 50_000 });
     expect(after.openRecordId).toBe(JOB_A);
     expect(after.stageTimes.transcribing?.end).toBeDefined();
     expect(records()).toHaveLength(1);

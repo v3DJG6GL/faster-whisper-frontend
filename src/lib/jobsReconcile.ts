@@ -89,12 +89,18 @@ let attachedId: string | null = null;
  *  own live requests, never something to reconcile. */
 let launchedAt = Infinity;
 
-/** Server-clocked wall time when both stamps are there, else our own. */
-function tookMsOf(status: JobStatus, row: LedgerRow): number {
-  if (status.finishedAt && status.createdAt && status.finishedAt >= status.createdAt) {
-    return Math.round((status.finishedAt - status.createdAt) * 1000);
+/** Server-clocked wall time when both stamps are there, else our own. The server's delta is
+ *  trusted only within our own elapsed time (plus slack): `startedAt` is stamped before the
+ *  upload, so a real run can never have taken longer server-side, and both stamps share the
+ *  server's clock, so skew does not enter. A larger or non-finite one would land in the record's
+ *  duration and the usage statistics as is. */
+export function tookMsOf(status: Pick<JobStatus, "createdAt" | "finishedAt">, row: Pick<LedgerRow, "startedAt">): number {
+  const local = Math.max(0, Date.now() - row.startedAt);
+  if (status.finishedAt && status.createdAt) {
+    const d = (status.finishedAt - status.createdAt) * 1000;
+    if (Number.isFinite(d) && d >= 0 && d <= local + 5_000) return Math.round(d);
   }
-  return Math.max(0, Date.now() - row.startedAt);
+  return local;
 }
 
 function failedText(status: JobStatus): string {
