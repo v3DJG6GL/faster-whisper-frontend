@@ -710,6 +710,8 @@ function SecurityReviewDialog() {
     "dictation-history": "Dictation history would be turned off and wiped",
     "report-target-app": "Reporting the app you dictate into would be turned on",
     "typed-text": "Text typed into your apps would change",
+    "audio-folder": "Audio folder would move",
+    "log-folder": "Log folder would move",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
@@ -722,7 +724,7 @@ function SecurityReviewDialog() {
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
         {peerName(pending.device) || "Another device"} sent changes that affect where your
-        dictation is sent, which key is used, what it types, or what is kept on this device.{" "}
+        dictation is sent, which key is used, what it types, or what is kept on this device and where.{" "}
         {/* The raise's held-back apply is refused while dictating: then nothing landed. */}
         {pending.restApplied
           ? "Everything else was applied already — only these are waiting."
@@ -749,7 +751,12 @@ function SecurityReviewDialog() {
                   Would connect to <span className="font-mono font-semibold">{safeHostText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
-              <div className="mt-0.5 font-mono text-[11px] break-all text-dim">
+              <div
+                className="mt-0.5 font-mono text-[11px] break-all text-dim"
+                // A folder row's detail IS the path: a long one is cut at the row cap, so the
+                // tooltip carries it whole (still through the same invisible-character fold).
+                title={c.kind === "audio-folder" || c.kind === "log-folder" ? safeIdentityText(c.detail, 4096) : undefined}
+              >
                 {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
                     identity while it decides whether a plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide

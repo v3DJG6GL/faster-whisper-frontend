@@ -3427,7 +3427,8 @@ function handleTransportFailure(status: number, error?: string): void {
 
 /** One pulled change worth stopping for. Everything a sync server can change is applied
  *  silently EXCEPT these: where the microphone audio goes, which credential travels with it,
- *  what the app types, and what this device keeps, deletes or reports. A sync server is remote
+ *  what the app types, what this device keeps, deletes or reports, and which folder it writes
+ *  recordings and logs to. A sync server is remote
  *  and may be hostile or intercepted, and the pull runs unattended at startup and on every window
  *  focus — so these get the same explicit consent the file-import path already asks for. */
 export interface SecurityChange {
@@ -3440,9 +3441,11 @@ export interface SecurityChange {
     | "dictation-retention"
     | "dictation-history"
     | "report-target-app"
-    | "typed-text";
-  /** The backend a `backends`-category change applies to; the recording and retention kinds have
-   *  no backend and set this to an empty string (the dialog omits it). A `typed-text` change names
+    | "typed-text"
+    | "audio-folder"
+    | "log-folder";
+  /** The backend a `backends`-category change applies to; the recording, retention and folder
+   *  kinds have no backend and set this to an empty string (the dialog omits it). A `typed-text` change names
    *  the backend or profile whose decode defaults carry the text. */
   backend: string;
   /** `typed-text` only: the category that holds it — a profile's overrides or a backend's
@@ -3472,7 +3475,9 @@ function catOf({ kind, category }: SecurityChange): SyncCategory {
   ) {
     return "recording";
   }
+  if (kind === "audio-folder") return "recording";
   if (kind === "history-retention") return "fileTranscriptions";
+  if (kind === "log-folder") return "logging";
   return "backends";
 }
 
@@ -3599,9 +3604,37 @@ export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
   cats: Record<SyncCategory, boolean>,
-  gates?: Partial<Pick<Gates, "modelDecodeDefaults" | "serverAddresses" | "apiKeys">>,
+  gates?: Partial<Pick<Gates, "modelDecodeDefaults" | "serverAddresses" | "apiKeys" | "audioFolder" | "logFolder">>,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
+  // The folder paths (`gatedPath`): with the "Audio folder" / "Log folder" switch on, an inbound
+  // path moves where every later dictation recording, audio copy or session log is written — and
+  // on Windows a UNC path (`\\host\share`) sends them to a network host, which Windows also
+  // authenticates to. Only a move to a different non-blank path is held: back to the default
+  // (null/blank) writes to this device's own default folder, and a gated-off path never applies
+  // (`gateScalars` already stripped it from `incoming`). One row per distinct target.
+  const folderMoves = (
+    incomingCat: unknown,
+    localCat: unknown,
+    fields: readonly string[],
+    kind: "audio-folder" | "log-folder",
+  ) => {
+    const seen = new Set<string>();
+    for (const field of fields) {
+      const v = isPlainObject(incomingCat) ? ownProp(incomingCat, field) : undefined;
+      if (typeof v !== "string" || v.trim() === "") continue;
+      const here = isPlainObject(localCat) ? ownProp(localCat, field) : undefined;
+      if (v.trim() === (typeof here === "string" ? here.trim() : "") || seen.has(v)) continue;
+      seen.add(v);
+      out.push({ kind, id: field, backend: "", detail: v });
+    }
+  };
+  if (cats.recording && gates?.audioFolder !== false) {
+    folderMoves(incoming.recording, local.recording, ["audioBaseDir", "recordingsDir"], "audio-folder");
+  }
+  if (cats.logging && gates?.logFolder !== false) {
+    folderMoves(incoming.logging, local.logging, ["logDir"], "log-folder");
+  }
   // The retention windows drive sweeps that DELETE stored data (saved recordings; dictation
   // sessions incl. audio; file transcripts incl. their audio copies). Only a change that starts
   // deleting, or deletes sooner, needs consent — lengthening the window (or turning retention
