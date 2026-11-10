@@ -298,7 +298,9 @@ export function rulePatchProblem(patch: Record<string, unknown>): string | null 
       if (typeof w !== "string") continue;
       const chars = [...w];
       if (chars.length > LOWERCASE_WORD_MAX) {
-        return `“${chars.slice(0, 16).join("")}…” is too long for a lowercase word (at most ${LOWERCASE_WORD_MAX} letters)`;
+        // A server-loaded word: quoted through the display filter, so bidi and zero-width
+        // characters cannot reorder or hide the reason the Save is held.
+        return `“${safeDisplayText(w, 16)}…” is too long for a lowercase word (at most ${LOWERCASE_WORD_MAX} letters)`;
       }
       const bad = chars.find((c) => !LOWERCASE_WORD_CHAR.test(c));
       if (bad !== undefined) return `${shownChar(bad)} can’t be in a lowercase word (letters A–Z, ÄÖÜ, äöü and ß only)`;

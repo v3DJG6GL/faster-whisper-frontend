@@ -252,6 +252,7 @@ describe("rulePatchProblem (the Dictionary's Save gate for the other rule bodies
     expect(rulePatchProblem({ wordlist: ["Mrs."] })).toMatch(/^“\.” /);
     expect(rulePatchProblem({ wordlist: ["a b"] })).toMatch(/^U\+0020 /);
     expect(rulePatchProblem({ wordlist: ["x".repeat(33)] })).toMatch(/too long for a lowercase word \(at most 32 letters\)/);
+    expect(rulePatchProblem({ wordlist: ["\u202eab\u200bc" + "x".repeat(40)] })).toMatch(/^“abcxxxxxxxxxxxxx…” is too long/);
     expect(rulePatchProblem({ wordlist: Array.from({ length: 2001 }, () => "und") })).toMatch(/Too many lowercase words \(at most 2,000\)/);
   });
 
