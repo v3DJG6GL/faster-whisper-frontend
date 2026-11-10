@@ -35,6 +35,11 @@ pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<()
         for sub in AUDIO_SUBDIRS {
             let _ = crate::audio::create_dir_private(&dir.join(sub));
         }
+        // The base can arrive from a sync peer, and `create_dir_private` passes any existing
+        // path: a file there would be opened (or run) instead of shown as a folder.
+        if !dir.is_dir() {
+            return Err("the configured folder is not a folder".into());
+        }
         // Not the bare plugin call: the file manager it may cold-start must not inherit the
         // env vars this process injected for itself (see `crate::open_external`).
         crate::open_external(&app, &dir.to_string_lossy())
@@ -46,6 +51,12 @@ pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<()
 /// copy + remove (verified by the copy's success).
 fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     if std::fs::rename(src, dest).is_ok() {
+        // Owner-only like the copy arm: a file written before recordings were created 0600
+        // would otherwise keep its old mode in a target folder others can list. Only when
+        // `dest` is still the plain file just moved, so the change never lands through a link.
+        if std::fs::symlink_metadata(dest).is_ok_and(|m| m.file_type().is_file()) {
+            crate::audio::restrict_file_private(dest);
+        }
         return Ok(());
     }
     let moved = copy_keeping_mtime(src, dest).and_then(|()| {
@@ -104,7 +115,9 @@ fn move_dir_contents(
     crate::audio::create_dir_private(to).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
         let src = entry.path();
-        if !src.is_file() {
+        // The entry's own type, not the path's: a link planted in the old base is left there,
+        // never copied from its target. The app writes no links into these folders.
+        if !entry.file_type().is_ok_and(|t| t.is_file()) {
             continue;
         }
         // An in-progress media copy (`<id>.<ext>.tmp`, see save_transcript_media) finishes in
@@ -288,7 +301,11 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
                 // Only the app's own files: the legacy folder is a free user pick (~/Music,
                 // a shared Documents folder…), and relocating every .wav/.txt in it would move
                 // foreign files under a folder "Delete all dictations" then wipes.
-                if !src.is_file() || !crate::audio::is_dictation_file(&name.to_string_lossy()) {
+                // `file_type` is the entry's own: a planted link is left behind (see
+                // `move_dir_contents`).
+                if !entry.file_type().is_ok_and(|t| t.is_file())
+                    || !crate::audio::is_dictation_file(&name.to_string_lossy())
+                {
                     continue;
                 }
                 let dest = dict.join(name);
@@ -311,8 +328,8 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
         if let Ok(entries) = std::fs::read_dir(&legacy_media) {
             for entry in entries.flatten() {
                 let src = entry.path();
-                if !src.is_file() {
-                    continue;
+                if !entry.file_type().is_ok_and(|t| t.is_file()) {
+                    continue; // a link is left behind (see `move_dir_contents`)
                 }
                 let Some(name) = src.file_name() else {
                     continue;
@@ -939,6 +956,34 @@ mod tests {
             .iter()
             .any(|(old, new)| old.ends_with("a.wav") && new.ends_with("a.wav")));
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A link planted in the old base stays there (never copied from its target), and a file the
+    // same-volume rename moves ends up owner-only, as a cross-volume copy would.
+    #[cfg(unix)]
+    #[test]
+    fn move_dir_contents_leaves_links_behind_and_moves_files_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let base = crate::config::fresh_test_dir("move-dir-links");
+        let from = base.join("from");
+        let to = base.join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        let old = from.join("a.wav");
+        std::fs::write(&old, b"riff").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let secret = base.join("secret");
+        std::fs::write(&secret, b"elsewhere").unwrap();
+        std::os::unix::fs::symlink(&secret, from.join("b.wav")).unwrap();
+
+        let mut map = Vec::new();
+        move_dir_contents(&from, &to, &mut map).unwrap();
+
+        let moved = std::fs::metadata(to.join("a.wav")).unwrap();
+        assert_eq!(moved.permissions().mode() & 0o777, 0o600);
+        assert!(!to.join("b.wav").exists(), "a link is never moved");
+        assert!(std::fs::symlink_metadata(from.join("b.wav")).is_ok());
+        assert_eq!(map.len(), 1);
         let _ = std::fs::remove_dir_all(&base);
     }
 

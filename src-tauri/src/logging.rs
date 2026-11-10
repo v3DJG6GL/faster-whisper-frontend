@@ -606,6 +606,10 @@ pub async fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(
     crate::commands::blocking(move || -> Result<(), String> {
         let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
         crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
+        // As `open_audio_dir`: a synced path naming a file is refused, never opened or run.
+        if !dir.is_dir() {
+            return Err("the configured folder is not a folder".into());
+        }
         crate::open_external(&app, &dir.to_string_lossy())
     })
     .await
