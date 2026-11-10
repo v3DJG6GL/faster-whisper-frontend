@@ -446,6 +446,35 @@ pub async fn move_audio_base(
     .await
 }
 
+enum CappedRead {
+    TooLarge,
+    NotAFile,
+    Io(std::io::Error),
+}
+
+/// Read a whole regular file of at most `cap` bytes. The path comes from the webview, so the
+/// checks run on the one opened handle, not a separate stat: a swap between stat and read could
+/// otherwise hand over a device or a file that grows, and the read itself stops at `cap + 1`.
+fn read_capped(path: &str, cap: u64) -> Result<Vec<u8>, CappedRead> {
+    use std::io::Read as _;
+    let f = std::fs::File::open(path).map_err(CappedRead::Io)?;
+    let meta = f.metadata().map_err(CappedRead::Io)?;
+    if !meta.is_file() {
+        return Err(CappedRead::NotAFile);
+    }
+    if meta.len() > cap {
+        return Err(CappedRead::TooLarge);
+    }
+    let mut buf = Vec::with_capacity(meta.len() as usize);
+    f.take(cap + 1)
+        .read_to_end(&mut buf)
+        .map_err(CappedRead::Io)?;
+    if buf.len() as u64 > cap {
+        return Err(CappedRead::TooLarge);
+    }
+    Ok(buf)
+}
+
 /// The exact refusal text the webview matches on: the viewer falls back to the decode path,
 /// History says the file is too large instead of gone.
 pub const MEDIA_TOO_LARGE: &str = "too large to buffer";
@@ -462,11 +491,11 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     // The size check too runs on the blocking pool: a stat of media on a stalled mount (a
     // sleeping disk, an offline share) must not park a runtime worker any more than the read.
     let bytes = super::blocking(move || -> Result<Vec<u8>, String> {
-        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-        if meta.len() > MAX_MEDIA_BYTES {
-            return Err(MEDIA_TOO_LARGE.into());
-        }
-        std::fs::read(&path).map_err(|e| e.to_string())
+        read_capped(&path, MAX_MEDIA_BYTES).map_err(|e| match e {
+            CappedRead::TooLarge => MEDIA_TOO_LARGE.into(),
+            CappedRead::NotAFile => "not a file".into(),
+            CappedRead::Io(e) => e.to_string(),
+        })
     })
     .await?;
     Ok(tauri::ipc::Response::new(bytes))
@@ -568,14 +597,11 @@ fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), Strin
 pub async fn read_text_file(path: String) -> Result<String, String> {
     const MAX_TEXT_SOURCE_BYTES: u64 = 10 * 1024 * 1024;
     super::blocking(move || -> Result<String, String> {
-        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-        if !meta.is_file() {
-            return Err("not a file".into());
-        }
-        if meta.len() > MAX_TEXT_SOURCE_BYTES {
-            return Err("file is larger than 10 MB — not a subtitle/text source".into());
-        }
-        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let bytes = read_capped(&path, MAX_TEXT_SOURCE_BYTES).map_err(|e| match e {
+            CappedRead::TooLarge => "file is larger than 10 MB — not a subtitle/text source".into(),
+            CappedRead::NotAFile => "not a file".into(),
+            CappedRead::Io(e) => e.to_string(),
+        })?;
         Ok(decode_text_source(&bytes))
     })
     .await
@@ -766,6 +792,13 @@ mod tests {
         assert_eq!(read(&big).err().as_deref(), Some(super::MEDIA_TOO_LARGE));
         assert!(read(&small).is_ok());
         assert!(read(&dir.join("gone.webm")).is_err());
+        assert!(read(&dir).is_err());
+        assert_eq!(
+            super::read_capped(&small.to_string_lossy(), 2)
+                .err()
+                .map(|e| matches!(e, super::CappedRead::TooLarge)),
+            Some(true)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
