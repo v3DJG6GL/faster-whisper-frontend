@@ -2,7 +2,7 @@
 // the name. The chip also CSS-truncates, so the caps here set a sensible default, not a hard
 // width guarantee.
 
-import { capCodePoints, profileDisplayName, trimLeadingInvisible } from "./sanitize";
+import { capCodePoints, leadingTrimBudget, profileDisplayName, trimLeadingInvisible } from "./sanitize";
 
 export function deriveChipTag(name: string): string {
   return capCodePoints(name.trim().replace(/\s+/g, " ").toUpperCase(), 10).trimEnd();
@@ -13,13 +13,21 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
 /** An authored tag as the chip shows it: its invisible head dropped first, so a tag that renders
  *  blank reads "" (= unset) and a padded one keeps its visible part inside the cap. The one rule
  *  for every reader of an authored tag — the chip, the Profiles row badge, the tag a dictation
- *  record stores, History's badge and the translation-target picker's header. */
-export function authoredChipTag(tag: unknown): string {
-  const t = typeof tag === "string" ? trimLeadingInvisible(tag).trim() : "";
+ *  record stores, History's badge and the translation-target picker's header. `budget` bounds the
+ *  head walk (`trimLeadingInvisible`); the tag a record stores walks it whole. */
+export function authoredChipTag(tag: unknown, budget = Infinity): string {
+  const t = typeof tag === "string" ? trimLeadingInvisible(tag, budget).trim() : "";
   return t ? capCodePoints(t, AUTHORED_TAG_MAX).trimEnd() : "";
 }
 
-/** The effective chip tag for a Profile: its authored tag (`authoredChipTag`), else derived from
+/** `authoredChipTag` for a surface that re-renders it — the chip (rebuilt on every level tick), the
+ *  Profiles row badge, the picker header. A synced tag is unbounded, and MBs of invisible head
+ *  would be walked on every render, so the walk is budgeted (`leadingTrimBudget`): a tag with
+ *  fewer than 32 Ki invisible leading code points (every real one) reads the same, a padded one
+ *  reads "…". */
+export const shownChipTag = (tag: unknown): string => authoredChipTag(tag, leadingTrimBudget(AUTHORED_TAG_MAX));
+
+/** The effective chip tag for a Profile: its authored tag (`shownChipTag`), else derived from
  *  name.
  *
  *  The authored cap is the editor's own limit, so a typed tag shows in full, but it still matters:
@@ -28,7 +36,7 @@ export function authoredChipTag(tag: unknown): string {
  *  re-broadcast cross-window and re-laid-out several times a second. Display only; the stored
  *  tag is untouched. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
-  const authored = authoredChipTag(profile.tag);
+  const authored = shownChipTag(profile.tag);
   if (authored) return authored;
   // Derived from the name as the lists show it (`profileDisplayName`): a synced name that renders
   // blank, or starts with ten invisible characters, would otherwise derive "" — the overlay then

@@ -259,7 +259,7 @@ const identityScanBudget = (max: number) => 8 * max + 1024;
 /** How many leading code points a RENDER caller's `trimLeadingInvisible` walks at most. Wider than
  *  `identityScanBudget`, as the head is dropped whole within it (a 20k-blank head still renders
  *  the name behind it), yet a fixed bound, so MBs of synced padding cost about a millisecond. */
-const leadingTrimBudget = (max: number) => Math.max(identityScanBudget(max), 1 << 15);
+export const leadingTrimBudget = (max: number) => Math.max(identityScanBudget(max), 1 << 15);
 
 /** The UTF-16 offset just past `raw`'s (max+2)-th ORDINARY code point — one `safeIdentityText`
  *  keeps as itself (not whitespace, not the invisible class it folds to a space, not one the

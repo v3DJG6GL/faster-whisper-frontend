@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authoredChipTag, chipTagFor, deriveChipTag } from "./profileTag";
+import { authoredChipTag, chipTagFor, deriveChipTag, shownChipTag } from "./profileTag";
 
 describe("chipTagFor", () => {
   it("derives a normal name as before, emoji presentation included", () => {
@@ -32,5 +32,23 @@ describe("authoredChipTag", () => {
     expect(authoredChipTag("⠀".repeat(40) + "WORK")).toBe("WORK");
     expect(authoredChipTag("x".repeat(30))).toBe("x".repeat(16));
     expect(authoredChipTag(" de-ch ")).toBe("de-ch");
+  });
+});
+
+describe("shownChipTag", () => {
+  it("reads a real tag as authoredChipTag does", () => {
+    for (const tag of [" de-ch ", "⠀".repeat(40) + "WORK", "\u200b".repeat(32000) + "WORK", "x".repeat(30), "⠀⠀", 42]) {
+      expect(shownChipTag(tag)).toBe(authoredChipTag(tag));
+    }
+  });
+
+  it("bounds the walk over a synced tag's MBs of invisible head on every chip render", () => {
+    const padded = "\u00a0\u200b\ufe0f".repeat(1_400_000) + "EVIL";
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) {
+      expect(shownChipTag(padded).startsWith("…")).toBe(true);
+      expect(chipTagFor({ name: "Work", tag: padded }).startsWith("…")).toBe(true);
+    }
+    expect(performance.now() - t0).toBeLessThan(200);
   });
 });

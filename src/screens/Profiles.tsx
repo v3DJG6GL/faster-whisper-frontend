@@ -29,7 +29,7 @@ import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddP
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
-import { authoredChipTag, chipTagFor } from "@/lib/profileTag";
+import { chipTagFor, shownChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendLabel, backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
@@ -767,9 +767,9 @@ function ProfileRow({
   // The DISPLAYED name, not the raw string: a synced model of only whitespace or format
   // characters renders nothing, so it gets no (empty) badge.
   const shortModel = shortModelName(p.model, 40);
-  // The tag as the chip shows it (`authoredChipTag`: invisible head dropped, capped at 16), so
+  // The tag as the chip shows it (`shownChipTag`: invisible head dropped, capped at 16), so
   // the badge appears exactly when the chip shows an authored tag, with the same text.
-  const tag = safeDisplayText(authoredChipTag(p.tag), 16).trim();
+  const tag = safeDisplayText(shownChipTag(p.tag), 16).trim();
   // As the editor's save stores a blank name: a synced whitespace- or format-only name
   // would otherwise leave a nameless row and an "Enable " switch.
   const name = profileDisplayName(p.name);

@@ -12,7 +12,7 @@ import type { TargetPick } from "./streaming";
 import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
 import { ownProp } from "../own";
 import { profileDisplayName } from "../sanitize";
-import { authoredChipTag } from "../profileTag";
+import { shownChipTag } from "../profileTag";
 import { effectiveLanguage, effectiveTranslationModel } from "../backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
@@ -345,11 +345,11 @@ function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "
     source: effectiveLanguage(profile.language, backend.language),
     preset: configuredRouteTargets(profile, backend) ?? [],
     recent: st.settings.recentTranslationTargets ?? [],
-    // The authored tag as the chip shows it (authoredChipTag: invisible head dropped, capped like
+    // The authored tag as the chip shows it (shownChipTag: invisible head dropped, capped like
     // the chip, so a long synced tag reads the same here as on the chip and in History) unless it
     // renders blank, else the name as the lists show it ("Untitled profile" for a blank synced
     // one) — never an empty picker header.
-    tag: authoredChipTag(profile.tag) || profileDisplayName(profile.name),
+    tag: shownChipTag(profile.tag) || profileDisplayName(profile.name),
     when,
     theme: st.settings.theme,
     accentHue: st.settings.accentHue,
