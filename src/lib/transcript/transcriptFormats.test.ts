@@ -47,6 +47,31 @@ describe("prettySpeaker / speakerOrder", () => {
     const { speakers: _drop, ...rest } = RESULT;
     expect(speakerOrder(rest)).toEqual(["SPEAKER_00", "SPEAKER_01"]);
   });
+  it("keeps first-appearance order exactly as the earlier list scan did, in linear time", () => {
+    const reference = (r: BatchResult) => {
+      const seen: string[] = [];
+      for (const s of r.segments ?? []) if (s.speaker && !seen.includes(s.speaker)) seen.push(s.speaker);
+      return seen;
+    };
+    const labels = ["", "A", "B", "SPEAKER_00", "a", "A "];
+    let seed = 3;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 300; round++) {
+      const segments = Array.from({ length: rand(10) }, () => {
+        const sp = labels[rand(labels.length + 1)];
+        return { start: 0, end: 0, text: "", ...(sp === undefined ? {} : { speaker: sp }) };
+      });
+      const r = { text: "", segments } as unknown as BatchResult;
+      expect(speakerOrder(r)).toEqual(reference(r));
+    }
+    const many = {
+      text: "",
+      segments: Array.from({ length: 200_000 }, (_, i) => ({ start: 0, end: 0, text: "", speaker: `s${i}` })),
+    } as unknown as BatchResult;
+    const started = performance.now();
+    expect(speakerOrder(many)).toHaveLength(200_000);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 describe("txt", () => {

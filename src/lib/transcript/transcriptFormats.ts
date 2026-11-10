@@ -90,11 +90,11 @@ export function prettySpeaker(label: string): string {
 /** Distinct speaker labels in first-appearance order. */
 export function speakerOrder(result: BatchResult): string[] {
   if (result.speakers?.length) return result.speakers;
-  const seen: string[] = [];
-  for (const s of result.segments ?? []) {
-    if (s.speaker && !seen.includes(s.speaker)) seen.push(s.speaker);
-  }
-  return seen;
+  // A Set keeps insertion order and stays linear: the segment count and its distinct labels are
+  // the server's (one response can carry ~500k of each), and History renders this per row.
+  const seen = new Set<string>();
+  for (const s of result.segments ?? []) if (s.speaker) seen.add(s.speaker);
+  return [...seen];
 }
 
 /** THE speaker-color resolver — viewer chips (via --spk-N tokens) and export
