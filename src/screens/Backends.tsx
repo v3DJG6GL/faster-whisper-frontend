@@ -68,6 +68,40 @@ export function Editor({
     return typeof raw === "string" ? raw : "";
   });
   const setUrlOverride = useApp((s) => s.setUrlOverride);
+  // "Address on this device" while it is typed in. The store's value routes every request for this
+  // backend (dictation, and the editor probes that carry the stored key), so it is committed only on
+  // blur, Enter or the editor closing: committed per keystroke, a pause on a prefix
+  // (`http://10.0.0.5` on the way to `…50`) made that host the live address. A store change made
+  // elsewhere (a sync pull) shows here unless the user is mid-edit.
+  const [overrideDraft, setOverrideDraft] = useState(urlOverride);
+  const overrideDraftRef = useRef(urlOverride);
+  const overrideEditing = useRef(false);
+  useEffect(() => {
+    if (!overrideEditing.current) {
+      overrideDraftRef.current = urlOverride;
+      setOverrideDraft(urlOverride);
+    }
+  }, [urlOverride]);
+  const editOverride = (v: string) => {
+    overrideEditing.current = true;
+    overrideDraftRef.current = v;
+    setOverrideDraft(v);
+  };
+  const commitOverride = () => {
+    if (!overrideEditing.current) return;
+    overrideEditing.current = false;
+    const v = overrideDraftRef.current.trim();
+    overrideDraftRef.current = v;
+    setOverrideDraft(v);
+    setUrlOverride(initial.id, v);
+  };
+  // Closed mid-edit (no blur first): keep what was typed, as the per-keystroke field did.
+  useEffect(
+    () => () => {
+      if (overrideEditing.current) setUrlOverride(initial.id, overrideDraftRef.current);
+    },
+    [setUrlOverride, initial.id],
+  );
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState(initialKey ?? "");
   // Whether a key is already in the keyring — the store's live flag, so a sync pull that adds or
@@ -589,9 +623,13 @@ export function Editor({
             <div className={OVERRIDE_CONTROL_W}>
               <TextInput
                 aria-label="Address on this device"
-                value={urlOverride}
+                value={overrideDraft}
                 disabled={!syncEnabled && !urlOverride.trim()}
-                onChange={(e) => setUrlOverride(b.id, e.target.value)}
+                onChange={(e) => editOverride(e.target.value)}
+                onBlur={commitOverride}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitOverride();
+                }}
                 placeholder={syncEnabled ? "override the synced URL here only" : "used with settings sync"}
               />
             </div>
@@ -603,8 +641,8 @@ export function Editor({
             )}
             {/* Not gated on syncEnabled: the override routes requests whether or not sync is on, and
                 gets only the stored-form `http://` default, so it needs the warning as much as Server URL. */}
-            {urlOverride.trim() && insecureUrlWarning(urlOverride) && (
-              <Notice className="mt-1">{insecureUrlWarning(urlOverride)}</Notice>
+            {overrideDraft.trim() && insecureUrlWarning(overrideDraft) && (
+              <Notice className="mt-1">{insecureUrlWarning(overrideDraft)}</Notice>
             )}
           </OverrideHeader>
           <OverrideHeader title="API key" env={false}>
