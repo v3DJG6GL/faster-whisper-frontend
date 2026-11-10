@@ -86,6 +86,13 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
     expect(quickAddRejectReason(res)).toMatch(/^String should match pattern/);
     expect(quickAddRejectReason(reply({ status: 422, errors: [{}], detail: "map key too long" }))).toBe("map key too long");
     expect(quickAddRejectReason(reply({ status: 422 }))).toBe("The server refused a mapping in this list.");
+    // The raw `errors` text is defanged and bounded by code point; an invisible-only one falls back.
+    const shown = quickAddRejectReason(reply({ status: 422, errors: [{ msg: "bad\u202e key\u200b" + "😀".repeat(300) }] }));
+    expect(shown.startsWith("bad key")).toBe(true);
+    expect([...shown]).toHaveLength(200);
+    expect(quickAddRejectReason(reply({ status: 422, errors: [{ msg: "\u202e\u200b" }] }))).toBe(
+      "The server refused a mapping in this list.",
+    );
   });
 
   it("does not retry a full dictionary: the server's cap refuses the rows, and its reason is shown", () => {

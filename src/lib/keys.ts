@@ -20,6 +20,7 @@ import { keycapLabel } from "./keyboardLayout";
 // through `ownProp`.
 import { ownProp } from "./own";
 import { IS_WINDOWS } from "./platform";
+import { safeDisplayText } from "./sanitize";
 
 /** Named keys (by `event.code`) the plugin accepts as a shortcut's key part. */
 const NAMED_CODES = new Set<string>([
@@ -122,7 +123,10 @@ export function prettyToken(token: string): string {
   if (pretty) return pretty;
   const numpad = /^Numpad([0-9])$/.exec(token);
   if (numpad) return `Num ${numpad[1]}`;
-  return token; // letters, digits, F-keys
+  // Letters, digits, F-keys. A code is untrusted content (see above): the fall-through is the one
+  // branch that shows it as-is, so it goes through the remote-label filter (no bidi, zero-width
+  // or forced breaks). Every code the capture UI produces is short ASCII and shows unchanged.
+  return safeDisplayText(token, 24);
 }
 
 // Modifier `event.code` → display label. Right-side modifiers and AltGr are shown

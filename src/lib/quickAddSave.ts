@@ -4,6 +4,7 @@
 // window.
 import { effectiveServerUrl, serverUrlFromPeer } from "./backends";
 import { envPinnedOf, saveLanded, RULE_LIST_SETTING } from "./pipelineMap";
+import { safeDisplayText } from "./sanitize";
 import type { AppSettings, Backend, Config, PipelineSaveResult } from "./types";
 
 /** Where quick-add connects for `backend`, read straight from config.json (this window has no
@@ -161,7 +162,9 @@ export function quickAddSaveOutcome(res: PipelineSaveResult): QuickAddSaveOutcom
 export function quickAddRejectReason(res: PipelineSaveResult): string {
   const first = Array.isArray(res.errors) ? res.errors.find((e) => typeof e?.msg === "string" && e.msg.trim()) : undefined;
   const text = first?.msg ?? (typeof res.detail === "string" ? res.detail : "");
-  return text.trim().slice(0, 200) || "The server refused a mapping in this list.";
+  // `errors` arrives raw (only `detail` passes Rust's bounded_server_text): defang it as the
+  // Dictionary screen does, by code point so a surrogate pair is never split.
+  return safeDisplayText(text.trim(), 200).trim() || "The server refused a mapping in this list.";
 }
 
 /** The edge characters the typing route may carry back: a space, tab or no-break space. A line
