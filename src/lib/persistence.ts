@@ -2,6 +2,7 @@ import { useApp, CONFIG_VERSION } from "./store";
 import { isTauri, loadConfig, saveConfig, applyLiveSwitches, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
 import { conflicts, withQuickAddPeer } from "./hotkeyConflicts";
 import { IS_WINDOWS } from "./platform";
+import { safeDisplayText } from "./sanitize";
 import type { Profile } from "./types";
 
 let started = false;
@@ -301,7 +302,9 @@ export async function initConfig(): Promise<void> {
           console.error("saveConfig failed", e);
           if (mySeq === saveSeq) {
             saveHeld = true;
-            useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+            // Defanged and bounded: a typed-arg serde failure echoes the offending (possibly
+            // synced) value into the message, and the banner renders it.
+            useApp.getState().setSaveError(safeDisplayText(e instanceof Error ? e.message : String(e), 300));
           }
           // Restore the intent (as the conflict early-return keeps it) so the NEXT successful save
           // re-registers — else a later non-binding save would persist the chord but leave it not

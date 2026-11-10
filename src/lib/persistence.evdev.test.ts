@@ -11,6 +11,7 @@ const ipc = vi.hoisted(() => ({
   saved: [] as { profiles: unknown[] }[],
   parkSaves: false,
   landSave: null as null | (() => void),
+  saveFails: null as unknown,
 }));
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
@@ -19,6 +20,7 @@ vi.mock("./api", async (importOriginal) => ({
   saveConfig: async (cfg: { profiles: unknown[] }) => {
     ipc.saves += 1;
     ipc.saved.push(cfg);
+    if (ipc.saveFails !== null) throw ipc.saveFails;
     if (ipc.parkSaves) await new Promise<void>((r) => (ipc.landSave = r));
   },
   applyLiveSwitches: async () => {},
@@ -52,6 +54,7 @@ describe("evdev permitted bit at startup", () => {
     ipc.saved = [];
     ipc.parkSaves = false;
     ipc.landSave = null;
+    ipc.saveFails = null;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -167,5 +170,35 @@ describe("evdev permitted bit at startup", () => {
     expect(ipc.saved[1].profiles).toHaveLength(2);
     expect(persistence.configSaveHeld()).toBe(false);
     expect(store.useApp.getState().saveError).toBeNull();
+  });
+});
+
+describe("a failed save's banner text", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ipc.saves = 0;
+    ipc.saved = [];
+    ipc.parkSaves = false;
+    ipc.saveFails = null;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    ipc.saveFails = null;
+  });
+
+  it("is defanged and bounded; a plain disk error reads as before", async () => {
+    const { store } = await boot();
+    ipc.release!({ permitted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    ipc.saveFails = "invalid type: string \"x\u202e\u200by\", expected bool" + "z".repeat(1000);
+    store.useApp.setState({ profiles: [] });
+    await vi.advanceTimersByTimeAsync(400);
+    const shown = store.useApp.getState().saveError!;
+    expect(shown.startsWith('invalid type: string "xy", expected bool')).toBe(true);
+    expect([...shown]).toHaveLength(300);
+    ipc.saveFails = new Error("No space left on device (os error 28)");
+    store.useApp.setState({ profiles: [] });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(store.useApp.getState().saveError).toBe("No space left on device (os error 28)");
   });
 });
