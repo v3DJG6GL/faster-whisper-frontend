@@ -23,18 +23,24 @@ const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 /// through [`write_export_atomic`].
 ///
 /// On Linux the open (`open_private`) does not follow a symlink at the final component. The
-/// settings export (`write_export_atomic`, same open) writes to `<user-picked-path>.tmp`, which
+/// settings export (`write_export_atomic`, same open, created fresh) writes to `<user-picked-path>.tmp`, which
 /// can land in a world-writable directory (a save dialog pointed at /tmp) — without `O_NOFOLLOW`
 /// a pre-planted symlink there would have it truncate and overwrite whatever it pointed at,
 /// with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
-    fill_private(open_private(path)?, contents)
+    fill_private(open_private(path, false)?, contents)
 }
 
 /// The open half of `write_private`: created or truncated, 0600, final symlink not followed.
-fn open_private(path: &Path) -> std::io::Result<std::fs::File> {
+/// `create_new` refuses any existing name instead (`O_CREAT|O_EXCL`), so the file is always
+/// one this process just made.
+fn open_private(path: &Path, create_new: bool) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    if create_new {
+        opts.write(true).create_new(true);
+    } else {
+        opts.write(true).create(true).truncate(true);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -75,10 +81,19 @@ pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> 
 ///
 /// A DACL failure only warns, like the Unix fchmod above: FAT/exFAT sticks hold no ACL and are
 /// exactly where an export is carried to another machine, and failing would block the export.
+///
+/// The tmp is created fresh: the export folder may be shared, and a file another account planted
+/// at the predictable `.tmp` name would otherwise be truncated and filled with the secrets
+/// (fchmod fails on a file we don't own, and that failure is tolerated). A stale tmp of our own
+/// is removed first; one we can't remove, or one re-created in between, fails the export.
 pub fn write_export_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     let tmp = crate::transport::media::tmp_sibling(path);
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
     replace_via_tmp(&tmp, path, |t| {
-        let f = open_private(t)?;
+        let f = open_private(t, true)?;
         #[cfg(windows)]
         if let Err(e) = crate::audio::windows_owner_only_dacl(t) {
             tracing::warn!(
@@ -1479,6 +1494,27 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_export_writes_a_fresh_tmp_never_a_planted_one() {
+        let dir = fresh_test_dir("cfg-export-tmp");
+        let path = dir.join("settings.json");
+        let tmp = crate::transport::media::tmp_sibling(&path);
+        // A stale tmp left by a crash is cleared, and the export still lands.
+        std::fs::write(&tmp, "stale").unwrap();
+        write_export_atomic(&path, "{}").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}");
+        assert!(!tmp.exists());
+        // A planted link is unlinked, never written through.
+        let target = dir.join("target");
+        std::fs::write(&target, "keep").unwrap();
+        std::os::unix::fs::symlink(&target, &tmp).unwrap();
+        write_export_atomic(&path, "{\"a\":1}").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\":1}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
