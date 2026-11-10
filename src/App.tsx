@@ -14,7 +14,7 @@ import {
   noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate, onBeforeQuit, onSessionEnding, quitReady,
 } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation/dictation";
-import { cancelLive, requestStopIfStarting } from "@/lib/dictation/streaming";
+import { cancelLive, flushFoldWrites, requestStopIfStarting } from "@/lib/dictation/streaming";
 import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
@@ -35,10 +35,11 @@ import AppRules from "@/screens/AppRules";
 import Statistics from "@/screens/Statistics";
 import Settings from "@/screens/Settings";
 
-// Land every debounced / coalesced write. History edits go first: they feed the record writes.
-// None of the flushes rejects.
+// Land every debounced / coalesced write. History edits and a long dictation's batched record
+// writes go first: they feed the record writes. None of the flushes rejects.
 function flushPendingWrites(): Promise<PromiseSettledResult<void>[]> {
   flushPersistEdits();
+  flushFoldWrites();
   return Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
 }
 

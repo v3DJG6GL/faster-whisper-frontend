@@ -156,3 +156,51 @@ export function routeUtteranceClip(
 export function recordCapFold(count: number, max: number, lastRecorded: UtteranceEntry | null): UtteranceEntry | null {
   return count >= max && lastRecorded?.id ? lastRecorded : null;
 }
+
+/** One queued write to the fold record (streaming.ts batches them): a run of appended finals'
+ *  text (queueFoldText), or a patch. */
+export type FoldWrite = string | ((r: TranscriptRecord) => TranscriptRecord);
+
+/** Queue one final's text for the fold record. appendDelta trims after every append and the
+ *  delta holds a word (the caller skips a blank one), so a run of appends lands exactly as the
+ *  deltas' trimEnd()s joined and appended once. */
+export function queueFoldText(ops: FoldWrite[], delta: string): void {
+  const d = delta.trimEnd();
+  const last = ops.length - 1;
+  if (last >= 0 && typeof ops[last] === "string") ops[last] += d;
+  else ops.push(d);
+}
+
+/** Apply the fold record's queued writes in order, leaving it exactly as one patchRecord per
+ *  write would have — but with one text copy and one word count per batch, not per append. A
+ *  patch that throws is dropped alone, as its own patchRecord call would have been. */
+export function applyFoldWrites(r: TranscriptRecord, ops: readonly FoldWrite[]): TranscriptRecord {
+  let lastText = -1;
+  ops.forEach((op, i) => {
+    if (typeof op === "string") lastText = i;
+  });
+  let cur = r;
+  // The text the previous append left: trimmed and non-empty, so the next run (which ends in a
+  // word) joins it with no trim of its own. Any other text goes through appendDelta.
+  let appended: string | null = null;
+  ops.forEach((op, i) => {
+    if (typeof op !== "string") {
+      try {
+        cur = op(cur);
+      } catch (e) {
+        console.error("dictation history update failed:", e);
+      }
+      return;
+    }
+    const prev = cur.result?.text ?? "";
+    const text: string = appended !== null && prev === appended ? appended + op : appendDelta(prev, op);
+    appended = text;
+    cur = {
+      ...cur,
+      result: { ...cur.result, text },
+      // Counted once, for the text the batch ends with: no queued patch reads it.
+      ...(i === lastText ? { wordCount: text.split(/\s+/).filter(Boolean).length } : {}),
+    };
+  });
+  return cur;
+}

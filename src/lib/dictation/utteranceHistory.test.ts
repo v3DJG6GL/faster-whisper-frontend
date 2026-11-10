@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, recordCapFold, routeUtteranceClip, utteranceInsertTranslation,
-  type UtteranceClip, type UtteranceEntry,
+  appendChunk, appendDelta, appendTranslation, applyFoldWrites, finalDelta, mergeTracks, queueFoldText, recordCapFold,
+  routeUtteranceClip, utteranceInsertTranslation, type FoldWrite, type UtteranceClip, type UtteranceEntry,
 } from "./utteranceHistory";
+import type { TranscriptRecord } from "../transcript/transcriptHistory";
 
 describe("finalDelta", () => {
   it("is what the document gained since the previous final", () => {
@@ -241,5 +242,86 @@ describe("recordCapFold", () => {
   it("never folds into an entry that has no record", () => {
     expect(recordCapFold(3, 3, null)).toBeNull();
     expect(recordCapFold(3, 3, { ordinal: 1, id: null, openedAt: 0 })).toBeNull();
+  });
+});
+
+describe("queueFoldText / applyFoldWrites", () => {
+  // What streaming.ts's recordUtteranceFinal did per append before the fold record's writes were
+  // batched — the batch must leave the record exactly as these one-by-one writes did.
+  const appendOne = (r: TranscriptRecord, delta: string): TranscriptRecord => {
+    const text = appendDelta(r.result?.text ?? "", delta);
+    return { ...r, result: { ...r.result, text }, wordCount: text.split(/\s+/).filter(Boolean).length } as TranscriptRecord;
+  };
+  // A booking that reads the text the appends left (as utteranceInsertTranslation does).
+  const book = (how: string) => (r: TranscriptRecord): TranscriptRecord =>
+    ({ ...r, insertMethod: how, translatedText: `${r.translatedText ?? ""}|${how}:${r.result?.text ?? ""}` }) as TranscriptRecord;
+  const rec = (text: string): TranscriptRecord =>
+    ({ id: "r", result: { text, segments: [], language: "de", duration: 1 }, wordCount: 1, insertMethod: "none" }) as unknown as TranscriptRecord;
+
+  // Deterministic PRNG: the matrix is the same on every run.
+  let seed = 0x2f6e2b1;
+  const rand = (n: number) => {
+    seed = (seed * 1103515245 + 12345) >>> 0;
+    return seed % n;
+  };
+  const pieces = [" Hallo", ",", " Welt ", "  und\n", " weiter.", "!", "\tTab", " a  b ", "x", " \u00a0Kurz", "Satz \n\n"];
+  const starts = ["Hallo", "", "  lead", "trail  ", "eins zwei"];
+
+  it("lands every mix of appends and bookings exactly as one write per step did", () => {
+    for (let round = 0; round < 2000; round++) {
+      const start = rec(starts[rand(starts.length)]);
+      let oneByOne = start;
+      const ops: FoldWrite[] = [];
+      const steps = 1 + rand(12);
+      for (let s = 0; s < steps; s++) {
+        if (rand(12) === 0) {
+          // Another writer replacing the text (a History edit): later appends go onto its text.
+          const fn = (r: TranscriptRecord) => ({ ...r, result: { ...r.result, text: ` edited${s} ` } }) as TranscriptRecord;
+          oneByOne = fn(oneByOne);
+          ops.push(fn);
+        } else if (rand(3) === 0) {
+          const fn = book(`b${s}`);
+          oneByOne = fn(oneByOne);
+          ops.push(fn);
+        } else {
+          let delta = "";
+          for (let k = 1 + rand(3); k > 0; k--) delta += pieces[rand(pieces.length)];
+          // recordUtteranceFinal never appends a blank delta.
+          if (!delta.trim()) continue;
+          oneByOne = appendOne(oneByOne, delta);
+          queueFoldText(ops, delta);
+        }
+      }
+      expect(applyFoldWrites(start, ops)).toEqual(oneByOne);
+    }
+  });
+
+  it("runs consecutive appends together and keeps patches in order", () => {
+    const ops: FoldWrite[] = [];
+    queueFoldText(ops, " eins ");
+    queueFoldText(ops, " zwei\n");
+    const fn = book("typed");
+    ops.push(fn);
+    queueFoldText(ops, ",");
+    expect(ops).toEqual([" eins zwei", fn, ","]);
+    const out = applyFoldWrites(rec("null"), ops);
+    expect(out.result?.text).toBe("null eins zwei,");
+    expect(out.translatedText).toBe("|typed:null eins zwei");
+    expect(out.wordCount).toBe(3);
+  });
+
+  it("hands the record back untouched when nothing changed, and drops a throwing patch alone", () => {
+    const r = rec("Hallo");
+    expect(applyFoldWrites(r, [(x) => x])).toBe(r);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = applyFoldWrites(r, [
+      () => {
+        throw new Error("boom");
+      },
+      " Welt",
+    ]);
+    expect(out.result?.text).toBe("Hallo Welt");
+    expect(err).toHaveBeenCalledOnce();
+    err.mockRestore();
   });
 });

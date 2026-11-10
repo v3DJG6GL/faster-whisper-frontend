@@ -17,6 +17,7 @@ import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
 import dictationSrc from "./dictation.ts?raw";
 import overlaySrc from "../../Overlay.tsx?raw";
+import appSrc from "../../App.tsx?raw";
 import { incompleteFlashMessage, incompleteSurface, liveActivationOf, translationOutcome } from "./streaming";
 import { commonPrefixLen } from "./typedBaseline";
 
@@ -1129,29 +1130,44 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("lastRecordedUtterance = null");
   });
 
-  it("past the record ceiling the fold record's rewrites are capped, reset with the session", () => {
-    // Every fold append rewrites the whole record and re-sorts the History mirror, and the text
-    // budget alone allowed millions of tiny ones. Over either fold cap nothing is rewritten and the
-    // null id keeps bookUtteranceInsert from rebuilding the record's translation.
+  it("past the record ceiling the fold record's writes are batched, and every end lands them", () => {
+    // Written one by one, every fold append rewrote the whole record and re-sorted the History
+    // mirror, and the text budget alone allowed millions of tiny ones. Queued instead (nothing is
+    // dropped, so a day-long session keeps recording) and landed once per FOLD_FLUSH_MS.
     const at = anchorAt(streamingSrc, "function recordUtteranceFinal(", "recordUtteranceFinal");
     const body = mask(bodyAfter(streamingSrc.slice(at), "delta: string }"));
-    expect(body).toContain("const folding = !!utt.id && utt === lastRecordedUtterance && utteranceRecordCount >= MAX_UTTERANCE_RECORDS;");
-    const check = body.indexOf("if (folding && (utteranceFoldAppends >= MAX_UTTERANCE_RECORDS || utteranceFoldChars + delta.length > MAX_FOLD_CHARS))");
-    expect(check, "the fold cap check moved").toBeGreaterThan(body.indexOf("!delta.trim()"));
-    expect(check).toBeLessThan(body.indexOf("if (utteranceRecordChars + delta.length > MAX_BANKED_DOC)"));
-    expect(body.slice(check)).toMatch(/^[^]*?return \{ id: null, first: false, delta \};\s*\}/);
-    // Charged only on an actual rewrite, after the text budget let it through.
-    expect(body).toMatch(/if \(utt\.id\) \{\s*if \(folding\) \{\s*utteranceFoldAppends \+= 1;\s*utteranceFoldChars \+= delta\.length;\s*\}\s*patchRecord\(utt\.id/);
-    expect(streamingSrc).toContain("const MAX_FOLD_CHARS = MAX_BANKED_DOC / 64;");
-    // A break must not reopen them; only the session's end does.
-    expect(mask(boundaryBody)).not.toContain("utteranceFold");
-    const reset = mask(topLevelFunctions(streamingSrc).resetUtteranceHistory);
-    expect(reset).toContain("utteranceFoldAppends = 0");
-    expect(reset).toContain("utteranceFoldChars = 0");
-    expect(reset).toContain("utteranceFoldCapWarned = false");
-    // No other writer moves the counters (the reset and the append are the only two).
-    expect(streamingSrc.match(/(?<!let )utteranceFoldAppends \+?=/g)).toHaveLength(2);
-    expect(streamingSrc.match(/(?<!let )utteranceFoldChars \+?=/g)).toHaveLength(2);
+    // Charged to the text budget first, exactly like any other append.
+    const fold = body.indexOf("if (isFoldRecord(utt.id)) {");
+    expect(fold, "the fold append moved").toBeGreaterThan(body.indexOf("utteranceRecordChars += delta.length;"));
+    expect(body.slice(fold)).toMatch(/^if \(isFoldRecord\(utt\.id\)\) \{\s*queueFoldText\(foldQueue\(utt\.id\), delta\);\s*return \{ id: utt\.id, first: false, delta \};\s*\}\s*patchRecord\(utt\.id/);
+    // Only the text budget and a failed capture leave a final unrecorded.
+    expect(body.match(/return \{ id: null, first: false, delta \};/g)).toHaveLength(2);
+    expect(streamingSrc).not.toContain("utteranceFold");
+    // Every other write to an utterance record queues behind the fold's pending text when it is
+    // the fold record: a translation booking reads that text (utteranceInsertTranslation).
+    const fns = topLevelFunctions(streamingSrc);
+    expect(mask(fns.attachUtteranceClip)).toContain("patchUtteranceRecord(id,");
+    const book = mask(bodyAfter(streamingSrc.slice(anchorAt(streamingSrc, "function bookUtteranceInsert(", "bookUtteranceInsert")), "): void"));
+    expect(book).toContain("patchUtteranceRecord(rec.id,");
+    expect(mask(fns.bookOwedUtterances)).toContain("patchUtteranceRecord(id,");
+    expect(mask(fns.patchUtteranceRecord)).toMatch(/if \(isFoldRecord\(id\)\) foldQueue\(id\)\.push\(fn\);\s*else patchRecord\(id, fn\);/);
+    // The only direct patchRecord calls: the flush, the non-fold append and patchUtteranceRecord.
+    expect(mask(streamingSrc).match(/\bpatchRecord\(/g)).toHaveLength(3);
+    expect(mask(fns.flushFoldWrites)).toContain("patchRecord(w.id, (r) => applyFoldWrites(r, w.ops))");
+    expect(mask(fns.foldQueue)).toContain("foldFlushTimer = setTimeout(flushFoldWrites, FOLD_FLUSH_MS)");
+    // Landed before the session's state goes (start, cancel), at its settle, and at quit.
+    const reset = mask(fns.resetUtteranceHistory);
+    expect(reset.indexOf("flushFoldWrites();")).toBeGreaterThanOrEqual(0);
+    expect(reset.indexOf("flushFoldWrites();")).toBeLessThan(reset.indexOf("lastRecordedUtterance = null"));
+    expect(reset.indexOf("flushFoldWrites();")).toBeLessThan(reset.indexOf("utteranceRecordCount = 0"));
+    const settle = mask(fns.settleIdle);
+    expect(settle.indexOf("flushFoldWrites();")).toBeGreaterThanOrEqual(0);
+    expect(settle.indexOf("flushFoldWrites();")).toBeLessThan(settle.indexOf("captureDictationHistory()"));
+    const quit = mask(bodyAfter(appSrc, "function flushPendingWrites("));
+    expect(quit.indexOf("flushFoldWrites();")).toBeGreaterThanOrEqual(0);
+    expect(quit.indexOf("flushFoldWrites();")).toBeLessThan(quit.indexOf("flushRecordWrites()"));
+    // A break does not touch the queue: the fold record outlives it.
+    expect(mask(boundaryBody)).not.toContain("foldWrites");
   });
 
   it("utterance records share one session text budget, reset with the session", () => {
@@ -1176,7 +1192,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(book).toMatch(/\} else \{\s*utteranceTranslationChars \+= added;\s*\}/);
     expect(book).not.toContain("utteranceRecordChars");
     const charge = book.indexOf("utteranceTranslationChars += added;");
-    expect(charge).toBeLessThan(book.indexOf("patchRecord(rec.id"));
+    expect(charge).toBeLessThan(book.indexOf("patchUtteranceRecord(rec.id"));
     expect(book).toContain("...(bookTranslation ? utteranceInsertTranslation(");
   });
 
