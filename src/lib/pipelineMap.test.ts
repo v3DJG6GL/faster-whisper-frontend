@@ -43,6 +43,14 @@ describe("ruleListOf", () => {
     expect(ruleListOf(res)).toHaveLength(500);
     expect(ruleCountOf(res)).toBe(600);
   });
+
+  it("bounds a regex list far above the server's own 200-entry cap, keeping a real one whole", () => {
+    const list = (n: number) => Array.from({ length: n }, (_, i) => ({ pattern: `p${i}`, replacement: "" }));
+    const [real] = ruleListOf(fetchWith([{ name: "r", type: "regex-list", entries: list(200) }]));
+    expect(real.entries).toHaveLength(200);
+    const [huge] = ruleListOf(fetchWith([{ name: "r", type: "regex-list", entries: list(50_000) }]));
+    expect(huge.entries).toHaveLength(2_000);
+  });
 });
 
 describe("mapRowsFromRule", () => {
@@ -150,6 +158,43 @@ describe("mapRowEditProblem + mapRowTwinProblems (the inline list editor)", () =
     expect(mapRowTwinProblems(end).size).toBe(0);
     // Adding "Komma" from the capture row is still refused.
     expect(mapKeyTwinProblem("Komma", start)).not.toBeNull();
+  });
+
+  it("names the same twin as the full-list scan did, in one linear pass", () => {
+    // The earlier implementation (every distinct spelling kept), as the reference.
+    const reference = (rows: MapRow[]) => {
+      const spellings = new Map<string, string[]>();
+      for (const r of rows) {
+        if (!r.k.trim()) continue;
+        const seen = spellings.get(r.k.toLowerCase());
+        if (!seen) spellings.set(r.k.toLowerCase(), [r.k]);
+        else if (!seen.includes(r.k)) seen.push(r.k);
+      }
+      const out = new Map<number, string>();
+      for (const r of rows) {
+        if (!r.k.trim()) continue;
+        const other = spellings.get(r.k.toLowerCase())?.find((x) => x !== r.k);
+        if (other !== undefined) out.set(r.id, `“${other}” is already in this list — edit that row`);
+      }
+      return out;
+    };
+    const spell = ["ab", "Ab", "aB", "AB", "b", "B", " ", ""];
+    let seed = 7;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 400; round++) {
+      const rows = Array.from({ length: rand(9) }, (_, id) => ({ id, k: spell[rand(spell.length)], v: "x" }));
+      expect(mapRowTwinProblems(rows), JSON.stringify(rows)).toEqual(reference(rows));
+    }
+    // 20,000 case variants of one phrase (plainMap's read ceiling): every row flagged, quickly.
+    const word = "abcdefghijklmno";
+    const variants = Array.from({ length: 20_000 }, (_, id) => ({
+      id,
+      k: [...word].map((c, i) => ((id >> i) & 1 ? c.toUpperCase() : c)).join(""),
+      v: "x",
+    }));
+    const started = performance.now();
+    expect(mapRowTwinProblems(variants).size).toBe(20_000);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("still refuses a keystroke the schema rejects, and lets an out-of-bounds row be fixed", () => {

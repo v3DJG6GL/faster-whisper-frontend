@@ -47,8 +47,10 @@ export function ruleListOf(res: PipelineFetch): PipelineRule[] {
       note: rule.note === undefined ? undefined : str(rule.note),
       color: rule.color === undefined ? undefined : str(rule.color),
       tags: Array.isArray(rule.tags) ? rule.tags.filter((t) => typeof t === "string") : undefined,
+      // Bounded like `map` (plainMap): every entry costs an editor id, a clone and a re-emit
+      // per keystroke, before the render cap bounds the DOM.
       entries: Array.isArray(rule.entries)
-        ? rule.entries.filter((e) => !!e && typeof e === "object")
+        ? rule.entries.filter((e) => !!e && typeof e === "object").slice(0, MAX_REGEX_LIST_ENTRIES)
         : undefined,
       wordlist: Array.isArray(rule.wordlist)
         ? rule.wordlist.filter((w) => typeof w === "string")
@@ -106,6 +108,10 @@ function plainMap<T>(v: unknown, ok: (x: unknown) => x is T): Record<string, T> 
 }
 
 const MAX_MAP_ENTRIES = 20_000;
+/** Ten times the server's own cap on a regex-list rule (RegexListRule.entries max_length=200 in
+ *  settings/schema.py, since the type was added): a read ceiling only, never reached by a list the
+ *  server accepted. */
+const MAX_REGEX_LIST_ENTRIES = 2_000;
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** One editor row for a spoken→symbol mapping. `id` is a client-only stable React
@@ -213,7 +219,9 @@ export function mapRowTwinProblems(rows: MapRow[]): Map<number, string> {
     const lower = r.k.toLowerCase();
     const seen = spellings.get(lower);
     if (!seen) spellings.set(lower, [r.k]);
-    else if (!seen.includes(r.k)) seen.push(r.k);
+    // Two spellings are all the reason below ever reads (the first that isn't the row's own), so
+    // a server-shaped map of 20,000 case variants of one phrase stays one linear pass.
+    else if (seen.length < 2 && !seen.includes(r.k)) seen.push(r.k);
   }
   const out = new Map<number, string>();
   for (const r of rows) {
