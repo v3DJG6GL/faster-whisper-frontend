@@ -978,6 +978,18 @@ mod wire_language_tests {
 }
 
 #[cfg(test)]
+mod capacity_hint_tests {
+    use super::{capacity_hint, MAX_META_BODY};
+
+    #[test]
+    fn a_declared_length_reserves_at_most_the_meta_cap() {
+        assert_eq!(capacity_hint(None), 0);
+        assert_eq!(capacity_hint(Some(4096)), 4096);
+        assert_eq!(capacity_hint(Some(64 * 1024 * 1024)), MAX_META_BODY);
+    }
+}
+
+#[cfg(test)]
 mod cert_rejected_tests {
     use super::cert_rejected;
 
@@ -1072,6 +1084,14 @@ mod usage_hour_cell_tests {
     }
 }
 
+/// The pre-allocation for a body that declares `content_length`. The declared length is the
+/// server's word, not the bytes that arrive, so the hint is capped: a header claiming the whole
+/// limit must not reserve it up front for a body that never comes. Past the cap the buffer grows
+/// with the bytes actually received.
+fn capacity_hint(content_length: Option<u64>) -> usize {
+    content_length.map_or(0, |n| (n as usize).min(MAX_META_BODY))
+}
+
 /// Buffer a response body with an explicit ceiling, giving up once it passes the limit instead of
 /// growing without bound.
 pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result<String, String> {
@@ -1081,8 +1101,7 @@ pub async fn body_capped_to(mut resp: reqwest::Response, limit: usize) -> Result
     // Pre-allocate when the server declares the size (already proven <= limit above),
     // avoiding the geometric doubling that otherwise pushes peak RSS to ~1.5x on
     // multi-megabyte transcription / sync bodies.
-    let capacity = resp.content_length().map(|n| n as usize).unwrap_or(0);
-    let mut buf: Vec<u8> = Vec::with_capacity(capacity);
+    let mut buf: Vec<u8> = Vec::with_capacity(capacity_hint(resp.content_length()));
     loop {
         match resp.chunk().await {
             Ok(Some(chunk)) => {

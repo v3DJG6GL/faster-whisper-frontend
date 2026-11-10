@@ -17,8 +17,9 @@ use tokio_tungstenite::tungstenite::http::{HeaderValue, Uri};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
-/// An HTTP proxy the stream URL tunnels through. `uri` never carries the login: hyper-util moves
-/// the userinfo into `auth` when it parses the proxy URL, so `display` is credential-free.
+/// An HTTP proxy the stream URL tunnels through. hyper-util moves the userinfo into `auth` when
+/// it parses the proxy URL, but it splits at the FIRST '@', so a password holding '@' leaves its
+/// tail in `uri`: `display` prints host and port only.
 pub(super) struct Proxy {
     uri: Uri,
     auth: Option<HeaderValue>,
@@ -27,11 +28,20 @@ pub(super) struct Proxy {
 }
 
 impl Proxy {
-    /// The proxy as it is safe to print: scheme + authority, bounded like `display_url`.
+    /// The proxy as it is safe to print: scheme + host:port, bounded like `display_url`.
     pub(super) fn display(&self) -> String {
-        let authority = self.uri.authority().map_or("", |a| a.as_str());
-        super::bounded_server_text(&format!("http://{authority}"), MAX_URL_IN_ERROR)
+        let shown = printable_authority(&self.uri);
+        super::bounded_server_text(&format!("http://{shown}"), MAX_URL_IN_ERROR)
     }
+}
+
+/// A proxy URI's `host[:port]`, never its raw authority, which can still hold part of a login.
+fn printable_authority(uri: &Uri) -> String {
+    uri.authority()
+        .map_or(String::new(), |a| match a.port_u16() {
+            Some(p) => format!("{}:{p}", a.host()),
+            None => a.host().to_string(),
+        })
 }
 
 /// A URI host without its IPv6-literal brackets (`[::1]` → `::1`); anything else as given.
@@ -413,7 +423,7 @@ fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> 
             &format!(
                 "{}://{}",
                 hit.uri().scheme_str().unwrap_or(""),
-                hit.uri().authority().map_or("", |a| a.as_str())
+                printable_authority(hit.uri())
             ),
             MAX_URL_IN_ERROR,
         );
@@ -682,6 +692,20 @@ mod tests {
             head.contains("proxy-authorization: basic dtpw\r\n"),
             "{head}"
         );
+    }
+
+    /// A password holding '@' must not reach the printed proxy, whichever '@' the parser splits at.
+    #[test]
+    fn the_printed_proxy_is_host_and_port_only() {
+        let uri: super::Uri = "http://alice:p@ss@proxy:3128".parse().unwrap();
+        assert_eq!(super::printable_authority(&uri), "proxy:3128");
+        let matcher = Matcher::builder()
+            .all("http://alice:p@ss@proxy.test:3128")
+            .build();
+        let p = route(&matcher, "ws://echo.test:9000/x").expect("proxied");
+        assert_eq!(p.display(), "http://proxy.test:3128");
+        let plain: super::Uri = "http://[::1]:8080".parse().unwrap();
+        assert_eq!(super::printable_authority(&plain), "[::1]:8080");
     }
 
     /// NO_PROXY wins, as it does for reqwest: no tunnel, the socket goes straight to the server.
