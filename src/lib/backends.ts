@@ -324,6 +324,29 @@ export function effectiveServerUrl(backend: Backend, settings: AppSettings): str
   return override ? override : backend.serverUrl;
 }
 
+/** Whether the Backend editor's automatic probes (capabilities, decode defaults, override-profile
+ *  names) may name the backend's id for `probeUrl`. With the key field blank, Rust resolves the
+ *  key STORED for that id and sends it to whatever address the probe names — so a retyped Server
+ *  URL (or a pause on a half-typed one) would carry the stored key to a host the user never
+ *  confirmed. They may when a key is typed (that key is what travels), when no key is stored
+ *  (nothing to carry), or when the address is the saved backend's effective one or one the user
+ *  Tested successfully with the stored key in this editor (`testedUrls`, in `typedServerUrl`
+ *  form). Otherwise the editor skips them until a Test or a Save. */
+export function editorProbesAllowed(a: {
+  typedKey: string;
+  keyStored: boolean;
+  probeUrl: string;
+  savedUrl: string | null;
+  testedUrls: ReadonlySet<string>;
+}): boolean {
+  if (a.typedKey || !a.keyStored) return true;
+  // A blank address is no address: `typedServerUrl` would still read it as a bare scheme.
+  const target = a.probeUrl.trim() ? typedServerUrl(a.probeUrl) : "";
+  if (!target) return false;
+  if (a.savedUrl !== null && target === typedServerUrl(a.savedUrl)) return true;
+  return a.testedUrls.has(target);
+}
+
 /** What the app will ACTUALLY connect to, plus a flag when the address hides it behind userinfo.
  *
  *  A URL's real authority is whatever follows the LAST `@`, so `http://localhost:8000@evil.tld/v1`

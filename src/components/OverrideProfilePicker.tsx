@@ -27,6 +27,7 @@ export function OverrideProfilePicker({
   onChange,
   ariaLabel = "Server override profile",
   refresh,
+  enabled = true,
 }: {
   serverUrl: string;
   backendId: string;
@@ -46,6 +47,9 @@ export function OverrideProfilePicker({
   /** Bumped by a fresh successful connection test of the same target: refetch the names (an
    *  admin may have added or removed a profile since). Callers without a test omit it. */
   refresh?: number;
+  /** False: fetch no names (the caller withholds the credentialed request — the Backend editor
+   *  while a retyped address is unconfirmed) and drop any already shown; free text still works. */
+  enabled?: boolean;
 }) {
   const [names, setNames] = useState<string[]>([]);
   const [showCustom, setShowCustom] = useState(false);
@@ -62,6 +66,12 @@ export function OverrideProfilePicker({
 
   useEffect(() => {
     if (serverKind === "standard" || blocked) return; // no endpoint / not permitted
+    if (!enabled) {
+      // The names belong to the target the caller stopped probing: never keep them beside it.
+      fetchedFor.current = null;
+      setNames([]);
+      return;
+    }
     let cancelled = false;
     // Clear the prior connection's names up front on a target switch so switching backends
     // never shows a stale dropdown while the refetch is in flight (or if it fails/returns empty).
@@ -82,7 +92,7 @@ export function OverrideProfilePicker({
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, backendId, apiKey, serverKind, blocked, gen, refresh]);
+  }, [serverUrl, backendId, apiKey, serverKind, blocked, gen, refresh, enabled]);
 
   if (serverKind === "standard") {
     return (

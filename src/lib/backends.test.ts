@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendForAddress, backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, fatesAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
+import { backendForAddress, backendLabel, editorProbesAllowed, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, fatesAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 import { backend } from "./sync/syncTestFixtures";
@@ -296,5 +296,35 @@ describe("fatesAfterSuppliedKey — the restore dialog's keyless list", () => {
     const twin = backend({ id: "twin", name: "Twin", serverUrl: "http://home.lan:8000", hasApiKey: true });
     expect(missingAfterSuppliedKey([home, twin], [home, twin], "home.lan:8000")).toEqual([twin]);
     expect(backendForAddress([home, twin], "home.lan:8000")?.id).toBe("home");
+  });
+});
+
+describe("editorProbesAllowed", () => {
+  const saved = "http://home.lan:8000";
+  const none: ReadonlySet<string> = new Set();
+  const gate = (over: Partial<Parameters<typeof editorProbesAllowed>[0]>) =>
+    editorProbesAllowed({ typedKey: "", keyStored: true, probeUrl: saved, savedUrl: saved, testedUrls: none, ...over });
+
+  it("lets the stored key go to the saved address only", () => {
+    expect(gate({})).toBe(true);
+    // The same address in another spelling (schemeless, trailing slash).
+    expect(gate({ probeUrl: "home.lan:8000/" })).toBe(true);
+    // A retyped address, or a pause on a half-typed one, is not confirmed.
+    expect(gate({ probeUrl: "http://other.example:8000" })).toBe(false);
+    expect(gate({ probeUrl: "http://home.la" })).toBe(false);
+    // Not saved yet, or no address at all.
+    expect(gate({ probeUrl: "http://other.example:8000", savedUrl: null })).toBe(false);
+    expect(gate({ probeUrl: "", savedUrl: "" })).toBe(false);
+  });
+
+  it("an address Tested with the stored key is confirmed", () => {
+    const tested = new Set([typedServerUrl("http://other.example:8000")]);
+    expect(gate({ probeUrl: "other.example:8000", testedUrls: tested })).toBe(true);
+    expect(gate({ probeUrl: "http://third.example:8000", testedUrls: tested })).toBe(false);
+  });
+
+  it("a typed key, or no stored key, has nothing to carry", () => {
+    expect(gate({ probeUrl: "http://other.example:8000", typedKey: "wk_new" })).toBe(true);
+    expect(gate({ probeUrl: "http://other.example:8000", keyStored: false })).toBe(true);
   });
 });

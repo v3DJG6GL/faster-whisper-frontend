@@ -28,7 +28,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedKeyPresent, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, editorProbesAllowed, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedKeyPresent, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeHostText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -97,6 +97,14 @@ export function Editor({
   // as `effectiveServerUrl` resolves the override. One rule for both, so the live and debounced
   // values can never pick different branches mid-debounce.
   const probeUrl = storedTypedUrl(debouncedUrl);
+  // The saved backend's effective address (null while it is not saved), and the addresses a Test
+  // with the stored key succeeded on in this editor: the probes below carry the stored key only
+  // there (`editorProbesAllowed`), never to a retyped address the user has not confirmed.
+  const savedUrl = useApp((s) => {
+    const saved = s.backends.find((x) => x.id === initial.id);
+    return saved ? effectiveServerUrl(saved, s.settings) : null;
+  });
+  const [testedUrls, setTestedUrls] = useState<ReadonlySet<string>>(() => new Set());
   // The targets of the tests in flight; only those show Test busy, since the fields stay editable
   // mid-test. Every run is kept, not just the latest: retyping an older, still-running target must
   // show it busy again, or a click starts a duplicate run. The ref is the synchronous twin (two
@@ -182,12 +190,21 @@ export function Editor({
   const hookTestGenRef = useRef(testGen);
   if (targetSettled) hookTestGenRef.current = testGen;
   const hookTestGen = hookTestGenRef.current;
+  // No backend id = no probe at all (the hooks and the picker skip, never go unauthenticated).
+  const probesAllowed = editorProbesAllowed({
+    typedKey: debouncedKey,
+    keyStored: keyStoredNow,
+    probeUrl,
+    savedUrl,
+    testedUrls,
+  });
+  const probeId = probesAllowed ? b.id : null;
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
   // generation, and the hooks below then re-ask as the new caller (as resultLive does) — they
   // and the override-profile picker apply that stored-key generation rule themselves.
   const { caps: ctxCaps } = useOverrideContext({
     serverUrl: probeUrl,
-    backendId: b.id,
+    backendId: probeId,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
     refresh: hookTestGen,
@@ -202,7 +219,7 @@ export function Editor({
   // backend serves both endpoints.
   const decodeDefaults = useDecodeDefaults({
     serverUrl: probeUrl,
-    backendId: b.id,
+    backendId: probeId,
     apiKey: debouncedKey || null,
     model: debouncedModel,
     profileName: b.overrideProfile,
@@ -291,6 +308,8 @@ export function Editor({
         setResult(info);
         // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
         if (info.ok) setTestGen((n) => n + 1);
+        // A successful Test with the stored key is the user confirming this address for it.
+        if (info.ok && !testedKey) setTestedUrls((s) => new Set(s).add(typedServerUrl(testedUrl)));
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
         // verdict describes what the list card routes to — a Test-then-Cancel on an unedited
@@ -514,6 +533,9 @@ export function Editor({
             controls={infoId}
           />
         </div>
+        {!probesAllowed && !!effUrl.trim() && (
+          <div className="-mt-1 pb-3 text-[12px] text-faint">Test this address to load its details.</div>
+        )}
         {showInfo && caps?.server_info && <ServerInfoPanel id={infoId} info={caps.server_info} reportApp={reportApp} />}
       </div>
 
@@ -621,6 +643,7 @@ export function Editor({
                 inheritLabel="Server default"
                 onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
                 refresh={hookTestGen}
+                enabled={probesAllowed}
               />
             </div>
           </OverrideHeader>
