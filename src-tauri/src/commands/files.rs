@@ -63,13 +63,17 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 /// `move_file`'s cross-volume copy, carrying the source's mtime over (`std::fs::copy` does not
 /// on Linux): dictation audio ages by mtime on the same clock as its record, which a move keeps
 /// (`rewrite_record_keep_mtime`), so a fresh copy clock would outlive the record by a window.
+///
+/// `dest` is created fresh and owner-only: every caller has checked nothing is there, and the
+/// target base may be a shared folder where a link planted in between must not be written
+/// through (the open fails instead, and `move_file` unlinks the link).
 fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     let mtime = std::fs::metadata(src).and_then(|m| m.modified()).ok();
-    std::fs::copy(src, dest)?;
+    let mut inp = std::fs::File::open(src)?;
+    let mut out = crate::audio::create_new_private(dest)?;
+    std::io::copy(&mut inp, &mut out)?;
     if let Some(t) = mtime {
-        if let Ok(f) = std::fs::File::options().write(true).open(dest) {
-            let _ = f.set_modified(t);
-        }
+        let _ = out.set_modified(t);
     }
     Ok(())
 }
@@ -729,6 +733,19 @@ mod tests {
         let mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
         assert_eq!(mtime, old);
         assert_eq!(std::fs::read(&dest).unwrap(), b"RIFF");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cross_volume_move_never_writes_through_a_planted_link() {
+        let dir = crate::config::fresh_test_dir("move-link");
+        let (src, dest, victim) = (dir.join("a.wav"), dir.join("b.wav"), dir.join("victim"));
+        std::fs::write(&src, b"RIFF").unwrap();
+        // Dangling: `dest.exists()` says no, so only the open stands between it and the write.
+        std::os::unix::fs::symlink(&victim, &dest).unwrap();
+        assert!(super::copy_keeping_mtime(&src, &dest).is_err());
+        assert!(!victim.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

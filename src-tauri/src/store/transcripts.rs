@@ -971,11 +971,13 @@ pub async fn save_transcript_media(
         let dest = dir.join(format!("{id}.{ext}"));
         let tmp = dir.join(format!("{id}.{ext}.tmp"));
         crate::config::replace_via_tmp(&tmp, &dest, |t| {
-            std::fs::copy(&src, t)?;
-            // Owner-only like the records themselves (copy inherits source perms). On Windows the
-            // file inherits the DACL of a `files/` folder that may have pre-existed the pick (a
-            // restored or synced tree), so it gets the same per-file DACL the recordings get.
-            crate::audio::restrict_file_private(t);
+            // Created fresh, owner-only from the start (0600, and on Windows the per-file DACL
+            // the recordings get, since `files/` may have pre-existed the pick): the base can sit
+            // in a shared tree, and a link planted at the tmp name must not be written through.
+            // A stale tmp (or such a link) is unlinked first, never followed.
+            let _ = std::fs::remove_file(t);
+            let mut out = crate::audio::create_new_private(t)?;
+            std::io::copy(&mut std::fs::File::open(&src)?, &mut out)?;
             Ok(())
         })
         .map_err(|e| e.to_string())?;

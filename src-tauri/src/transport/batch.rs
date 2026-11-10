@@ -2338,13 +2338,16 @@ pub async fn download_result_media(
     let mut over_cap = false;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::File::create(&tmp)
-            .await
-            .context("creating the media file")?;
         // Owner-only like the recordings: `links/` or `video/` may have pre-existed the pick.
+        // Created owner-only from the start and never over an existing name: the folder is a
+        // user pick that may be shared, and a planted file or link at the tmp name must not be
+        // written into. The name is unique per call, so a legitimate run never collides.
         let path = tmp.clone();
-        let _ =
-            tokio::task::spawn_blocking(move || crate::audio::restrict_file_private(&path)).await;
+        let std_f = tokio::task::spawn_blocking(move || crate::audio::create_new_private(&path))
+            .await
+            .map_err(|e| anyhow::anyhow!("creating the media file: {e}"))?
+            .context("creating the media file")?;
+        let mut f = tokio::fs::File::from_std(std_f);
         let mut total: u64 = 0;
         while let Some(chunk) = resp
             .chunk()
