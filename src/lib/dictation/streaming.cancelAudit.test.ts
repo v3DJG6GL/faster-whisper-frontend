@@ -453,7 +453,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const translate = streamingSrc.slice(streamingSrc.indexOf("async function maybeTranslate("), streamingSrc.indexOf("async function translatePhrase("));
     expect(translate).toContain("if (!tr || !text.trim()) return { text, translated: false };");
     // …and only a translated phrase books there.
-    expect(delivered).toMatch(/if \(phrase\.translated\) \{\s+sessionPhraseContext\.push\(body\);\s+sessionTranslatedText = /);
+    expect(delivered).toMatch(/if \(phrase\.translated\) \{\s+pushPhraseContext\(body\);\s+const booked = sessionTranslatedText /);
   });
 
   it("a translated whitespace-only final hands injectText an empty text, gap owed or not", () => {

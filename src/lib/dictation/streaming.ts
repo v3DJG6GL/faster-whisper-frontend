@@ -633,13 +633,19 @@ let sessionByLang: Record<string, string[]> = Object.create(null) as Record<stri
  *  by ordinal and not by arrival order. */
 const captureIds = newCaptureIdBook();
 
+/** Characters held in `sessionByLang`, budgeted at MAX_BANKED_DOC like `bankedDoc`: the
+ *  tracks are History copies of server-authored text, and an hour of dictation is ~50 KB. */
+let sessionByLangChars = 0;
+
 /** Fold a phrase's per-language translations into the session accumulator. */
 function accumulateByLang(byLang: Record<string, string> | undefined): void {
   if (!byLang) return;
   for (const [lang, text] of Object.entries(byLang)) {
     const t = text.trim();
     if (!t) continue;
+    if (sessionByLangChars + t.length > MAX_BANKED_DOC) continue;
     (sessionByLang[lang] ??= []).push(t);
+    sessionByLangChars += t.length;
   }
 }
 
@@ -659,7 +665,10 @@ function unbookClipByLang(byLang: Record<string, string> | undefined): void {
   for (const [lang, text] of Object.entries(byLang)) {
     const t = text.trim();
     const parts = sessionByLang[lang];
-    if (t && parts?.[parts.length - 1] === t) parts.pop();
+    if (t && parts?.[parts.length - 1] === t) {
+      parts.pop();
+      sessionByLangChars -= t.length;
+    }
   }
 }
 
@@ -708,6 +717,20 @@ export function abortDictationTranslate(): void {
 // Live mode: recent ORIGINAL phrases, sent as context for the next phrase.
 let sessionPhraseContext: string[] = [];
 const PHRASE_CONTEXT_MAX = 3;
+/** Characters held in `sessionPhraseContext`, budgeted at MAX_BANKED_DOC like `bankedDoc`. The
+ *  array keeps every phrase (a clipboard window's booking rolls it back by index, see
+ *  ClipBooking), so it is bounded by size: a phrase over the budget is not kept. */
+let sessionPhraseContextChars = 0;
+function pushPhraseContext(phrase: string): void {
+  if (sessionPhraseContextChars + phrase.length > MAX_BANKED_DOC) return;
+  sessionPhraseContext.push(phrase);
+  sessionPhraseContextChars += phrase.length;
+}
+/** `sessionPhraseContext.length = len`, keeping the budget's count in step. */
+function truncatePhraseContext(len: number): void {
+  for (let i = len; i < sessionPhraseContext.length; i++) sessionPhraseContextChars -= sessionPhraseContext[i]?.length ?? 0;
+  sessionPhraseContext.length = len;
+}
 
 /** What a phrase translate produced, and whether it actually translated. `translated` is
  *  explicit, not inferred as `out !== in`: a translation that legitimately equals the
@@ -2354,14 +2377,13 @@ async function ensureListeners(): Promise<void> {
                 if (byLang) unbookClipByLang(live.byLang);
               }
               clipBooked ??= { text: sessionTranslatedText, ctxLen: sessionPhraseContext.length };
-              sessionPhraseContext.length = clipBooked.ctxLen;
-              sessionPhraseContext.push(phraseClip);
+              truncatePhraseContext(clipBooked.ctxLen);
+              pushPhraseContext(phraseClip);
               // The clipboard is REPLACED per phrase (never appended to), so the copied text
               // needs no phrase gap — only this session accumulator, which History renders as
-              // one document, does.
-              sessionTranslatedText = clipBooked.text
-                ? clipBooked.text + PHRASE_GAP + clipOut.trim()
-                : clipOut.trim();
+              // one document, does. Budgeted like bankedDoc: over it, this window isn't booked.
+              const booked = clipBooked.text ? clipBooked.text + PHRASE_GAP + clipOut.trim() : clipOut.trim();
+              if (booked.length <= MAX_BANKED_DOC) sessionTranslatedText = booked;
               // Per-language tracks: each final in this window translates the GROWING window,
               // so the latest byLang supersedes every earlier one. Buffer it here; flushClipByLang
               // books the final version into sessionByLang once per window (see clipByLang: the
@@ -2617,10 +2639,10 @@ async function ensureListeners(): Promise<void> {
               carryText = "";
               carrySep = "";
               if (phrase.translated) {
-                sessionPhraseContext.push(body);
-                sessionTranslatedText = sessionTranslatedText
-                  ? sessionTranslatedText + PHRASE_GAP + block
-                  : block;
+                pushPhraseContext(body);
+                // Budgeted like bankedDoc: a History copy, never what gets typed.
+                const booked = sessionTranslatedText ? sessionTranslatedText + PHRASE_GAP + block : block;
+                if (booked.length <= MAX_BANKED_DOC) sessionTranslatedText = booked;
                 accumulateByLang(phrase.byLang);
               }
               // Report WHERE it went: Rust can divert a typed/pasted insert to the clipboard (chord still
@@ -3723,12 +3745,14 @@ async function startLiveInner(
     // rule would trim the context to a depth the translate request never uses.
     sessionTranslatedText = null;
     sessionByLang = Object.create(null) as Record<string, string[]>;
+    sessionByLangChars = 0;
     clipByLang = undefined;
     sessionPerUtteranceDeclared = false;
     captureIds.reset();
     sessionTranslateWarned = false;
     sessionTranslateFailure = null;
     sessionPhraseContext = [];
+    sessionPhraseContextChars = 0;
     // Publish the RESOLVED route so the chip can show it. `sessionTranslation` is module
     // state the overlay's own webview can never read, and the chip must not re-derive it
     // from the Profile: the translate-to picker can change the targets for one session.
