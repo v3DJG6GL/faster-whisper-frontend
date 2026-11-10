@@ -252,6 +252,35 @@ describe("trimLeadingInvisible", () => {
     expect(trimLeadingInvisible("\u{1F600}\uFE0F")).toBe("\u{1F600}\uFE0F");
     expect(trimLeadingInvisible("\u2800\u200d")).toBe("");
   });
+
+  it("stops at a render caller's budget and marks the cut head", () => {
+    expect(trimLeadingInvisible("   a", 3)).toBe("a");
+    expect(trimLeadingInvisible("    a", 3)).toBe("… a");
+    // Value callers pass none: a long head still goes whole.
+    expect(trimLeadingInvisible(" ".repeat(10_000) + "a")).toBe("a");
+  });
+
+  it("keeps every render of a name with MBs of leading padding fast", () => {
+    const big = 4 * 1024 * 1024;
+    for (const pad of ["\u00a0", "\u200b", "\ufe0f"]) {
+      const name = pad.repeat(big) + "evil";
+      const t0 = performance.now();
+      const shown = [safeIdentityText(name), backendDisplayName(name), profileDisplayName(name), deviceDisplayName(name)];
+      expect(performance.now() - t0, JSON.stringify(pad)).toBeLessThan(50);
+      // Marked as cut, never blank and never "Untitled": a name follows the padding.
+      for (const t of shown) expect(t.startsWith("…"), JSON.stringify([pad, t])).toBe(true);
+    }
+    // One visible character then MBs of characters the display filter deletes.
+    const name = "a" + "\u200b".repeat(big);
+    const t0 = performance.now();
+    expect(safeDisplayText(name)).toBe("a");
+    expect(profileDisplayName(name)).toBe("a");
+    expect(deviceDisplayName(name)).toBe("a");
+    expect(performance.now() - t0).toBeLessThan(50);
+    // Under the budget the output is unchanged.
+    expect(safeDisplayText("a" + "\u200b".repeat(2000) + "b")).toBe("ab");
+    expect(profileDisplayName("\u200b".repeat(1500) + "Work")).toBe("Work");
+  });
 });
 
 describe("deviceDisplayName", () => {

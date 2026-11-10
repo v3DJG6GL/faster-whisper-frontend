@@ -59,7 +59,12 @@ function isDisplayDropped(code: number): boolean {
 export function safeDisplayText(s: unknown, max = 200): string {
   if (typeof s !== "string") return "";
   const out: string[] = [];
+  // `out` caps what is kept, not what is walked: a synced name of one visible character and MBs
+  // of deleted ones would be scanned whole on every render. A real label reaches `max` long
+  // before this budget runs out.
+  let budget = identityScanBudget(max);
   for (const ch of s) {
+    if (budget-- <= 0) break;
     const code = ch.codePointAt(0) ?? 0;
     // The deceptive-format set also holds U+2028/U+2029: UAX#14 mandatory breaks no CSS collapses,
     // so a 60-code-point label could carry 60 forced breaks and push the buttons off screen.
@@ -196,7 +201,7 @@ function identityText(s: unknown, max: number): { text: string; cut: boolean } {
   // next to whitespace, or a second one in a row, joins nothing, so such a run is folded first: one
   // touching whitespace becomes a space, a bare run keeps only its first joiner. Emoji and script
   // sequences (a single joiner between two visible characters) are untouched.
-  const head = typeof s === "string" ? trimLeadingInvisible(s) : "";
+  const head = typeof s === "string" ? trimLeadingInvisible(s, leadingTrimBudget(max)) : "";
   // A synced name is unbounded (only the 4 MiB blob cap), and the passes below copy it whole
   // several times per render. Its first max+2 "ordinary" characters already decide the output
   // (see identityCutAt), so the rest is cut before those passes — the output is identical. A name
@@ -250,6 +255,11 @@ export function safeHeadTailText(s: unknown, max = 80): string {
  *  display cap does not, and scanning (then copying) all of it would make every render of an
  *  untrusted multi-MB name slow. */
 const identityScanBudget = (max: number) => 8 * max + 1024;
+
+/** How many leading code points a RENDER caller's `trimLeadingInvisible` walks at most. Wider than
+ *  `identityScanBudget`, as the head is dropped whole within it (a 20k-blank head still renders
+ *  the name behind it), yet a fixed bound, so MBs of synced padding cost about a millisecond. */
+const leadingTrimBudget = (max: number) => Math.max(identityScanBudget(max), 1 << 15);
 
 /** The UTF-16 offset just past `raw`'s (max+2)-th ORDINARY code point — one `safeIdentityText`
  *  keeps as itself (not whitespace, not the invisible class it folds to a space, not one the
@@ -344,7 +354,7 @@ function identityTail(s: unknown, max: number, labels: boolean): string {
  *  `.trim()` keeps (U+2800, variation selectors, …), ZWNJ/ZWJ and the characters the display filter
  *  deletes — so a display cut that follows starts at the first visible one. Only the head: a
  *  trailing variation selector belongs to the emoji before it. */
-export function trimLeadingInvisible(s: string): string {
+export function trimLeadingInvisible(s: string, budget = Infinity): string {
   // Walk the head only and cut by UTF-16 offset: spreading the whole name would copy an unbounded
   // synced string twice per render before the display cap applied.
   let off = 0;
@@ -353,6 +363,10 @@ export function trimLeadingInvisible(s: string): string {
     // A leading ZWNJ/ZWJ joins nothing, so it is dropped here; interior ones (emoji sequences) stay.
     const joiner = code === 0x200c || code === 0x200d;
     if (!(/\s/.test(ch) || isInvisibleKeyChar(code) || isDisplayDropped(code) || joiner)) break;
+    // A render caller's budget (`leadingTrimBudget`): a synced name's MBs of leading padding
+    // would otherwise be walked on every render. Out of it with padding left, the head is marked
+    // as cut rather than dropped, so a name behind the padding never reads as "Untitled".
+    if (budget-- <= 0) return "…" + s.slice(off);
     off += ch.length;
   }
   return s.slice(off);
@@ -367,14 +381,15 @@ export function trimLeadingInvisible(s: string): string {
  *  backend name renders as an identity, as the Backends audit card always has (`safeIdentityText`
  *  drops the invisible head itself). */
 export const profileDisplayName = (name: unknown, max = 80): string =>
-  (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name), max).trim()) || "Untitled profile";
+  (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name, leadingTrimBudget(max)), max).trim()) ||
+  "Untitled profile";
 export const backendDisplayName = (name: unknown, max = 80): string =>
   safeIdentityText(name, max) || "Untitled backend";
 /** A server-supplied device name as shown ("… from <device>"): its invisible head dropped (as a
  *  profile name's), display-filtered and trimmed. A blank result (spaces, invisible characters
  *  only) means "render the fallback or omit it". */
 export const deviceDisplayName = (name: unknown, max = 60): string =>
-  typeof name === "string" ? safeDisplayText(trimLeadingInvisible(name), max).trim() : "";
+  typeof name === "string" ? safeDisplayText(trimLeadingInvisible(name, leadingTrimBudget(max)), max).trim() : "";
 
 /** A PEER device's name as a sync surface shows it ("… from <device>", a conflict arm), or "" when
  *  it would read as this device's own label (`localLabel`) — the caller then renders its neutral
