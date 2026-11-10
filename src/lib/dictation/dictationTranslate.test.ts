@@ -228,6 +228,18 @@ describe("runDictationTranslate", () => {
     expect(none).toMatchObject({ text: "Hallo", ok: false, cause: "empty" });
   });
 
+  it("targets that would push the joined text past the cap read as missing", async () => {
+    const half = "x".repeat(2 * 1024 * 1024);
+    const d = deps((a) => Promise.resolve({ results: a.texts.map(() => ({ en: half, de: half, fr: "Salut" })) }));
+    // Two halves fill the cap exactly; the short third no longer fits.
+    const r = await runDictationTranslate(req({ text: "Hallo", targets: ["en", "de", "fr"] }), d);
+    expect(r.ok).toBe(true);
+    expect(Object.keys(r.byLang ?? {})).toEqual(["en", "de"]);
+    // The original counts when it is typed too: the second half no longer fits beside it.
+    const withOrig = await runDictationTranslate(req({ text: "Hallo", targets: ["en", "de", "fr"], includeOriginal: true }), d);
+    expect(Object.keys(withOrig.byLang ?? {})).toEqual(["en", "fr"]);
+  });
+
   it("sends only a language code as the source, the shared rule every T2T sender uses", async () => {
     // The text route 422s a word: a synced "english" or an invisible value would fail every
     // phrase's translation, so they go out as null (auto-detect); a padded code is trimmed.

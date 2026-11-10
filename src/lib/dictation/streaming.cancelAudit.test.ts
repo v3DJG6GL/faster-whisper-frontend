@@ -1129,6 +1129,20 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("lastRecordedUtterance = null");
   });
 
+  it("utterance records share one session text budget, reset with the session", () => {
+    // A server's finals are unbounded; past the budget no record is written or grown, and the
+    // null id keeps bookUtteranceInsert from growing it with a translation.
+    const at = anchorAt(streamingSrc, "function recordUtteranceFinal(", "recordUtteranceFinal");
+    const body = mask(bodyAfter(streamingSrc.slice(at), "delta: string }"));
+    const check = body.indexOf("if (utteranceRecordChars + delta.length > MAX_BANKED_DOC)");
+    expect(check, "the record budget check moved").toBeGreaterThan(body.indexOf("!delta.trim()"));
+    expect(check).toBeLessThan(body.indexOf("if (utt.id)"));
+    expect(body.slice(check)).toMatch(/^[^]*?return \{ id: null, first: false, delta \};\s*\}\s*utteranceRecordChars \+= delta\.length;/);
+    const reset = mask(topLevelFunctions(streamingSrc).resetUtteranceHistory);
+    expect(reset).toContain("utteranceRecordChars = 0");
+    expect(reset).toContain("utteranceRecordCharsWarned = false");
+  });
+
   it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
     // An inline arrow in the final handler shares the dropped task's closure scope (target,
     // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.

@@ -12,7 +12,7 @@ import type { BatchProgress } from "../types";
 import { newProgressId } from "../ids";
 import { translateSourceCode } from "../languages";
 
-/** The longest translation a dictation phrase accepts per target, mirroring Rust's
+/** The longest translation a dictation phrase accepts, all targets together, mirroring Rust's
  *  MAX_TRANSCRIPT (transport/stream.rs) on the transcript fields themselves: Rust passes
  *  translation VALUES through untouched (only the 32 MiB body cap), and this text is typed
  *  into the focused app and banked for History. */
@@ -345,10 +345,16 @@ export async function runDictationTranslate(
     // The parts array is derived FROM the map so the two can never disagree
     // about which targets came back.
     const byLang: Record<string, string> = {};
+    // The cap holds for the joined text, not per target: 16 targets each just under it would
+    // type and bank 64 MiB.
+    let total = req.includeOriginal ? original.trim().length : 0;
     for (const lang of req.targets) {
       const t = last[lang]?.trim();
       // An oversize value reads as missing too, rather than typing a partial cut of it.
-      if (t && !kept.has(lang) && t.length <= MAX_DICTATION_TRANSLATION) byLang[lang] = t;
+      if (t && !kept.has(lang) && total + t.length <= MAX_DICTATION_TRANSLATION) {
+        byLang[lang] = t;
+        total += t.length;
+      }
     }
     const parts = Object.values(byLang);
     if (!parts.length) throw new EmptyTranslation("empty translation");

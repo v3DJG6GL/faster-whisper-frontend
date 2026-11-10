@@ -556,10 +556,17 @@ const MAX_CLIPLESS_UTTERANCES = 1000;
 /** Per-session ceiling on per-utterance History records (over 8 hours of hands-free speech at
  *  one utterance every few seconds). Each record is a file write and a re-sort of the mirror, and
  *  a server can mint one per ~100-byte frame pair; past this, utterances fold into the last
- *  record instead, so no text is lost. */
+ *  record instead. The records' text shares one session budget (`utteranceRecordChars`, at
+ *  MAX_BANKED_DOC): past it no record is written or grown — the typed text and the session's
+ *  .txt sidecar are unaffected. */
 const MAX_UTTERANCE_RECORDS = 10_000;
 let utteranceRecordCount = 0;
 let utteranceRecordCapWarned = false;
+/** Characters of utterance text written to this session's records: a server's finals are
+ *  otherwise unbounded, and every one rewrites (and re-counts the words of) its record. A real
+ *  hour of dictation is ~50 KB. */
+let utteranceRecordChars = 0;
+let utteranceRecordCharsWarned = false;
 /** The last utterance that got a record — what utterances past the ceiling fold into. Apart from
  *  `lastUtterance` because a break clears that one, and only the session's end clears this. */
 let lastRecordedUtterance: UtteranceEntry | null = null;
@@ -574,6 +581,8 @@ function resetUtteranceHistory(): void {
   utteranceByOrdinal.clear();
   utteranceRecordCount = 0;
   utteranceRecordCapWarned = false;
+  utteranceRecordChars = 0;
+  utteranceRecordCharsWarned = false;
   lastRecordedUtterance = null;
 }
 
@@ -1012,6 +1021,16 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
   const utt = lastUtterance;
   const meta = historyMeta();
   if (!utt || !meta || !delta.trim()) return { id: utt?.id ?? null, first: false, delta };
+  // Past the session's text budget: no record write or growth, and `id: null` so the insert
+  // books no translation onto it either.
+  if (utteranceRecordChars + delta.length > MAX_BANKED_DOC) {
+    if (!utteranceRecordCharsWarned) {
+      utteranceRecordCharsWarned = true;
+      console.warn("[dictation] utterance records hit this session's text budget; later utterances are not recorded");
+    }
+    return { id: null, first: false, delta };
+  }
+  utteranceRecordChars += delta.length;
   if (utt.id) {
     patchRecord(utt.id, (r) => {
       const text = appendDelta(r.result?.text ?? "", delta);
