@@ -556,7 +556,7 @@ const MAX_CLIPLESS_UTTERANCES = 1000;
 /** Per-session ceiling on per-utterance History records (over 8 hours of hands-free speech at
  *  one utterance every few seconds). Each record is a file write and a re-sort of the mirror, and
  *  a server can mint one per ~100-byte frame pair; past this, utterances fold into the last
- *  record instead. The records' original text shares one session budget (`utteranceRecordChars`,
+ *  record instead, within caps of their own (MAX_FOLD_CHARS). The records' original text shares one session budget (`utteranceRecordChars`,
  *  at MAX_BANKED_DOC): past it no record is written or grown — the typed text and the session's
  *  .txt sidecar are unaffected. Their translations have a budget of their own
  *  (`utteranceTranslationChars`), so running it out never stops the originals being recorded. */
@@ -579,6 +579,15 @@ let utteranceTranslationCharsWarned = false;
 /** The last utterance that got a record — what utterances past the ceiling fold into. Apart from
  *  `lastUtterance` because a break clears that one, and only the session's end clears this. */
 let lastRecordedUtterance: UtteranceEntry | null = null;
+/** Appends to that fold record past the ceiling, and the text they added. Every append rewrites
+ *  the whole record and re-sorts the History mirror, and a server alternating ~100-byte finals and
+ *  breaks can send millions of them inside the text budget: past MAX_UTTERANCE_RECORDS appends
+ *  (the cost the records themselves already allow) or MAX_FOLD_CHARS of added text, later
+ *  utterances are not recorded. */
+const MAX_FOLD_CHARS = MAX_BANKED_DOC / 64;
+let utteranceFoldAppends = 0;
+let utteranceFoldChars = 0;
+let utteranceFoldCapWarned = false;
 
 function resetUtteranceHistory(): void {
   sessionPerUtterance = false;
@@ -595,6 +604,9 @@ function resetUtteranceHistory(): void {
   utteranceTranslationChars = 0;
   utteranceTranslationCharsWarned = false;
   lastRecordedUtterance = null;
+  utteranceFoldAppends = 0;
+  utteranceFoldChars = 0;
+  utteranceFoldCapWarned = false;
 }
 
 // Dictation translation (per-profile "Translate output"), frozen per session from
@@ -1032,6 +1044,16 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
   const utt = lastUtterance;
   const meta = historyMeta();
   if (!utt || !meta || !delta.trim()) return { id: utt?.id ?? null, first: false, delta };
+  // Past the record ceiling (a release final for the last record counts too: it rewrites the same
+  // record). Over the fold caps: no rewrite, and `id: null` so the insert books no translation.
+  const folding = !!utt.id && utt === lastRecordedUtterance && utteranceRecordCount >= MAX_UTTERANCE_RECORDS;
+  if (folding && (utteranceFoldAppends >= MAX_UTTERANCE_RECORDS || utteranceFoldChars + delta.length > MAX_FOLD_CHARS)) {
+    if (!utteranceFoldCapWarned) {
+      utteranceFoldCapWarned = true;
+      console.warn("[dictation] the last utterance record stopped growing past this session's record ceiling; later utterances are not recorded");
+    }
+    return { id: null, first: false, delta };
+  }
   // Past the session's text budget: no record write or growth, and `id: null` so the insert
   // books no translation onto it either.
   if (utteranceRecordChars + delta.length > MAX_BANKED_DOC) {
@@ -1043,6 +1065,10 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; firs
   }
   utteranceRecordChars += delta.length;
   if (utt.id) {
+    if (folding) {
+      utteranceFoldAppends += 1;
+      utteranceFoldChars += delta.length;
+    }
     patchRecord(utt.id, (r) => {
       const text = appendDelta(r.result?.text ?? "", delta);
       return { ...r, result: { ...r.result, text }, wordCount: text.split(/\s+/).filter(Boolean).length };

@@ -1129,6 +1129,31 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("lastRecordedUtterance = null");
   });
 
+  it("past the record ceiling the fold record's rewrites are capped, reset with the session", () => {
+    // Every fold append rewrites the whole record and re-sorts the History mirror, and the text
+    // budget alone allowed millions of tiny ones. Over either fold cap nothing is rewritten and the
+    // null id keeps bookUtteranceInsert from rebuilding the record's translation.
+    const at = anchorAt(streamingSrc, "function recordUtteranceFinal(", "recordUtteranceFinal");
+    const body = mask(bodyAfter(streamingSrc.slice(at), "delta: string }"));
+    expect(body).toContain("const folding = !!utt.id && utt === lastRecordedUtterance && utteranceRecordCount >= MAX_UTTERANCE_RECORDS;");
+    const check = body.indexOf("if (folding && (utteranceFoldAppends >= MAX_UTTERANCE_RECORDS || utteranceFoldChars + delta.length > MAX_FOLD_CHARS))");
+    expect(check, "the fold cap check moved").toBeGreaterThan(body.indexOf("!delta.trim()"));
+    expect(check).toBeLessThan(body.indexOf("if (utteranceRecordChars + delta.length > MAX_BANKED_DOC)"));
+    expect(body.slice(check)).toMatch(/^[^]*?return \{ id: null, first: false, delta \};\s*\}/);
+    // Charged only on an actual rewrite, after the text budget let it through.
+    expect(body).toMatch(/if \(utt\.id\) \{\s*if \(folding\) \{\s*utteranceFoldAppends \+= 1;\s*utteranceFoldChars \+= delta\.length;\s*\}\s*patchRecord\(utt\.id/);
+    expect(streamingSrc).toContain("const MAX_FOLD_CHARS = MAX_BANKED_DOC / 64;");
+    // A break must not reopen them; only the session's end does.
+    expect(mask(boundaryBody)).not.toContain("utteranceFold");
+    const reset = mask(topLevelFunctions(streamingSrc).resetUtteranceHistory);
+    expect(reset).toContain("utteranceFoldAppends = 0");
+    expect(reset).toContain("utteranceFoldChars = 0");
+    expect(reset).toContain("utteranceFoldCapWarned = false");
+    // No other writer moves the counters (the reset and the append are the only two).
+    expect(streamingSrc.match(/(?<!let )utteranceFoldAppends \+?=/g)).toHaveLength(2);
+    expect(streamingSrc.match(/(?<!let )utteranceFoldChars \+?=/g)).toHaveLength(2);
+  });
+
   it("utterance records share one session text budget, reset with the session", () => {
     // A server's finals are unbounded; past the budget no record is written or grown, and the
     // null id keeps bookUtteranceInsert from growing it with a translation.
