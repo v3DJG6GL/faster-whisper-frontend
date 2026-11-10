@@ -7,14 +7,9 @@
 # Adding an id here is a security decision. Record why, and what would make it reachable.
 
 [advisories]
-ignore = [
-    # quick-xml 0.39.4: denial-of-service on hostile XML. It used to arrive via plist <- tauri-utils
-    # <- tauri-build (build-time bundle metadata only). Cargo.lock now resolves only quick-xml
-    # 0.41/0.42 (plist, wayland-scanner), so these ignores match nothing. DELETE THESE TWO LINES
-    # and let the scanner confirm it.
-    "RUSTSEC-2026-0195",
-    "RUSTSEC-2026-0194",
-]
+# quick-xml 0.39.4 RUSTSEC-2026-0194/-0195 were ignored until Cargo.lock moved to >=0.41 (patched);
+# removed.
+ignore = []
 
 # `unmaintained` and `unsound` advisories are reported but do NOT fail the build. The GTK3 binding
 # family (gtk / gdk / atk / glib 0.18) is unmaintained-but-deliberate — Cargo.toml pins it to
