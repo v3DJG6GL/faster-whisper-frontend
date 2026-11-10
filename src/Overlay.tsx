@@ -17,8 +17,8 @@ import {
   type DictationTone,
 } from "@/lib/dictation/dictationVisual";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold, currentPhase,
-  phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
+  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold, currentPhase,
+  nextWarmingSince, PHASE_PERSIST_MS, phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { asServerWork } from "@/lib/types";
@@ -433,12 +433,28 @@ export default function Overlay() {
     return () => clearInterval(id);
   }, [phaseKey]);
 
-  // Collapsed = armed but silent, or idle (the standby dock). Warming expands, so "warming up…"
-  // is actually visible. See chipRules.chipExpansion for the processing rule (sub-second
-  // stages never pop a minimized chip; a stage that will visibly last does).
+  // When the current mic warm-up began, on this chip's clock — stepped during render like the
+  // processing stamp below, so the frame that brings `warming` already carries its stamp.
+  const [warmSince, setWarmSince] = useState<number | null>(null);
+  const warmingSince = nextWarmingSince(warmSince, !!state.warming, Date.now());
+  if (warmingSince !== warmSince) setWarmSince(warmingSince);
+  // One re-render once the warm-up has outlasted the anti-glitch window: a warming mic sends
+  // level 0, so no payload may arrive to re-evaluate chipExpansion at that mark.
+  const [, tickWarm] = useState(0);
+  useEffect(() => {
+    if (warmingSince == null) return;
+    const t = setTimeout(() => tickWarm((n) => n + 1), Math.max(0, warmingSince + PHASE_PERSIST_MS + 1 - Date.now()));
+    return () => clearTimeout(t);
+  }, [warmingSince]);
+
+  // Collapsed = armed but silent, or idle (the standby dock). A warm-up that lasts expands, so
+  // "warming up…" is actually visible; a sub-second one (a warm mic) does not pop the pill. See
+  // chipRules.chipExpansion for both rules (sub-second stages never pop a minimized chip; a
+  // stage that will visibly last does).
   const wantExpanded = chipExpansion({
     status: state.status,
     warming: state.warming,
+    warmingSince,
     serverWork: state.serverWork,
     speaking,
     expanded,
@@ -807,10 +823,16 @@ export default function Overlay() {
 
   // Per-phrase pulse: keyed on the monotonic `seq` so identical consecutive kinds retrigger.
   const lastSeq = useRef<number | undefined>(state.lastInsert?.seq);
+  // Whether this session already pulsed a phrase as it landed. A session's start clears
+  // `lastInsert`, so null resets it. With phrases already confirmed one by one, the end-of-session
+  // pulse below would only repeat an old "typed" when the stop inserted nothing new.
+  const phrasePulsed = useRef(state.lastInsert != null);
   useEffect(() => {
     const li = state.lastInsert;
+    if (!li) phrasePulsed.current = false;
     if (!li || li.seq === lastSeq.current) return;
     lastSeq.current = li.seq;
+    phrasePulsed.current = true;
     setPulse(li.kind);
     pulseHoldUntil.current = 0; // a per-phrase tick replaces any untranslated pulse
     if (pulseTimer.current) clearTimeout(pulseTimer.current);
@@ -831,6 +853,9 @@ export default function Overlay() {
       // surprising half. Held longer still, because it carries a reason to read — for the
       // shared sessionNoteHoldMs (the window's hide linger reads the same rule; 0 = no warning).
       const warnHold = sessionNoteHoldMs({ translateFailure: state.translateFailure, sessionOutcome: o });
+      // Each phrase already got its own pulse as it landed: a plain "done" beat would flash the
+      // delivery colour for a stop that inserted nothing. The untranslated reason still shows.
+      if (!warnHold && phrasePulsed.current) return;
       setPulse(warnHold ? "untranslated" : o);
       pulseHoldUntil.current = warnHold ? Date.now() + warnHold : 0;
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
@@ -1089,7 +1114,8 @@ export default function Overlay() {
   // can always read the transcript / see a failure); completion settles back without popping.
   const lastPeekStatus = useRef(state.status);
   useEffect(() => {
-    const statusChanged = lastPeekStatus.current !== state.status;
+    const prevPeekStatus = lastPeekStatus.current;
+    const statusChanged = prevPeekStatus !== state.status;
     lastPeekStatus.current = state.status;
     const activeStatus = isActiveDictation(state.status);
     const keepMin = state.overlayPeek && state.peekWhileActive && state.position !== "off";
@@ -1109,7 +1135,8 @@ export default function Overlay() {
       state.position === "off" ||
       hoverReveal ||
       state.status === "error" ||
-      (!keepMin && !endFlash && (speaking || processing || expanded));
+      // `warming`: a warm-up no longer always expands the pill (chipExpansion), and it never tucks.
+      (!keepMin && !endFlash && (speaking || processing || expanded || !!state.warming));
     const eligible =
       !blocked && (standby || endFlash || (keepMin ? activeStatus : state.status === "listening"));
     if (!eligible) {
@@ -1122,7 +1149,19 @@ export default function Overlay() {
     // Normal mode bounces out on fresh activity (a status change) then re-arms; keep-minimized
     // glues the dot in place across the whole lifecycle (listening → finalizing → done). A tucked
     // end-of-session flash also holds (endFlash), so it hides without sliding out first.
-    if (statusChanged && !keepMin && !endFlash) setPeeked(false);
+    // The idle edge that ENDS a session is not fresh activity for a tucked chip: it stays tucked
+    // (the done pulse plays on the dot) unless a note / untranslated reason needs reading
+    // (chipEndTuckHold — the note / pulse effects above stamped this commit's deadlines).
+    const endSettle =
+      statusChanged &&
+      chipEndTuckHold({
+        peeked,
+        prevStatus: prevPeekStatus,
+        status: state.status,
+        holdUntil: Math.max(noteHoldUntil.current, pulseHoldUntil.current),
+        now: Date.now(),
+      });
+    if (statusChanged && !keepMin && !endFlash && !endSettle) setPeeked(false);
     // Idle/standby honours the user's full inactivity timeout; a live keep-minimized session
     // tucks promptly instead. A recent hover extends either via the grace floor.
     const base = chipTuckDelayMs(keepMin && activeStatus && !standby, state.peekTimeoutSec);
@@ -1137,6 +1176,7 @@ export default function Overlay() {
     state.peekWhileActive,
     state.position,
     state.status,
+    state.warming,
     state.peekTimeoutSec,
     hovering,
     hoverReveal,

@@ -2,9 +2,12 @@
 // there is no jsdom here — these matrices are their behavioural coverage.
 
 import { describe, expect, it } from "vitest";
+// Raw source (no jsdom here): pins that Overlay.tsx actually feeds these rules what they need.
+import overlaySrc from "../Overlay.tsx?raw";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold,
-  currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs, stepProcessingStamp, type ProcessingStamp,
+  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs,
+  chipTuckHold, currentPhase, nextProcessingSince, nextWarmingSince, phaseClock, phaseElapsedMs, stepProcessingStamp,
+  type ProcessingStamp,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
 
@@ -19,10 +22,33 @@ const phase = (over: Partial<DictationPhase> = {}): DictationPhase => ({
 const PROCESSING: DictationStatus[] = ["transcribing", "translating", "injecting"];
 
 describe("chipExpansion", () => {
-  it("expands for error and warm-up regardless of anything else", () => {
+  it("expands for error regardless of anything else", () => {
     expect(chipExpansion({ status: "error", speaking: false, expanded: false, now: NOW })).toBe(true);
+    expect(chipExpansion({ status: "error", warming: true, speaking: false, expanded: false, now: NOW })).toBe(true);
+  });
+
+  it("does not pop a collapsed chip for a sub-second warm-up (the start enlarge-then-shrink)", () => {
+    // Every session starts warming; on a warm mic it clears a fraction of a second later.
+    const warm = (dt: number) =>
+      chipExpansion({
+        status: "listening",
+        warming: true,
+        warmingSince: NOW,
+        speaking: false,
+        expanded: false,
+        now: NOW + dt,
+      });
+    expect(warm(0)).toBe(false);
+    expect(warm(PHASE_PERSIST_MS)).toBe(false);
+    // A warm-up that lasts (a cold Bluetooth mic) opens the pill so "warming up…" is readable.
+    expect(warm(PHASE_PERSIST_MS + 1)).toBe(true);
+    // No stamp: never pops, only keeps.
+    expect(chipExpansion({ status: "listening", warming: true, speaking: false, expanded: false, now: NOW })).toBe(false);
+  });
+
+  it("keeps an already-open pill open through a warm-up", () => {
     expect(
-      chipExpansion({ status: "listening", warming: true, speaking: false, expanded: false, now: NOW }),
+      chipExpansion({ status: "listening", warming: true, warmingSince: NOW, speaking: false, expanded: true, now: NOW }),
     ).toBe(true);
   });
 
@@ -156,6 +182,38 @@ describe("chipTuckHold", () => {
   it("never holds a non-processing status", () => {
     expect(chipTuckHold({ peeked: true, status: "listening", phase: phase(), now: NOW })).toBe(false);
     expect(chipTuckHold({ peeked: true, status: "idle", now: NOW })).toBe(false);
+  });
+});
+
+describe("nextWarmingSince", () => {
+  it("stamps the edge into warming, keeps it while warming lasts, clears it after", () => {
+    expect(nextWarmingSince(null, true, NOW)).toBe(NOW);
+    expect(nextWarmingSince(NOW, true, NOW + 800)).toBe(NOW);
+    expect(nextWarmingSince(NOW, false, NOW + 900)).toBeNull();
+    expect(nextWarmingSince(null, false, NOW)).toBeNull();
+  });
+});
+
+describe("chipEndTuckHold", () => {
+  const end = { peeked: true, prevStatus: "listening" as DictationStatus, status: "idle" as DictationStatus, holdUntil: 0, now: NOW };
+
+  it("keeps a tucked chip tucked on the idle edge that ends a session (no pop-out for the done pulse)", () => {
+    for (const prevStatus of ["listening", ...PROCESSING] as DictationStatus[]) {
+      expect(chipEndTuckHold({ ...end, prevStatus }), prevStatus).toBe(true);
+    }
+    // A hold that has already run out is nothing to read.
+    expect(chipEndTuckHold({ ...end, holdUntil: NOW })).toBe(true);
+  });
+
+  it("lets a session note or the untranslated reason slide it out to be read", () => {
+    expect(chipEndTuckHold({ ...end, holdUntil: NOW + 2600 })).toBe(false);
+  });
+
+  it("holds nothing else: an open chip, a start, an error, or idle after a non-session status", () => {
+    expect(chipEndTuckHold({ ...end, peeked: false })).toBe(false);
+    expect(chipEndTuckHold({ ...end, prevStatus: "idle", status: "listening" })).toBe(false);
+    expect(chipEndTuckHold({ ...end, status: "error" })).toBe(false);
+    expect(chipEndTuckHold({ ...end, prevStatus: "error" })).toBe(false);
   });
 });
 
@@ -339,5 +397,31 @@ describe("chipTuckDelayMs", () => {
   it("settles a live keep-minimized session quickly, never slower than Hide after", () => {
     expect(chipTuckDelayMs(true, 30)).toBe(700);
     expect(chipTuckDelayMs(true, 0.2)).toBe(200);
+  });
+});
+
+describe("Overlay's end-of-session pulse after per-phrase pulses", () => {
+  it("skips the plain done pulse when the session's phrases already pulsed as they landed", () => {
+    // A session start clears lastInsert, which resets the flag; each landed phrase sets it.
+    expect(overlaySrc).toMatch(/if \(!li\) phrasePulsed\.current = false;/);
+    expect(overlaySrc).toMatch(/lastSeq\.current = li\.seq;\s*phrasePulsed\.current = true;/);
+    // Only the plain beat is skipped: the untranslated reason (warnHold) still shows.
+    expect(overlaySrc).toMatch(/if \(!warnHold && phrasePulsed\.current\) return;\s*setPulse\(warnHold \? "untranslated" : o\);/);
+  });
+});
+
+describe("Overlay wiring of the warm-up and session-end tuck rules", () => {
+  it("passes its warm-up stamp to chipExpansion, so a warm mic's start does not pop the pill", () => {
+    const call = /const wantExpanded = chipExpansion\(\{([\s\S]*?)\}\);/.exec(overlaySrc);
+    expect(call).not.toBeNull();
+    expect(call![1]).toMatch(/\bwarmingSince,/);
+    expect(overlaySrc).toMatch(/const warmingSince = nextWarmingSince\(warmSince, !!state\.warming, Date\.now\(\)\);/);
+  });
+
+  it("gates the status-change un-tuck on chipEndTuckHold, read after the note / pulse stamps", () => {
+    expect(overlaySrc).toMatch(/if \(statusChanged && !keepMin && !endFlash && !endSettle\) setPeeked\(false\);/);
+    const at = overlaySrc.indexOf("chipEndTuckHold({");
+    expect(at).toBeGreaterThan(overlaySrc.indexOf("noteHoldUntil.current = Date.now() + hold;"));
+    expect(at).toBeGreaterThan(overlaySrc.indexOf("pulseHoldUntil.current = warnHold ? Date.now() + warnHold : 0;"));
   });
 });

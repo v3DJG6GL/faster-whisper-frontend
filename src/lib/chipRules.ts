@@ -8,7 +8,7 @@
 // so they can disagree for a frame — and a stale phase is precisely what would pop
 // the pill open (or hold the ✕ up) after the stage it described has ended.
 
-import { isProcessing } from "./dictation/dictationVisual";
+import { isActiveDictation, isProcessing } from "./dictation/dictationVisual";
 import type { DictationPhase, DictationStatus, ServerWork } from "./types";
 
 /** How long a processing stage must persist before it earns the pill. Below this a
@@ -53,14 +53,23 @@ export function phaseClock(ms: number): string {
 
 /** Should the chip be a full pill rather than a dot?
  *
- *  Error / warm-up / speech expand outright. A processing state normally only KEEPS
+ *  Error / speech expand outright. A processing state normally only KEEPS
  *  an already-open pill open — it never pops a minimized chip just to flash a
  *  sub-second stage. The one addition: a stage that is KNOWN to be long (a cold
  *  translate) or has already outlasted PHASE_PERSIST_MS does earn the pill, because
- *  the alternative is a silent dot for tens of seconds, which reads as a hang. */
+ *  the alternative is a silent dot for tens of seconds, which reads as a hang.
+ *
+ *  Mic warm-up follows the same rule: every session starts warming (streaming.ts sets it
+ *  from the first frame), and on a warm mic it ends a fraction of a second later — popping
+ *  the pill for that read as an enlarge-then-shrink on every start. The blue dot says
+ *  "not yet" meanwhile; a warm-up that outlasts PHASE_PERSIST_MS (a cold Bluetooth mic)
+ *  opens the pill so "warming up…" is readable. `warmingSince` is when the chip saw it begin
+ *  (nextWarmingSince); without one, warm-up only keeps an open pill open. */
 export function chipExpansion(a: {
   status: DictationStatus;
   warming?: boolean;
+  /** When the current warm-up began, on the chip's clock (nextWarmingSince); null = none. */
+  warmingSince?: number | null;
   /** What the server reports doing behind a "listening" status (types.ServerWork). */
   serverWork?: ServerWork;
   speaking: boolean;
@@ -69,7 +78,8 @@ export function chipExpansion(a: {
   phase?: DictationPhase | null;
   now: number;
 }): boolean {
-  if (a.status === "error" || a.warming) return true;
+  if (a.status === "error") return true;
+  if (a.warming) return a.expanded || (a.warmingSince != null && a.now - a.warmingSince > PHASE_PERSIST_MS);
   if (a.status === "listening") {
     // A cold model load is a wait the user is about to sit through, like warm-up: say so.
     if (a.serverWork === "loading") return true;
@@ -116,6 +126,30 @@ export function chipTuckHold(a: {
   if (!a.peeked || !isProcessing(a.status)) return false;
   const phase = currentPhase(a.status, a.phase);
   return !(phase != null && persists(phase, a.now));
+}
+
+/** When the current mic warm-up began, stepped from the last render's value: stamped on the
+ *  edge into warming, kept while it lasts, cleared when it ends (chipExpansion's warmingSince). */
+export function nextWarmingSince(since: number | null, warming: boolean, now: number): number | null {
+  return warming ? (since ?? now) : null;
+}
+
+/** Should a TUCKED chip stay tucked on the edge that ENDS a session (an active status → idle)?
+ *
+ *  chipTuckHold keeps it tucked through finalize/insert; without this the idle edge then counted
+ *  as fresh activity and slid the chip out — with the dock on, a minimized dot popped open at
+ *  every stop just to play the done pulse (green = typed) over the idle pill. The pulse plays on
+ *  the tucked dot instead. Something to READ (a session note or the untranslated reason —
+ *  `holdUntil`, the deadline the chip's note / pulse timers were armed with) still slides it
+ *  out, so chipLabelHoldOpens can open the pill for it. */
+export function chipEndTuckHold(a: {
+  peeked: boolean;
+  prevStatus: DictationStatus;
+  status: DictationStatus;
+  holdUntil: number;
+  now: number;
+}): boolean {
+  return a.peeked && a.status === "idle" && isActiveDictation(a.prevStatus) && !(a.holdUntil > a.now);
 }
 
 /** Must a collapsed chip OPEN to paint an end-of-session label (the untranslated reason, "not
