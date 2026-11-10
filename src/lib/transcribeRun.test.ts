@@ -2546,6 +2546,24 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(r.segments).toHaveLength(400);
   });
 
+  it("the run keeps at most 16 distinct languages across its chunks, every requested one included", async () => {
+    let n = 0;
+    translateText.mockImplementation((a) =>
+      Promise.resolve({
+        results: a.texts.map((t) => {
+          const tr: Record<string, string> = { de: t };
+          for (let k = 0; k < 16; k++) tr[`x${n++}`] = t;
+          return tr;
+        }),
+      }),
+    );
+    const segments = Array.from({ length: 801 }, (_, i) => ({ text: `cue ${i}` }));
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
+    const keys = new Set(r.segments!.flatMap((seg) => Object.keys(seg.translations ?? {})));
+    expect(keys.size).toBe(16);
+    expect(r.segments!.every((seg, i) => seg.translations?.de === `cue ${i}`)).toBe(true);
+  });
+
   it("a lone segment over the character budget still goes out, alone", async () => {
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = [{ text: "a" }, { text: "x".repeat(190_000) }, { text: "b" }];

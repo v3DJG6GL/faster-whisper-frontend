@@ -275,6 +275,36 @@ export function foldPollFailure(s: TranslateRunUi, sentAt?: number): TranslateRu
   return { ...s, phase: "reconnecting", pollAt: sentAt ?? s.pollAt };
 }
 
+/** Mirror of Rust's MAX_TRANSLATION_KEYS (transport/batch.rs `bound_translation_keys`): how many
+ *  distinct language keys one translation result may carry. Rust holds each REQUEST to it, and a
+ *  run is many requests (chunks, target groups) merged into one record, so the run keeps its own
+ *  count too. */
+export const MAX_TRANSLATION_KEYS = 16;
+
+/** A run-wide filter for the per-segment translation maps a chunked run merges. A key the run
+ *  asked for always passes, as does one already held; a new one only while the run holds fewer
+ *  than MAX_TRANSLATION_KEYS (or as many as it asked for, when that is more) — so a server can't
+ *  grow one record by 16 fresh keys per chunk. Per RUN: a record that gathers more languages over
+ *  several runs keeps them. A map with nothing dropped is returned as it came. */
+export function translationKeyBudget(requested: readonly string[]): (tr: Record<string, string>) => Record<string, string> {
+  const asked = new Set(requested);
+  const held = new Set<string>();
+  const cap = Math.max(MAX_TRANSLATION_KEYS, asked.size);
+  return (tr) => {
+    const keys = Object.keys(tr);
+    const keep = keys.filter((k) => {
+      if (!asked.has(k) && !held.has(k) && held.size >= cap) return false;
+      held.add(k);
+      return true;
+    });
+    if (keep.length === keys.length) return tr;
+    const out: Record<string, string> = {};
+    // An own data property even for "__proto__" (parsed JSON carries it as an ordinary key).
+    for (const k of keep) Object.defineProperty(out, k, { value: tr[k], writable: true, enumerable: true, configurable: true });
+    return out;
+  };
+}
+
 export interface ChunkedTranslateArgs {
   /** Segment indexes to translate, in order (may be sparse — stale rows). */
   indexes: number[];
@@ -308,6 +338,9 @@ export interface ChunkedTranslateArgs {
    *  its completed chunks, the in-flight chunk's results are dropped. */
   isCancelled?: () => boolean;
   chunk?: number;
+  /** The target codes this run asked for: they always pass the run's key budget
+   *  (translationKeyBudget), which bounds the keys a server adds beyond them. */
+  targets?: readonly string[];
 }
 
 /** Drive a whole run in requests of at most TRANSLATE_CHUNK segments and
@@ -327,6 +360,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   let mergedChunks = 0;
   const warnings: string[] = [];
   let slice: number[] = [];
+  const budget = translationKeyBudget(a.targets ?? []);
   for (let at = 0; at < a.indexes.length; at += slice.length) {
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
     // Close the chunk before the segment that would cross either cap; a lone segment over
@@ -361,7 +395,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     const kept: Record<number, string[]> = {};
     const sent: Record<number, string> = {};
     slice.forEach((segIdx, k) => {
-      const tr = r.results[k];
+      const tr = r.results[k] && budget(r.results[k]);
       if (tr && Object.keys(tr).length) {
         patch[segIdx] = tr;
         kept[segIdx] = r.kept?.[k] ?? [];

@@ -35,7 +35,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { pruneTargets, wireCodes } from "./translationTargets";
-import { TRANSLATE_CHUNK_CHARS } from "./retroTranslate";
+import { TRANSLATE_CHUNK_CHARS, translationKeyBudget } from "./retroTranslate";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
@@ -2107,6 +2107,8 @@ export async function translateParsed(
   let plan: PlanStage[] | undefined;
   // An imported JSON may name its language as a word ("english"): only a code goes out.
   const srcCode = translateSourceCode(parsed.language);
+  // One key budget for the whole file: each chunk is its own request, and Rust bounds each alone.
+  const budget = translationKeyBudget(targets);
   for (let at = 0, end = 0; targets.length && at < parsed.segments.length; at = end) {
     // Close the chunk before the segment that would cross either cap (the 400 above, and
     // TRANSLATE_CHUNK_CHARS, kept under the server's character cap); a lone segment over the
@@ -2140,7 +2142,7 @@ export async function translateParsed(
       progressId: progressId ?? null,
       fileEpochCancel: true,
     });
-    results.push(...r.results);
+    results.push(...r.results.map((tr) => (tr ? budget(tr) : tr)));
     // Dense and aligned with results — a chunk from an older backend that omits
     // `kept` contributes empty arrays, never a shift.
     for (let k = 0; k < r.results.length; k++) keptAll.push(r.kept?.[k] ?? []);

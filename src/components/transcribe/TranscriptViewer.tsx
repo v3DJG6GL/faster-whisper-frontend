@@ -692,6 +692,7 @@ export function TranscriptViewer({
     try {
       await runChunkedTranslate({
         indexes,
+        targets,
         // Read the store, not the render closure: the chunk loop outlives this render and a
         // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
         textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),

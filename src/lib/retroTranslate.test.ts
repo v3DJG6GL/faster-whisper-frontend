@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
   runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type ChunkedTranslateArgs, type TranslateRunUi,
-  translateCtls, translateOptsFrom, untranslatedIndexes,
+  translateCtls, translateOptsFrom, translationKeyBudget, untranslatedIndexes, MAX_TRANSLATION_KEYS,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
 import otherRunsSrc from "../components/transcribe/OtherTranslateRuns.tsx?raw";
@@ -69,6 +69,41 @@ describe("runChunkedTranslate", () => {
       onMerge: (_patch, _prov, _first, _kept, sent) => sents.push(sent),
     });
     expect(sents).toEqual([{ 3: "A", 17: "B" }]);
+  });
+
+  it("bounds the distinct keys a server adds across chunks, run-wide, never a requested one", async () => {
+    let n = 0;
+    const merged: Record<string, string>[] = [];
+    await runChunkedTranslate({
+      indexes: Array.from({ length: 10 }, (_, i) => i),
+      chunk: 1,
+      targets: ["de", "fr"],
+      textOf: (i) => `t${i}`,
+      // Each chunk: the two requested languages plus 16 fresh made-up keys.
+      translate: (sent) =>
+        Promise.resolve({
+          results: sent.map(() => {
+            const tr: Record<string, string> = { de: "d", fr: "f" };
+            for (let k = 0; k < 16; k++) tr[`x${n++}`] = "x";
+            return tr;
+          }),
+        }),
+      onMerge: (patch) => merged.push(...Object.values(patch)),
+    });
+    const keys = new Set(merged.flatMap((tr) => Object.keys(tr)));
+    expect(keys.size).toBe(MAX_TRANSLATION_KEYS);
+    expect(merged.every((tr) => tr.de === "d" && tr.fr === "f")).toBe(true);
+  });
+
+  it("translationKeyBudget passes a run that asked for more than the cap, and returns a clean map as is", () => {
+    const asked = Array.from({ length: 20 }, (_, i) => `l${i}`);
+    const budget = translationKeyBudget(asked);
+    const all = Object.fromEntries(asked.map((k) => [k, k]));
+    expect(budget(all)).toBe(all);
+    expect(Object.keys(budget({ ...all, extra: "x" }))).toEqual(asked);
+    const proto = JSON.parse('{"__proto__": "p", "de": "d"}') as Record<string, string>;
+    const kept = translationKeyBudget([])(proto);
+    expect(kept).toBe(proto);
   });
 
   it("keys the patch by SEGMENT index even for a sparse stale-row set", async () => {
