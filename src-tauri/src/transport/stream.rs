@@ -561,6 +561,12 @@ pub async fn run<F>(
     // loss), but keep this generous so a brief server hiccup doesn't kill a recoverable session;
     // a truly dead link is still caught promptly by the client keepalive PING below.
     const SEND_TIMEOUT: Duration = Duration::from_secs(20);
+    // Ceiling on captured audio queued unsent. A server draining just fast enough that no single
+    // send times out lets the capture queue grow at mic rate for as long as the session runs; past
+    // this the session ends instead. Generous: audio queued during the connect is still in the
+    // queue when the live loop starts, and a link this far behind is already unusable.
+    const MAX_QUEUED_AUDIO_SECS: usize = 120;
+    let max_queued_samples = MAX_QUEUED_AUDIO_SECS * params.in_rate as usize;
 
     // Drive the read half in a DEDICATED task. tokio-tungstenite only answers the server's
     // keepalive PINGs while the read half is polled; sharing one `select!` with a blocked
@@ -663,6 +669,17 @@ pub async fn run<F>(
             maybe = pcm_rx.recv() => {
                 match maybe {
                     Some(chunk) => {
+                        // Chunks are one device buffer each, so the queue's depth in chunks times
+                        // this one's length is the queued audio in samples.
+                        if pcm_rx.len().saturating_mul(chunk.len()) > max_queued_samples {
+                            tracing::warn!(
+                                "[stream] over {MAX_QUEUED_AUDIO_SECS} s of audio queued unsent — the server is not keeping up"
+                            );
+                            on_event(StreamEvent::Error(
+                                "stream connection too slow — the server is not keeping up with the audio".into(),
+                            ));
+                            break;
+                        }
                         let bytes = resampler.push(&chunk);
                         if !bytes.is_empty() {
                             if saving {
@@ -2025,6 +2042,39 @@ mod server_close_tests {
         assert_eq!(events.len(), 2, "{events:?}");
         assert!(events[0].starts_with("error: "), "{events:?}");
         assert_eq!(events[1], "closed");
+    }
+
+    /// A server too slow to drain the audio ends the session once the queue holds more than the
+    /// ceiling, instead of letting the backlog grow for as long as the session runs.
+    #[tokio::test]
+    async fn a_backlog_past_the_ceiling_ends_the_session() {
+        let (pcm_tx, pcm_rx) = mpsc::unbounded_channel();
+        // 125 s of 16 kHz audio already queued: one second per chunk.
+        for _ in 0..125 {
+            pcm_tx.send(vec![0.0f32; 16_000]).unwrap();
+        }
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let session = run(
+            params(serve_restart_after("never-sent")),
+            pcm_rx,
+            stop_rx,
+            move |e| {
+                if let StreamEvent::Error(m) = e {
+                    sink.lock().unwrap().push(m);
+                }
+            },
+        );
+        // Bounded: without the ceiling the session would stream on until stopped.
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(30), session).await;
+        assert!(ended.is_ok(), "the session did not end");
+        drop((pcm_tx, stop_tx));
+        let errors = seen.lock().unwrap().clone();
+        assert_eq!(
+            errors,
+            ["stream connection too slow — the server is not keeping up with the audio"]
+        );
     }
 
     /// Runs one silence-trimmed recording session whose Stop lands before the connect, with
