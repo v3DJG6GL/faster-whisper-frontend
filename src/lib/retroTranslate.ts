@@ -20,6 +20,25 @@ export const TRANSLATE_CHUNK = 32;
  *  long .txt paragraphs whole. UTF-16 length never undercounts its code points. */
 export const TRANSLATE_CHUNK_CHARS = 180_000;
 
+/** How much longer than its source a segment's translation may be (× the source length, with a
+ *  floor of `MAX_TRANSLATION_FLOOR`) before it is dropped as untranslated. Real translations stay
+ *  far below; the server's values are otherwise bounded only by its response body, so 32 segments
+ *  × 16 languages could merge ~32 MiB per chunk into the transcript. The chunked counterpart of
+ *  the dictation path's MAX_DICTATION_TRANSLATION. */
+const MAX_TRANSLATION_GROWTH = 8;
+const MAX_TRANSLATION_FLOOR = 4096;
+
+/** `tr` without the values longer than `cap` (the same object when none is). */
+function dropOversize(tr: Record<string, string>, cap: number): Record<string, string> {
+  const keys = Object.keys(tr);
+  const keep = keys.filter((k) => !(typeof tr[k] === "string" && tr[k].length > cap));
+  if (keep.length === keys.length) return tr;
+  const out: Record<string, string> = {};
+  // An own data property even for "__proto__" (parsed JSON carries it as an ordinary key).
+  for (const k of keep) Object.defineProperty(out, k, { value: tr[k], writable: true, enumerable: true, configurable: true });
+  return out;
+}
+
 /** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
  *  leaves these behind, and they are the run's resume set. The viewer's other doors
  *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
@@ -395,7 +414,9 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     const kept: Record<number, string[]> = {};
     const sent: Record<number, string> = {};
     slice.forEach((segIdx, k) => {
-      const tr = r.results[k] && budget(r.results[k]);
+      // An oversize value reads as untranslated, like an absent key: the stale/retry paths apply.
+      const cap = Math.max(MAX_TRANSLATION_GROWTH * texts[k].length, MAX_TRANSLATION_FLOOR);
+      const tr = r.results[k] && dropOversize(budget(r.results[k]), cap);
       if (tr && Object.keys(tr).length) {
         patch[segIdx] = tr;
         kept[segIdx] = r.kept?.[k] ?? [];

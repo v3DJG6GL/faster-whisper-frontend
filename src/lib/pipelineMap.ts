@@ -5,6 +5,7 @@
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
 import { fmtFull } from "./format";
 import { ownProp } from "./own";
+import { safeDisplayText } from "./sanitize";
 
 /** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
  *  is opaque server JSON: coerce it like `errors`/`conflicts`. In practice it is only ever `PIPELINE_RULES`
@@ -194,7 +195,8 @@ export function mapKeyTwinProblem(k: string, rows: MapRow[], selfId?: number): s
   return twin ? twinReason(twin.k) : null;
 }
 
-const twinReason = (other: string) => `“${other}” is already in this list — edit that row`;
+// The other row's key may be the server's (any length, any characters): quote it bounded and defanged.
+const twinReason = (other: string) => `“${safeDisplayText(other, MAP_FIELD_MAX)}” is already in this list — edit that row`;
 
 /** Why an inline edit turning `row` into `next` is refused, or null to take it. Only the per-pair
  *  rules (mapEntryProblem) refuse a keystroke: they are prefix-closed — every prefix of a phrase

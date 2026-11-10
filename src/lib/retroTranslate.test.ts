@@ -71,6 +71,28 @@ describe("runChunkedTranslate", () => {
     expect(sents).toEqual([{ 3: "A", 17: "B" }]);
   });
 
+  it("drops a translation far longer than its source as untranslated", async () => {
+    const merged: Record<number, Record<string, string>>[] = [];
+    const long = "s".repeat(1000);
+    await runChunkedTranslate({
+      indexes: [0, 1],
+      textOf: (i) => (i === 0 ? "short" : long),
+      translate: () =>
+        Promise.resolve({
+          results: [
+            // The floor: a short source may still take 4096 characters, not one more.
+            { en: "e".repeat(4096), fr: "f".repeat(4097) },
+            // Eight times the source: 8000 fits, 8001 does not.
+            { en: "e".repeat(8000), fr: "f".repeat(8001) },
+          ],
+        }),
+      onMerge: (patch) => merged.push(patch),
+    });
+    expect(merged).toHaveLength(1);
+    expect(Object.keys(merged[0][0])).toEqual(["en"]);
+    expect(Object.keys(merged[0][1])).toEqual(["en"]);
+  });
+
   it("bounds the distinct keys a server adds across chunks, run-wide, never a requested one", async () => {
     let n = 0;
     const merged: Record<string, string>[] = [];

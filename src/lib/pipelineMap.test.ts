@@ -124,6 +124,15 @@ describe("mapKeyTwinProblem", () => {
     expect(mapKeyTwinProblem("STRAẞE", [{ id: 2, k: "straße", v: "" }])).not.toBeNull(); // ẞ lower-cases to ß
   });
 
+  it("quotes the other row's key bounded and defanged", () => {
+    // A key the server may hold at full length is quoted whole.
+    const full = "k".repeat(64);
+    expect(mapKeyTwinProblem("K".repeat(64), [{ id: 3, k: full, v: "" }])).toBe(`“${full}” is already in this list — edit that row`);
+    // An oversize one with a bidi override: cut at 64, the override dropped.
+    const msg = mapKeyTwinProblem("A\u202e" + "B".repeat(500), [{ id: 4, k: "a\u202e" + "b".repeat(500), v: "" }]);
+    expect(msg).toBe(`“a${"b".repeat(63)}” is already in this list — edit that row`);
+  });
+
   it("takes a new key, an exact duplicate, and a row's own case change", () => {
     expect(mapKeyTwinProblem("punkt", rows)).toBeNull();
     expect(mapKeyTwinProblem("komma", rows)).toBeNull(); // one key on the wire: the newest row wins
