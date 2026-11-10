@@ -224,8 +224,10 @@ const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math
 const CONTROLS = /[\u0000-\u001f\u007f]/g;
 const CONTROLS_BUT_LINE_BREAK_TAB = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
-/** A rung the server's float() reads as a decimal (JS Number also takes hex/binary/octal). */
-const DECIMAL_RUNG = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+/** A rung the server's float() reads as a decimal (JS Number also takes hex/binary/octal). The
+ *  dot sits in its own group so a long digit run can't be split two ways: the check stays linear
+ *  on a synced string of any length. */
+export const DECIMAL_RUNG = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 /** A rung in the editor's own alphabet (what parseLadderInput lets a user type). */
 const EDITOR_RUNG = /^\d+(\.\d*)?$|^\.\d+$/;
 

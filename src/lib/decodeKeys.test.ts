@@ -3,6 +3,7 @@ import {
   BOOL_KEYS,
   clampDecodeOverrides,
   countSet,
+  DECIMAL_RUNG,
   stepDecimals,
   DECODE_KEY_LIST,
   DECODE_KEYS,
@@ -188,6 +189,24 @@ describe("clampDecodeOverrides", () => {
     expect(sanitizeDecodeValue("temperature", 5e-324)).toBe(5e-324);
     // …and the spelled-out text stays editable (it may grow, as the exponent form may not).
     expect(parseLadderInput("0.00000015", false, "0.0000001")).toBe("0.00000015");
+  });
+
+  it("the decimal-rung check accepts exactly what the earlier pattern did, in linear time", () => {
+    // The earlier pattern, kept here as the reference: same language, but it backtracked
+    // quadratically on a long digit run that fails at the end.
+    const reference = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+    const samples = ["1", "1.", "1.5", ".5", "+1e3", "-1.e-2", "1..2", "e3", ".", "1.5.5", "", "+", "1e", "1E+5", "0x1"];
+    for (const s of samples) expect(DECIMAL_RUNG.test(s), s).toBe(reference.test(s));
+    // Every string up to five characters over the rung alphabet plus one stray letter.
+    const alphabet = ["0", "1", ".", "e", "E", "+", "-", "x"];
+    let level = [""];
+    for (let len = 1; len <= 5; len++) {
+      level = level.flatMap((p) => alphabet.map((c) => p + c));
+      for (const s of level) expect(DECIMAL_RUNG.test(s), s).toBe(reference.test(s));
+    }
+    const started = performance.now();
+    expect(sanitizeDecodeValue("temperature", "1".repeat(200_000) + "x")).toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it("wrong types are dropped; a newer peer's numeric key passes, its text does not", () => {
