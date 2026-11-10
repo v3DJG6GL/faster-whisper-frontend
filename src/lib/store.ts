@@ -148,6 +148,9 @@ function wellFormedProfiles(v: unknown): Profile[] {
     .filter(
       (p): p is Profile =>
         hasStringFields(p, "id", "name") &&
+        // The reserved `__…__` namespace holds the synthetic quick-add conflict peer; every real
+        // profile id is a UUID (or a legacy "hold"/"handsfree"). Same rejection the sync path makes.
+        !isReservedId((p as Profile).id) &&
         // The ELEMENTS, not just the container — the sync sanitizer's floor. A numeric code throws
         // in `canonicalizeCodes`' localeCompare tie-break, which runs in a component body and in
         // the debounced save.
@@ -585,7 +588,7 @@ function scrubBackendFromSettings(settings: AppSettings, id: string): AppSetting
   const sync = next.sync;
   // hasOwn, not `in`: a blob-authored id like `constructor` is inherited-present, so `in` would
   // rebuild `settings` when nothing pointed at the backend — a spurious config save + push.
-  // `isReservedBackendId` rejects only the `__…__` namespace, so those ids survive `sanitizeBackends`.
+  // `isReservedId` rejects only the `__…__` namespace, so those ids survive `sanitizeBackends`.
   if (sync && (sync.backendId === id || hasOwn(sync.urlOverrides, id))) {
     const urlOverrides = { ...sync.urlOverrides };
     delete urlOverrides[id];

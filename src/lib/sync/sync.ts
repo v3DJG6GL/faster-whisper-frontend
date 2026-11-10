@@ -918,8 +918,10 @@ function safePasteShortcut(codes: unknown, fallback: string[]): string[] {
  *  as the keyring account name, and an inbound `id` is whatever the sender chose — so without
  *  this a peer could name a backend after our snapshot stash and have `readBackendKeys` hand it
  *  the bundle of EVERY backend's key (which the next push, and that backend's own Authorization
- *  header, would then ship to a server of the sender's choosing). */
-function isReservedBackendId(id: unknown): boolean {
+ *  header, would then ship to a server of the sender's choosing). Profiles get the same rule: the
+ *  conflict checks know the synthetic quick-add peer only by its `__quick-add__` id, so a synced
+ *  profile wearing it could neither be disabled by the sync resolver nor resolved in the UI. */
+function isReservedId(id: unknown): boolean {
   return typeof id === "string" && id.startsWith("__") && id.endsWith("__");
 }
 
@@ -983,6 +985,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       (p): p is Profile =>
         !!p && typeof p === "object" &&
         typeof (p as Profile).id === "string" &&
+        !isReservedId((p as Profile).id) &&
         typeof (p as Profile).name === "string" &&
         // The ELEMENTS matter as much as the container: `canonicalizeCodes`' sort tie-break calls
         // `a.localeCompare(b)`, which throws on a non-string code. That runs in a component body
@@ -1369,7 +1372,7 @@ export function sanitizeBackends(list: unknown): Backend[] {
       !!b && typeof b === "object" &&
       typeof (b as Backend).id === "string" &&
       typeof (b as Backend).serverUrl === "string" &&
-      !isReservedBackendId((b as Backend).id),
+      !isReservedId((b as Backend).id),
   )
     // FILL the remaining leaves rather than filtering on them. Rust's `Backend` requires
     // `name`/`model`/`language`/`prompt`/`endpoint`/`responseFormat` with NO serde default, so a
@@ -2524,8 +2527,8 @@ const MAX_SNAPSHOT_CHUNKS = 8192;
 
 /** The keyring account of stash chunk `i`. Chunk 0 is the legacy single account, so a one-chunk
  *  stash is byte-identical to the format before sharding and an old stash reads unchanged. Every
- *  chunk account stays inside the reserved `__…__` namespace that `isReservedBackendId` (and the
- *  store's `isReservedId`) reject: a backend id is its keyring account verbatim, so a peer's or an
+ *  chunk account stays inside the reserved `__…__` namespace that `isReservedId` (here and in the
+ *  store) rejects: a backend id is its keyring account verbatim, so a peer's or an
  *  imported backend named after a chunk would otherwise read that slice of every key out through
  *  `readBackendKeys`, or overwrite and delete it. */
 function snapshotChunkAccount(i: number): string {
@@ -3760,7 +3763,7 @@ export function securityChanges(
     // (a locked wallet) or because a backend has no key yet, and requiring a known local value
     // would let an incoming key be written with no review in exactly the cases we can least
     // verify.
-    // Own-property reads: an inbound id is whatever the blob chose, and `isReservedBackendId`
+    // Own-property reads: an inbound id is whatever the blob chose, and `isReservedId`
     // rejects only the `__…__` namespace — so `toString`/`constructor` otherwise make both maps
     // return the same inherited function (comparison false, no prompt) or mislabel the detail line
     // as "the stored key would be replaced" for a key that does not exist locally.

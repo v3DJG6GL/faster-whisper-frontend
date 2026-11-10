@@ -22,7 +22,7 @@ import {
   securityChanges,
 } from "./sync";
 import { safeIdentityText } from "../sanitize";
-import { useApp } from "../store";
+import { CONFIG_VERSION, useApp } from "../store";
 import { credentialGeneration } from "../capabilities";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { IS_WINDOWS } from "../platform";
@@ -1514,6 +1514,19 @@ describe("applyBlob keep-local (baseline)", () => {
     // Claims a key nobody supplies → missing; a backend not selected (empty list) → nothing.
     expect(backendKeyFates([backend({ id: "b2", hasApiKey: true })], undefined, local, s).missing.map((b) => b.id)).toEqual(["b2"]);
     expect(backendKeyFates([], { b1: "sk" }, local, s)).toEqual({ carried: false, missing: [], moved: [] });
+  });
+
+  it("a profile wearing the reserved quick-add peer id is dropped at both floors", () => {
+    const uuid = "4f7c2a9e-1b3d-4e5f-8a6b-7c8d9e0f1a2b";
+    const list = [profile({ id: "__quick-add__" }), profile({ id: uuid }), profile({ id: "hold" })];
+    expect(sanitizeProfiles(list).map((p) => p.id)).toEqual([uuid, "hold"]);
+    const before = useApp.getState();
+    try {
+      useApp.getState().hydrate({ version: CONFIG_VERSION, settings: settings(), backends: [], profiles: list });
+      expect(useApp.getState().profiles.map((p) => p.id)).toEqual([uuid, "hold"]);
+    } finally {
+      useApp.setState(before, true);
+    }
   });
 
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {

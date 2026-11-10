@@ -2,7 +2,7 @@
 //
 // Backend ids are used verbatim as keys in several plain-object maps (`usage`, `connections`,
 // `settings.sync.urlOverrides`, the keyring read-back), and an inbound id is whatever a sync blob
-// or an imported file chose. `isReservedBackendId` only rejects the `__…__` keyring namespace, so
+// or an imported file chose. `isReservedId` only rejects the `__…__` keyring namespace, so
 // `constructor`, `toString`, `valueOf`, `hasOwnProperty`, `isPrototypeOf`… all survive
 // sanitization — and for every one of them `map[id]` returns a FUNCTION off `Object.prototype` and
 // `id in map` returns true. `?.` does not help: an inherited value is non-nullish.
