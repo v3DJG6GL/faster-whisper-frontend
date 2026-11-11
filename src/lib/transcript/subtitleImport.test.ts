@@ -197,6 +197,25 @@ describe("plain text + errors", () => {
     const named = parseImportedText("lrc", "[00:12.00]Kate: lunch at noon");
     expect(named.segments[0]).toMatchObject({ speaker: "Kate", text: "lunch at noon" });
   });
+  it("a 310-digit clock field never lands as an Infinity time", () => {
+    // parseInt of 310 digits is Infinity, which exports wrote as "Infinity:NaN" stamps.
+    const big = "9".repeat(310);
+    const finite = (r: ReturnType<typeof parseImportedText>) =>
+      r.segments.every((s) => [s.start, s.end].every((t) => t === undefined || Number.isFinite(t)));
+    const srt = parseImportedText(
+      "srt",
+      `1\n00:00:01,000 --> 00:00:02,000\nhello\n\n2\n${big}:00:03,000 --> 00:00:04,000\nworld\n\n3\n00:00:05,000 --> 00:00:06,000\nlast\n`,
+    );
+    expect(finite(srt)).toBe(true);
+    expect(srt.segments.map((s) => [s.start, s.text])).toEqual([[1, "hello"], [undefined, "world"], [5, "last"]]);
+    const vtt = parseImportedText("vtt", `WEBVTT\n\n00:01.000 --> 00:02.000\nhello\n\n00:${big}:03.000 --> 00:04.000\nworld\n`);
+    expect(finite(vtt)).toBe(true);
+    // LRC: an oversized minute ends the stamps like non-tag text; a line it opens has none.
+    const lrc = parseImportedText("lrc", `[00:01.00]hello\n[${big}:00.00]gone\n[00:02.00][${big}:00.00]chorus\n[00:03.00]tail\n`);
+    expect(finite(lrc)).toBe(true);
+    expect(lrc.segments.map((s) => s.start)).toEqual([1, 2, 3]);
+    expect(lrc.segments[1].text).toBe(`[${big}:00.00]chorus`);
+  });
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);
     expect(() => parseImportedText("json", "not json")).toThrow(/Not valid JSON/);

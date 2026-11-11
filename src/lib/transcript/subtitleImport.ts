@@ -72,7 +72,10 @@ function parseClock(s: string): number | undefined {
   if (!m) return undefined;
   const h = m[1] ? parseInt(m[1], 10) : 0;
   const frac = m[4] ? parseInt(m[4].padEnd(3, "0"), 10) / 1000 : 0;
-  return h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + frac;
+  const v = h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + frac;
+  // A file or site track can carry a 300+ digit field, which parses to Infinity and would
+  // write "Infinity:NaN" stamps into every export: no clock, so the line reads as text.
+  return Number.isFinite(v) ? v : undefined;
 }
 
 /** Character references a cue may carry (WebVTT allows all HTML ones; sites send
@@ -558,7 +561,11 @@ function parseLrc(body: string): ImportedText {
     let tm: RegExpExecArray | null;
     while ((tm = tagRe.exec(trimmed)) !== null) {
       if (tm.index !== lastTagEnd) break; // non-tag text interrupted
-      starts.push(parseInt(tm[1], 10) * 60 + parseFloat(tm[2]));
+      const start = parseInt(tm[1], 10) * 60 + parseFloat(tm[2]);
+      // A 300+ digit stamp parses to Infinity: it ends the stamps like non-tag text does
+      // (lastTagEnd stays before it), rather than landing as a segment start.
+      if (!Number.isFinite(start)) break;
+      starts.push(start);
       lastTagEnd = tagRe.lastIndex;
     }
     if (starts.length === 0) continue; // metadata tags ([ti:…]) and blanks
