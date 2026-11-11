@@ -3,7 +3,7 @@
 // per-setting sync switches + status/manual controls + conflict dialog).
 // The engine lives in lib/sync/sync.ts; this screen only drives it.
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
@@ -36,12 +36,13 @@ import {
   disableConflictingProfiles,
   getPendingConflict,
   getPendingReview,
+  heldKeyCandidates,
   isCodeList,
   isPlainObject,
   migrateBlob,
   pullNow,
   pushNow,
-  readHeldKeyIds,
+  readHeldKeys,
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
@@ -218,24 +219,92 @@ export function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof bac
 const NO_BACKENDS: Backend[] = [];
 const NO_IDS: ReadonlySet<string> = new Set();
 
-/** `readHeldKeyIds` for a consent dialog: the ids of `incoming` (the list its apply installs, or
- *  `NO_BACKENDS` when backends are not selected) new to this device whose keyring entry holds a
- *  key or could not be read. Empty until the read is back, so no notice flashes for a key that
- *  turns out absent, and the confirm button never waits on a locked wallet: the apply itself does
- *  not depend on the answer. Re-read when this device's list changes. */
-export function useHeldKeyIds(incoming: Backend[], secrets: unknown): ReadonlySet<string> {
+/** One dialog's keyring reads, each kept for the exact candidate list (`heldKeyCandidates`) it was
+ *  made for: a confirm never decides on a result read for an older file, server copy or
+ *  category selection, and a repeat for the same list reuses the read (no second unlock prompt). */
+export function heldKeyReads(): (candidates: string[]) => Promise<ReadonlySet<string>> {
+  let last: { key: string; ids: Promise<ReadonlySet<string>> } | null = null;
+  return (candidates) => {
+    const key = JSON.stringify(candidates);
+    if (last?.key !== key) last = { key, ids: readHeldKeys(candidates) };
+    return last.ids;
+  };
+}
+
+/** A confirm click's verdict on the held keys. The dialog shows held-key notices only once the
+ *  read is back, and the button does not wait for it, so a click can land first — and the file or
+ *  server copy can stretch that window (hundreds of decoy ids read one by one, or a locked wallet
+ *  parked behind its unlock prompt). So the click awaits the read for the current list (bounded:
+ *  a timeout counts every id as held) and goes ahead only when every held-key notice it yields
+ *  (`noticed`) was already on screen (`shown`, the set the click's render had); otherwise the
+ *  caller shows them and the user clicks again. */
+export async function confirmHeldKeys(
+  read: (candidates: string[]) => Promise<ReadonlySet<string>>,
+  candidates: string[],
+  shown: ReadonlySet<string>,
+  noticed: (held: ReadonlySet<string>) => readonly string[],
+): Promise<{ ids: ReadonlySet<string>; go: boolean }> {
+  const ids = await read(candidates);
+  const before = new Set(noticed(shown));
+  return { ids, go: noticed(ids).every((id) => before.has(id)) };
+}
+
+/** The ids of the held-key notices (`anyKey` moves) `fates` shows — `confirmHeldKeys`' `noticed`. */
+export const heldKeyNoticeIds = (fates: { moved: { backend: Backend; anyKey?: boolean }[] }): string[] =>
+  fates.moved.filter((m) => m.anyKey).map((m) => m.backend.id);
+
+/** `readHeldKeyIds` for a consent dialog. `held`: the ids of `incoming` (the list its apply
+ *  installs, or `NO_BACKENDS` when backends are not selected) whose keyring entry the key notices
+ *  need and that hold a key or could not be read — empty until the read for the CURRENT list is
+ *  back, so no notice flashes for a key that turns out absent and the button is never disabled
+ *  before a click. `confirm`, awaited by the confirm handler before it applies: `true` = apply;
+ *  `false` = the read found a held key whose notice was not on screen, now shown: apply nothing,
+ *  the user clicks again; `null` = do nothing at all (another confirm is in flight, or the dialog
+ *  unmounted meanwhile — no state is set). Re-read when this device's list changes. */
+export function useHeldKeyIds(
+  incoming: Backend[],
+  secrets: unknown,
+): {
+  held: ReadonlySet<string>;
+  confirm: (noticed: (held: ReadonlySet<string>) => readonly string[]) => Promise<boolean | null>;
+} {
   const local = useApp((st) => st.backends);
-  const [held, setHeld] = useState<ReadonlySet<string>>(NO_IDS);
+  const candidates = useMemo(() => heldKeyCandidates(incoming, secrets, local), [incoming, secrets, local]);
+  const key = JSON.stringify(candidates);
+  const [read] = useState(heldKeyReads);
+  const [shown, setShown] = useState<{ key: string; ids: ReadonlySet<string> } | null>(null);
+  const mounted = useRef(false);
+  const confirming = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     let live = true;
-    void readHeldKeyIds(incoming, secrets, local).then((ids) => {
-      if (live) setHeld(ids);
+    void read(candidates).then((ids) => {
+      if (live) setShown({ key, ids });
     });
     return () => {
       live = false;
     };
-  }, [incoming, secrets, local]);
-  return held;
+  }, [read, candidates, key]);
+  const held = candidates.length > 0 && shown?.key === key ? shown.ids : NO_IDS;
+  const confirm = async (noticed: (held: ReadonlySet<string>) => readonly string[]): Promise<boolean | null> => {
+    if (candidates.length === 0) return true;
+    if (confirming.current) return null;
+    confirming.current = true;
+    try {
+      const { ids, go } = await confirmHeldKeys(read, candidates, held, noticed);
+      if (!mounted.current) return null;
+      if (!go) setShown({ key, ids });
+      return go;
+    } finally {
+      confirming.current = false;
+    }
+  };
+  return { held, confirm };
 }
 
 /** Per-category selection + hazard preview for a parsed import file. */
@@ -306,19 +375,22 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // server, that key goes there, whatever the file's own `hasApiKey` says (`backendKeyFates`).
   // A removed backend's key outlives it, so an id the file re-adds also gets the key held here.
   const heldKeys = useHeldKeyIds(sel.backends ? installBackends : NO_BACKENDS, result.secrets);
-  const keyFates = backendKeyFates(
-    sel.backends ? installBackends : [],
-    result.secrets,
-    st.backends,
-    st.settings,
-    heldKeys,
-  );
+  const fatesWith = (held: ReadonlySet<string>) =>
+    backendKeyFates(sel.backends ? installBackends : [], result.secrets, st.backends, st.settings, held);
+  const keyFates = fatesWith(heldKeys.held);
 
   const replaced = replacedNames(sel, categories, st);
 
   const apply = async () => {
     setApplying(true);
     setError(null);
+    // The held-key read may still be out: the apply waits for it and stops at a notice the
+    // user has not seen yet (`useHeldKeyIds`).
+    const go = await heldKeys.confirm((h) => heldKeyNoticeIds(fatesWith(h)));
+    if (go !== true) {
+      if (go === false) setApplying(false);
+      return;
+    }
     try {
       const applied = await applyImport(sel, result);
       if (!applied) {
@@ -486,14 +558,13 @@ export function RestoreFromServer({
   // No security review stands in front of this direct `applyBlob`, so this is the only place a
   // moved key or the account's stored keys replacing this device's is disclosed.
   const heldKeys = useHeldKeyIds(sel.backends ? installBackends : NO_BACKENDS, blob.backends?.secrets);
-  const fates = backendKeyFates(
-    sel.backends ? installBackends : [],
-    blob.backends?.secrets,
-    st.backends,
-    st.settings,
-    heldKeys,
-  );
-  const keyFates = fatesAfterSuppliedKey(fates, sel.backends ? installBackends : [], keyFor);
+  const fatesWith = (held: ReadonlySet<string>) =>
+    fatesAfterSuppliedKey(
+      backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings, held),
+      sel.backends ? installBackends : [],
+      keyFor,
+    );
+  const keyFates = fatesWith(heldKeys.held);
 
   const apply = async () => {
     // Re-check right before applying: applyBlob refuses while dictating, and
@@ -506,6 +577,12 @@ export function RestoreFromServer({
     }
     setApplying(true);
     setError(null);
+    // As in ImportPreview: wait for the held-key read, and stop at a notice not yet seen.
+    const go = await heldKeys.confirm((h) => heldKeyNoticeIds(fatesWith(h)));
+    if (go !== true) {
+      if (go === false) setApplying(false);
+      return;
+    }
     try {
       // The boolean matters: false = nothing was applied (a session started between the
       // check above and applyBlob's own, or the apply was dropped stale after its retries).

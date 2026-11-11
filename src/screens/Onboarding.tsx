@@ -227,6 +227,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     if (!blob) return;
     setBusy(true);
     setError(null);
+    // The held-key read may still be out: wait for it, and stop at a notice not yet seen
+    // (`useHeldKeyIds`) — the user restores with a second click.
+    const go = await heldKeys.confirm((h) => heldKeyMovesWith(h).map((m) => m.backend.id));
+    if (go !== true) {
+      if (go === false) setBusy(false);
+      return;
+    }
     // Only for this attempt's error line (the key the user proved stays under the gate's own entry).
     let keyWriteFailed = false;
     // The failed write was for a keyless kept backend: the keptKeyless note below the buttons
@@ -349,11 +356,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // carried, keys to re-enter) is what a fresh device expects and the Home checklist covers. The
   // key the user typed at the gate is written over the backend at that address.
   const heldKeys = useHeldKeyIds(pulledBackends.list, pulledBackends.secrets);
-  const heldKeyMoves = fatesAfterSuppliedKey(
-    backendKeyFates(pulledBackends.list, pulledBackends.secrets, backends, st.getState().settings, heldKeys),
-    pulledBackends.list,
-    key ? storedTypedUrl(url) : undefined,
-  ).moved.filter((m) => m.anyKey);
+  const heldKeyMovesWith = (held: ReadonlySet<string>) =>
+    fatesAfterSuppliedKey(
+      backendKeyFates(pulledBackends.list, pulledBackends.secrets, backends, st.getState().settings, held),
+      pulledBackends.list,
+      key ? storedTypedUrl(url) : undefined,
+    ).moved.filter((m) => m.anyKey);
+  const heldKeyMoves = heldKeyMovesWith(heldKeys.held);
   // How the restore's collision pass resolves hotkeys (all categories on), predicted as the Sync
   // tab's restore preview does: `applyBlob` switches off an incoming profile that collides with
   // the quick-add chord (the copy's, else this device's) or with another profile, and `finish()`

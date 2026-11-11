@@ -6,10 +6,10 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { backendKeyFates, carriesQuickAddPin, readHeldKeyIds, sanitizeInboundBackends } from "./sync";
+import { backendKeyFates, carriesQuickAddPin, heldKeyCandidates, readHeldKeyIds, sanitizeInboundBackends } from "./sync";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
-import { KeyFateNotices } from "@/components/sync/SettingsSync";
+import { KeyFateNotices, confirmHeldKeys, heldKeyNoticeIds, heldKeyReads } from "@/components/sync/SettingsSync";
 import type { SyncBlob } from "./syncTypes";
 
 const api = vi.hoisted(() => ({
@@ -17,12 +17,15 @@ const api = vi.hoisted(() => ({
   unreadable: [] as string[],
   fail: false,
   reads: [] as string[][],
+  // Set by a test to hold the read open until it resolves this.
+  gate: null as Promise<void> | null,
 }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   isTauri: true,
   readBackendKeyStates: async (ids: string[]) => {
     api.reads.push(ids);
+    if (api.gate) await api.gate;
     if (api.fail) throw new Error("keyring locked");
     return {
       keys: Object.fromEntries(ids.filter((id) => id in api.keys).map((id) => [id, api.keys[id]])),
@@ -47,6 +50,7 @@ describe("the held key of an id the blob re-adds", () => {
     api.unreadable = [];
     api.fail = false;
     api.reads = [];
+    api.gate = null;
   });
 
   it("is disclosed when the keyring holds one, with the new host", async () => {
@@ -91,6 +95,67 @@ describe("the held key of an id the blob re-adds", () => {
     expect((await readHeldKeyIds(incoming, { b9: "peer-key" }, local)).size).toBe(0);
     expect((await readHeldKeyIds([incoming[0]], undefined, local)).size).toBe(0);
     expect(api.reads).toEqual([]);
+  });
+});
+
+describe("a confirm click that lands before the held-key read is back", () => {
+  beforeEach(() => {
+    api.keys = {};
+    api.unreadable = [];
+    api.fail = false;
+    api.reads = [];
+    api.gate = null;
+  });
+
+  const noticed = (h: ReadonlySet<string>) =>
+    heldKeyNoticeIds(backendKeyFates(incoming, undefined, local, DEFAULT_SETTINGS, h));
+  const candidates = () => heldKeyCandidates(incoming, undefined, local);
+  const NONE: ReadonlySet<string> = new Set();
+
+  it("applies nothing on a held key it did not show; the second click applies", async () => {
+    api.keys = { b9: "old-key" };
+    let open!: () => void;
+    api.gate = new Promise((r) => (open = r));
+    const read = heldKeyReads();
+    // The dialog's mount starts the read; the click lands while it is out, with nothing shown.
+    void read(candidates());
+    const click = confirmHeldKeys(read, candidates(), NONE, noticed);
+    open();
+    const first = await click;
+    expect(first.go).toBe(false);
+    // The caller now shows what the read found: the notice naming the new host.
+    expect(notices(first.ids)).toContain("evil.example");
+    const second = await confirmHeldKeys(read, candidates(), first.ids, noticed);
+    expect(second.go).toBe(true);
+    // One keyring read for the list, shared by the mount and both clicks.
+    expect(api.reads).toEqual([["b9"]]);
+  });
+
+  it("applies on the first click when nothing is held", async () => {
+    let open!: () => void;
+    api.gate = new Promise((r) => (open = r));
+    const read = heldKeyReads();
+    const click = confirmHeldKeys(read, candidates(), NONE, noticed);
+    open();
+    expect((await click).go).toBe(true);
+  });
+
+  it("fails closed on a failed read: notice first, then the second click applies", async () => {
+    api.fail = true;
+    const read = heldKeyReads();
+    const first = await confirmHeldKeys(read, candidates(), NONE, noticed);
+    expect(first.go).toBe(false);
+    expect(notices(first.ids)).toContain("any API key this device holds for this ID would be sent to");
+    expect((await confirmHeldKeys(read, candidates(), first.ids, noticed)).go).toBe(true);
+  });
+
+  it("never decides on a result read for another list", async () => {
+    api.keys = { b9: "old-key" };
+    const read = heldKeyReads();
+    // A read for an older selection without b9 came back empty …
+    expect((await read([])).size).toBe(0);
+    // … and the click for the current list still reads b9 and stops.
+    expect((await confirmHeldKeys(read, candidates(), NONE, noticed)).go).toBe(false);
   });
 });
 

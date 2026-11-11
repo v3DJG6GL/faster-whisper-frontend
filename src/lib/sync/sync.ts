@@ -1589,22 +1589,27 @@ export function backendKeyFates(
   };
 }
 
-/** The ids of `incoming` (the list an import or restore installs) that this device's `local`
- *  list lacks and that carry no inbound key, whose keyring entry holds a key or could not be
- *  read — `backendKeyFates`' `heldKeys`. One bounded read, none when no id qualifies (a fresh
- *  device restoring a list with keys, or one that already holds every id). A failed or timed-out
- *  read counts every candidate as held (fail closed: the dialog then discloses, never hides). */
-export async function readHeldKeyIds(
-  incoming: Backend[],
-  secrets: unknown,
-  local: readonly Backend[],
-): Promise<ReadonlySet<string>> {
+/** The ids of `incoming` (the list an import or restore installs) whose keyring entry
+ *  `backendKeyFates` needs: new to this device's `local` list, and no inbound key. None when no
+ *  id qualifies (a fresh device restoring a list with keys, or one that already holds every id). */
+export function heldKeyCandidates(incoming: Backend[], secrets: unknown, local: readonly Backend[]): string[] {
   const here = new Set(local.map((b) => b.id));
-  const ids = incoming.map((b) => b.id).filter((id) => !here.has(id) && inboundSecret(secrets, id) === undefined);
+  return incoming.map((b) => b.id).filter((id) => !here.has(id) && inboundSecret(secrets, id) === undefined);
+}
+
+/** Which of `ids` (`heldKeyCandidates`) hold a key in this device's keyring, or could not be read —
+ *  `backendKeyFates`' `heldKeys`. One bounded read, none for an empty list. A failed or timed-out
+ *  read counts every id as held (fail closed: the dialog then discloses, never hides). */
+export async function readHeldKeys(ids: string[]): Promise<ReadonlySet<string>> {
   if (ids.length === 0) return new Set();
   const read = await readKeyStatesBounded(ids).catch(() => null);
   if (!read || !isPlainObject(read.keys) || !Array.isArray(read.unreadable)) return new Set(ids);
   return new Set(ids.filter((id) => hasOwn(read.keys, id) || read.unreadable.includes(id)));
+}
+
+/** `readHeldKeys` of `heldKeyCandidates`. */
+export function readHeldKeyIds(incoming: Backend[], secrets: unknown, local: readonly Backend[]): Promise<ReadonlySet<string>> {
+  return readHeldKeys(heldKeyCandidates(incoming, secrets, local));
 }
 
 /** Write incoming secrets to the keyring, then re-derive every backend's
