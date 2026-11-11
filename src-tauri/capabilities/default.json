@@ -12,7 +12,6 @@
     "core:default",
     "core:event:default",
     "core:window:default",
-    "core:window:allow-set-size",
     "dialog:default"
   ]
 }

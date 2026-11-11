@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-dnd",
-  "description": "Drag-and-drop events for the main window's Transcribe dropzone. Redundant while default.json grants core:default (which includes core:webview:default) to every window.",
+  "description": "Main-window-only grants: window set-size for the Transcribe Studio minimum width (no aux window resizes itself from JS), and drag-and-drop events for the Transcribe dropzone (redundant while default.json grants core:default, which includes core:webview:default, to every window).",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:webview:default"
+    "core:webview:default",
+    "core:window:allow-set-size"
   ]
 }
