@@ -274,6 +274,20 @@ describe("securityChanges: folder moves", () => {
     expect(row("/home/u/a\u{E0067}\u{E007F}")).toBe("/home/u/a\\u{E0067}\\u{E007F}");
     expect(row("/home/u/\u{1F3F4}\u{E0067}\u{E0062}")).toBe("/home/u/\u{1F3F4}\\u{E0067}\\u{E0062}");
     expect(row("/home/u/1\ufe0fx")).toBe("/home/u/1\\u{FE0F}x");
+    // A tag run that is no subdivision code (too long, a space or upper-case tag, a single tag)
+    // is a payload the display draws as nothing.
+    const tags = (s: string) => [...s].map((c) => String.fromCodePoint(0xe0000 + c.codePointAt(0)!)).join("");
+    const esc = (s: string) => [...s].map((c) => `\\u{E00${(c.codePointAt(0)!).toString(16).toUpperCase()}}`).join("");
+    for (const payload of ["gbengxyz", "gb eng", "GBENG", "g", "a".repeat(400)]) {
+      expect(row(`/home/u/\u{1F3F4}${tags(payload)}\u{E007F}`)).toBe(`/home/u/\u{1F3F4}${esc(payload)}\\u{E007F}`);
+    }
+    // A joiner that sits between shapers but before nothing it shapes with.
+    expect(row("/home/u/\u{1F600}\u200dx")).toBe("/home/u/\u{1F600}\\u{200D}x");
+    expect(row("/home/u/\u2764\ufe0f\u200dx")).toBe("/home/u/\u2764 \\u{200D}x"); // kept VS16 drawn as a space
+    expect(row("/home/u/\u{1F600}\u200d\u0915")).toBe("/home/u/\u{1F600}\\u{200D}\u0915");
+    expect(row("/home/u/\u0628\u200cx")).toBe("/home/u/\u0628\\u{200C}x");
+    expect(row("/home/u/\u0915\u094d\u200dx")).toBe("/home/u/\u0915\u094d\\u{200D}x");
+    expect(row("/home/u/\u0915\u200d\u{1F600}")).toBe("/home/u/\u0915\\u{200D}\u{1F600}");
   });
   it("renders legitimate script, emoji, flag and keycap folder names as before", () => {
     for (const plain of [
@@ -287,6 +301,13 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u{1F3F3}\ufe0f\u200d\u{1F308}", // rainbow flag
       "/home/u/\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}", // England
       "/home/u/\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F} x", // Scotland
+      "/home/u/\u{1F3F4}\u{E0067}\u{E0062}\u{E0077}\u{E006C}\u{E0073}\u{E007F}", // Wales
+      "/home/u/\u{1F3F3}\ufe0f\u200d\u26a7\ufe0f", // transgender flag
+      "/home/u/\u{1F43B}\u200d\u2744\ufe0f", // polar bear
+      "/home/u/\u{1F9D1}\u200d\u{1F9B0}", // person: red hair
+      "/home/u/\u{1F3C3}\u200d\u27a1\ufe0f", // facing right
+      "/home/u/\u09b0\u200d\u09cd\u09af", // Bengali ya-phala after ra
+      "/home/u/\u0dc1\u0dca\u200d\u0dbb\u0dd3", // Sinhala shri
       "/home/u/1\ufe0f\u20e3", // keycap
       "/home/u/#\ufe0f\u20e3 Takes",
       "/home/u/Musik \u2764\ufe0f",

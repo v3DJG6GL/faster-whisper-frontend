@@ -3759,9 +3759,10 @@ function edgeBlankText(s: string): string {
  *  separator lookalike (`SEP_LOOKALIKES`), and a joiner or variation selector that shapes nothing.
  *  The blank edges Rust trims are written out compactly (`edgeBlankText`). Kept: a ZWJ or VS16 right after an emoji
  *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
- *  mark of a script it shapes (`JOINING_LETTER`) — each only before a visible code point, as a
- *  joiner before a separator, a blank or another joiner joins nothing — plus a keycap's VS16
- *  (`1️⃣`) and a subdivision flag's tag run (`🏴` + tags + U+E007F). A path with none of the
+ *  mark of a script it shapes (`JOINING_LETTER`) — a ZWJ only before an emoji, a script's joiner
+ *  only before a letter or mark of such a script, as a joiner before anything else joins nothing —
+ *  plus a keycap's VS16 (`1️⃣`) and a subdivision flag's tag run (`🏴` + 2–7 tag digits or
+ *  lower-case tag letters + U+E007F). A path with none of the
  *  escaped ones (folder-picker paths, emoji and script names included, except a rare name
  *  holding a slash lookalike such as a fullwidth `AC／DC`) is returned unchanged; one no OS opens even once trimmed is left as it is, so the walk stays bounded. */
 function escapeHiddenPathChars(p: string): string {
@@ -3777,9 +3778,12 @@ function escapeHiddenPathChars(p: string): string {
   for (let i = 0, start = 0; i <= cps.length; i++) {
     if (i < cps.length && !isSep(cps[i])) {
       if (cps[i] === "\u{1F3F4}") {
+        // Only a real subdivision tag run (2–7 tag digits / lower-case tag letters, as in
+        // `gbeng`): any other run is a peer's payload the display draws as nothing.
+        const isSubdivisionTag = (c: number) => (c >= 0xe0030 && c <= 0xe0039) || (c >= 0xe0061 && c <= 0xe007a);
         let j = i + 1;
-        for (let c = cps[j]?.codePointAt(0) ?? 0; c >= 0xe0020 && c <= 0xe007e; c = cps[j]?.codePointAt(0) ?? 0) j++;
-        if (j > i + 1 && cps[j] === "\u{E007F}") {
+        while (j - i - 1 < 8 && isSubdivisionTag(cps[j]?.codePointAt(0) ?? 0)) j++;
+        if (j - i - 1 >= 2 && j - i - 1 <= 7 && cps[j] === "\u{E007F}") {
           flagTag.fill(true, i + 1, j + 1);
           i = j;
         }
@@ -3809,7 +3813,13 @@ function escapeHiddenPathChars(p: string): string {
     else if (flagTag[i]) hide = false;
     else if (SEP_LOOKALIKES.has(code)) hide = true;
     else if (code === 0x200c || code === 0x200d)
-      hide = !(code === 0x200d ? base !== null : base === "script") || !visible(cps[i + 1]);
+      // A kept joiner must shape with what follows too: an emoji's ZWJ only before another emoji,
+      // a script's ZWNJ/ZWJ only before a letter or mark of a script it shapes. Before anything
+      // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`.
+      hide =
+        !(code === 0x200d ? base !== null : base === "script") ||
+        !visible(cps[i + 1]) ||
+        !(base === "script" ? JOINING_LETTER : EMOJI_BASE).test(cps[i + 1] ?? "");
     else if (code >= 0xfe00 && code <= 0xfe0f)
       hide = !(code === 0xfe0f && (base === "emoji" || (/^[0-9#*]$/.test(cps[i - 1] ?? "") && cps[i + 1] === "⃣")));
     else if (code === 0x20) hide = isSep(cps[i - 1]) || isSep(cps[i + 1]) || cps[i - 1] === " ";
