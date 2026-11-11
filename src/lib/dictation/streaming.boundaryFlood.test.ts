@@ -85,6 +85,7 @@ function oweRecord(id, from) { if (!owedUtterances.some((o) => o.id === id)) owe
 
 const ENV_API = `
 let ids = 0;
+let settled = null;
 return {
   boundary(sep) { if (noCoalesce) boundaryTail = null; handler({ payload: sep }); },
   /** A final whose phrase task types the document (or skips it, owing its record). */
@@ -111,6 +112,9 @@ return {
   },
   /** A server final carrying a document but no utterance (nothing queued for it). */
   bareDoc(text) { committedDoc = text; },
+  /** A predecessor link that rejected (no counted task's catch after it yet). */
+  rejectHead() { injectChain = Start.reject(new Error("head")); },
+  async settle() { await injectChain.then(() => "ok", (e) => e.message).then((r) => { settled = r; }); return settled; },
   hold() { let open; gate = new Promise((r) => { open = r; }); return () => { gate = null; open(); }; },
   async drain() { for (let c = injectChain; ; c = injectChain) { await c; await null; if (c === injectChain) return; } },
   state: () => ({ log: [...log], injectedText, carryText, carrySep, owed: owedUtterances.map((o) => ({ ...o })), clipDirty, clipBooked, clipLanded, clipLastCopy, bankedDoc, phraseDirty }),
@@ -124,6 +128,8 @@ type Env = {
   boundary(sep: string): void;
   final(text: string, typed?: boolean): void;
   bareDoc(text: string): void;
+  rejectHead(): void;
+  settle(): Promise<string>;
   hold(): () => void;
   drain(): Promise<void>;
   state(): Record<string, unknown> & { log: string[] };
@@ -137,6 +143,7 @@ const compiled = (async () => {
   const src = `${PRELUDE}
 ${topLevel("enqueueInject")}
 ${topLevel("oweDroppedInsert")}
+${topLevel("refundThrough")}
 const handler = ${boundaryHandler()};
 ${ENV_API}`;
   const { code } = await transformWithOxc(`function makeEnv(Start, stats, settleOwedUtterances, untypedRemainder, joinCarry, noCoalesce, live) {${src}}`, "env.ts");
@@ -282,6 +289,17 @@ describe("the hard break under a boundary flood", () => {
     expect(e.state().log[0]).toBe('type "Stuck."');
   });
 
+  it("links a rejected predecessor skips refund their cost and pass the rejection on", async () => {
+    const e = await env(false, Promise, false);
+    e.rejectHead();
+    e.bareDoc("some text");
+    e.boundary(" ");
+    expect(e.cost()).toBeGreaterThan(0);
+    // The chain settles as without the arm: still rejected, with the head's reason.
+    expect(await e.settle()).toBe("head");
+    expect(e.cost()).toBe(0);
+  });
+
   it("finals dropped at the cap before a break still owe their records into the carry", async () => {
     const e = await env(false);
     const open = e.hold();
@@ -296,5 +314,81 @@ describe("the hard break under a boundary flood", () => {
     const s = e.state();
     expect(s.carryText).toContain("p69.");
     expect((s.owed as { id: string }[]).length).toBe(70);
+  });
+});
+
+describe("the pause's queued window close behind a stuck chain head", () => {
+  // bumpPhraseEnd's close link is uncounted and comes once per 1.2 s pause. It used to capture the
+  // whole closed window, whose `baseline` is the previous final's entire document, so every link
+  // waiting behind a stuck head parked a distinct multi-MB copy. It now holds the window's `rec`.
+  const PAUSE_ENV = `
+let insertCfg = { live: true, activation: "handsfree" };
+let phraseEndTimer = null, phraseDeferSince = null, phraseDirty = false;
+const PHRASE_DEFER_MAX_MS = 30000, PHRASE_END_QUIET_MS = 1200;
+const isCapturing = () => false, pendingIsLive = () => false, pending = null;
+const enqueueAutoEnter = () => {};
+let committedDoc = "", clipBaseline = "", clipOrdinalSeen = true, clipClosed = null;
+let clipDirty = false, beganInjection = false, clipBooked = null, clipByLang = undefined, clipLanded = false;
+let boundaryTail = null;
+let open;
+let injectChain = new Promise((r) => { open = r; });
+const giveClipboardBack = async () => {};
+const flushClipByLang = () => { clipByLang = undefined; };
+let fire = null;
+const setTimeout = (cb) => { fire = cb; return 1; };
+const clearTimeout = () => {};
+${topLevel("bumpPhraseEnd")}
+return {
+  pause(doc) { committedDoc = doc; bumpPhraseEnd(); const cb = fire; fire = null; cb(); return clipClosed; },
+  land(booked) { clipLanded = true; clipBooked = booked; },
+  release() { open(); },
+  async drain() { for (let c = injectChain; ; c = injectChain) { await c; await null; if (c === injectChain) return; } },
+  closed: () => clipClosed,
+};`;
+  type PauseEnv = {
+    pause(doc: string): object | null;
+    land(booked: object): void;
+    release(): void;
+    drain(): Promise<void>;
+    closed(): { baseline: string; rec: { booked: unknown; landed: boolean } } | null;
+  };
+  const pauseEnv = (async () => {
+    const { code } = await transformWithOxc(`function makePauseEnv() {${PAUSE_ENV}}`, "pause.ts");
+    return new Function(`${code}\nreturn makePauseEnv;`)() as () => PauseEnv;
+  })();
+
+  it("a waiting close link keeps neither the closed window nor its document alive", async () => {
+    const { setFlagsFromString } = await import("node:v8");
+    const { runInNewContext } = await import("node:vm");
+    setFlagsFromString("--expose_gc");
+    const gc = runInNewContext("gc") as () => void;
+    const e = (await pauseEnv)();
+    // The project's lib predates WeakRef's typings; the runtime has it.
+    type Weak = { deref(): object | undefined };
+    const WeakRefCtor = (globalThis as unknown as { WeakRef: new (target: object) => Weak }).WeakRef;
+    const windows: Weak[] = [];
+    for (let i = 0; i < 20; i++) {
+      // Each pause closes the window opened by the one before: a distinct 1 MiB document each.
+      const w = e.pause(`${"x".repeat(1024 * 1024)} ${i}`);
+      if (i > 0) windows.push(new WeakRefCtor(w!));
+    }
+    // A WeakRef target lives at least until the current job ends.
+    await new Promise((r) => globalThis.setTimeout(r, 0));
+    gc();
+    // All but the latest (still clipClosed) are unreachable although 20 close links still wait.
+    const alive = windows.slice(0, -1).filter((w) => w.deref() !== undefined).length;
+    expect(alive).toBe(0);
+    // The links still record into the window a release final reopens: once the head moves, a
+    // copy lands and the next pause closes that window with it.
+    e.release();
+    await e.drain();
+    const booked = { text: "", ctxLen: 0 };
+    e.land(booked);
+    e.pause("next");
+    await e.drain();
+    const last = e.closed()!;
+    expect(last.baseline.endsWith(" 19")).toBe(true);
+    expect(last.rec.landed).toBe(true);
+    expect(last.rec.booked).toBe(booked);
   });
 });

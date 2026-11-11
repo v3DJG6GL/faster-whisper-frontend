@@ -360,9 +360,17 @@ let clipByLang: Record<string, string> | undefined;
  *  `landed` (set by the close link, from `clipLanded`): a clipboard copy of the window landed.
  *  Only such a window reopens. A TYPED window (paste/direct, with focus then moving to a
  *  clipboard-routed app) is in a field already and its translation booked by the typed path:
- *  reopening it would copy the typed phrase again and book its translation and tracks twice. */
+ *  reopening it would copy the typed phrase again and book its translation and tracks twice.
+ *
+ *  The close link gets `rec` alone, never the window: a link waits on the chain uncounted (behind
+ *  a stuck head, one per 1.2 s pause), and `baseline` is the previous final's whole document — a
+ *  server's multi-MB finals would otherwise park a distinct copy in every waiting link. */
 type ClosedClipWindow = {
   baseline: string;
+  rec: ClosedClipRecord;
+};
+/** What a closed window's queued close link records into it (see ClosedClipWindow). */
+type ClosedClipRecord = {
   booked: ClipBooking | null;
   byLang: Record<string, string> | undefined;
   landed: boolean;
@@ -1212,7 +1220,16 @@ function oweDroppedInsert(cfg: InsertCfg | null, id: string, from: number): void
   injectChain = injectChain.then(() => {
     held.n -= cost;
     if (insertCfg === cfg) oweRecord(id, from);
-  });
+  }, refundThrough(held, cost));
+}
+
+/** An uncounted link's rejection arm: a rejected predecessor skips the link, so refund its cost
+ *  there and pass the rejection on unchanged — the chain settles exactly as without it. */
+function refundThrough(held: { n: number }, cost: number): (e: unknown) => never {
+  return (e) => {
+    held.n -= cost;
+    throw e;
+  };
 }
 
 /** Book the owed records `ev` delivered where they went. Where only: an insert that carried
@@ -1369,7 +1386,11 @@ let boundaryTail: { cfg: InsertCfg | null } | null = null;
  *  a 520-char separator per break): past MAX_UNCOUNTED_COST a break holds no document and a dropped
  *  final owes nothing, so only the break pair a counted task cuts off from the tail still adds —
  *  at most one per MAX_INJECT_DEPTH task. Per chain generation like `injectDepth`, so an abandoned
- *  chain's links release their own count. */
+ *  chain's links release their own count; a link a rejected predecessor skips refunds in its
+ *  rejection arm (refundThrough). The other two uncounted links are not charged: the closed
+ *  handler's final restore comes once per session, and bumpPhraseEnd's window close at most once
+ *  per 1.2 s pause, holding only the session token and the closed window's `rec` (never its
+ *  document-sized `baseline`, see ClosedClipWindow). */
 let uncountedCost = { n: 0 };
 /** A link's closure and promise reactions, in chars, so that a link holding no text still costs. */
 const UNCOUNTED_LINK_COST = 256;
@@ -1486,7 +1507,7 @@ function bumpPhraseEnd(deferred = false): void {
     const closing: ClosedClipWindow | null | undefined =
       committedDoc !== clipBaseline
         ? clipOrdinalSeen
-          ? { baseline: clipBaseline, booked: null, byLang: undefined, landed: false }
+          ? { baseline: clipBaseline, rec: { booked: null, byLang: undefined, landed: false } }
           : null
         : undefined;
     if (closing !== undefined) clipClosed = closing;
@@ -1499,6 +1520,7 @@ function bumpPhraseEnd(deferred = false): void {
     // close; the session token guards a cancel-then-restart (both reset all of this themselves).
     {
       const cfg = insertCfg;
+      const rec = closing ? closing.rec : null;
       boundaryTail = null;
       injectChain = injectChain.then(async () => {
         if (insertCfg !== cfg) return;
@@ -1507,10 +1529,10 @@ function bumpPhraseEnd(deferred = false): void {
           await giveClipboardBack();
         }
         if (insertCfg !== cfg) return;
-        if (closing) {
-          closing.booked = clipBooked;
-          closing.byLang = clipByLang;
-          closing.landed = clipLanded;
+        if (rec) {
+          rec.booked = clipBooked;
+          rec.byLang = clipByLang;
+          rec.landed = clipLanded;
         }
         clipBooked = null;
         clipLanded = false;
@@ -2459,7 +2481,7 @@ async function ensureListeners(): Promise<void> {
           // A release reopens the closed window only when a copy of it landed (the pause's close
           // link has run, FIFO, and recorded that). After a typed window the release copies its own
           // words alone: the typed phrase is in its field already, its translation booked.
-          const live = reopen?.landed ? reopen : null;
+          const live = reopen?.rec.landed ? reopen.rec : null;
           const phraseClip = live ? reopenClip : plainClip;
           const clipFrom = Math.max(0, (live ? reopenStartRaw : plainStartRaw) - lead);
           // Pulse the chip's clipboard glyph per phrase; `grew` keeps a re-sent final (the drain's flush
@@ -3021,7 +3043,7 @@ async function ensureListeners(): Promise<void> {
           owedUtterances = settleOwedUtterances(owedUtterances, { kind: "break", carried: !!rest.trim() }).owed;
         }
         injectedText = "";
-      });
+      }, refundThrough(held, cost));
     }
     // The server only breaks between utterances, so nothing should be held here — but a fresh
     // document must not inherit a working state from the old one if a frame was ever lost.
@@ -3178,7 +3200,7 @@ async function ensureListeners(): Promise<void> {
         // it here would drop that session's restore debt.
         if (insertCfg !== cfg) return;
         clipDirty = false;
-      });
+      }, refundThrough(held, UNCOUNTED_LINK_COST));
       boundaryTail = { cfg };
     }
   });

@@ -701,11 +701,11 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
         `const signalInsert = (k) => calls.push("pulse " + k);\n` +
         `const oweUtterance = () => {}, bookOwedUtterances = () => {}, bookUtteranceInsert = () => {}, noteDivergence = () => {}, logLine = () => {}, flashError = () => {}, teardownAfterFatalInject = () => {};\n` +
         `return (async () => ${branch})().then(() => injectedText);`,
-    ) as (reopen: { landed: boolean } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<string>;
+    ) as (reopen: { rec: { landed: boolean } } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<string>;
     const t = { isSelf: false };
     // " Hello world." copied; the server's "\n" then arrives in its own final, in the open window
     // and as a release that reopens the window the pause closed.
-    for (const reopen of [null, { landed: true }]) {
+    for (const reopen of [null, { rec: { landed: true } }]) {
       const calls: string[] = [];
       const base = await run(null, "Hello world.", "Hello world.", 0, 0, 1, true, "Hello world.", "", commonPrefixLen, t, calls);
       expect(calls).toEqual(["translate Hello world.", "copy Hello world.", "pulse clipboard"]);
@@ -742,7 +742,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
         `const signalInsert = (k) => calls.push("pulse " + k);\n` +
         `const oweUtterance = () => {}, bookOwedUtterances = () => {}, bookUtteranceInsert = () => {}, noteDivergence = () => {}, logLine = () => {}, flashError = () => {}, teardownAfterFatalInject = () => {};\n` +
         `return (async () => ${branch})().then(() => ({ injectedText, clipLastCopy }));`,
-    ) as (reopen: { landed: boolean } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, lastCopy: { from: number; text: string } | null, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<{ injectedText: string; clipLastCopy: { from: number; text: string } | null }>;
+    ) as (reopen: { rec: { landed: boolean } } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, lastCopy: { from: number; text: string } | null, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<{ injectedText: string; clipLastCopy: { from: number; text: string } | null }>;
     const t = { isSelf: false };
     // committedDoc " A. B.": the pause closed "A." (owed), and "B." is copied into an app. Its
     // window starts at 3 (2 in `target`), past the typed baseline "", which stays put.
@@ -752,7 +752,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(copied.injectedText).toBe("");
     // The server's "\n" then arrives in its own final, in the open window and as a release that
     // reopens the window the pause closed.
-    for (const reopen of [null, { landed: true }]) {
+    for (const reopen of [null, { rec: { landed: true } }]) {
       calls.length = 0;
       const after = await run(reopen, "B.", "B.", 3, 3, 1, true, "A. B.\n", copied.injectedText, copied.clipLastCopy, commonPrefixLen, t, calls);
       expect(calls, `the suffix final ${reopen ? "reopening the closed window" : "in the open window"}`).toEqual([]);
@@ -1253,11 +1253,15 @@ describe("work that must wait for the queue or the cancel", () => {
     // session has seen ordinals (an old server's finals all look like releases).
     const keep = found(timer, "clipClosed = closing", "the timer must record the window it closes");
     expect(timer.indexOf("baseline: clipBaseline")).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
-    expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, booked: null, byLang: undefined, landed: false \}/);
+    expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, rec: \{ booked: null, byLang: undefined, landed: false \} \}/);
     expect(keep).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
     // Its queued close link records what it closed before closing it.
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
-    expect(link).toMatch(/closing\.booked = clipBooked;\s+closing\.byLang = clipByLang;\s+closing\.landed = clipLanded;\s+\}\s+clipBooked = null;\s+clipLanded = false;\s+flushClipByLang\(\);/);
+    expect(link).toMatch(/rec\.booked = clipBooked;\s+rec\.byLang = clipByLang;\s+rec\.landed = clipLanded;\s+\}\s+clipBooked = null;\s+clipLanded = false;\s+flushClipByLang\(\);/);
+    // …into the window's `rec` alone: the link waits uncounted, and the window's baseline is a
+    // whole document (see ClosedClipWindow).
+    expect(mask(fns.bumpPhraseEnd)).toMatch(/const rec = closing \? closing\.rec : null;/);
+    expect(link).not.toContain("closing");
     // A release final (no ordinal) copies from the closed window's baseline and leaves it closed.
     expect(final).toMatch(/const reopen = ordinal === null \? clipClosed : null;/);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
@@ -1300,10 +1304,11 @@ describe("work that must wait for the queue or the cancel", () => {
     // translation on top of the typed path's booking — History and every track held it twice.
     // The pause's link records whether a copy landed in the window it closes, and resets the flag
     // with the window — as does a hard break's link and every start and abandon.
-    expect(streamingSrc).toMatch(/type ClosedClipWindow = \{[^}]*landed: boolean;[^}]*\};/);
+    expect(streamingSrc).toMatch(/type ClosedClipWindow = \{\s+baseline: string;\s+rec: ClosedClipRecord;\s+\};/);
+    expect(streamingSrc).toMatch(/type ClosedClipRecord = \{[^}]*landed: boolean;[^}]*\};/);
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
-    expect(link).toContain("closing.landed = clipLanded;");
-    expect(link.indexOf("clipLanded = false;")).toBeGreaterThan(link.indexOf("closing.landed = clipLanded;"));
+    expect(link).toContain("rec.landed = clipLanded;");
+    expect(link.indexOf("clipLanded = false;")).toBeGreaterThan(link.indexOf("rec.landed = clipLanded;"));
     const boundaryLink = mask(bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>"));
     expect(boundaryLink).toMatch(/clipBooked = null;\s+clipLanded = false;/);
     expect(mask(fns.clearPhraseEnd)).toContain("clipLanded = false;");
@@ -1313,7 +1318,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(bodyAfter(task, "if (!t.isSelf && landed) "))).toMatch(/^\{\s+if \(!reopen\) clipLanded = true;/);
     // The task decides in the queue, after that link, which window it copies and books.
     expect(task).toMatch(
-      /const live = reopen\?\.landed \? reopen : null;\s+const phraseClip = live \? reopenClip : plainClip;\s+const clipFrom = Math\.max\(0, \(live \? reopenStartRaw : plainStartRaw\) - lead\);/,
+      /const live = reopen\?\.rec\.landed \? reopen\.rec : null;\s+const phraseClip = live \? reopenClip : plainClip;\s+const clipFrom = Math\.max\(0, \(live \? reopenStartRaw : plainStartRaw\) - lead\);/,
     );
     expect(task.indexOf("const live =")).toBeLessThan(task.indexOf("translatePhrase(phraseClip"));
     const booking = mask(bodyAfter(task, "if (translated && !t.isSelf && landed) "));
