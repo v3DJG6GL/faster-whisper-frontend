@@ -501,6 +501,13 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   );
 }
 
+/** What `RestoreFromServer` hands `onApplied`, read just before the apply: this device's backends
+ *  then (by id), and the ids whose key this device holds that the apply leaves under an entry that
+ *  connects elsewhere with no key carried for it (`backendKeyFates`' moves). The supplied-key
+ *  backend's move notice is hidden (the typed key was to replace its entry), so a failed write
+ *  must not leave such a key to reach the typed address. */
+export type RestorePreApply = { backends: ReadonlyMap<string, Backend>; keyMoved: ReadonlySet<string> };
+
 /** Per-category selection + hazard preview for a server-side settings blob —
  *  ImportPreview's sibling for the Backends connect-first add flow, where the
  *  just-connected account turns out to have synced settings. Applies via the
@@ -514,9 +521,8 @@ export function RestoreFromServer({
 }: {
   state: SyncRemoteState;
   onCancel: () => void;
-  /** Gets the backend ids this device had just before the apply (a supplied-key write that fails
-   *  must not leave a key the keyring holds for a REMOVED backend under an id the blob re-added). */
-  onApplied: (before: ReadonlySet<string>) => void | Promise<void>;
+  /** Gets this device's pre-apply state (`RestorePreApply`). */
+  onApplied: (before: RestorePreApply) => void | Promise<void>;
   /** The server address `onApplied` writes a just-typed API key for (the Backends connect-first
    *  flow): the restored backend it lands on is not one that "needs an API key re-entered". */
   keyFor?: string;
@@ -586,8 +592,13 @@ export function RestoreFromServer({
     }
     setApplying(true);
     setError(null);
-    // As in ImportPreview: wait for the held-key read, and stop at a notice not yet seen.
-    const go = await heldKeys.confirm((h) => heldKeyNoticeIds(fatesWith(h)));
+    // As in ImportPreview: wait for the held-key read, and stop at a notice not yet seen. The
+    // last set it judges is the fresh read (none when no id needs one): kept for `keyMoved`.
+    let readHeld: ReadonlySet<string> = NO_IDS;
+    const go = await heldKeys.confirm((h) => {
+      readHeld = h;
+      return heldKeyNoticeIds(fatesWith(h));
+    });
     if (go !== true) {
       if (go === false) setApplying(false);
       return;
@@ -598,7 +609,14 @@ export function RestoreFromServer({
       // Binding sync to the new backend on a state that never landed would then push this
       // device's pre-restore config over the server copy.
       // The gate bypass opens the folder gates — keep this machine's folders.
-      const before = new Set(useApp.getState().backends.map((b) => b.id));
+      const pre = useApp.getState();
+      const before: RestorePreApply = {
+        backends: new Map(pre.backends.map((b) => [b.id, b])),
+        keyMoved: new Set(
+          backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, pre.backends, pre.settings, readHeld)
+            .moved.map((m) => m.backend.id),
+        ),
+      };
       const ok = await applyBlob(stripMachineFolders(blob), sel, 2, { ignoreGates: true });
       if (!ok) {
         setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");

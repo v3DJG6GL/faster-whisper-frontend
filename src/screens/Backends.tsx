@@ -35,7 +35,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps, requestCredentialGen, stillRoutesTo } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
-import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
+import { RestoreFromServer, SyncedCategoryChips, type RestorePreApply } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
 import { adoptWrittenKey, KEY_TOO_LONG, keyWriteOutcome, MAX_SECRET_LEN } from "@/lib/backendKeyWrite";
@@ -1098,7 +1098,7 @@ function RestoreOffer({
   // restore may or may not have brought one — the backends category can be
   // deselected), surface the fresh test result on its card, and bind sync to it
   // (mirrors onboarding's restoreEverything).
-  const finishRestore = async (before: ReadonlySet<string>) => {
+  const finishRestore = async (before: RestorePreApply) => {
     const s = useApp.getState();
     const target = normalizeUrl(draft.serverUrl);
     let match = backendForAddress(s.backends, draft.serverUrl);
@@ -1127,15 +1127,25 @@ function RestoreOffer({
         // Don't lose an applied restore over a keyring failure: a new backend is left keyless
         // (the sync tab's no-key warning takes it from there), one this device had keeps whatever key it had.
         console.error("saving API key failed:", e);
-        if (!s.backends.some((b) => b.id === match!.id)) s.upsertBackend({ ...match, hasApiKey: false });
-        else if (!before.has(match.id)) {
+        const id = match.id;
+        const had = before.backends.get(id);
+        if (!s.backends.some((b) => b.id === id)) s.upsertBackend({ ...match, hasApiKey: false });
+        else if (!had) {
           // The blob added this id, and the held-key notice skipped it (the typed key was to
           // replace its entry): any key the keyring holds under it is a removed backend's, for
           // whatever host that one used. Drop it, best-effort, rather than send it to this address.
-          const id = match.id;
           await deleteBackendKey(id).catch(() => {});
           const cur = useApp.getState().backends.find((b) => b.id === id);
           if (cur) useApp.getState().upsertBackend({ ...cur, hasApiKey: false });
+        } else if (before.keyMoved.has(id)) {
+          // A backend this device had, which the blob moved here with no key carried: its own
+          // key, for the host it used, would now go to this address, and the move notice was
+          // skipped. The key is the user's, so it is not deleted: the backend goes back to its
+          // address, and this server gets a new backend, keyless as above.
+          const cur = useApp.getState().backends.find((b) => b.id === id);
+          if (cur) useApp.getState().upsertBackend({ ...cur, serverUrl: had.serverUrl });
+          match = { ...draft, hasApiKey: false };
+          useApp.getState().upsertBackend(match);
         }
       }
     }
