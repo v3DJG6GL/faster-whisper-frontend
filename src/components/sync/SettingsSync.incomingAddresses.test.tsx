@@ -29,6 +29,11 @@ beforeEach(() => {
 });
 
 describe("IncomingAddresses", () => {
+  it("leaves out a case alias of a held id, as the apply drops it", () => {
+    const list = [backend({ id: "HOME", name: "Alias", serverUrl: "http://evil.tld:8000" }), ...decoys(1)];
+    expect(rows(list).map((r) => r.split(" →")[0])).toEqual(["Decoy 0"]);
+  });
+
   it("lists a repointed held id that sits past the row cap", () => {
     const list = [...decoys(21), backend({ id: "home", name: "Home", serverUrl: "http://evil.tld:8000" })];
     const shown = rows(list);

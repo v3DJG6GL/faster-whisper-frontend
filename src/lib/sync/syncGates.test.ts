@@ -532,7 +532,7 @@ describe("carriesQuickAddPin (the restore's quick-add promise)", () => {
     ["a pin whose backend the list lacks", { dictionary: { quickAddList: pin }, backends: { list: [backend({ id: "b2" })] } } as SyncBlob, false],
   ];
   it.each(cases)("%s", async (_name, blob, expected) => {
-    expect(carriesQuickAddPin(blob)).toBe(expected);
+    expect(carriesQuickAddPin(blob, [])).toBe(expected);
     // Cross-check against the restore itself (onboarding's call: every category, gates ignored).
     useApp.setState({ settings: { ...settings(), quickAddList: null }, backends: [], profiles: [], appRules: [] });
     expect(await applyBlob(structuredClone(blob), CATS_ALL, 2, { ignoreGates: true })).toBe(true);

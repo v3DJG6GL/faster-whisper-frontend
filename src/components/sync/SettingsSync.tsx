@@ -41,12 +41,13 @@ import {
   migrateBlob,
   pullNow,
   pushNow,
+  readHeldKeyIds,
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
   restorableCategories,
   sanitizeAppRules,
-  sanitizeBackends,
+  sanitizeInboundBackends,
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
@@ -56,7 +57,7 @@ import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
 import { everyWhileVisible } from "@/lib/windowVisibility";
 import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeHostText, safeIdentityText } from "@/lib/sanitize";
-import type { Profile, SyncCategory } from "@/lib/types";
+import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
@@ -167,7 +168,7 @@ const HOST_CAP = 80;
 
 /** The API-key half of the import / restore disclosure (`backendKeyFates`): keys the apply
  *  stores, keys nobody supplies, and a key this device keeps that now goes to another server. */
-function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKeyFates>; source: "file" | "backup" }) {
+export function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKeyFates>; source: "file" | "backup" }) {
   const what = source === "file" ? "This file" : "The server copy";
   return (
     <>
@@ -181,7 +182,7 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
           {source === "file" ? "importing (not included in the file)" : "restoring (not in the server copy)"}.
         </Notice>
       )}
-      {fates.moved.map(({ backend: b, to }) => {
+      {fates.moved.map(({ backend: b, to, anyKey }) => {
         // An empty address (the sanitizer blanks a scheme this app does not speak) is the
         // "not configured" state: nothing is sent, so say that rather than "sent to an empty
         // address".
@@ -199,7 +200,10 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
         const auth = authorityOf(to);
         return (
           <Notice key={`moved-${b.id}`} tone="warn">
-            &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+            &ldquo;{backendDisplayName(b.name, NOTICE_NAME_CAP)}&rdquo;
+            {anyKey
+              ? ": any API key this device holds for this ID would be sent to"
+              : " keeps this device's API key, which is then sent to"}{" "}
             <span className="font-mono font-semibold">
               {auth ? safeHostText(auth.host, HOST_CAP) : "an unreadable address"}
             </span>
@@ -209,6 +213,29 @@ function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKey
       })}
     </>
   );
+}
+
+const NO_BACKENDS: Backend[] = [];
+const NO_IDS: ReadonlySet<string> = new Set();
+
+/** `readHeldKeyIds` for a consent dialog: the ids of `incoming` (the list its apply installs, or
+ *  `NO_BACKENDS` when backends are not selected) new to this device whose keyring entry holds a
+ *  key or could not be read. Empty until the read is back, so no notice flashes for a key that
+ *  turns out absent, and the confirm button never waits on a locked wallet: the apply itself does
+ *  not depend on the answer. Re-read when this device's list changes. */
+export function useHeldKeyIds(incoming: Backend[], secrets: unknown): ReadonlySet<string> {
+  const local = useApp((st) => st.backends);
+  const [held, setHeld] = useState<ReadonlySet<string>>(NO_IDS);
+  useEffect(() => {
+    let live = true;
+    void readHeldKeyIds(incoming, secrets, local).then((ids) => {
+      if (live) setHeld(ids);
+    });
+    return () => {
+      live = false;
+    };
+  }, [incoming, secrets, local]);
+  return held;
 }
 
 /** Per-category selection + hazard preview for a parsed import file. */
@@ -223,12 +250,14 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // What `applyBlob` would install, not the raw file list: `sanitizeBackends` dedupes ids, drops
-  // reserved ones, blanks unusable addresses and caps the count, so the row count and the address
-  // list below disclose the same entries the key notices are judged on.
+  // What `applyBlob` would install, not the raw file list: `sanitizeInboundBackends` dedupes ids,
+  // drops reserved ones and case aliases of a local id, blanks unusable addresses and caps the
+  // count, so the row count and the address list below disclose the same entries the key notices
+  // are judged on.
+  const localBackends = useApp((st) => st.backends);
   const installBackends = useMemo(
-    () => (categories.backends ? sanitizeBackends(categories.backends.list) : []),
-    [categories],
+    () => (categories.backends ? sanitizeInboundBackends(categories.backends.list, localBackends) : []),
+    [categories, localBackends],
   );
   // Likewise the profiles: `sanitizeProfiles` dedupes ids and drops malformed entries, so the raw
   // file length would over-count what replaces this device's profiles.
@@ -275,7 +304,15 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
   // device holds a key for keeps it: nothing to re-enter — but if the file moves it to another
   // server, that key goes there, whatever the file's own `hasApiKey` says (`backendKeyFates`).
-  const keyFates = backendKeyFates(sel.backends ? installBackends : [], result.secrets, st.backends, st.settings);
+  // A removed backend's key outlives it, so an id the file re-adds also gets the key held here.
+  const heldKeys = useHeldKeyIds(sel.backends ? installBackends : NO_BACKENDS, result.secrets);
+  const keyFates = backendKeyFates(
+    sel.backends ? installBackends : [],
+    result.secrets,
+    st.backends,
+    st.settings,
+    heldKeys,
+  );
 
   const replaced = replacedNames(sel, categories, st);
 
@@ -412,9 +449,10 @@ export function RestoreFromServer({
   const [error, setError] = useState<string | null>(null);
 
   // The list applyBlob installs, as ImportPreview counts and lists it.
+  const localBackends = useApp((st) => st.backends);
   const installBackends = useMemo(
-    () => (blob.backends ? sanitizeBackends(blob.backends.list) : []),
-    [blob],
+    () => (blob.backends ? sanitizeInboundBackends(blob.backends.list, localBackends) : []),
+    [blob, localBackends],
   );
   const installProfiles = useMemo(
     () => (blob.profiles ? sanitizeProfiles(blob.profiles.list) : []),
@@ -447,7 +485,14 @@ export function RestoreFromServer({
   const replaced = replacedNames(sel, blob, st);
   // No security review stands in front of this direct `applyBlob`, so this is the only place a
   // moved key or the account's stored keys replacing this device's is disclosed.
-  const fates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
+  const heldKeys = useHeldKeyIds(sel.backends ? installBackends : NO_BACKENDS, blob.backends?.secrets);
+  const fates = backendKeyFates(
+    sel.backends ? installBackends : [],
+    blob.backends?.secrets,
+    st.backends,
+    st.settings,
+    heldKeys,
+  );
   const keyFates = fatesAfterSuppliedKey(fates, sel.backends ? installBackends : [], keyFor);
 
   const apply = async () => {
@@ -584,12 +629,12 @@ const LOCAL_ARM_LABEL = "This device";
  *  loopback until it is parsed. */
 export function IncomingAddresses({ list }: { list: unknown }) {
   // Takes the RAW inbound list and derives the rows itself, so every caller lists the same thing:
-  // what `applyBlob` would install (`sanitizeBackends` — run here BEFORE consent, since a `[null]`
+  // what `applyBlob` would install (`sanitizeInboundBackends` — run here BEFORE consent, since a `[null]`
   // element or a non-string address would throw in this render body and unmount the dialog that
   // lets the user refuse the blob), at the address this device would CONNECT to (a surviving id's
   // "Address on this device" override wins over the canonical one).
   const { settings, backends: held } = useApp.getState();
-  const all = sanitizeBackends(list).map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, settings) }));
+  const all = sanitizeInboundBackends(list, held).map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, settings) }));
   // The blob picks the ORDER, so 20 decoys in front would push a repointed id this device already
   // holds into "…and N more". Every such repoint is listed (at most one row per held backend),
   // then new ids, then unchanged ones, each in blob order, under the same row cap.

@@ -1092,10 +1092,10 @@ function safeQuickAddTarget(v: unknown): QuickAddTarget | null {
  *  well-formed pin, next to a backends section — plus the dangling-reference scrub after it,
  *  which nulls a pin whose backend the incoming list does not hold. Without a pin the quick-add
  *  chord is inert, so a restore must not promise quick add on the chord alone. */
-export function carriesQuickAddPin(m: SyncBlob): boolean {
+export function carriesQuickAddPin(m: SyncBlob, local: readonly { id: string }[]): boolean {
   if (!isPlainObject(m.dictionary) || !isPlainObject(m.backends)) return false;
   const pin = safeQuickAddTarget(ownProp(m.dictionary as Record<string, unknown>, "quickAddList"));
-  return !!pin && sanitizeBackends(m.backends.list).some((b) => b.id === pin.backendId);
+  return !!pin && sanitizeInboundBackends(m.backends.list, local).some((b) => b.id === pin.backendId);
 }
 
 export function isCodeList(v: unknown): v is string[] {
@@ -1247,6 +1247,13 @@ function dropLocalIdAliases<T extends { id: string }>(inbound: T[], local: reado
   const exact = new Set(local.map((b) => b.id));
   const folded = new Set(local.map((b) => foldedId(b.id)));
   return inbound.filter((b) => exact.has(b.id) || !folded.has(foldedId(b.id)));
+}
+
+/** The backend list `applyBlob` installs from an inbound (untrusted) `list` over this device's
+ *  `local` one: sanitized, without case aliases of a local id. The review and every pre-apply
+ *  preview read through this, so none of them counts or lists a backend the apply drops. */
+export function sanitizeInboundBackends(list: unknown, local: readonly { id: string }[]): Backend[] {
+  return dropLocalIdAliases(sanitizeBackends(list), local);
 }
 
 /** Ceiling on how many entries one inbound blob may install. Far above any real profile /
@@ -1553,26 +1560,51 @@ function inboundSecret(secrets: unknown, id: string): string | undefined {
  *  - `moved`: keeps the key this device holds for that id (nothing carried replaces it, and an
  *    apply never deletes one), but now CONNECTS elsewhere, so the key goes to `to`. "Connects" is
  *    `effectiveServerUrl`: an "Address on this device" override wins, and the apply leaves a
- *    surviving id's override in place, so the current settings are also the post-apply ones. */
+ *    surviving id's override in place, so the current settings are also the post-apply ones.
+ *    `anyKey`: an id NOT in the local list that `heldKeys` (`readHeldKeyIds`) found a key for, or
+ *    could not read. Keys outlive their backend and resolve by id alone, so the blob re-adding a
+ *    removed id at its own address picks that key up, whatever its `hasApiKey` says. */
 export function backendKeyFates(
   incoming: Backend[],
   secrets: unknown,
   local: Backend[],
   settings: AppSettings,
-): { carried: boolean; missing: Backend[]; moved: { backend: Backend; to: string }[] } {
+  heldKeys: ReadonlySet<string> = new Set(),
+): { carried: boolean; missing: Backend[]; moved: { backend: Backend; to: string; anyKey?: boolean }[] } {
   const dest = (x: Backend) => effectiveServerUrl(x, settings);
   const keyHere = (b: Backend) => local.find((x) => x.id === b.id && x.hasApiKey);
   const carries = (b: Backend) => inboundSecret(secrets, b.id) !== undefined;
+  const heldElsewhere = (b: Backend) => heldKeys.has(b.id) && !carries(b) && !local.some((x) => x.id === b.id);
   return {
     carried: incoming.some(carries),
-    missing: incoming.filter((b) => b.hasApiKey && !carries(b) && !keyHere(b)),
+    missing: incoming.filter((b) => b.hasApiKey && !carries(b) && !keyHere(b) && !heldElsewhere(b)),
     moved: incoming.flatMap((b) => {
+      // No usable address sends nothing anywhere: no notice for a key that may not exist.
+      if (heldElsewhere(b)) return dest(b) ? [{ backend: b, to: dest(b), anyKey: true }] : [];
       const here = keyHere(b);
       return here && !carries(b) && normalizeUrl(dest(here)) !== normalizeUrl(dest(b))
         ? [{ backend: b, to: dest(b) }]
         : [];
     }),
   };
+}
+
+/** The ids of `incoming` (the list an import or restore installs) that this device's `local`
+ *  list lacks and that carry no inbound key, whose keyring entry holds a key or could not be
+ *  read — `backendKeyFates`' `heldKeys`. One bounded read, none when no id qualifies (a fresh
+ *  device restoring a list with keys, or one that already holds every id). A failed or timed-out
+ *  read counts every candidate as held (fail closed: the dialog then discloses, never hides). */
+export async function readHeldKeyIds(
+  incoming: Backend[],
+  secrets: unknown,
+  local: readonly Backend[],
+): Promise<ReadonlySet<string>> {
+  const here = new Set(local.map((b) => b.id));
+  const ids = incoming.map((b) => b.id).filter((id) => !here.has(id) && inboundSecret(secrets, id) === undefined);
+  if (ids.length === 0) return new Set();
+  const read = await readKeyStatesBounded(ids).catch(() => null);
+  if (!read || !isPlainObject(read.keys) || !Array.isArray(read.unreadable)) return new Set(ids);
+  return new Set(ids.filter((id) => hasOwn(read.keys, id) || read.unreadable.includes(id)));
 }
 
 /** Write incoming secrets to the keyring, then re-derive every backend's
@@ -1930,7 +1962,7 @@ export async function applyBlob(
     // and `sanitizeBackends` would return `[]`, which the dangling-reference scrub below turns
     // into "every profile's backend is gone".
     if (cats.backends && isPlainObject(blob.backends)) {
-      let inboundBackends = dropLocalIdAliases(sanitizeBackends(blob.backends.list), st.backends);
+      let inboundBackends = sanitizeInboundBackends(blob.backends.list, st.backends);
       // Element-wise keep-local for the gated backend aspects (the profile
       // chord idiom): addresses and model/decode defaults re-pin to this
       // device's values for backends it already knows; new backends keep the
@@ -4120,7 +4152,7 @@ export function securityChanges(
   // server sends — a throw would escape `void pullNow()` and leave syncStatus stuck on "syncing".
   if (!cats.backends || !incoming.backends) return out;
   // Without a case alias of a local id: `applyBlob` drops one the same way, so it raises no row.
-  const inBackends = dropLocalIdAliases(sanitizeBackends(incoming.backends.list), local.backends?.list ?? []);
+  const inBackends = sanitizeInboundBackends(incoming.backends.list, local.backends?.list ?? []);
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   out.push(
     ...typedTextChanges(

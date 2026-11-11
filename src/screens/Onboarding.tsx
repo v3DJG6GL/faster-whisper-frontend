@@ -17,12 +17,12 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { backendForAddress, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { backendForAddress, effectiveServerUrl, fatesAfterSuppliedKey, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { forgetCredential } from "@/lib/capabilities";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import {
-  applyBlob, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
-  sanitizeProfiles,
+  applyBlob, backendKeyFates, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
+  sanitizeInboundBackends, sanitizeProfiles,
 } from "@/lib/sync/sync";
 import { STARTERS_LOW_LEVEL_NOTE, startersClearOf, startersNeedLowLevelNote } from "@/lib/starters";
 import { useApp } from "@/lib/store";
@@ -31,7 +31,8 @@ import { quickAddListsOf } from "@/screens/onboardingLists";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { peerDeviceName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import {
-  ChordFixNotices, ImportPreview, IncomingAddresses, SyncedCategoryChips, predictChordFix,
+  ChordFixNotices, ImportPreview, IncomingAddresses, KeyFateNotices, SyncedCategoryChips, predictChordFix,
+  useHeldKeyIds,
 } from "@/components/sync/SettingsSync";
 import { stripMachineFolders } from "@/lib/sync/settingsFile";
 import { relTime } from "@/lib/format";
@@ -333,7 +334,26 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     sanitizeProfiles(migrateBlob(pulledBlob).profiles?.list).length > 0;
   // Quick add arrives only with a pinned list the restore keeps: the chord alone is inert, and
   // a peer that never pinned one would otherwise be promised quick add while setup skips it.
-  const bringsQuickAdd = !!pulledBlob && carriesQuickAddPin(migrateBlob(pulledBlob));
+  const bringsQuickAdd = !!pulledBlob && carriesQuickAddPin(migrateBlob(pulledBlob), backends);
+  // The list the restore installs (ALL_ON), and the keys it carries.
+  const pulledBackends = useMemo(() => {
+    const m = pulledBlob ? migrateBlob(pulledBlob) : null;
+    return {
+      list: m && isPlainObject(m.backends) ? sanitizeInboundBackends(m.backends.list, backends) : [],
+      secrets: m && isPlainObject(m.backends) ? m.backends.secrets : undefined,
+    };
+  }, [pulledBlob, backends]);
+  // A removed backend's key outlives it and resolves by id alone, so a copy re-adding that id at
+  // its own address gets the key held here. No security review stands in front of this restore:
+  // only the held-key half of the restore dialog's key notices is shown here — the rest (keys
+  // carried, keys to re-enter) is what a fresh device expects and the Home checklist covers. The
+  // key the user typed at the gate is written over the backend at that address.
+  const heldKeys = useHeldKeyIds(pulledBackends.list, pulledBackends.secrets);
+  const heldKeyMoves = fatesAfterSuppliedKey(
+    backendKeyFates(pulledBackends.list, pulledBackends.secrets, backends, st.getState().settings, heldKeys),
+    pulledBackends.list,
+    key ? storedTypedUrl(url) : undefined,
+  ).moved.filter((m) => m.anyKey);
   // How the restore's collision pass resolves hotkeys (all categories on), predicted as the Sync
   // tab's restore preview does: `applyBlob` switches off an incoming profile that collides with
   // the quick-add chord (the copy's, else this device's) or with another profile, and `finish()`
@@ -465,6 +485,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <IncomingAddresses list={pull.state.blob.backends.list} />
                 </div>
               ) : null}
+              {heldKeyMoves.length > 0 && (
+                <div className="mt-2.5 flex flex-col gap-2">
+                  <KeyFateNotices fates={{ carried: false, missing: [], moved: heldKeyMoves }} source="backup" />
+                </div>
+              )}
               {chordFix && (chordFix.switchedOff.length > 0 || chordFix.qaKept) && (
                 <div className="mt-2.5 flex flex-col gap-2">
                   <ChordFixNotices fix={chordFix} source="backup" />
