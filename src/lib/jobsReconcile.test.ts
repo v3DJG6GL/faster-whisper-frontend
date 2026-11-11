@@ -317,17 +317,21 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toEqual([]);
   });
 
-  it("a done row whose backend goes during the result fetch fetches no media and lands nothing", async () => {
+  it("a done row whose backend goes during the result fetch lands the result, with no media fetch", async () => {
+    // The result is already in hand: it lands, but nothing asks a server again.
     const old = row(JOB_A, T0, "url");
     await seed({ ...old, serverUrl: "http://old:8000", ctx: { ...old.ctx, serverUrl: "http://old:8000" } });
     serveDone(JOB_A, { ...RESULT, sourceMediaId: "m1" });
     getJobResult.mockImplementation(async () => {
       useApp.setState({ backends: [] });
-      return ok({ ...RESULT, sourceMediaId: "m1" });
+      return ok({ ...RESULT, sourceMediaId: "m1", sourceVideoPending: true });
     });
     await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(fetchUrlMedia).not.toHaveBeenCalled();
-    expect(records()).toEqual([]);
+    expect(getTranscribeProgress).not.toHaveBeenCalled();
+    expect(records().map((r) => [r.id, r.status])).toEqual([[JOB_A, "done"]]);
+    expect(ledgerRows()).toEqual([]);
   });
 
   it("a deleted backend's row is forgotten even when its host is down for another backend", async () => {

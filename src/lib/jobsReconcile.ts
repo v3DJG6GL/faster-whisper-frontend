@@ -151,11 +151,13 @@ async function ingestDone(
     case "ok": {
       // The ingest's own fetches (a link's audio/video copy, the pending-video poll) read the
       // address off ctx: the current one, re-resolved after the await above, not the one frozen
-      // at post time.
+      // at post time. Gone meanwhile: the result in hand still lands, but with nothing that
+      // would ask a server again (no site subtitles, no media or video ids, no video poll).
       const ctxUrl = liveRowServerUrl(row);
-      if (ctxUrl === null) return false;
-      const ctx = { ...row.ctx, serverUrl: ctxUrl };
-      const result = await withSiteTracks(r.value, row.path, row.urlMeta, ctx);
+      const ctx = ctxUrl === null ? row.ctx : { ...row.ctx, serverUrl: ctxUrl };
+      const result = ctxUrl === null
+        ? { ...r.value, sourceMediaId: undefined, sourceVideoMediaId: undefined, sourceVideoPending: undefined }
+        : await withSiteTracks(r.value, row.path, row.urlMeta, ctx);
       if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
       ingestJobResult({ ...row, ctx }, result, tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
