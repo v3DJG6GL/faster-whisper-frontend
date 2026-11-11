@@ -434,12 +434,14 @@ export function SettingRow({
             {title}
           </div>
           {disabled && disabledReason ? (
-            <div className="mt-0.5 text-[12.5px] leading-snug text-warn">{disabledReason}</div>
+            // overflow-wrap:anywhere (here and on desc): a row can show a synced, space-free path
+            // (a UNC log folder) that would otherwise run over the control column; prose wraps as before.
+            <div className="mt-0.5 text-[12.5px] leading-snug text-warn [overflow-wrap:anywhere]">{disabledReason}</div>
           ) : (
             desc && (
               <div
                 className={cn(
-                  "mt-0.5 text-[12.5px] leading-snug text-dim transition-opacity",
+                  "mt-0.5 text-[12.5px] leading-snug text-dim transition-opacity [overflow-wrap:anywhere]",
                   disabled && "opacity-50",
                 )}
               >
