@@ -237,7 +237,7 @@ pub fn prune_older_than(
 /// (`std::fs::write` would give `0666 & ~umask`, typically world-readable).
 ///
 /// `create_new` fails on an existing name of any kind, symlink included: the caller's
-/// `path.exists()` collision loop follows symlinks and races the write, so anyone able to create
+/// collision loop races the write, so anyone able to create
 /// entries in the folder could pre-plant a link and have the transcript written through it.
 ///
 /// `parts` are written back to back, so a `.wav` goes out as header + the caller's PCM without
@@ -501,7 +501,9 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
     }
     let mut path = dir.join(format!("{stem}.wav"));
     let mut n = 2;
-    while path.exists() {
+    // Link-aware: a dangling link planted at the predictable name reads as free to `exists()`,
+    // and `write_new_private` then refuses it, losing this recording.
+    while std::fs::symlink_metadata(&path).is_ok() {
         path = dir.join(format!("{stem}-{n}.wav"));
         n += 1;
     }
@@ -697,6 +699,22 @@ mod retention_tests {
             std::fs::read(&path).unwrap(),
             wav_from_pcm16(&pcm, 16_000, 1)
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A dangling link at the next free name is skipped like a taken name, not written through
+    /// or treated as free (which would lose the recording).
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_at_the_recording_name_is_skipped() {
+        let dir = scratch_dir("save-dangling");
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("nowhere");
+        std::os::unix::fs::symlink(&target, dir.join("dictation-test.wav")).unwrap();
+        let pcm = vec![1u8; 64];
+        let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
+        assert_eq!(path, dir.join("dictation-test-2.wav"));
+        assert!(!target.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
