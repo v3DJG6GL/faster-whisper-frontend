@@ -19,7 +19,9 @@ export function deviceChip(device: string | undefined | null): string | undefine
   return typeof device === "string" && /^[a-z0-9_:-]{1,16}$/i.test(device) ? device.toUpperCase() : undefined;
 }
 
-const tail = (id: string) => id.split("/").pop() ?? id;
+// The last path part, by one reverse scan: the backend's model is a synced string of any length,
+// and split() would copy all of it into an array per listed model (same result for every input).
+const tail = (id: string) => id.slice(id.lastIndexOf("/") + 1);
 
 /** The OpenAI model alias the server maps to its default model (and does not list). */
 export const WHISPER_ALIAS = "whisper-1";
@@ -43,7 +45,9 @@ export function ownModelName(model: string | undefined, kind: string): string {
 export function modelDevice(models: readonly ServerModel[] | undefined, model: string): string | undefined {
   if (!models?.length) return undefined;
   const m = model.trim();
-  const byName = m ? (models.find((x) => x.id === m) ?? models.find((x) => tail(x.id) === tail(m))) : undefined;
+  // The backend's own tail once, not once per listed model (up to 500).
+  const mt = tail(m);
+  const byName = m ? (models.find((x) => x.id === m) ?? models.find((x) => tail(x.id) === mt)) : undefined;
   if (byName) return deviceChip(byName.device);
   if (m && m !== WHISPER_ALIAS) return undefined;
   const first = deviceChip(models[0].device);

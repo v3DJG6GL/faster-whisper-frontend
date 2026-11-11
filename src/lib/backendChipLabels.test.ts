@@ -54,6 +54,19 @@ describe("modelDevice", () => {
     // The resolved default name (what the Editor passes from decode defaults) names it exactly.
     expect(modelDevice(resident, "Systran/faster-whisper-large-v3")).toBe("CUDA");
   });
+  it("matches by the last path part, the same for every slash shape", () => {
+    const list: ServerModel[] = [{ id: "Systran/large-v3", loaded: false, device: "cuda" }, { id: "", loaded: false, device: "cpu" }];
+    expect(modelDevice(list, "org/large-v3")).toBe("CUDA");
+    expect(modelDevice(list, "a/b/large-v3")).toBe("CUDA");
+    expect(modelDevice(list, "large-v3/")).toBe("CPU");
+    expect(modelDevice(list, "/x")).toBeUndefined();
+  });
+  it("a multi-MB synced model against 500 listed models stays fast", () => {
+    const many: ServerModel[] = Array.from({ length: 500 }, (_, i) => ({ id: `org/m${i}`, loaded: false, device: "cuda" }));
+    const t0 = performance.now();
+    expect(modelDevice(many, "/".repeat(4_000_000) + "z")).toBeUndefined();
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
   it("a model without a device token splits the consensus", () => {
     expect(modelDevice([...agree, { id: "medium", loaded: false }], "")).toBeUndefined();
   });
