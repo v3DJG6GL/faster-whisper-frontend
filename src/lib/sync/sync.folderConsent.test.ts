@@ -447,6 +447,27 @@ describe("an unattended pull that moves a synced folder", () => {
     expect(after.logging?.logDir).toBe("\\\\attacker.example\\logs");
   });
 
+  it("neither asks about nor applies a folder value too long to be any path", async () => {
+    await seed();
+    // Blank padding Rust would trim off, around a short path: a value no picker produces.
+    const padded = " ".repeat(40000) + "/tmp/x" + " ".repeat(40000);
+    const remote = structuredClone((api.pull as { blob: SyncBlob }).blob);
+    remote.recording = { ...remote.recording, audioBaseDir: padded, recordingsDir: padded } as never;
+    remote.logging = { ...remote.logging, logDir: padded } as never;
+    api.pull = { ...(api.pull as object), blob: remote };
+    expect(
+      securityChanges(remote, { recording: {}, logging: {} } as never, CATS, { audioFolder: true, logFolder: true }).filter(
+        (c) => c.kind === "audio-folder" || c.kind === "log-folder",
+      ),
+    ).toEqual([]);
+    await pullNow(true);
+    expect(getPendingReview()).toBeNull();
+    const after = useApp.getState().settings;
+    expect(after.recording.audioBaseDir).toBe("/home/me/audio");
+    expect(after.logging?.logDir ?? null).toBeNull();
+    expect(after.recording.dotScale).toBe(2);
+  });
+
   it("asks nothing when this device's folder switches are off", async () => {
     await seed();
     const s = useApp.getState().settings;

@@ -952,9 +952,12 @@ function roundedIn(v: unknown, lo: number, hi: number): number | undefined {
 }
 
 /** A machine-path leaf (Rust `Option<String>`): the inbound value when `gate` opts in and it is a
- *  string or `null` ("use the default location", a legitimate value); otherwise `local`. */
+ *  string or `null` ("use the default location", a legitimate value); otherwise `local`. A string
+ *  too long to be any path (`overlongPath`) is not one: the review skips it the same way
+ *  (`securityChanges`), so it must never apply — else blank padding Rust trims off would land a
+ *  short path with no consent row. */
 function gatedPath<L>(gate: boolean, v: unknown, local: L): string | null | L {
-  return gate && (typeof v === "string" || v === null) ? v : local;
+  return gate && ((typeof v === "string" && !overlongPath(v)) || v === null) ? v : local;
 }
 
 /** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
@@ -3618,6 +3621,11 @@ export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
  *  PATH_MAX of 4096 bytes is shorter). */
 const MAX_OPENABLE_PATH = 32767;
 
+/** A synced folder value too long to be a path even with generous edge padding: no picker or typed
+ *  path comes near it, and the peer's padding would otherwise be walked on every render of the
+ *  review row. Applied and reviewed alike (`gatedPath`, `securityChanges`). */
+const overlongPath = (v: string): boolean => v.length > 2 * MAX_OPENABLE_PATH;
+
 /** Rust `char::is_whitespace` (the Unicode White_Space property): JS `\s` plus U+0085, minus
  *  U+FEFF. */
 const isRustWhitespace = (c: number): boolean =>
@@ -3891,7 +3899,8 @@ export function securityChanges(
       const v = isPlainObject(incomingCat) ? ownProp(incomingCat, field) : undefined;
       // Rust's trim (`custom_folder`), not JS `trim`: JS also strips U+FEFF, so a peer's
       // `/home/u/rec\u{FEFF}` would compare equal here yet open a different, lookalike folder.
-      const t = typeof v === "string" ? trimRustWhitespace(v) : "";
+      // An overlong value never applies (`gatedPath`), so it needs no row.
+      const t = typeof v === "string" && !overlongPath(v) ? trimRustWhitespace(v) : "";
       if (typeof v !== "string" || t === "") continue;
       const here = isPlainObject(localCat) ? ownProp(localCat, field) : undefined;
       if (t === (typeof here === "string" ? trimRustWhitespace(here) : "") || seen.has(v)) continue;

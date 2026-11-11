@@ -720,6 +720,13 @@ function SecurityReviewDialog() {
   const pending = getPendingReview();
   const dictating = useApp((st) => st.status !== "idle");
   const [busy, setBusy] = useState(false);
+  // Once per change list, not per render: a folder row's detail is the peer's path, and the
+  // dialog re-renders on every dictation status change while it is open.
+  const changes = pending?.changes;
+  const details = useMemo(
+    () => new Map((changes ?? []).map((c) => [c, { text: consentDetailText(c), title: consentDetailTitle(c) }])),
+    [changes],
+  );
   if (!pending) return null;
   const LABELS: Record<SecurityChange["kind"], string> = {
     "new-backend": "New server added",
@@ -771,7 +778,7 @@ function SecurityReviewDialog() {
                   Would connect to <span className="font-mono font-semibold">{safeHostText(auth.host, HOST_CAP)}</span>
                 </div>
               )}
-              <div className="mt-0.5 font-mono text-[11px] break-all text-dim" title={consentDetailTitle(c)}>
+              <div className="mt-0.5 font-mono text-[11px] break-all text-dim" title={details.get(c)?.title}>
                 {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
                     identity while it decides whether a plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
@@ -779,7 +786,7 @@ function SecurityReviewDialog() {
                     (`break-all` wraps a long path), resolved of `.`/`..` (the raw path is the
                     tooltip), and one past its cap its head and tail. */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
-                {consentDetailText(c)}
+                {details.get(c)?.text}
               </div>
               {auth?.hasUserinfo && (
                 <div className="mt-1 text-[12px] font-semibold text-rec">
