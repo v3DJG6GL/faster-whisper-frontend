@@ -33,6 +33,17 @@ describe("authoredChipTag", () => {
     expect(authoredChipTag("x".repeat(30))).toBe("x".repeat(16));
     expect(authoredChipTag(" de-ch ")).toBe("de-ch");
   });
+
+  it("matches trim-then-cap for whitespace around and inside the cap", () => {
+    const old = (tag: string) => {
+      const t = tag.trim();
+      return t ? Array.from(t).slice(0, 16).join("").trimEnd() : "";
+    };
+    for (const tag of ["", " ", "a", " a ", "x".repeat(15) + " y", "x".repeat(16) + "   ", "x".repeat(15) + "   z",
+      " \u{1F3AC}".repeat(10), "ab" + " ".repeat(20) + "c", "\u3000a\u3000", "a".repeat(17)]) {
+      expect(authoredChipTag(tag)).toBe(old(tag));
+    }
+  });
 });
 
 describe("shownChipTag", () => {

@@ -44,6 +44,29 @@ describe("capCodePoints", () => {
     expect(capCodePoints("abc", 3)).toBe("abc");
     expect(capCodePoints("abcd", 2)).toBe("ab");
   });
+
+  it("matches the whole-string Array.from cut, surrogate pairs and lone surrogates included", () => {
+    const old = (s: string, max: number) => Array.from(s).slice(0, max).join("");
+    // Every string of up to 5 picks from a letter, an astral char, and each lone surrogate half.
+    const alphabet = ["a", "\u{1F3AC}", "\ud83c", "\udfac"];
+    let level = [""];
+    const shapes = [""];
+    for (let len = 1; len <= 5; len++) {
+      level = level.flatMap((x) => alphabet.map((c) => x + c));
+      shapes.push(...level);
+    }
+    for (const s of shapes) {
+      for (let max = 0; max <= 7; max++) expect(capCodePoints(s, max)).toBe(old(s, max));
+    }
+  });
+
+  it("reads only the head of a multi-MB string", () => {
+    const big = "W" + "x".repeat(4 << 20);
+    const t0 = performance.now();
+    for (let i = 0; i < 50; i++) expect(capCodePoints(big, 16)).toBe(big.slice(0, 16));
+    // Spreading the whole string costs tens of ms per call; the bounded walk microseconds.
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
 });
 
 describe("codeSlug", () => {

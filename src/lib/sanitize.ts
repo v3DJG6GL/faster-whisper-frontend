@@ -443,7 +443,15 @@ export function codeSlug(code: string, max = 12, fallback = ""): string {
 export function capCodePoints(s: string, max: number): string {
   // At most `max` UTF-16 units is at most `max` code points: nothing to cut.
   if (s.length <= max) return s;
-  return Array.from(s).slice(0, max).join("");
+  // A bounded walk, not `Array.from(s)`: a synced or server string can be MBs, and some callers
+  // (the chip tag) run on every level tick — only the first `max` code points are ever read.
+  let out = "";
+  let n = 0;
+  for (const ch of s) {
+    if (n++ >= max) break;
+    out += ch;
+  }
+  return out;
 }
 
 /** An edit `prev` → `next` held to `max` code points the way a native maxLength holds it: only

@@ -16,8 +16,11 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
  *  record stores, History's badge and the translation-target picker's header. `budget` bounds the
  *  head walk (`trimLeadingInvisible`); the tag a record stores walks it whole. */
 export function authoredChipTag(tag: unknown, budget = Infinity): string {
-  const t = typeof tag === "string" ? trimLeadingInvisible(tag, budget).trim() : "";
-  return t ? capCodePoints(t, AUTHORED_TAG_MAX).trimEnd() : "";
+  // Capped before the trailing trim, so MBs of synced trailing whitespace are never walked. Same
+  // output: the head is already trimmed, so the cap keeps a visible first character whenever any
+  // text is left, and trailing whitespace past the cap is cut either way.
+  const t = typeof tag === "string" ? trimLeadingInvisible(tag, budget).trimStart() : "";
+  return capCodePoints(t, AUTHORED_TAG_MAX).trimEnd();
 }
 
 /** `authoredChipTag` for a surface that re-renders it — the chip (rebuilt on every level tick), the
