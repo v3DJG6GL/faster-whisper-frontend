@@ -167,7 +167,7 @@ fn move_dir_contents(
     let entries = match std::fs::read_dir(from) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("could not read {}: {e}", from.display())),
+        Err(e) => return Err(format!("could not read {from:?}: {e}")),
     };
     crate::audio::create_dir_private(to).map_err(|e| e.to_string())?;
     for entry in entries.flatten() {
@@ -200,7 +200,8 @@ fn move_dir_contents(
         match move_file_waiting_out_a_save(&src, &dest) {
             // Swapped for a non-file after the check above: skipped like one found at the check.
             Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => continue,
-            r => r.map_err(|e| format!("could not move {}: {e}", src.display()))?,
+            // Debug-quoted like the warn above: a planted name with a newline would forge a log line.
+            r => r.map_err(|e| format!("could not move {src:?}: {e}"))?,
         }
         map.push((
             src.to_string_lossy().into_owned(),
