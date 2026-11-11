@@ -191,7 +191,9 @@ fn move_dir_contents(
         // Never clobber (the layout migration's rule, applied to the relocation too): a base
         // that already holds a same-named file — a second install pointed at one synced folder,
         // a re-run after a partial move — keeps it, and the record still points at the source.
-        if dest.exists() {
+        // Link-aware: a dangling link planted in a shared target reads as absent to `exists()`,
+        // and the copy refuses to write through it, so it would abort the whole move each time.
+        if std::fs::symlink_metadata(&dest).is_ok() {
             tracing::warn!("[audio] not moving {:?} — {:?} already exists", src, dest);
             continue;
         }
@@ -366,8 +368,8 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
                     continue;
                 }
                 let dest = dict.join(name);
-                if dest.exists() {
-                    continue; // never clobber
+                if std::fs::symlink_metadata(&dest).is_ok() {
+                    continue; // never clobber (a dangling link included)
                 }
                 if move_file(&src, &dest).is_ok() {
                     map.push((
@@ -404,8 +406,8 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
                     "files"
                 };
                 let dest = base.join(sub).join(name);
-                if dest.exists() {
-                    continue;
+                if std::fs::symlink_metadata(&dest).is_ok() {
+                    continue; // never clobber (a dangling link included)
                 }
                 if move_file(&src, &dest).is_ok() {
                     map.push((
@@ -1181,6 +1183,32 @@ mod tests {
         assert!(!to.join("b.wav").exists(), "a link is never moved");
         assert!(std::fs::symlink_metadata(from.join("b.wav")).is_ok());
         assert_eq!(map.len(), 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // A dangling link at the destination (another account's, in a shared target) is skipped
+    // like any same-named entry, not an error that aborts the move on every attempt.
+    #[cfg(unix)]
+    #[test]
+    fn move_dir_contents_skips_a_dangling_link_at_the_destination() {
+        let base = crate::config::fresh_test_dir("move-dir-dangling");
+        let (from, to) = (base.join("from"), base.join("to"));
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join("a.wav"), b"riff").unwrap();
+        std::fs::write(from.join("c.wav"), b"riff").unwrap();
+        std::os::unix::fs::symlink(base.join("nowhere"), to.join("a.wav")).unwrap();
+
+        let mut map = Vec::new();
+        move_dir_contents(&from, &to, &mut map).unwrap();
+
+        assert!(from.join("a.wav").exists(), "the source stays where it was");
+        assert!(std::fs::symlink_metadata(to.join("a.wav"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!base.join("nowhere").exists());
+        assert_eq!(map.len(), 1, "the other file still moves");
         let _ = std::fs::remove_dir_all(&base);
     }
 
