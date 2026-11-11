@@ -7,8 +7,12 @@ import type { Backend } from "./types";
 /** Longest API key this app stores, in UTF-16 code units — one bound for both writers: Rust's
  *  `set_backend_key` refuses a longer key (MAX_SECRET_UTF16) and sync drops a longer synced one.
  *  A longer local key would be left out of this device's own snapshot stash, and a later push
- *  would then erase it on the server for every peer. Real API keys and JWTs are far shorter. */
-export const MAX_SECRET_LEN = 4096;
+ *  would then erase it on the server for every peer. 1280 is what every keyring can hold: Windows
+ *  Credential Manager caps a secret at 2560 bytes of UTF-16. A longer synced key would count as
+ *  carried, yet its write fails there while the old key held for that id stays and resolves — so
+ *  a peer could send this device's key to its own host without the held-key disclosure. Real API
+ *  keys and JWTs are far shorter. */
+export const MAX_SECRET_LEN = 1280;
 /** What the key fields say for a key over MAX_SECRET_LEN (the words Rust's refusal uses). */
 export const KEY_TOO_LONG = `The API key is longer than ${MAX_SECRET_LEN} characters, so it was not stored.`;
 

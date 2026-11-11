@@ -1485,8 +1485,8 @@ describe("applyBlob keep-local (baseline)", () => {
     // A real key still asks.
     expect(keyRows(known, { b1: "sk-1" })).toHaveLength(1);
     // An oversize key is written by nobody either, so it raises no row; one at the cap still asks.
-    expect(keyRows(known, { b1: "k".repeat(4097) })).toEqual([]);
-    expect(keyRows(known, { b1: "k".repeat(4096) })).toHaveLength(1);
+    expect(keyRows(known, { b1: "k".repeat(1281) })).toEqual([]);
+    expect(keyRows(known, { b1: "k".repeat(1280) })).toHaveLength(1);
   });
 
   it("backendKeyFates: the API-key disclosure the import AND the restore dialog show", () => {
