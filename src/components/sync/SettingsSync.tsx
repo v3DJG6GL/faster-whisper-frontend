@@ -269,7 +269,11 @@ export function useHeldKeyIds(
   confirm: (noticed: (held: ReadonlySet<string>) => readonly string[]) => Promise<boolean | null>;
 } {
   const local = useApp((st) => st.backends);
-  const candidates = useMemo(() => heldKeyCandidates(incoming, secrets, local), [incoming, secrets, local]);
+  const settings = useApp((st) => st.settings);
+  const candidates = useMemo(
+    () => heldKeyCandidates(incoming, secrets, local, settings),
+    [incoming, secrets, local, settings],
+  );
   const key = JSON.stringify(candidates);
   const [read] = useState(heldKeyReads);
   const [shown, setShown] = useState<{ key: string; ids: ReadonlySet<string> } | null>(null);

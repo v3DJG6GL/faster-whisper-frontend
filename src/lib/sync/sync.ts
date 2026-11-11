@@ -1561,9 +1561,12 @@ function inboundSecret(secrets: unknown, id: string): string | undefined {
  *    apply never deletes one), but now CONNECTS elsewhere, so the key goes to `to`. "Connects" is
  *    `effectiveServerUrl`: an "Address on this device" override wins, and the apply leaves a
  *    surviving id's override in place, so the current settings are also the post-apply ones.
- *    `anyKey`: an id NOT in the local list that `heldKeys` (`readHeldKeyIds`) found a key for, or
- *    could not read. Keys outlive their backend and resolve by id alone, so the blob re-adding a
- *    removed id at its own address picks that key up, whatever its `hasApiKey` says. */
+ *    `anyKey`: an id `heldKeys` (`readHeldKeyIds`) found a key for, or could not read — one NOT in
+ *    the local list, or a local one flagged keyless that now connects elsewhere. Keys outlive
+ *    their backend and resolve by id alone, so the blob re-adding a removed id at its own address
+ *    picks that key up, whatever its `hasApiKey` says; and a local `hasApiKey: false` is not
+ *    keyring truth (a degraded read keeps a new backend's flag false), while the apply
+ *    re-derives it from the keyring. */
 export function backendKeyFates(
   incoming: Backend[],
   secrets: unknown,
@@ -1574,7 +1577,7 @@ export function backendKeyFates(
   const dest = (x: Backend) => effectiveServerUrl(x, settings);
   const keyHere = (b: Backend) => local.find((x) => x.id === b.id && x.hasApiKey);
   const carries = (b: Backend) => inboundSecret(secrets, b.id) !== undefined;
-  const heldElsewhere = (b: Backend) => heldKeys.has(b.id) && !carries(b) && !local.some((x) => x.id === b.id);
+  const heldElsewhere = (b: Backend) => heldKeys.has(b.id) && !carries(b) && keylessOrGone(b, local, settings);
   return {
     carried: incoming.some(carries),
     missing: incoming.filter((b) => b.hasApiKey && !carries(b) && !keyHere(b) && !heldElsewhere(b)),
@@ -1589,12 +1592,31 @@ export function backendKeyFates(
   };
 }
 
+/** Whether `b`'s held key would reach a destination no keyed local entry discloses: the local list
+ *  lacks its id, or holds it flagged keyless (`backendKeyFates`' `keyHere` misses it) while the
+ *  blob moves it to another effective address. An unmoved keyless id sends nowhere new. */
+function keylessOrGone(b: Backend, local: readonly Backend[], settings: AppSettings): boolean {
+  const here = local.find((x) => x.id === b.id);
+  if (!here) return true;
+  return (
+    !here.hasApiKey &&
+    normalizeUrl(effectiveServerUrl(here, settings)) !== normalizeUrl(effectiveServerUrl(b, settings))
+  );
+}
+
 /** The ids of `incoming` (the list an import or restore installs) whose keyring entry
- *  `backendKeyFates` needs: new to this device's `local` list, and no inbound key. None when no
- *  id qualifies (a fresh device restoring a list with keys, or one that already holds every id). */
-export function heldKeyCandidates(incoming: Backend[], secrets: unknown, local: readonly Backend[]): string[] {
-  const here = new Set(local.map((b) => b.id));
-  return incoming.map((b) => b.id).filter((id) => !here.has(id) && inboundSecret(secrets, id) === undefined);
+ *  `backendKeyFates` needs: no inbound key, and `keylessOrGone` (new to this device, or local,
+ *  flagged keyless and moved). None when no id qualifies (a fresh device restoring a list with
+ *  keys, or one that already holds every id where it was). */
+export function heldKeyCandidates(
+  incoming: Backend[],
+  secrets: unknown,
+  local: readonly Backend[],
+  settings: AppSettings,
+): string[] {
+  return incoming
+    .filter((b) => inboundSecret(secrets, b.id) === undefined && keylessOrGone(b, local, settings))
+    .map((b) => b.id);
 }
 
 /** Which of `ids` (`heldKeyCandidates`) hold a key in this device's keyring, or could not be read —
@@ -1608,8 +1630,13 @@ export async function readHeldKeys(ids: string[]): Promise<ReadonlySet<string>> 
 }
 
 /** `readHeldKeys` of `heldKeyCandidates`. */
-export function readHeldKeyIds(incoming: Backend[], secrets: unknown, local: readonly Backend[]): Promise<ReadonlySet<string>> {
-  return readHeldKeys(heldKeyCandidates(incoming, secrets, local));
+export function readHeldKeyIds(
+  incoming: Backend[],
+  secrets: unknown,
+  local: readonly Backend[],
+  settings: AppSettings,
+): Promise<ReadonlySet<string>> {
+  return readHeldKeys(heldKeyCandidates(incoming, secrets, local, settings));
 }
 
 /** Write incoming secrets to the keyring, then re-derive every backend's

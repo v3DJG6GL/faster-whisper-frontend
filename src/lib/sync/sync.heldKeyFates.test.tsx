@@ -55,7 +55,7 @@ describe("the held key of an id the blob re-adds", () => {
 
   it("is disclosed when the keyring holds one, with the new host", async () => {
     api.keys = { b9: "old-key" };
-    const held = await readHeldKeyIds(incoming, undefined, local);
+    const held = await readHeldKeyIds(incoming, undefined, local, DEFAULT_SETTINGS);
     expect([...held]).toEqual(["b9"]);
     // Only the id new to this device is read.
     expect(api.reads).toEqual([["b9"]]);
@@ -68,14 +68,14 @@ describe("the held key of an id the blob re-adds", () => {
   it("leaves `missing` for a held id that claims a key", async () => {
     api.keys = { b9: "old-key" };
     const claims = [backend({ id: "b9", hasApiKey: true, serverUrl: EVIL })];
-    const held = await readHeldKeyIds(claims, undefined, local);
+    const held = await readHeldKeyIds(claims, undefined, local, DEFAULT_SETTINGS);
     const fates = backendKeyFates(claims, undefined, local, DEFAULT_SETTINGS, held);
     expect(fates.missing).toEqual([]);
     expect(fates.moved.map((m) => m.backend.id)).toEqual(["b9"]);
   });
 
   it("adds no text for a brand-new id with an empty keyring", async () => {
-    const held = await readHeldKeyIds(incoming, undefined, local);
+    const held = await readHeldKeyIds(incoming, undefined, local, DEFAULT_SETTINGS);
     expect(held.size).toBe(0);
     expect(notices(held)).toBe(notices(new Set()));
     expect(notices(held)).toBe("");
@@ -83,17 +83,51 @@ describe("the held key of an id the blob re-adds", () => {
 
   it("fails closed when the keyring cannot read the id, or the read fails", async () => {
     api.unreadable = ["b9"];
-    expect([...(await readHeldKeyIds(incoming, undefined, local))]).toEqual(["b9"]);
+    expect([...(await readHeldKeyIds(incoming, undefined, local, DEFAULT_SETTINGS))]).toEqual(["b9"]);
     api.unreadable = [];
     api.fail = true;
-    const held = await readHeldKeyIds(incoming, undefined, local);
+    const held = await readHeldKeyIds(incoming, undefined, local, DEFAULT_SETTINGS);
     expect([...held]).toEqual(["b9"]);
     expect(notices(held)).toContain("any API key this device holds for this ID would be sent to");
   });
 
   it("reads nothing when the blob carries the id's key, or every id is held here", async () => {
-    expect((await readHeldKeyIds(incoming, { b9: "peer-key" }, local)).size).toBe(0);
-    expect((await readHeldKeyIds([incoming[0]], undefined, local)).size).toBe(0);
+    expect((await readHeldKeyIds(incoming, { b9: "peer-key" }, local, DEFAULT_SETTINGS)).size).toBe(0);
+    expect((await readHeldKeyIds([incoming[0]], undefined, local, DEFAULT_SETTINGS)).size).toBe(0);
+    expect(api.reads).toEqual([]);
+  });
+});
+
+describe("a local id flagged keyless that the blob moves", () => {
+  // A degraded keyring read leaves a new backend's flag false even though its key was written;
+  // the apply re-derives the flag from the keyring and the key then goes to the blob's address.
+  const keyless = [backend({ id: "b2", hasApiKey: false })];
+
+  beforeEach(() => {
+    api.keys = {};
+    api.unreadable = [];
+    api.fail = false;
+    api.reads = [];
+    api.gate = null;
+  });
+
+  it("is probed, and a held key gets the same notice as a re-added id", async () => {
+    api.keys = { b2: "kept-key" };
+    const moved = [backend({ id: "b2", name: "home", serverUrl: EVIL })];
+    const held = await readHeldKeyIds(moved, undefined, keyless, DEFAULT_SETTINGS);
+    expect([...held]).toEqual(["b2"]);
+    const fates = backendKeyFates(moved, undefined, keyless, DEFAULT_SETTINGS, held);
+    expect(fates.moved.map((m) => [m.backend.id, m.to, m.anyKey])).toEqual([["b2", EVIL, true]]);
+    expect(fates.missing).toEqual([]);
+  });
+
+  it("is not probed when unmoved (address differs only in form), keyed, or carrying a key", async () => {
+    const unmoved = [backend({ id: "b2", serverUrl: `${keyless[0].serverUrl}/` })];
+    expect(heldKeyCandidates(unmoved, undefined, keyless, DEFAULT_SETTINGS)).toEqual([]);
+    const moved = [backend({ id: "b2", serverUrl: EVIL })];
+    expect(heldKeyCandidates(moved, undefined, [{ ...keyless[0], hasApiKey: true }], DEFAULT_SETTINGS)).toEqual([]);
+    expect(heldKeyCandidates(moved, { b2: "peer-key" }, keyless, DEFAULT_SETTINGS)).toEqual([]);
+    expect((await readHeldKeyIds(unmoved, undefined, keyless, DEFAULT_SETTINGS)).size).toBe(0);
     expect(api.reads).toEqual([]);
   });
 });
@@ -109,7 +143,7 @@ describe("a confirm click that lands before the held-key read is back", () => {
 
   const noticed = (h: ReadonlySet<string>) =>
     heldKeyNoticeIds(backendKeyFates(incoming, undefined, local, DEFAULT_SETTINGS, h));
-  const candidates = () => heldKeyCandidates(incoming, undefined, local);
+  const candidates = () => heldKeyCandidates(incoming, undefined, local, DEFAULT_SETTINGS);
   const NONE: ReadonlySet<string> = new Set();
 
   it("applies nothing on a held key it did not show; the second click applies", async () => {
