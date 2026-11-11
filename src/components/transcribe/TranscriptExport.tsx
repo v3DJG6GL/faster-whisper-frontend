@@ -12,7 +12,7 @@ import { ExportTrackChips } from "@/components/transcribe/ExportTrackChips";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,
-  fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia, revealSaved,
+  fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia, revealSaved, type PackageOutcome,
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
 import { errorText } from "@/lib/errors";
@@ -61,6 +61,18 @@ const ERROR_MAX = 300;
 const tooLargeToEmbed = (t: EmbeddedTrack) =>
   `The "${safeDisplayText(t.label || t.lang, 60)}" subtitle track is too large to put ` +
   `inside a video (over ${fmtBytes(MAX_EMBED_SRT_BYTES)}) — leave it out or save the subtitles as files.`;
+
+/** Why a Save stops before a request: its backend was removed after Save was pressed. */
+const BACKEND_GONE_SAVE = "This backend was removed. Save again with another backend.";
+
+/** Whether backend `id` is gone (deleted, or removed by a sync pull) once the config is loaded,
+ *  checked when each export request leaves: keys resolve by backend id at call time and a pull
+ *  keeps a removed backend's key, so a Save's address frozen at the click must not get it. A
+ *  live backend keeps that address. Before the config loads there is no list to check. */
+function backendGone(id: string): boolean {
+  const st = useApp.getState();
+  return st.configLoaded && !st.configLoadFailed && !st.backends.some((b) => b.id === id);
+}
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -250,7 +262,7 @@ export function TranscriptExport({
   // a fallback's 404) must still fetch. `settings` stays out — streams are a fact of the
   // media id, not of the address.
   useEffect(() => {
-    if (!open || effMedia !== "video" || !serverVideoId || streams || !trBackend) return;
+    if (!open || effMedia !== "video" || !serverVideoId || streams || !trBackend || backendGone(trBackend.id)) return;
     let alive = true;
     getMediaStreams({
       serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id, mediaId: serverVideoId,
@@ -444,6 +456,8 @@ export function TranscriptExport({
       if (!serverAudioId) return null;
       if (!trBackend) throw new Error("No backend is selected.");
       if (!rec) return null;
+      // After the save dialog: the backend may have gone meanwhile.
+      if (backendGone(trBackend.id)) throw new Error(BACKEND_GONE_SAVE);
       // The id actually sent: a re-run may stamp a newer one meanwhile.
       const sentId = serverAudioId;
       const got = await withMediaJob("fetching-audio", fetchUrlMedia({
@@ -566,6 +580,7 @@ export function TranscriptExport({
     const picked = packageSource(storedId, localVideo);
     if (picked) source = picked;
     else if (urlVideoOnDemand) {
+      if (backendGone(issuer)) return fail("error", BACKEND_GONE_SAVE);
       try {
         // The link card's quality and format picks, as the run's own on-demand fetch
         // honours them; none = the Settings default. Fetched, the job clears: a wait in the
@@ -578,10 +593,13 @@ export function TranscriptExport({
         source = { sourceMediaId: got.mediaId };
         // Only reachable for a link (urlVideoOnDemand), so this lands in sourceVideo*.
         rememberUpload(got.mediaId, got.expiresAt ?? undefined);
-        // Keep a local copy too (the Settings' video store), best effort.
-        void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
-          .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
-          .catch(() => {});
+        // Keep a local copy too (the Settings' video store), best effort; none from a backend
+        // that went during the fetch.
+        if (!backendGone(issuer)) {
+          void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
+            .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
+            .catch(() => {});
+        }
       } catch (e) {
         return fail("fetch", safeDisplayText(errorText(e), ERROR_MAX) || "The video could not be fetched.");
       }
@@ -622,7 +640,11 @@ export function TranscriptExport({
     let outcome;
     try {
       // One export at a time, in Save order — across every viewer (lib/transcript/mediaExport.ts).
-      outcome = await queueMediaExport(jobId, owner, async () => {
+      outcome = await queueMediaExport(jobId, owner, async (): Promise<PackageOutcome> => {
+        // Checked on every attempt: the queue and its busy retries can wait many minutes.
+        if (backendGone(issuer)) {
+          return { kind: "error", detail: BACKEND_GONE_SAVE, bytes: 0, mediaId: null, expiresAt: null, reason: null };
+        }
         setRunningProgress(jobId, { jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
         const out = await packageMedia({
           serverUrl, backendId: trBackend.id, jobId,
