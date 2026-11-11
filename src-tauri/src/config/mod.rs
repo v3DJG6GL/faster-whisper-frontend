@@ -33,11 +33,21 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
 
 /// The open half of `write_private`: created or truncated, 0600, final symlink not followed.
 /// `create_new` refuses any existing name instead (`O_CREAT|O_EXCL`), so the file is always
-/// one this process just made.
+/// one this process just made; on Windows it is also held unshared (the export tmp, closed
+/// before anything renames or removes it by name).
 fn open_private(path: &Path, create_new: bool) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     if create_new {
         opts.write(true).create_new(true);
+        // Shared, a handle another local account opened between the create and the owner-only
+        // DACL would stay valid and read the secrets as they are written. The DACL call opens
+        // the file by name for WRITE_DAC only, which sharing does not restrict
+        // (`create_new_private_exclusive` relies on the same).
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            opts.share_mode(0);
+        }
     } else {
         opts.write(true).create(true).truncate(true);
     }
@@ -77,7 +87,8 @@ pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> 
 
 /// `write_private_atomic` for a path OUTSIDE the config dir — the settings export, at a
 /// save-dialog path that may carry a folder's permissive inherited ACL. On Windows the tmp also
-/// gets an owner-only DACL before the contents land; the rename keeps it.
+/// gets an owner-only DACL before the contents land, and is held unshared until it is closed;
+/// the rename keeps the DACL.
 ///
 /// A DACL failure only warns, like the Unix fchmod above: FAT/exFAT sticks hold no ACL and are
 /// exactly where an export is carried to another machine, and failing would block the export.
