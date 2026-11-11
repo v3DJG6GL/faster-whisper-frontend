@@ -576,6 +576,21 @@ describe("wrapLines", () => {
       expect(performance.now() - t0).toBeLessThan(500);
     }
   });
+  it("a long trailing or inner whitespace run (a server's segment text) splits quickly", () => {
+    // The last token runs to the text's end, and every seam trimmed both sides again, run included.
+    const W = 16000;
+    const ws = Array.from({ length: W }, (_, i) => "w" + (i % 10));
+    for (const [tail, inner] of [[200_000, 0], [0, 200_000]]) {
+      const text = ws.map((w, i) => (i === W / 2 ? " ".repeat(inner) : "") + w).join(" ") + " ".repeat(tail);
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text, language: "en", words, segments: [{ start: 0, end: W * 0.3, text: " " + text }] };
+      const t0 = performance.now();
+      const { cues } = buildCues(r, STD, ["orig"]);
+      expect(performance.now() - t0).toBeLessThan(1000);
+      expect(cues.map((c) => c.text).join(" ").split(/\s+/)).toEqual(ws);
+      expect(cues.every((c) => c.text === c.text.trim())).toBe(true);
+    }
+  });
   it("a long flag run (a server's text) cuts quickly and keeps every flag whole", () => {
     // Each candidate walked the regional-indicator run back to its start to tell a flag's halves apart.
     expect(cutByShare("a 🇺🇸🇩🇪🇫🇷 b", [1, 1])).toEqual(["a 🇺🇸🇩🇪🇫🇷", "b"]);

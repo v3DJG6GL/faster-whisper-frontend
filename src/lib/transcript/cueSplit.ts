@@ -821,6 +821,28 @@ function riOddBefore(text: string): (i: number) => boolean {
     return odd[i] === 1;
   };
 }
+/** For `text`, the span `[start, end)` that `text.slice(a, b).trim()` keeps (`.trimEnd()` with
+ *  `endOnly`) — trim's whitespace is /\s/'s. Read from two arrays built in one pass each on first
+ *  use, then O(1) per span: a server's text can hold a long whitespace run, and trimming it again
+ *  for every candidate cut or seam was quadratic. */
+function trimSpan(text: string): (a: number, b: number, endOnly?: boolean) => [number, number] {
+  /** nextNonWs[x]: the first index >= x whose char is not whitespace (len if none). */
+  let nextNonWs: Int32Array | undefined;
+  /** prevNonWs[x]: one past the last index < x whose char is not whitespace (0 if none). */
+  let prevNonWs: Int32Array | undefined;
+  return (a, b, endOnly = false) => {
+    if (!nextNonWs || !prevNonWs) {
+      const len = text.length;
+      nextNonWs = new Int32Array(len + 1);
+      prevNonWs = new Int32Array(len + 1);
+      nextNonWs[len] = len;
+      for (let x = len - 1; x >= 0; x--) nextNonWs[x] = /\s/.test(text[x]) ? nextNonWs[x + 1] : x;
+      for (let x = 1; x <= len; x++) prevNonWs[x] = /\s/.test(text[x - 1]) ? prevNonWs[x - 1] : x;
+    }
+    const a2 = endOnly ? a : Math.min(nextNonWs[a], b);
+    return [a2, Math.max(a2, prevNonWs[b])];
+  };
+}
 /** The longest whitespace-free run of spaced text that is still a short word ("東京", "Tokyo"):
  *  a seam inside one is a fallback (cutByShare, wrapTokens); a longer run is a sentence. */
 const SHORT_RUN = 6;
@@ -896,6 +918,7 @@ function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
   // Right half pushed first, so the left one pops first and the groups come out in text order.
   const stack: [number, number][] = [[0, all.length]];
   const riOdd = riOddBefore(text);
+  const span = trimSpan(text);
   for (let r = stack.pop(); r; r = stack.pop()) {
     const [lo, hi] = r;
     scanned += hi - lo;
@@ -904,15 +927,22 @@ function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
       out.push(ts);
       continue;
     }
-    const bi = scanned > budget ? Math.floor(ts.length / 2) : bestSeam(text, ts, L, riOdd);
+    const bi = scanned > budget ? Math.floor(ts.length / 2) : bestSeam(text, ts, L, riOdd, span);
     stack.push([lo + bi, hi], [lo, lo + bi]);
   }
   return out;
 }
 
 /** The index in `ts` of the seam splitTokens cuts at. */
-function bestSeam(text: string, ts: Tok[], L: Budget, riOdd: (i: number) => boolean): number {
-  const total = sliceOf(text, ts).length || 1;
+function bestSeam(
+  text: string, ts: Tok[], L: Budget, riOdd: (i: number) => boolean, span: ReturnType<typeof trimSpan>,
+): number {
+  /** Trimmed length of `text[a, b)`, by index (trimSpan): no walk over a whitespace run per candidate. */
+  const trimmedLen = (a: number, b: number) => {
+    const [a2, b2] = span(a, b);
+    return b2 - a2;
+  };
+  const total = trimmedLen(ts[0].from, ts[ts.length - 1].to) || 1;
   let best = -Infinity;
   let bi = -1;
   for (let i = 1; i < ts.length; i++) {
@@ -936,8 +966,8 @@ function bestSeam(text: string, ts: Tok[], L: Budget, riOdd: (i: number) => bool
     // Western marks too: a lone opening mark after a space or a closer (" «", " „", ”“), a quote
     // tokensOf split off as an opener, a word of closers and stops alone (" »", " !", ’'), and
     // an English clitic after a closing quote (‘Tokyo’' | s).
-    const left = text.slice(ts[i - 1].from, ts[i - 1].to).trimEnd();
-    const right = text.slice(at, ts[i].to).trim();
+    const left = text.slice(...span(ts[i - 1].from, ts[i - 1].to, true));
+    const right = text.slice(...span(at, ts[i].to));
     if (ts[i - 1].opens || OPENER.test(edgeChar(left, true)) || /(?:^|[\s\p{Pe}\p{Pf}])[\p{Ps}\p{Pi}]+$/u.test(left)
       || CLOSE_PUNCT.includes(text[at] || "\0") || /^(?:(?!["'&@#*/\\§¶])[\p{Pe}\p{Pf}\p{Po}])+["']*$/u.test(right)
       || (/[\p{Pe}\p{Pf}]'$/u.test(left) && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])/iu.test(right))) s -= 1000;
@@ -946,8 +976,8 @@ function bestSeam(text: string, ts: Tok[], L: Budget, riOdd: (i: number) => bool
     // cue opened on a bare mark (a dotted circle) or ended on a leading vowel.
     if (splitsUnit(text, at, riOdd)) s -= 1000;
     // Both sides read by index: slicing the token array per candidate would make every level O(n²).
-    const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
-    const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
+    const leftLen = trimmedLen(ts[0].from, ts[i - 1].to);
+    const rightLen = trimmedLen(ts[i].from, ts[ts.length - 1].to);
     s -= (30 * Math.abs(leftLen - rightLen)) / total;
     if (ts[i - 1].e - ts[0].s < 1 || ts[ts.length - 1].e - ts[i].s < 1) s -= 60;
     if (s > best) {
@@ -1110,21 +1140,11 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   const MAX_BONUS = 25;
   /** text[a..b) trimmed holds fewer than two code points — counted in place: slicing and
    *  spreading the part per candidate would make a long text with many shares quadratic per cut.
-   *  The trim reads precomputed edges, not a walk: a server translation of one long whitespace run
-   *  ("a" + N spaces + "b") has a candidate at every space, and walking the run for each was quadratic. */
-  const len = text.length;
-  /** nextNonWs[x]: the first index >= x whose char is not whitespace (len if none). */
-  const nextNonWs = new Int32Array(nCuts > 0 ? len + 1 : 0);
-  /** prevNonWs[x]: one past the last index < x whose char is not whitespace (0 if none). */
-  const prevNonWs = new Int32Array(nCuts > 0 ? len + 1 : 0);
-  if (nCuts > 0) {
-    nextNonWs[len] = len;
-    for (let x = len - 1; x >= 0; x--) nextNonWs[x] = /\s/.test(text[x]) ? nextNonWs[x + 1] : x;
-    for (let x = 1; x <= len; x++) prevNonWs[x] = /\s/.test(text[x - 1]) ? prevNonWs[x - 1] : x;
-  }
+   *  The trim reads precomputed edges (trimSpan), not a walk: a server translation of one long
+   *  whitespace run ("a" + N spaces + "b") has a candidate at every space. */
+  const span = trimSpan(text);
   const oneCp = (a: number, b: number): boolean => {
-    const a2 = Math.min(nextNonWs[a], b);
-    const b2 = Math.max(a2, prevNonWs[b]);
+    const [a2, b2] = span(a, b);
     const n = b2 - a2;
     return n < 2 || (n === 2 && text.codePointAt(a2)! > 0xffff);
   };
