@@ -43,7 +43,7 @@ export const LOCKED_REASON = "Your server admin fixed this value.";
 
 /** The tooltip line naming where an inherited value comes from. */
 export function sourceText(d: Pick<DecodeDefault, "source" | "label">, model: string): string {
-  const short = model.split("/").pop() || model;
+  const short = model.slice(model.lastIndexOf("/") + 1) || model;
   switch (d.source) {
     case "model":
       return `Server default for ${short} (model config)`;
@@ -106,7 +106,7 @@ export function shortModelName(id: unknown, max = 60): string | undefined {
   const t = id.trim();
   // Trimmed after sanitizing: a name of only format characters ("\u200f \u200f") sanitizes to
   // blank space, which is no name either.
-  return safeDisplayText(t.split("/").pop() || t, max).trim() || undefined;
+  return safeDisplayText(t.slice(t.lastIndexOf("/") + 1) || t, max).trim() || undefined;
 }
 
 /** The name a request-default-settings entry gives (the default model, a stage model), short. */
