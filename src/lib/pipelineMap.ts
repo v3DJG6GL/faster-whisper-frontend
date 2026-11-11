@@ -369,7 +369,12 @@ export function applyMap(text: string, rows: MapRow[]): string {
       i += 1;
     }
   }
-  return out.replace(/^[ \t\r]+/, "").replace(/[ \t\r]+$/, "");
+  out = out.replace(/^[ \t\r]+/, "");
+  // The trailing trim by an end-scan, not `[ \t\r]+$`: that regex retries from every run start,
+  // quadratic on a server-supplied value of MBs of blanks before a final character.
+  let e = out.length;
+  while (e > 0 && (out[e - 1] === " " || out[e - 1] === "\t" || out[e - 1] === "\r")) e--;
+  return out.slice(0, e);
 }
 
 /** A `\b`-equivalent boundary: true when exactly one side is a word char (string edge = ""

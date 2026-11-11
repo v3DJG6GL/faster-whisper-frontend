@@ -301,6 +301,17 @@ describe("applyMap", () => {
     expect(applyMap(" \u{20BB7}野家 ", [{ id: 1, k: "\u{20BB7}野家", v: "X" }])).toBe("X");
   });
 
+  it("trims a server value's long blank run in linear time, same result", () => {
+    const v = " ".repeat(100_000) + "x";
+    const t0 = performance.now();
+    // Mid-text, so the leading trim can't remove the run first.
+    expect(applyMap("a w", [{ id: 1, k: "w", v }])).toBe("a " + v);
+    expect(applyMap("w", [{ id: 1, k: "w", v: "x" + " \t\r".repeat(50_000) + "y \t\r" }])).toBe("x" + " \t\r".repeat(50_000) + "y");
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(applyMap(" \t a w \r", [{ id: 1, k: "w", v: "b" }])).toBe("a b");
+    expect(applyMap("w", [{ id: 1, k: "w", v: " \t\r" }])).toBe("");
+  });
+
   it("finds no boundary between an astral letter and a key", () => {
     expect(applyMap("\u{1D400}ok", [{ id: 1, k: "ok", v: "Y" }])).toBe("\u{1D400}ok");
   });
