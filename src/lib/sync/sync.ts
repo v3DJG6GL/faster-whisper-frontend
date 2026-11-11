@@ -3855,12 +3855,14 @@ const EMOJI_BASE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
  *  joiner renders as nothing. */
 const JOINING_LETTER =
   /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Nko}\p{scx=Mongolian}\p{scx=Myanmar}\p{scx=Khmer}ऀ-෿]$/u;
-/** The Brahmic viramas of U+0900–U+0DFF: every code point there with canonical combining class 9
- *  (UnicodeData.txt, Unicode 16), which a regex property cannot select. Devanagari, Bengali,
- *  Gurmukhi, Gujarati, Oriya, Tamil, Telugu and Kannada virama, Malayalam vertical bar, circular
- *  and plain virama, Sinhala al-lakuna. A joiner right after one changes the glyph drawn BEFORE it
- *  (a half form, a chillu, a khanda ta), whatever follows. */
-const VIRAMA = /^[\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D3B\u0D3C\u0D4D\u0DCA]$/u;
+/** The viramas after which a ZWJ changes the glyph drawn BEFORE it, so it shows even before a
+ *  non-letter or at the end of a name: Devanagari and Gujarati (an explicit half form, Unicode
+ *  core spec §12.1, Gujarati following it in §12.4), Bengali (khanda ta, §12.2) and Malayalam (a chillu in the
+ *  pre-5.1 encoding, §12.9). Elsewhere a ZWJ after a virama (Tamil, Gurmukhi, Telugu, Kannada,
+ *  Oriya, Sinhala, Malayalam's vertical bar and circular viramas) has no defined shape before a
+ *  non-letter, and a ZWNJ after any virama asks for the explicit virama a non-letter already
+ *  gets: both draw as nothing there. */
+const HALF_FORM_VIRAMA = /^[\u094D\u09CD\u0ACD\u0D4D]$/u;
 
 /** Code points that draw as a lone `.` yet have no decomposition to one, so NFKD keeps them:
  *  Lisu tone mya ti, the Arabic-Indic and Persian zeros, the Syriac supralinear and sublinear
@@ -3925,8 +3927,8 @@ function edgeBlankText(s: string): string {
  *  The blank edges Rust trims are written out compactly (`edgeBlankText`). Kept: a ZWJ or VS16 right after an emoji
  *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
  *  mark of a script it shapes (`JOINING_LETTER`) — a ZWJ only before an emoji, a script's joiner
- *  only before a letter or mark of such a script (or, right after a `VIRAMA`, before any visible
- *  code point), as a joiner before anything else joins nothing —
+ *  only before a letter or mark of such a script (or, a ZWJ right after a `HALF_FORM_VIRAMA`,
+ *  before anything but another hidden character), as a joiner before anything else joins nothing —
  *  plus a keycap's VS16 (`1️⃣`) and a subdivision flag's tag run (`🏴` + 2–7 tag digits or
  *  lower-case tag letters + U+E007F). A path with none of the
  *  escaped ones (folder-picker paths, emoji and script names included, except a rare name
@@ -3966,6 +3968,9 @@ function escapeHiddenPathChars(p: string): string {
     ch !== "‍" &&
     !isHiddenChar(ch?.codePointAt(0) ?? 0) &&
     !SEP_LOOKALIKES.has(ch?.codePointAt(0) ?? 0);
+  // A joiner, a variation selector, a tag or another code point that draws as nothing.
+  const hiddenNext = (ch: string | undefined) =>
+    ch !== undefined && (ch === "\u200C" || ch === "\u200D" || isHiddenChar(ch.codePointAt(0) ?? 0));
   let out = "";
   let changed = false;
   // What the previous code point, if kept, lets a joiner or VS16 shape with; "selected" is an
@@ -3981,16 +3986,16 @@ function escapeHiddenPathChars(p: string): string {
     else if (code === 0x200c || code === 0x200d)
       // A kept joiner must shape with what follows too: an emoji's ZWJ only before another emoji,
       // a script's ZWNJ/ZWJ only before a letter or mark of a script it shapes. Before anything
-      // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`. Except
-      // right after a virama: there it shapes what PRECEDES it (`അവന്\u{200D}-2025`, a chillu),
-      // so any visible code point may follow.
+      // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`. Except a
+      // ZWJ right after a half-form virama: there it shapes what PRECEDES it (`അവന്\u{200D}`, a
+      // chillu, word-final by nature), so a separator, a space or the path end may follow too;
+      // only another hidden character may not (it would ride on the visible glyph change).
       hide =
-        !(code === 0x200d ? base !== null : base === "script") ||
-        !visible(cps[i + 1]) ||
-        !(
-          (base === "script" && VIRAMA.test(cps[i - 1] ?? "")) ||
-          (base === "script" ? JOINING_LETTER : EMOJI_BASE).test(cps[i + 1] ?? "")
-        );
+        code === 0x200d && base === "script" && HALF_FORM_VIRAMA.test(cps[i - 1] ?? "")
+          ? hiddenNext(cps[i + 1])
+          : !(code === 0x200d ? base !== null : base === "script") ||
+            !visible(cps[i + 1]) ||
+            !(base === "script" ? JOINING_LETTER : EMOJI_BASE).test(cps[i + 1] ?? "");
     else if (code >= 0xfe00 && code <= 0xfe0f)
       hide = !(code === 0xfe0f && (base === "emoji" || (/^[0-9#*]$/.test(cps[i - 1] ?? "") && cps[i + 1] === "⃣")));
     else if (code === 0x20) hide = isSep(cps[i - 1]) || isSep(cps[i + 1]) || cps[i - 1] === " ";

@@ -289,6 +289,15 @@ describe("securityChanges: folder moves", () => {
     expect(row("/home/u/\u0915\u200dx")).toBe("/home/u/\u0915\\u{200D}x");
     expect(row("/home/u/\u0915\u200c-2025")).toBe("/home/u/\u0915\\u{200C}-2025");
     expect(row("/home/u/\u0915\u200d\u{1F600}")).toBe("/home/u/\u0915\\u{200D}\u{1F600}");
+    // After a virama only a half-form script's ZWJ shapes the glyph before it: a ZWNJ there, or
+    // a Tamil or Sinhala ZWJ, before a non-letter draws as nothing.
+    expect(row("/home/u/\u0915\u094d\u200c_a.b")).toBe("/home/u/\u0915\u094d\\u{200C}_a.b");
+    expect(row("/home/u/\u0915\u094d\u200c-2025")).toBe("/home/u/\u0915\u094d\\u{200C}-2025");
+    expect(row("/home/u/\u0b95\u0bcd\u200d-2025")).toBe("/home/u/\u0b95\u0bcd\\u{200D}-2025");
+    expect(row("/home/u/\u0d9a\u0dca\u200d-x")).toBe("/home/u/\u0d9a\u0dca\\u{200D}-x");
+    // Nor does a half-form ZWJ carry another hidden code point.
+    expect(row("/home/u/\u0d28\u0d4d\u200d\u200dx")).toBe("/home/u/\u0d28\u0d4d\\u{200D}\\u{200D}x");
+    expect(row("/home/u/\u0928\u094d\u200d\ufe0fx")).toBe("/home/u/\u0928\u094d\\u{200D}\\u{FE0F}x");
   });
   it("renders legitimate script, emoji, flag and keycap folder names as before", () => {
     for (const plain of [
@@ -309,11 +318,14 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u{1F3C3}\u200d\u27a1\ufe0f", // facing right
       "/home/u/\u09b0\u200d\u09cd\u09af", // Bengali ya-phala after ra
       "/home/u/\u0dc1\u0dca\u200d\u0dbb\u0dd3", // Sinhala shri
-      // A joiner right after a virama shapes the glyph before it, whatever follows.
+      // A ZWJ right after a half-form virama shapes the glyph before it, whatever follows.
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d-2025", // Malayalam chillu n before '-'
       "/home/u/\u09a4\u09cd\u200d2025", // Bengali khanda ta before a digit
       "/home/u/\u0915\u094d\u200dx", // Devanagari half ka before Latin
-      "/home/u/\u0915\u094d\u200c_a.b", // explicit virama before '_'
+      "/home/u/\u0a95\u0acd\u200d-1", // Gujarati half ka before '-'
+      "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d", // trailing chillu
+      "/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d41\u0d15\u0d33\u0d4d\u200d/x", // chillu before '/'
+      "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d x", // chillu before ' '
       "/home/u/1\ufe0f\u20e3", // keycap
       "/home/u/#\ufe0f\u20e3 Takes",
       "/home/u/Musik \u2764\ufe0f",
