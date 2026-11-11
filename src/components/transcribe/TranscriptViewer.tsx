@@ -28,7 +28,7 @@ import {
   type TextTranslationResult,
 } from "@/lib/api";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
+  askInGroups, beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
   newTranslateRun, runChunkedTranslate, translateCtls as trCtls, translateOptsFrom, untranslatedIndexes,
   type TranslateRunUi,
 } from "@/lib/retroTranslate";
@@ -692,6 +692,9 @@ export function TranscriptViewer({
       skipped = 0;
       poll();
     });
+    // Set when a chunk stopped between language groups on a gone backend: its answered groups
+    // merge, then the run ends as cancelled (a last chunk has no next one to end it).
+    let cutShort = false;
     try {
       await runChunkedTranslate({
         indexes,
@@ -737,22 +740,16 @@ export function TranscriptViewer({
             });
           // A Cancel during the caps refresh above falls through to the loop, which sends nothing.
           if (groups.length === 1 && !ctl.cancelled) return ask(targets);
-          // More languages than one request may carry: ask per group, in turn, and fold
-          // the answers into one — every language is still translated, none dropped.
-          const parts: TextTranslationResult[] = [];
-          for (const [k, g] of groups.entries()) {
-            if (ctl.cancelled) break; // the loop drops this chunk's answer anyway
-            ctl.group = k;
-            ctl.groupAt = Date.now();
-            parts.push(await ask(g));
-          }
-          return {
-            results: texts.map((_, i) => Object.assign({}, ...parts.map((r) => r.results[i]))),
-            kept: texts.map((_, i) => parts.flatMap((r) => r.kept?.[i] ?? [])),
-            warnings: parts.flatMap((r) => r.warnings ?? []),
-            model: parts[0]?.model,
-            source: parts[0]?.source,
-          };
+          // More languages than one request may carry: ask per group. A backend gone between
+          // groups keeps the answered ones (cutShort ends the run once they merged).
+          return askInGroups(texts, groups, ask, {
+            isCancelled: () => ctl.cancelled,
+            isGone: () => (cutShort ||= liveCtlUrl(ctl) === null),
+            onGroup: (k) => {
+              ctl.group = k;
+              ctl.groupAt = Date.now();
+            },
+          });
         },
         onChunkStart: (chunkIdxs, done) =>
           setTrRun((s) => (s ? beginChunk(s, chunkIdxs, done) : s)),
@@ -775,6 +772,7 @@ export function TranscriptViewer({
         onWarnings: (all) => setTrRun((s) => (s ? { ...s, warnings: all } : s)),
         isCancelled: () => ctl.cancelled,
       });
+      if (cutShort) ctl.cancelled = true;
       if (!ctl.cancelled) {
         // The viewer is reused across records: only fold the panel if this
         // run's record is still the one shown.

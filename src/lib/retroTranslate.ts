@@ -437,6 +437,33 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   return { model, source, cancelled: false, mergedChunks, warnings };
 }
 
+/** One chunk asked in language groups, in turn (a run with more targets than one request may
+ *  carry), folded into one answer: every language is still translated, none dropped. Stops at a
+ *  cancel, and before a later group once the run's backend is gone (`isGone`): the groups already
+ *  answered are returned, so the chunk merges what it has and its rows missing the rest stay in
+ *  the resume set; the caller ends the run before anything else is sent. */
+export async function askInGroups(
+  texts: string[],
+  groups: string[][],
+  ask: (group: string[]) => Promise<TextTranslationResult>,
+  s: { isCancelled: () => boolean; isGone: () => boolean; onGroup?: (k: number) => void },
+): Promise<TextTranslationResult> {
+  const parts: TextTranslationResult[] = [];
+  for (const [k, g] of groups.entries()) {
+    if (s.isCancelled()) break; // the chunk loop drops this chunk's answer anyway
+    if (k > 0 && s.isGone()) break;
+    s.onGroup?.(k);
+    parts.push(await ask(g));
+  }
+  return {
+    results: texts.map((_, i) => Object.assign({}, ...parts.map((r) => r.results[i]))),
+    kept: texts.map((_, i) => parts.flatMap((r) => r.kept?.[i] ?? [])),
+    warnings: parts.flatMap((r) => r.warnings ?? []),
+    model: parts[0]?.model,
+    source: parts[0]?.source,
+  };
+}
+
 /** A live run's controls: the chunk loop's cancel flag and the server request to abort. */
 export interface TranslateCtl {
   pid: string;

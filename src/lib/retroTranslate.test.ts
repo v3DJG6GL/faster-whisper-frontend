@@ -3,7 +3,7 @@
 // (TranscriptViewer) only wires these to translateText + the store.
 import { describe, expect, it, vi } from "vitest";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
+  askInGroups, beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
   newTranslateRun, runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type ChunkedTranslateArgs,
   type TranslateRunUi, translateCtls, translateOptsFrom, translationKeyBudget, untranslatedIndexes, MAX_TRANSLATION_KEYS,
 } from "./retroTranslate";
@@ -627,5 +627,97 @@ describe("liveCtlUrl", () => {
     expect(viewerSrc).toMatch(/if \(liveCtlUrl\(ctl\) === null\) return;\s*getTranscribeProgress\(/);
     expect(viewerSrc).toMatch(/if \(gone\(\)\) return unsent;\s*if \(!groups\)/);
     expect(viewerSrc).toMatch(/gone\(\) \? Promise\.resolve\(unsent\) : translateText\(/);
+  });
+});
+
+describe("askInGroups", () => {
+  // Two language groups per chunk (more targets than one request may carry), the viewer's wiring:
+  // a gone backend ends the run at the next send, and cutShort ends it after a partial chunk merged.
+  const run = async (goneAfterAsks: number, indexes: number[]) => {
+    let asks = 0;
+    let cancelled = false;
+    let cutShort = false;
+    const gone = () => asks >= goneAfterAsks;
+    const sent: string[][] = [];
+    const merged: Record<number, Record<string, string>>[] = [];
+    const ask = (texts: string[]) => async (group: string[]) => {
+      if (gone()) {
+        cancelled = true;
+        return { results: [] };
+      }
+      asks += 1;
+      sent.push(group);
+      return { results: texts.map((t) => Object.fromEntries(group.map((l) => [l, `${l}:${t}`]))) };
+    };
+    const r = await chunked({
+      indexes,
+      chunk: 2,
+      translate: async (texts) => {
+        if (gone()) {
+          cancelled = true;
+          return { results: [] };
+        }
+        return askInGroups(texts, [["en", "fr"], ["de"]], ask(texts), {
+          isCancelled: () => cancelled,
+          isGone: () => (cutShort ||= gone()),
+        });
+      },
+      onMerge: (patch) => merged.push(patch),
+      isCancelled: () => cancelled,
+    });
+    return { r, sent, merged, cutShort, cancelled };
+  };
+
+  it("folds every group's languages into one answer while the backend stays", async () => {
+    const { r, sent, merged, cutShort } = await run(Infinity, [0, 1]);
+    expect(r.cancelled).toBe(false);
+    expect(sent).toEqual([["en", "fr"], ["de"]]);
+    expect(merged).toEqual([{ 0: { en: "en:t0", fr: "fr:t0", de: "de:t0" }, 1: { en: "en:t1", fr: "fr:t1", de: "de:t1" } }]);
+    expect(cutShort).toBe(false);
+  });
+
+  it("a backend gone between groups keeps the answered languages and sends nothing more", async () => {
+    const { r, sent, merged, cutShort } = await run(1, [0, 1, 2, 3]);
+    // The first group's answer merges (de stays missing: those rows stay in the resume set).
+    expect(merged).toEqual([{ 0: { en: "en:t0", fr: "fr:t0" }, 1: { en: "en:t1", fr: "fr:t1" } }]);
+    expect(untranslatedIndexes([0, 1].map((i) => ({ text: `t${i}`, translations: merged[0][i] })), ["en", "fr", "de"]))
+      .toEqual([0, 1]);
+    // No second group, and the next chunk ends the run as cancelled before any request.
+    expect(sent).toEqual([["en", "fr"]]);
+    expect(r.cancelled).toBe(true);
+    expect(cutShort).toBe(true);
+  });
+
+  it("a gone backend on the last chunk still merges its answered groups and flags the run to end", async () => {
+    const { r, sent, merged, cutShort } = await run(1, [0, 1]);
+    expect(sent).toEqual([["en", "fr"]]);
+    expect(merged).toEqual([{ 0: { en: "en:t0", fr: "fr:t0" }, 1: { en: "en:t1", fr: "fr:t1" } }]);
+    // No next chunk to cancel it: the viewer ends it as cancelled through cutShort.
+    expect(r.cancelled).toBe(false);
+    expect(cutShort).toBe(true);
+  });
+
+  it("a cancel between groups stops the chunk as before (its answer is dropped)", async () => {
+    let cancelled = false;
+    const sent: string[][] = [];
+    const r = await chunked({
+      indexes: [0, 1],
+      chunk: 2,
+      translate: (texts) =>
+        askInGroups(texts, [["en"], ["de"]], async (g) => {
+          sent.push(g);
+          cancelled = true;
+          return answer(texts, g[0]);
+        }, { isCancelled: () => cancelled, isGone: () => false }),
+      isCancelled: () => cancelled,
+    });
+    expect(sent).toEqual([["en"]]);
+    expect(r.cancelled).toBe(true);
+    expect(r.mergedChunks).toBe(0);
+  });
+
+  it("the viewer wires it: gone ends the run at the next send, cutShort ends it after the merge", () => {
+    expect(viewerSrc).toMatch(/isGone: \(\) => \(cutShort \|\|= liveCtlUrl\(ctl\) === null\)/);
+    expect(viewerSrc).toMatch(/if \(cutShort\) ctl\.cancelled = true;\s*if \(!ctl\.cancelled\)/);
   });
 });
