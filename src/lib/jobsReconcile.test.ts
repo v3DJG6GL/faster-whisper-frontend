@@ -301,6 +301,35 @@ describe("reconcileJobs", () => {
     expect(fetchUrlMedia.mock.calls[0][0]).toMatchObject({ serverUrl: "http://localhost:8000", mediaId: "m1" });
   });
 
+  it("a backend a pull removes during an earlier row's status call is not asked about its own row", async () => {
+    // A pull keeps a removed backend's key: the row's address frozen at post time must not get it.
+    useApp.setState({ backends: [
+      { id: "b1", name: "Local", serverUrl: "http://localhost:8000" } as never,
+      { id: "b2", name: "Other", serverUrl: "http://other:8000" } as never,
+    ] });
+    await seed(row(JOB_A, T0), { ...row(JOB_B, T0 + 1), backendId: "b2", serverUrl: "http://other:8000" });
+    getJob.mockImplementation(async () => {
+      useApp.setState({ backends: [{ id: "b1", name: "Local", serverUrl: "http://localhost:8000" } as never] });
+      return { kind: "not_found" };
+    });
+    await reconcileJobs();
+    expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A]);
+    expect(ledgerRows()).toEqual([]);
+  });
+
+  it("a done row whose backend goes during the result fetch fetches no media and lands nothing", async () => {
+    const old = row(JOB_A, T0, "url");
+    await seed({ ...old, serverUrl: "http://old:8000", ctx: { ...old.ctx, serverUrl: "http://old:8000" } });
+    serveDone(JOB_A, { ...RESULT, sourceMediaId: "m1" });
+    getJobResult.mockImplementation(async () => {
+      useApp.setState({ backends: [] });
+      return ok({ ...RESULT, sourceMediaId: "m1" });
+    });
+    await reconcileJobs();
+    expect(fetchUrlMedia).not.toHaveBeenCalled();
+    expect(records()).toEqual([]);
+  });
+
   it("a deleted backend's row is forgotten even when its host is down for another backend", async () => {
     // The deleted backend's row keeps its stored address, which b1 shares; b1's row failing to
     // connect first must not leave it queued for a retry it can never get.
@@ -446,6 +475,33 @@ describe("reconcileJobs", () => {
     expect(cancelBackendTranscription.mock.calls[0][0]).toEqual({
       serverUrl: "http://new:8000", backendId: "b1", progressId: JOB_A,
     });
+  });
+
+  it("Cancel on a re-attached run whose backend is gone sends no cancel", async () => {
+    await reattachRunning();
+    expect(useTranscribeRun.getState().running).toBe(true);
+    // A pull removes the backend (keeping its key) before the watcher's next tick notices.
+    useApp.setState({ backends: [] });
+    cancelRun();
+    expect(cancelBackendTranscription).not.toHaveBeenCalled();
+    expect(useTranscribeRun.getState().running).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ledgerRows()).toEqual([]);
+  });
+
+  it("a re-attached run whose backend goes during a done status call fetches no result, then settles gone", async () => {
+    await reattachRunning();
+    getJob.mockImplementation(async () => {
+      useApp.setState({ backends: [] });
+      return ok({ jobId: JOB_A, state: "done", resultAvailable: true });
+    });
+    getJobResult.mockResolvedValue(ok(RESULT));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getJobResult).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getJobResult).not.toHaveBeenCalled();
+    expect(useTranscribeRun.getState().queue[0]).toMatchObject({ status: "failed", error: BACKEND_GONE_ERROR });
+    expect(ledgerRows()).toEqual([]);
   });
 
   it("two running rows: the newest owns the rail, the older is watched headless", async () => {

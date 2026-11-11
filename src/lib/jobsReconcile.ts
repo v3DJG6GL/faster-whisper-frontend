@@ -31,15 +31,18 @@ import {
 import { currentRecord, historyLoadFailed, loadHistory } from "./transcript/transcriptHistory";
 import type { JobStatus } from "./types";
 
-/** Where a ledgered job is asked about: its backend's CURRENT address. The jobs commands resolve
- *  the key by backend id at call time, so the address frozen at post time would send the current
- *  key to a host the backend no longer points at (trade-off: a backend repointed at another server
- *  reports the job not found). A deleted backend keeps the stored address (the reconcile pass and
- *  a watcher forget its rows without asking, and `cancelRow` sends it nothing). */
-function rowServerUrl(row: LedgerRow): string {
+/** Where a ledgered job is asked about, resolved when each request is sent: its backend's CURRENT
+ *  address. The jobs commands resolve the key by backend id at call time, so the address frozen at
+ *  post time would send the current key to a host the backend no longer points at (trade-off: a
+ *  backend repointed at another server reports the job not found). null once the config is loaded
+ *  and the backend is gone (deleted, a sync pull): a pull keeps a removed backend's key, which must
+ *  not go to the frozen address, so the caller takes its backend-gone branch or skips the request
+ *  this tick. Before the config loads the frozen address stands (no backend list to check). */
+function liveRowServerUrl(row: LedgerRow): string | null {
   const st = useApp.getState();
   const b = st.backends.find((x) => x.id === row.backendId);
-  return b ? effectiveServerUrl(b, st.settings) : row.serverUrl;
+  if (b) return effectiveServerUrl(b, st.settings);
+  return st.configLoaded && !st.configLoadFailed ? null : row.serverUrl;
 }
 
 /** Best-effort cancel of a stopped row's job, only while its backend still exists. A gone
@@ -138,14 +141,20 @@ async function failAndForget(row: LedgerRow, reason: string, attached: boolean):
 async function ingestDone(
   row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number, stopped: () => boolean = () => false,
 ): Promise<boolean> {
-  const serverUrl = rowServerUrl(row);
-  // The ingest's own fetches (a link's audio/video copy, the pending-video poll) read the
-  // address off ctx: the current one, like the result's, not the one frozen at post time.
-  const ctx = { ...row.ctx, serverUrl };
+  // Backend gone (here, or by a sync pull): retry, and the caller's next tick or pass takes
+  // its backend-gone branch.
+  const serverUrl = liveRowServerUrl(row);
+  if (serverUrl === null) return false;
   const r = await getJobResult({ serverUrl, backendId: row.backendId, jobId: row.jobId });
   if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
   switch (r.kind) {
     case "ok": {
+      // The ingest's own fetches (a link's audio/video copy, the pending-video poll) read the
+      // address off ctx: the current one, re-resolved after the await above, not the one frozen
+      // at post time.
+      const ctxUrl = liveRowServerUrl(row);
+      if (ctxUrl === null) return false;
+      const ctx = { ...row.ctx, serverUrl: ctxUrl };
       const result = await withSiteTracks(r.value, row.path, row.urlMeta, ctx);
       if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
       ingestJobResult({ ...row, ctx }, result, tookMsOf(status, row), { attached });
@@ -256,8 +265,11 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
     busy = true;
     let delay = base;
     try {
-      // Re-read per poll: an address edit mid-watch applies to the next status call.
-      const r = await getJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId: row.jobId });
+      // Re-read per poll: an address edit mid-watch applies to the next status call. Gone (the
+      // check above read the same state; kept closed at the sender): the next tick settles it.
+      const url = liveRowServerUrl(row);
+      if (url === null) return;
+      const r = await getJob({ serverUrl: url, backendId: row.backendId, jobId: row.jobId });
       if (stopped) return;
       if (r.kind === "error") {
         failures += 1;
@@ -376,7 +388,6 @@ export async function reconcileJobs(): Promise<void> {
       passReading = false;
     }
     if (!ledgerLoaded()) retry = true;
-    const app = useApp.getState();
     const rows = [...ledgerRows()].sort((a, b) => a.startedAt - b.startedAt);
     const running: LedgerRow[] = [];
     // Servers that failed to answer this pass: a dead host costs the status call's full
@@ -401,7 +412,9 @@ export async function reconcileJobs(): Promise<void> {
         // server still holds the run for its TTL, but the app has no way to reach it.
         // Before the reachability skip: its row keeps the stored address, which another
         // backend on that host may share — a down host must not keep it queued.
-        if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
+        // Read live, not at pass start: a pull during an earlier row's await may have removed it.
+        const url = liveRowServerUrl(row);
+        if (url === null) {
           const lost = await lostRecord(row);
           // Stopped during the listing: stopOrphan already forgot the row.
           if (stoppedIds.has(row.jobId)) continue;
@@ -414,7 +427,6 @@ export async function reconcileJobs(): Promise<void> {
           await forgetRow(row.jobId);
           continue;
         }
-        const url = rowServerUrl(row);
         if (unreachable.has(url)) {
           retry = true;
           continue;
@@ -468,7 +480,7 @@ export async function reconcileJobs(): Promise<void> {
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
     for (const row of live) {
       if (row === newest && idle) {
-        const epoch = reattachRun(row, () => rowServerUrl(row));
+        const epoch = reattachRun(row, () => liveRowServerUrl(row));
         watchJob(row, { attached: true, epoch });
       } else {
         // Stoppable by the path-keyed orphan stop like watchOrphan's: a History record

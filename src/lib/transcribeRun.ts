@@ -1844,8 +1844,9 @@ let railFileSeq = 0;
  *  must survive component unmounts exactly like the pump itself. */
 let activeCancel: {
   /** Where a cancel goes, resolved when it is sent — a re-attached run's follows the
-   *  backend's current address (an edit mid-run applies). */
-  serverUrlOf: () => string;
+   *  backend's current address (an edit mid-run applies). null: its backend is gone, and a
+   *  pull keeps a removed backend's key, so no cancel is sent (the server drops the job at its TTL). */
+  serverUrlOf: () => string | null;
   backendId?: string | null;
   progressId: string;
 } | null = null;
@@ -1868,9 +1869,10 @@ function abandonActiveRun(): void {
   const target = activeCancel;
   activeCancel = null;
   // A plain object: the resolver is a function and never crosses the IPC.
-  if (target) {
+  const serverUrl = target?.serverUrlOf() ?? null;
+  if (target && serverUrl !== null) {
     void cancelBackendTranscription({
-      serverUrl: target.serverUrlOf(),
+      serverUrl,
       backendId: target.backendId,
       progressId: target.progressId,
     }).catch(() => {});
@@ -1932,7 +1934,7 @@ export function setOrphanForget(fn: ((jobId: string) => void) | null): void {
  *  to the same server id at `serverUrlOf()` — the backend's address when Cancel is pressed, so
  *  an edit mid-run applies as it does to the watcher's polls. Returns the epoch the watcher
  *  must fold under. */
-export function reattachRun(row: LedgerRow, serverUrlOf: () => string): number {
+export function reattachRun(row: LedgerRow, serverUrlOf: () => string | null): number {
   abandonActiveRun();
   const isUrl = row.kind === "url";
   const first: RailStage = isUrl
