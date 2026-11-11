@@ -609,6 +609,26 @@ describe("a 409 against a deleted server copy", () => {
       api.conflicts = [];
     }
   });
+  // A version-0 PUT creates the document, so a "deleted" answer to it is a broken server: each
+  // re-seed re-armed a 0 ms push outside the attempt bound, looping for as long as it answered so.
+  it("stops when the server answers the version-0 re-seed with a deleted copy too", async () => {
+    try {
+      await seedBase();
+      toggleStartMinimized();
+      const dead = { version: 0, updated_ts: null, device: null, blob: null };
+      api.conflicts = Array.from({ length: 10 }, () => ({ ...dead }));
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      await vi.waitFor(() => expect(api.pushes).toBe(pushesBefore + 2));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(api.pushes).toBe(pushesBefore + 2);
+      expect(api.pushedBase).toBe(0);
+      expect(useApp.getState().syncStatus).toBe("error");
+    } finally {
+      api.keys = null;
+      api.conflicts = [];
+    }
+  });
 });
 
 // A review adopts no base, so a pull running when the user clicks Apply re-raises the SAME review

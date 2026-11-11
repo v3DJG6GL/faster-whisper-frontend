@@ -3339,6 +3339,12 @@ export async function pushNow(manual = false): Promise<void> {
           return;
         }
         if (remote.blob === null) {
+          // A version-0 PUT creates a missing document, so "deleted under you" cannot answer it;
+          // re-seeding from 0 here would re-send the same PUT forever, unbounded by `attempt`.
+          if (base === 0) {
+            handleTransportFailure(res.status, "The server sent settings this app cannot read.");
+            return;
+          }
           // The server copy was deleted under our base (a peer's "Delete server copy", or a
           // wipe): the 409 body is the zero-state. Merging `{}` against the stale snapshot drops
           // every unchanged category and conflicts the changed ones — re-seed from version 0
