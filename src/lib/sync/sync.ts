@@ -3298,6 +3298,9 @@ export async function pushNow(manual = false): Promise<void> {
       setRuntime({ syncStatus: "error", syncError: KEYRING_PUSH_ERROR });
       return;
     }
+    // One deleted-copy re-seed per call is free, so a legit race (a peer's delete, then its own
+    // re-seed) still reconciles; a second one counts against the three attempts.
+    let reseeded = false;
     for (let attempt = 0; attempt < 3; attempt++) {
       // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-sends the merged blob,
       // so the address can go stale between attempts too. This is the request that carries every
@@ -3351,6 +3354,13 @@ export async function pushNow(manual = false): Promise<void> {
           // every unchanged category and conflicts the changed ones — re-seed from version 0
           // instead, as pullCore's null-blob arm does, and send it all on the next attempt.
           if (!(await forgetDeadDocument(myGen))) return;
+          // The prologue's save-hold gate, re-asked: a hold raised while the PUT was on the wire
+          // owes the re-seed to the save that lifts it, which re-arms the push as before.
+          if (configSaveHeld()) {
+            pushOwed = true;
+            setRuntime({ syncStatus: "ok" });
+            return;
+          }
           // Within this call's attempt bound, not a fresh push: a server alternating an echo (which
           // raises `base`) with "deleted" would otherwise loop forever past the check above.
           blob = await composeLive(syncCats());
@@ -3361,6 +3371,10 @@ export async function pushNow(manual = false): Promise<void> {
             return;
           }
           base = 0;
+          if (!reseeded) {
+            reseeded = true;
+            attempt--;
+          }
           continue;
         }
         // Same as pullCore: a re-created document drops the dead base, so the merge below is a

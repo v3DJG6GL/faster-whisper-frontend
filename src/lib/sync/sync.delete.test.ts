@@ -631,6 +631,26 @@ describe("a 409 against a deleted server copy", () => {
       api.conflicts = [];
     }
   });
+  // A peer's edit, then its "Delete server copy", then its own re-seed: three conflicts in one push.
+  // Before, the re-seed spent the last attempt and the push ended in "kept changing".
+  it("still reconciles a delete that races a peer's edit and re-seed", async () => {
+    try {
+      await seedBase();
+      toggleStartMinimized();
+      const echo = (version: number) => (a: { blob: unknown }) =>
+        ({ version, updated_ts: version, device: "peer", blob: structuredClone(a.blob) });
+      const dead = () => ({ version: 0, updated_ts: null, device: null, blob: null });
+      api.conflicts = [echo(50), dead, echo(1)];
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      expect(api.pushes).toBe(pushesBefore + 4);
+      expect(api.pushedBase).toBe(1);
+      expect(useApp.getState().syncStatus).toBe("ok");
+    } finally {
+      api.keys = null;
+      api.conflicts = [];
+    }
+  });
   // Echoing the re-seed at version 1 raised the base past that check, so "deleted" was accepted
   // again and a fresh push re-armed: the re-seed now stays inside the call's three attempts.
   it("stops when the server alternates an echo of the re-seed with a deleted copy", async () => {
@@ -643,7 +663,8 @@ describe("a 409 against a deleted server copy", () => {
       const pushesBefore = api.pushes;
       await pushNow(true);
       await new Promise((r) => setTimeout(r, 50));
-      expect(api.pushes).toBe(pushesBefore + 3);
+      // The first re-seed is free (a legit race), the rest count: 4 PUTs, then it stops.
+      expect(api.pushes).toBe(pushesBefore + 4);
       expect(useApp.getState().syncStatus).toBe("error");
       expect(useApp.getState().syncError).toContain("kept changing");
     } finally {
