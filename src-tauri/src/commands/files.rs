@@ -155,13 +155,14 @@ fn move_file_waiting_out_a_save(
     }
 }
 
-/// Move every regular file from `from` into `to`, recording old→new paths.
+/// Move every regular file `own` claims from `from` into `to`, recording old→new paths.
 /// Stops on the first error; already-moved files stay moved and are in `map`,
 /// which the caller rewrites into the records even on failure (they store
 /// absolute paths, so nothing else would re-point them).
 fn move_dir_contents(
     from: &std::path::Path,
     to: &std::path::Path,
+    own: impl Fn(&std::path::Path) -> bool,
     map: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     let entries = match std::fs::read_dir(from) {
@@ -182,6 +183,12 @@ fn move_dir_contents(
         // fails the copier's final rename and strands a `.tmp` every sweep skips forever. An
         // older build's finished `<id>.tmp` copy moves like any other.
         if crate::store::transcripts::is_partial_copy(&src) {
+            continue;
+        }
+        // Only the app's own files: the base is a free user pick (~/Music…) whose `files/` or
+        // `video/` may predate the app, and every sweep, wipe and readout skips foreign names.
+        // Left in place, a foreign file keeps its absolute path and the folder stays.
+        if !own(&src) {
             continue;
         }
         let Some(name) = src.file_name() else {
@@ -516,7 +523,12 @@ pub async fn move_audio_base(
         let mut map: Vec<(String, String)> = Vec::new();
         let mut res: Result<(), String> = Ok(());
         for sub in AUDIO_SUBDIRS {
-            if let Err(e) = move_dir_contents(&from.join(sub), &to.join(sub), &mut map) {
+            let own = if sub == "dictations" {
+                crate::store::transcripts::is_own_recording
+            } else {
+                crate::store::transcripts::is_own_media
+            };
+            if let Err(e) = move_dir_contents(&from.join(sub), &to.join(sub), own, &mut map) {
                 res = Err(e);
                 break;
             }
@@ -1067,7 +1079,7 @@ mod tests {
         std::fs::write(from.join(format!("{id}.tmp")), b"final").unwrap();
 
         let mut map = Vec::new();
-        move_dir_contents(&from, &to, &mut map).unwrap();
+        move_dir_contents(&from, &to, |_| true, &mut map).unwrap();
 
         assert!(to.join("a.wav").is_file(), "regular media moves");
         assert!(
@@ -1089,6 +1101,48 @@ mod tests {
             .iter()
             .any(|(old, new)| old.ends_with("a.wav") && new.ends_with("a.wav")));
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // The base is a free user pick: a relocation moves only what the app wrote, so a user's own
+    // `files/` or `dictations/` content stays where it was.
+    #[test]
+    fn move_dir_contents_moves_only_what_the_predicate_owns() {
+        let base = crate::config::fresh_test_dir("move-dir-own");
+        let (from, to) = (base.join("from"), base.join("to"));
+        std::fs::create_dir_all(&from).unwrap();
+        let id = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
+        std::fs::write(from.join(format!("{id}.mp3")), b"ours").unwrap();
+        std::fs::write(from.join("my-album.mp3"), b"theirs").unwrap();
+
+        let mut map = Vec::new();
+        move_dir_contents(
+            &from,
+            &to,
+            crate::store::transcripts::is_own_media,
+            &mut map,
+        )
+        .unwrap();
+
+        assert!(to.join(format!("{id}.mp3")).is_file());
+        assert!(from.join("my-album.mp3").is_file(), "a foreign file stays");
+        assert!(!to.join("my-album.mp3").exists());
+        assert_eq!(map.len(), 1);
+
+        let (dfrom, dto) = (base.join("dfrom"), base.join("dto"));
+        std::fs::create_dir_all(&dfrom).unwrap();
+        std::fs::write(dfrom.join("dictation-1.wav"), b"riff").unwrap();
+        std::fs::write(dfrom.join("notes.txt"), b"mine").unwrap();
+        move_dir_contents(
+            &dfrom,
+            &dto,
+            crate::store::transcripts::is_own_recording,
+            &mut map,
+        )
+        .unwrap();
+        assert!(dto.join("dictation-1.wav").is_file());
+        assert!(dfrom.join("notes.txt").is_file());
+        assert!(!dto.join("notes.txt").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1121,7 +1175,7 @@ mod tests {
         });
 
         let mut map = Vec::new();
-        move_dir_contents(&from, &to, &mut map).unwrap();
+        move_dir_contents(&from, &to, |_| true, &mut map).unwrap();
         release.join().unwrap();
 
         assert!(to.join("a.wav").is_file());
@@ -1149,7 +1203,7 @@ mod tests {
             .unwrap();
 
         let mut map = Vec::new();
-        let res = move_dir_contents(&from, &to, &mut map);
+        let res = move_dir_contents(&from, &to, |_| true, &mut map);
         drop(held);
 
         assert!(res.is_err_and(|e| e.contains("could not move")));
@@ -1177,7 +1231,7 @@ mod tests {
         std::os::unix::fs::symlink(&secret, from.join("b.wav")).unwrap();
 
         let mut map = Vec::new();
-        move_dir_contents(&from, &to, &mut map).unwrap();
+        move_dir_contents(&from, &to, |_| true, &mut map).unwrap();
 
         let moved = std::fs::metadata(to.join("a.wav")).unwrap();
         assert_eq!(moved.permissions().mode() & 0o777, 0o600);
@@ -1201,7 +1255,7 @@ mod tests {
         std::os::unix::fs::symlink(base.join("nowhere"), to.join("a.wav")).unwrap();
 
         let mut map = Vec::new();
-        move_dir_contents(&from, &to, &mut map).unwrap();
+        move_dir_contents(&from, &to, |_| true, &mut map).unwrap();
 
         assert!(from.join("a.wav").exists(), "the source stays where it was");
         assert!(std::fs::symlink_metadata(to.join("a.wav"))

@@ -607,7 +607,7 @@ pub(crate) fn is_uuid_id(s: &str) -> bool {
 /// pick, so `files/`/`links/` may already hold foreign data — the sweeps, wipes and the
 /// storage readout must never touch or count anything else (the dictation twin is
 /// `audio::is_dictation_file`).
-fn is_own_media(path: &Path) -> bool {
+pub(crate) fn is_own_media(path: &Path) -> bool {
     path.file_stem()
         .and_then(|s| s.to_str())
         .map(is_uuid_id)
@@ -625,7 +625,7 @@ pub(crate) fn is_partial_copy(path: &Path) -> bool {
 /// Is this a recordings-folder file THIS app wrote (`dictation-*.wav` / `.txt`)? The one
 /// predicate the readout, the wipe and the per-record delete share, so a non-UTF-8 name is
 /// judged the same (lossily) by all three and the readout keeps matching the wipe.
-fn is_own_recording(path: &Path) -> bool {
+pub(crate) fn is_own_recording(path: &Path) -> bool {
     path.file_name()
         .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
         .unwrap_or(false)
