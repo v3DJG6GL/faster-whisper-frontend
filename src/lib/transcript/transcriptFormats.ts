@@ -628,6 +628,10 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
 /** Ceiling (text length x word count) on lrcExport's per-segment seam search: the same 16M
  *  cells as wordAlign's LCS cap. */
 const MAX_SEAM_SEARCH_CELLS = 16_000_000;
+/** Document-wide seam-search cells per character of segment text, on top of one segment's
+ *  ceiling: real segments spend a handful of cells per character, so only a hostile result
+ *  (hundreds of segments each just under the ceiling) runs the budget dry. */
+const SEAM_SEARCH_CELLS_PER_CHAR = 64;
 
 function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): string {
   const words = result.words ?? [];
@@ -638,6 +642,14 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
   // instead of a full scan per segment; the same cursor merge the viewer uses, so a word
   // on an exact segment boundary lands in one line, not two.
   const ranges = useWords ? segmentWordRanges(segs, words) : null;
+  // The per-segment ceiling alone lets a server result of many segments, each just under it,
+  // add up to ~1e10 comparisons on the UI thread; a budget linear in the document's text caps
+  // the whole export. Real transcripts never come near it.
+  let seamBudget = ranges
+    ? MAX_SEAM_SEARCH_CELLS +
+      SEAM_SEARCH_CELLS_PER_CHAR *
+        segs.reduce((n, s) => n + (typeof s.text === "string" ? s.text.length : 0), 0)
+    : 0;
   const out: string[] = [];
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i];
@@ -665,9 +677,11 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
         const spaced = /\s/.test(text);
         // A missing word leaves `cur` in place, so each one rescans the rest of the text: a
         // hostile result (MBs of text, 100k+ words in one segment) costs words x text on the UI
-        // thread. Over the ceiling every seam takes the per-seam script rule; real segments sit
-        // orders of magnitude below it.
-        const search = spaced && text.length * cw.length <= MAX_SEAM_SEARCH_CELLS;
+        // thread. Over the ceiling (or the document's remaining budget) every seam takes the
+        // per-seam script rule; real segments sit orders of magnitude below both.
+        const cells = text.length * cw.length;
+        const search = spaced && cells <= MAX_SEAM_SEARCH_CELLS && cells <= seamBudget;
+        if (search) seamBudget -= cells;
         let cur = 0;
         let prevEnd = -1;
         const body = cw

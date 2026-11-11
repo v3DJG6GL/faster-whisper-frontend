@@ -295,6 +295,43 @@ describe("lrc", () => {
     expect(performance.now() - t0).toBeLessThan(2000);
     expect(out.startsWith("[00:00.00]<00:00.00>zq <00:00.00>zq ")).toBe(true);
   });
+  it("many hostile segments each under the seam-search ceiling stay within a document budget", () => {
+    // Each segment is ~14M cells (under the 16M per-segment ceiling), and "ab" matches its
+    // first char at every other position of the text; without a document-wide budget the 200
+    // segments cost ~3e9 comparisons (seconds on the UI thread).
+    const n = 200;
+    const hostile: BatchResult = {
+      text: "",
+      segments: Array.from({ length: n }, (_, i) => ({ start: i, end: i + 1, text: "a ".repeat(10_000) })),
+      words: Array.from({ length: n * 700 }, (_, j) => {
+        const t = Math.floor(j / 700) + 0.5;
+        return { word: " ab", start: t, end: t };
+      }),
+    };
+    const t0 = performance.now();
+    const out = generateExport(hostile, { format: "lrc", wordTimestamps: true });
+    expect(performance.now() - t0).toBeLessThan(5000);
+    expect(out.split("\n").filter(Boolean)).toHaveLength(n);
+  });
+  it("a long real transcript past 16M seam cells in total keeps every seam from its text", () => {
+    // "用Python写" has no spaces in its text: only the seam search keeps them joined (the
+    // script rule would space the Latin/CJK seams). 5000 segments x ~3600 cells is ~18M in
+    // total, so a fixed document cap would flip the later lines.
+    const phrase = ["我们", "用", "Python", "写", "代码", " and", " test", " it", " now"];
+    const segWords = Array.from({ length: 4 }, (_, r) => phrase.map((w, k) => (r && !k ? ` ${w}` : w))).flat();
+    const text = segWords.join("");
+    const n = 5000;
+    const long: BatchResult = {
+      text: "",
+      segments: Array.from({ length: n }, (_, i) => ({ start: i, end: i + 1, text })),
+      words: Array.from({ length: n }, (_, i) =>
+        segWords.map((word, k) => ({ word, start: i + k / 100, end: i + (k + 1) / 100 })),
+      ).flat(),
+    };
+    const lines = generateExport(long, { format: "lrc", wordTimestamps: true }).split("\n").filter(Boolean);
+    expect(lines).toHaveLength(n);
+    for (const line of lines) expect(line.replace(/\[[^\]]*\]|<[^>]*>/g, "")).toBe(text);
+  });
   it("a rounding carry rolls into the minute instead of printing 60 seconds", () => {
     const edge: BatchResult = {
       text: "x",
