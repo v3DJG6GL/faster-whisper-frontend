@@ -566,6 +566,16 @@ describe("wrapLines", () => {
     const parts = cutByShare("Il a dit « bonjour » à Paris", [1, 1]);
     expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
+  it("a long whitespace run (a server's translation) cuts quickly and as before", () => {
+    // Every space is a candidate, and trimming each part by walking the run was quadratic.
+    expect(cutByShare("a" + " ".repeat(40) + "b", [1, 1])).toEqual(["a", "b"]);
+    expect(cutByShare("😀\t 　 x y", [1, 1, 1])).toEqual(cutByShare("😀 x y", [1, 1, 1]));
+    for (const w of [" ", "　\t\n"]) {
+      const t0 = performance.now();
+      expect(cutByShare("a" + w.repeat(200_000 / w.length) + "b", [1, 1])).toEqual(["a", "b"]);
+      expect(performance.now() - t0).toBeLessThan(500);
+    }
+  });
   it("a no-break space is no word break, and a line keeps it as written", () => {
     // /\s/ matches U+00A0, U+202F and U+2007: split by it, "25 000" is cut and wrapped across its
     // no-break space, and a wrapped line rewrites "viens ?" with a plain space.

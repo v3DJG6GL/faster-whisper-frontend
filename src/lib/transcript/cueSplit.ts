@@ -1097,12 +1097,24 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
    *  Thai/Lao/Khmer/Burmese space (9); every other term is a penalty. */
   const MAX_BONUS = 25;
   /** text[a..b) trimmed holds fewer than two code points — counted in place: slicing and
-   *  spreading the part per candidate would make a long text with many shares quadratic per cut. */
+   *  spreading the part per candidate would make a long text with many shares quadratic per cut.
+   *  The trim reads precomputed edges, not a walk: a server translation of one long whitespace run
+   *  ("a" + N spaces + "b") has a candidate at every space, and walking the run for each was quadratic. */
+  const len = text.length;
+  /** nextNonWs[x]: the first index >= x whose char is not whitespace (len if none). */
+  const nextNonWs = new Int32Array(nCuts > 0 ? len + 1 : 0);
+  /** prevNonWs[x]: one past the last index < x whose char is not whitespace (0 if none). */
+  const prevNonWs = new Int32Array(nCuts > 0 ? len + 1 : 0);
+  if (nCuts > 0) {
+    nextNonWs[len] = len;
+    for (let x = len - 1; x >= 0; x--) nextNonWs[x] = /\s/.test(text[x]) ? nextNonWs[x + 1] : x;
+    for (let x = 1; x <= len; x++) prevNonWs[x] = /\s/.test(text[x - 1]) ? prevNonWs[x - 1] : x;
+  }
   const oneCp = (a: number, b: number): boolean => {
-    while (a < b && /\s/.test(text[a])) a++;
-    while (b > a && /\s/.test(text[b - 1])) b--;
-    const n = b - a;
-    return n < 2 || (n === 2 && text.codePointAt(a)! > 0xffff);
+    const a2 = Math.min(nextNonWs[a], b);
+    const b2 = Math.max(a2, prevNonWs[b]);
+    const n = b2 - a2;
+    return n < 2 || (n === 2 && text.codePointAt(a2)! > 0xffff);
   };
   for (let k = 0; k < nCuts; k++) {
     done += shares[k];
