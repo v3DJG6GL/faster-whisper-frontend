@@ -84,6 +84,21 @@ describe("securityChanges: folder moves", () => {
       }, on as never),
     ).toEqual([]);
   });
+  it("compares by the trim Rust opens with, so a U+FEFF edge raises a row", () => {
+    const on = { audioFolder: true, logFolder: true };
+    // JS `trim` strips U+FEFF, Rust `str::trim` does not: the peer's path opens a lookalike folder.
+    expect(rows({ recording: { audioBaseDir: "/home/u/rec\ufeff" } }, { recording: { audioBaseDir: "/home/u/rec" } }, on)).toEqual([
+      ["audio-folder", "/home/u/rec\ufeff"],
+    ]);
+    expect(rows({ recording: { recordingsDir: "\ufeff/home/u/rec" } }, { recording: { recordingsDir: "/home/u/rec" } }, on)).toEqual([
+      ["audio-folder", "\ufeff/home/u/rec"],
+    ]);
+    expect(rows({ logging: { logDir: "/var/log/me\ufeff" } }, { logging: { logDir: "/var/log/me" } }, on)).toEqual([
+      ["log-folder", "/var/log/me\ufeff"],
+    ]);
+    // Edges both trims strip, and U+0085 (Rust only), still open the same folder: no row.
+    expect(rows({ logging: { logDir: "\u0085/var/log/me\u3000" } }, { logging: { logDir: "/var/log/me" } }, on)).toEqual([]);
+  });
   it("the row shows a long padded path whole, destination included", () => {
     // Visible padding a head-kept 200 cut would leave in front of the "…".
     const padded = "\\\\fileserver.corp.example.com." + "x.".repeat(120) + "evil.tld\\share\\" + "./".repeat(200) + "rec";

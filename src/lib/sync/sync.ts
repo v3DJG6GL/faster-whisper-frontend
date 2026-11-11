@@ -3879,9 +3879,12 @@ export function securityChanges(
     const seen = new Set<string>();
     for (const field of fields) {
       const v = isPlainObject(incomingCat) ? ownProp(incomingCat, field) : undefined;
-      if (typeof v !== "string" || v.trim() === "") continue;
+      // Rust's trim (`custom_folder`), not JS `trim`: JS also strips U+FEFF, so a peer's
+      // `/home/u/rec\u{FEFF}` would compare equal here yet open a different, lookalike folder.
+      const t = typeof v === "string" ? trimRustWhitespace(v) : "";
+      if (typeof v !== "string" || t === "") continue;
       const here = isPlainObject(localCat) ? ownProp(localCat, field) : undefined;
-      if (v.trim() === (typeof here === "string" ? here.trim() : "") || seen.has(v)) continue;
+      if (t === (typeof here === "string" ? trimRustWhitespace(here) : "") || seen.has(v)) continue;
       seen.add(v);
       out.push({ kind, id: field, backend: "", detail: v });
     }
