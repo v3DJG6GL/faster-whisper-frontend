@@ -733,6 +733,11 @@ export default function Dictionary() {
     [editableFields, role],
   );
 
+  // Cache buildPatch by the (edit, base, editable) references so a keystroke re-diffs only the rule
+  // that changed (setEdits keeps the others referentially stable) — each cb:map diff is a whole-map
+  // sort + JSON.stringify, which matters on large word-mapping lists.
+  const patchCache = useRef(new Map<string, { e: EditState; b: EditState; ed: string[]; patch: Record<string, unknown> }>());
+
   /** Put a fetched document on screen: its rules, fresh edits and an identical base. Returns the rules. */
   const showDocument = useCallback((res: PipelineFetch): PipelineRule[] => {
     setFetchRes(res);
@@ -741,6 +746,9 @@ export default function Dictionary() {
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
     setBase(cloneEdits(fresh));
+    // Every cached patch belongs to the previous document (its entries compare by identity), and a
+    // server that names its rules differently per fetch would otherwise grow the cache per load.
+    patchCache.current.clear();
     return list;
   }, []);
 
@@ -759,7 +767,15 @@ export default function Dictionary() {
       const live = st.backends.find((x) => x.id === b.id);
       return live ? effectiveServerUrl(live, st.settings) : null;
     };
-    let serverUrl = liveUrl() ?? effectiveServerUrl(b, useApp.getState().settings);
+    // A backend no longer in the store is never fetched: whatever its old address returned would
+    // end in the bail below anyway (no live address to commit against), and the request would
+    // carry the key a sync pull leaves in the keyring for that id.
+    const first = liveUrl();
+    if (first === null) {
+      setLoading(false);
+      return null;
+    }
+    let serverUrl = first;
     // Bounded: an address that moves again on every fetch ends in the plain bail, not a loop.
     for (let refetches = 0; ; refetches++) {
       let res: Awaited<ReturnType<typeof getPipelineRules>>;
@@ -893,10 +909,6 @@ export default function Dictionary() {
     };
   }, [backend?.id, backend?.serverUrl, backend && urlOverrides?.[backend.id]]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cache buildPatch by the (edit, base, editable) references so a keystroke re-diffs only the rule
-  // that changed (setEdits keeps the others referentially stable) — each cb:map diff is a whole-map
-  // sort + JSON.stringify, which matters on large word-mapping lists.
-  const patchCache = useRef(new Map<string, { e: EditState; b: EditState; ed: string[]; patch: Record<string, unknown> }>());
   const patchFor = useCallback(
     (r: PipelineRule): Record<string, unknown> => {
       const e = edits[r.name];
