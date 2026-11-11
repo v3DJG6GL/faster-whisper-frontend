@@ -3287,7 +3287,7 @@ export async function pushNow(manual = false): Promise<void> {
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
         // Before the compose, so its keyring wait opens no window before the apply.
-        const keyless = await keylessNewBackendIds(remoteBlob);
+        const keyless = await keylessNewBackendIds(syncCats(), remoteBlob);
         if (myGen !== gen) return;
         // ALWAYS recompose from the live store: `blob` was read before the PUT (or is the last
         // attempt's merge), so an edit made while the request was on the wire is in neither it
@@ -3364,7 +3364,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
   // Before the compose, so its keyring wait opens no window before the apply.
-  const keyless = await keylessNewBackendIds(remoteBlob);
+  const keyless = await keylessNewBackendIds(cats, remoteBlob);
   if (myGen !== gen) return;
   // With no base, or for a fresh category, the remote fills what this device does not sync
   // (see `composeLive`).
@@ -3599,12 +3599,28 @@ function withHeldKeyRows(
  *  and found EMPTY — the only new backends `withHeldKeyRows` may leave undisclosed. One bounded
  *  read, and none at all on the common pull whose list this device already holds. Read BEFORE
  *  the caller composes this device, so the wait opens no window between that compose and the
- *  apply; an id that turns up new only after (or a read that timed out) is not in the set. */
-async function keylessNewBackendIds(...blobs: SyncBlob[]): Promise<ReadonlySet<string>> {
+ *  apply; an id that turns up new only after (or a read that timed out) is not in the set.
+ *  No read either when this device does not sync backends (`cats`, the caller's): the peer's
+ *  list then routinely holds ids this device never installs, and `securityChanges` raises no
+ *  new-backend row for the set to clear — a read there would only pop a locked wallet's unlock
+ *  prompt on every focus pull. Nor for an id whose inbound key replaces the held one ("API keys"
+ *  on): `withHeldKeyRows` skips those itself, so their keyring entry is never needed. */
+async function keylessNewBackendIds(
+  cats: Record<SyncCategory, boolean>,
+  ...blobs: SyncBlob[]
+): Promise<ReadonlySet<string>> {
+  if (!cats.backends) return new Set();
+  const apiKeys = settingGates().apiKeys;
   const here = new Set(useApp.getState().backends.map((b) => b.id));
   const ids = [
     ...new Set(
-      blobs.flatMap((b) => (isPlainObject(b.backends) ? sanitizeBackends(b.backends.list).map((x) => x.id) : [])),
+      blobs.flatMap((b) =>
+        isPlainObject(b.backends)
+          ? sanitizeBackends(b.backends.list)
+              .map((x) => x.id)
+              .filter((id) => !(apiKeys && inboundSecret(b.backends!.secrets, id) !== undefined))
+          : [],
+      ),
     ),
   ].filter((id) => !here.has(id));
   if (ids.length === 0) return new Set();
@@ -4456,7 +4472,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // in `localNow` only: `movedMid` spans both waits and then counts every conflicting category as
   // edited (keep the live value, or ask), never as the reviewed value going back over it.
   // Before the signature and the compose, so its keyring wait stays outside `movedMid`'s span.
-  const keyless = await keylessNewBackendIds(r.remote, r.blob);
+  const keyless = await keylessNewBackendIds(cats, r.remote, r.blob);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   const st0 = useApp.getState();
   const sigNow = await storeSignature(r.cats);
@@ -4716,7 +4732,7 @@ async function resolveLocked(
   // approvePendingReview.
   const syncedCats = syncCats();
   // Before the compose, so its keyring wait opens no window before the apply.
-  const keyless = await keylessNewBackendIds(c.remote);
+  const keyless = await keylessNewBackendIds(syncedCats, c.remote);
   if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // The remote fills the pass-through (no base, or a category turned on since), as the raisers
   // compose (see `composeLive`).

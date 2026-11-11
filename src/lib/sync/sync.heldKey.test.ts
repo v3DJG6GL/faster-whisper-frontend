@@ -111,6 +111,25 @@ describe("a peer re-adding a backend id whose key this device still holds", () =
     ]);
   });
 
+  it("reads no keyring entry when this device does not sync backends", async () => {
+    await seed(true);
+    const settings = structuredClone(useApp.getState().settings);
+    settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, backendList: false } };
+    useApp.setState({ settings });
+    api.keys = { b9: "old-key" };
+    api.reads = [];
+    await pullNow(true);
+    expect(api.reads).toEqual([]);
+    expect(useApp.getState().backends.map((b) => b.id)).toEqual(["b1"]);
+  });
+
+  it("reads no keyring entry for an id whose inbound key replaces it", async () => {
+    await seed(true, "peer-key");
+    api.reads = [];
+    await pullNow(true);
+    expect(api.reads.some((ids) => ids.includes("b9"))).toBe(false);
+  });
+
   it("fails closed when the keyring cannot read the id", async () => {
     await seed(true);
     api.unreadable = ["b9"];
