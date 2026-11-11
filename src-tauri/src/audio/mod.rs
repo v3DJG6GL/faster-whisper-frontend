@@ -502,8 +502,13 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
     let mut path = dir.join(format!("{stem}.wav"));
     let mut n = 2;
     // Link-aware: a dangling link planted at the predictable name reads as free to `exists()`,
-    // and `write_new_private` then refuses it, losing this recording.
-    while std::fs::symlink_metadata(&path).is_ok() {
+    // and `write_new_private` then refuses it, losing this recording. The `.txt` sidecar's name
+    // counts too, so the pair is always picked together and the transcript is never refused.
+    let taken = |p: &Path| {
+        std::fs::symlink_metadata(p).is_ok()
+            || std::fs::symlink_metadata(p.with_extension("txt")).is_ok()
+    };
+    while taken(&path) {
         path = dir.join(format!("{stem}-{n}.wav"));
         n += 1;
     }
@@ -715,6 +720,22 @@ mod retention_tests {
         let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
         assert_eq!(path, dir.join("dictation-test-2.wav"));
         assert!(!target.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A leftover or planted `.txt` at the next name moves the pair on, so the transcript
+    /// sidecar is never refused while its `.wav` is written.
+    #[test]
+    fn a_taken_sidecar_name_moves_the_recording_on() {
+        let dir = scratch_dir("save-sidecar-taken");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("dictation-test.txt"), b"theirs").unwrap();
+        let path = save_recording_as(&dir, "dictation-test", &[1u8; 64], 16_000).unwrap();
+        assert_eq!(path, dir.join("dictation-test-2.wav"));
+        assert_eq!(
+            std::fs::read(dir.join("dictation-test.txt")).unwrap(),
+            b"theirs"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
