@@ -22,6 +22,9 @@ vi.mock("../api", async (importOriginal) => {
     saveSyncState: async (st: SyncState) => {
       saved.last = st;
     },
+    // A keyring holding no key (outside Tauri the real call reports every id unknown, which the
+    // review's held-key disclosure counts as a key).
+    readBackendKeyStates: async () => ({ keys: {}, unreadable: [] }),
   };
 });
 

@@ -3286,6 +3286,9 @@ export async function pushNow(manual = false): Promise<void> {
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
+        // Before the compose, so its keyring wait opens no window before the apply.
+        const keyless = await keylessNewBackendIds(remoteBlob);
+        if (myGen !== gen) return;
         // ALWAYS recompose from the live store: `blob` was read before the PUT (or is the last
         // attempt's merge), so an edit made while the request was on the wire is in neither it
         // nor the merge — and applying the merge would hydrate over that edit, push the old value
@@ -3315,7 +3318,7 @@ export async function pushNow(manual = false): Promise<void> {
         const degraded = backendsDegraded(blob, syncedCats);
         const pushCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
-        const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
+        const riskyPush = gatedSecurityCheck(merged, blob, pushCats, keyless);
         if (riskyPush.length > 0) {
           await applyAndRaiseReview(myGen, {
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
@@ -3360,6 +3363,9 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   const cats = syncCats();
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
+  // Before the compose, so its keyring wait opens no window before the apply.
+  const keyless = await keylessNewBackendIds(remoteBlob);
+  if (myGen !== gen) return;
   // With no base, or for a fresh category, the remote fills what this device does not sync
   // (see `composeLive`).
   const local = await composeLive(cats, passThroughFor(remoteBlob));
@@ -3379,7 +3385,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // This pull is unattended (startup + every window focus). A security-relevant change (a
   // repointed backend, a swapped key, a typed-text or retention change: see `catOf`) is held
   // for confirmation instead of being adopted silently.
-  const risky = gatedSecurityCheck(merged, local, applyCats);
+  const risky = gatedSecurityCheck(merged, local, applyCats, keyless);
   if (risky.length > 0) {
     // Everything else still applies — only the categories with a held-back change wait.
     // Deliberately no adoptBase here: adopting the server's version as the new base would
@@ -3554,9 +3560,57 @@ function gatedSecurityCheck(
   incoming: SyncBlob,
   localBlob: SyncBlob,
   cats: Record<SyncCategory, boolean>,
+  keyless: ReadonlySet<string>,
 ): SecurityChange[] {
   const g = settingGates();
-  return securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats, g);
+  const rows = securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats, g);
+  return withHeldKeyRows(rows, incoming, g.apiKeys, keyless);
+}
+
+/** The detail of the row `withHeldKeyRows` adds. "Any": the keyring may not have answered. */
+const HELD_KEY_DETAIL = "any API key this device holds for this server ID would be sent to it";
+
+/** `rows` plus an api-key row for each new backend that would pick up a key this device ALREADY
+ *  holds for its id. Keys outlive their backend (a removal never deletes one), and the key is
+ *  looked up by id alone, so a peer that re-adds a removed id at its own address gets that key
+ *  sent there behind a row reading only "New server added". Skipped where the keyring confirmed
+ *  no key (`keyless`, from `keylessNewBackendIds`) or an inbound key replaces it ("API keys" on);
+ *  an id the read could not confirm counts as holding one (fail closed). Disclosure only: the
+ *  approved apply is unchanged. */
+function withHeldKeyRows(
+  rows: SecurityChange[],
+  incoming: SyncBlob,
+  apiKeysGate: boolean,
+  keyless: ReadonlySet<string>,
+): SecurityChange[] {
+  const secrets = isPlainObject(incoming.backends) ? incoming.backends.secrets : undefined;
+  const extra: SecurityChange[] = rows
+    .filter(
+      (c) =>
+        c.kind === "new-backend" &&
+        !keyless.has(c.id ?? "") &&
+        !(apiKeysGate && inboundSecret(secrets, c.id ?? "") !== undefined),
+    )
+    .map((c) => ({ kind: "api-key", id: c.id, backend: c.backend, detail: HELD_KEY_DETAIL }));
+  return extra.length > 0 ? [...rows, ...extra] : rows;
+}
+
+/** The backend ids `blobs` carry that this device's store lacks and whose keyring entry was read
+ *  and found EMPTY — the only new backends `withHeldKeyRows` may leave undisclosed. One bounded
+ *  read, and none at all on the common pull whose list this device already holds. Read BEFORE
+ *  the caller composes this device, so the wait opens no window between that compose and the
+ *  apply; an id that turns up new only after (or a read that timed out) is not in the set. */
+async function keylessNewBackendIds(...blobs: SyncBlob[]): Promise<ReadonlySet<string>> {
+  const here = new Set(useApp.getState().backends.map((b) => b.id));
+  const ids = [
+    ...new Set(
+      blobs.flatMap((b) => (isPlainObject(b.backends) ? sanitizeBackends(b.backends.list).map((x) => x.id) : [])),
+    ),
+  ].filter((id) => !here.has(id));
+  if (ids.length === 0) return new Set();
+  const read = await readKeyStatesBounded(ids).catch(() => null);
+  if (!read || !isPlainObject(read.keys) || !Array.isArray(read.unreadable)) return new Set();
+  return new Set(ids.filter((id) => !hasOwn(read.keys, id) && !read.unreadable.includes(id)));
 }
 
 /** A consent row's label: the raw name only when it renders as something (the dialog shows it
@@ -4401,6 +4455,9 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // wait (the signature's, or the compose's, which recomposes when the store moved) is therefore
   // in `localNow` only: `movedMid` spans both waits and then counts every conflicting category as
   // edited (keep the live value, or ask), never as the reviewed value going back over it.
+  // Before the signature and the compose, so its keyring wait stays outside `movedMid`'s span.
+  const keyless = await keylessNewBackendIds(r.remote, r.blob);
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   const st0 = useApp.getState();
   const sigNow = await storeSignature(r.cats);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
@@ -4465,7 +4522,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // Judge under the categories the apply below runs with: a degraded keyring holds backends out
   // of it, so judging them under `cats` relisted rows (a peer's stored keys) that never land.
   const applyCats = degradedNow ? { ...cats, backends: false } : cats;
-  const now = gatedSecurityCheck(blobNow, localNow, applyCats);
+  const now = gatedSecurityCheck(blobNow, localNow, applyCats, keyless);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
     // Judged against the store as it is now: a later approval compares against that. The gates
@@ -4658,6 +4715,9 @@ async function resolveLocked(
   // as it is NOW, or a "keep mine" lands the peer's repoint with no review row. Same rule as
   // approvePendingReview.
   const syncedCats = syncCats();
+  // Before the compose, so its keyring wait opens no window before the apply.
+  const keyless = await keylessNewBackendIds(c.remote);
+  if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // The remote fills the pass-through (no base, or a category turned on since), as the raisers
   // compose (see `composeLive`).
   const localNow = await composeLive(syncedCats, passThroughFor(c.remote));
@@ -4695,7 +4755,7 @@ async function resolveLocked(
   // (forcing this branch) would ride its backend repoint / key swap in unreviewed. Same shape as
   // reconcileRemote: apply everything else, hold the flagged categories back, and persist no
   // base so a rejection is re-offered on the next pull.
-  const risky = gatedSecurityCheck(final, localNow, applyCats);
+  const risky = gatedSecurityCheck(final, localNow, applyCats, keyless);
   if (risky.length > 0) {
     const raised = await applyAndRaiseReview(myGen, {
       changes: risky,
