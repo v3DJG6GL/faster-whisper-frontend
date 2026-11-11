@@ -1098,7 +1098,7 @@ function RestoreOffer({
   // restore may or may not have brought one — the backends category can be
   // deselected), surface the fresh test result on its card, and bind sync to it
   // (mirrors onboarding's restoreEverything).
-  const finishRestore = async () => {
+  const finishRestore = async (before: ReadonlySet<string>) => {
     const s = useApp.getState();
     const target = normalizeUrl(draft.serverUrl);
     let match = backendForAddress(s.backends, draft.serverUrl);
@@ -1125,9 +1125,18 @@ function RestoreOffer({
         }
       } catch (e) {
         // Don't lose an applied restore over a keyring failure: a new backend is left keyless
-        // (the sync tab's no-key warning takes it from there), an existing one keeps whatever key it had.
+        // (the sync tab's no-key warning takes it from there), one this device had keeps whatever key it had.
         console.error("saving API key failed:", e);
         if (!s.backends.some((b) => b.id === match!.id)) s.upsertBackend({ ...match, hasApiKey: false });
+        else if (!before.has(match.id)) {
+          // The blob added this id, and the held-key notice skipped it (the typed key was to
+          // replace its entry): any key the keyring holds under it is a removed backend's, for
+          // whatever host that one used. Drop it, best-effort, rather than send it to this address.
+          const id = match.id;
+          await deleteBackendKey(id).catch(() => {});
+          const cur = useApp.getState().backends.find((b) => b.id === id);
+          if (cur) useApp.getState().upsertBackend({ ...cur, hasApiKey: false });
+        }
       }
     }
     // Cache the connect step's verdict only if the backend really routes to the address it

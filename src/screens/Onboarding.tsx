@@ -76,6 +76,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // The backend created at the connect gate, kept so the restore can put it back if the applied
   // blob's list does not contain it (see restoreEverything).
   const gateBackend = useRef<Backend | null>(null);
+  // The backend ids this device had before the first restore attempt (see restoreEverything).
+  const restoreBefore = useRef<ReadonlySet<string> | null>(null);
   // Set when a restore landed but carried no profiles, so the starters step follows it (and the
   // quick-add step only when the restore did not already pin a list).
   const restored = useRef(false);
@@ -242,8 +244,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // The backend whose key write failed, when its id is new to this device: any key the keyring
     // holds under it is a removed backend's, for whatever host that one used.
     let staleHeld: Backend | null = null;
-    // Read before the apply: the ids this device had (the gate's entry included).
-    const before = new Set(st.getState().backends.map((b) => b.id));
+    // Read before the FIRST attempt's apply: the ids this device had (the gate's entry included).
+    // Not re-read per attempt: a retry would count an id an earlier attempt's blob re-added (and
+    // whose best-effort delete failed) as this device's own, and skip the guard below.
+    restoreBefore.current ??= new Set(st.getState().backends.map((b) => b.id));
+    const before = restoreBefore.current;
     try {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the

@@ -514,7 +514,9 @@ export function RestoreFromServer({
 }: {
   state: SyncRemoteState;
   onCancel: () => void;
-  onApplied: () => void | Promise<void>;
+  /** Gets the backend ids this device had just before the apply (a supplied-key write that fails
+   *  must not leave a key the keyring holds for a REMOVED backend under an id the blob re-added). */
+  onApplied: (before: ReadonlySet<string>) => void | Promise<void>;
   /** The server address `onApplied` writes a just-typed API key for (the Backends connect-first
    *  flow): the restored backend it lands on is not one that "needs an API key re-entered". */
   keyFor?: string;
@@ -596,13 +598,14 @@ export function RestoreFromServer({
       // Binding sync to the new backend on a state that never landed would then push this
       // device's pre-restore config over the server copy.
       // The gate bypass opens the folder gates — keep this machine's folders.
+      const before = new Set(useApp.getState().backends.map((b) => b.id));
       const ok = await applyBlob(stripMachineFolders(blob), sel, 2, { ignoreGates: true });
       if (!ok) {
         setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
         setApplying(false);
         return;
       }
-      await onApplied();
+      await onApplied(before);
     } catch (e) {
       setError(String(e));
       setApplying(false);
