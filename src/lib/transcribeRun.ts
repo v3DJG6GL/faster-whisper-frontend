@@ -35,7 +35,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { pruneTargets, wireCodes } from "./translationTargets";
-import { TRANSLATE_CHUNK_CHARS, boundTranslationValues, translationKeyBudget } from "./retroTranslate";
+import { TRANSLATE_CHUNK_CHARS, boundTranslationValues, liveCtlUrl, translationKeyBudget } from "./retroTranslate";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
@@ -1144,6 +1144,8 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
 function fetchRunUrlMedia(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
   const s = useApp.getState().settings;
   if (s.transcribe?.keepUrlAudioCopies === false) return;
+  // A gone backend's held key must not go to the frozen address (liveCtlUrl): no copy.
+  if (liveCtlUrl(ctx) === null) return;
   void fetchUrlMedia({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
@@ -1169,6 +1171,8 @@ function fetchRunUrlMedia(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
 function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
   // A record deleted meanwhile: downloading its video would only leave an orphan file.
   if (!registeredIds.has(rec.id)) return;
+  // A gone backend's held key must not go to the frozen address (liveCtlUrl): no copy.
+  if (liveCtlUrl(ctx) === null) return;
   const s = useApp.getState().settings;
   void fetchUrlVideo({
     serverUrl: ctx.serverUrl,
@@ -1184,6 +1188,17 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
     .catch((e) => console.error("url video fetch failed:", e));
 }
 
+/** A queued file whose run's backend went mid-run (deleted, or removed by a sync pull). */
+export const RUN_BACKEND_GONE = "This backend was removed. Run again with another backend.";
+/** Thrown between one file's requests once its backend is gone: the pump fails the file
+ *  with this message instead of sending the next request. */
+class RunBackendGone extends Error {
+  constructor() {
+    super(RUN_BACKEND_GONE);
+  }
+}
+// The Video row once the run's backend is gone: the file is never pulled from it.
+const VIDEO_BACKEND_GONE = "the backend was removed, so the video was not downloaded";
 const NO_LONGER_TRACKED = "the server no longer tracks this video";
 // A jobs-off server closes the progress entry right after the video ends but keeps no job row
 // to read the outcome (or media id) from: the video may well sit finished on the server.
@@ -1223,6 +1238,11 @@ function awaitRunUrlVideo(
   const pull = (mediaId: string) => {
     if (pulled) return;
     pulled = true;
+    // The backend went while the video was on its way: the row says why there is no file.
+    if (liveCtlUrl(ctx) === null) {
+      if (onScreen()) set((s) => withVideo(s, { ...s.stageMeta.downloading?.video, state: "failed", error: VIDEO_BACKEND_GONE }));
+      return;
+    }
     fetchRunUrlVideo(rec, ctx, mediaId);
   };
   let requestSettled = !request;
@@ -1258,6 +1278,13 @@ function awaitRunUrlVideo(
     }
     if (skip > 0) {
       skip -= 1;
+      return;
+    }
+    // The backend is gone: no further poll goes to its frozen address. An on-demand request
+    // still open settles the row with its answer; a run's own video row fails here.
+    if (liveCtlUrl(ctx) === null) {
+      end();
+      if (!request) paintSettled(null, VIDEO_BACKEND_GONE);
       return;
     }
     inFlight = true;
@@ -1331,6 +1358,10 @@ function awaitRunUrlVideo(
   // error is asked once more a second later before it becomes the verdict.
   // `gone` = the reason when the row names no outcome of its own.
   function settleFromJob(retries: number, gone = NO_LONGER_TRACKED) {
+    if (liveCtlUrl(ctx) === null) {
+      paintSettled(null, VIDEO_BACKEND_GONE);
+      return;
+    }
     void getJobResult({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, jobId: pid })
       .catch((e): { kind: "error"; message: string } => ({ kind: "error", message: errorText(e, 200) }))
       .then((o) => {
@@ -1446,14 +1477,18 @@ function startOnDemandVideo(
 ): Promise<UrlMediaDownload | null> {
   const railSeq = railFileSeq;
   onDemandVideoPid = pid;
-  return fetchUrlVideoOnDemand({
-    serverUrl: ctx.serverUrl,
-    backendId: ctx.backendId,
-    url,
-    maxHeight: videoMaxHeightOf(url),
-    formatId: get().urlMeta[url]?.videoFormat ?? null,
-    progressId: pid,
-  }).catch((e) => {
+  // A gone backend gets no request (its held key stays home): the row fails with the reason.
+  const req = liveCtlUrl(ctx) === null
+    ? Promise.reject(new Error(VIDEO_BACKEND_GONE))
+    : fetchUrlVideoOnDemand({
+        serverUrl: ctx.serverUrl,
+        backendId: ctx.backendId,
+        url,
+        maxHeight: videoMaxHeightOf(url),
+        formatId: get().urlMeta[url]?.videoFormat ?? null,
+        progressId: pid,
+      });
+  return req.catch((e) => {
     // A Try again started a new attempt (same file, new pid): this stale failure is not its.
     if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url
         || onDemandVideoPid !== pid) return null;
@@ -2130,6 +2165,13 @@ export async function translateParsed(
     // returns: stop here so a feature-length file stops POSTing chunks on Cancel. The pump
     // discards the partial result.
     if (epoch !== undefined && epoch !== get().epoch) break;
+    // The backend went mid-file: no further chunk goes to its frozen address. The text in hand
+    // and the chunks already answered are kept; the warning names what was left untranslated.
+    if (liveCtlUrl(ctx) === null) {
+      const left = at + 1 === parsed.segments.length ? `segment ${at + 1} was` : `segments ${at + 1}–${parsed.segments.length} were`;
+      warnings.push(`The backend was removed mid-run, so ${left} not translated.`);
+      break;
+    }
     // The run panel reads every poll of this chunk against where it sits in the whole source.
     set((s) => ({
       textChunk: { done: at, len: end - at, total: parsed.segments.length, sentAt: Date.now(), prev: s.progress },
@@ -2227,6 +2269,8 @@ async function fetchSiteSubs(
 ): Promise<{ transcript?: ParsedSiteTrack; others: ParsedSiteTrack[]; warnings: string[] }> {
   const warnings: string[] = [];
   const parsed: ParsedSiteTrack[] = [];
+  // A gone backend gets no request (its held key stays home).
+  if (liveCtlUrl(ctx) === null) return { others: [], warnings: [`The site's subtitles were not downloaded: ${RUN_BACKEND_GONE}`] };
   try {
     const got = await fetchUrlSubtitles({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, tracks: site.fetch });
     for (const t of got.tracks) {
@@ -2362,6 +2406,8 @@ async function runLink(
   // A cancel during the subtitle download must not still post the request
   // (the pump's catch drops it silently on the epoch mismatch).
   if (epoch !== get().epoch) throw new Error("cancelled");
+  // The backend went during the subtitle download: the audio run is not posted to it.
+  if (!got.transcript && liveCtlUrl(ctx) === null) throw new RunBackendGone();
   if (!got.transcript) {
     // Decided now: the server runs the full audio pipeline, so the rail must show it.
     patchItem(url, { siteFallback: true });
@@ -2377,7 +2423,11 @@ async function runLink(
   // Its expiry rides along: without one the export panel reads the audio as kept forever.
   let audio = prefetch ?? null;
   let audioExp: number | undefined = prefetch ? meta?.prefetchExpiresAt : undefined;
-  if (!audio && epoch === get().epoch) {
+  // The backend went during the subtitle download: the site transcript in hand still lands,
+  // without the audio a gone backend is no longer asked for.
+  if (!audio && epoch === get().epoch && liveCtlUrl(ctx) === null) {
+    warnings.push("The backend was removed, so the audio was not downloaded and there is no playback.");
+  } else if (!audio && epoch === get().epoch) {
     try {
       const dl = await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid });
       audio = dl.mediaId;
@@ -2390,7 +2440,7 @@ async function runLink(
   const res = await translateParsed(parsed, { ...options, translateTo: translateTo ?? [] }, ctx, pid, epoch);
   let videoPid: string | undefined;
   let videoReq: Promise<UrlMediaDownload | null> | undefined;
-  if (options.keepVideo && epoch === get().epoch) {
+  if (options.keepVideo && epoch === get().epoch && liveCtlUrl(ctx) !== null) {
     videoPid = newProgressId();
     videoReq = startOnDemandVideo(url, ctx, videoPid, epoch);
   }
@@ -2426,6 +2476,12 @@ async function pump(
     while (epoch === get().epoch) {
       const next = get().queue.find((it) => it.status === "queued");
       if (!next) break;
+      // The run's backend went mid-run (deleted, or removed by a sync pull, which keeps its
+      // key): every file still queued fails here, and nothing more is sent to its frozen address.
+      if (liveCtlUrl(ctx) === null) {
+        failFile(next.path, RUN_BACKEND_GONE);
+        continue;
+      }
       const sourceKind = itemSourceKind(next);
       const isUrl = sourceKind === "url";
       const isText = sourceKind === "text";
@@ -2453,7 +2509,7 @@ async function pump(
       // registers the same progress entry (stage "translating" + last_text).
       const pid = ctx.standard ? null : newProgressId();
       activeCancel = pid
-        ? { serverUrlOf: () => ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
+        ? { serverUrlOf: () => liveCtlUrl(ctx), backendId: ctx.backendId, progressId: pid }
         : null;
       // Seed the first stage's clock from the request start, so the rail
       // shows elapsed time before the first poll lands (and at all on
@@ -2487,7 +2543,7 @@ async function pump(
       let handedOff = false;
       const poller = pid
         ? window.setInterval(() => {
-            if (pollInFlight) return;
+            if (pollInFlight || liveCtlUrl(ctx) === null) return;
             const seq = ++pollSeq;
             const sentAt = Date.now();
             pollInFlight = true;
@@ -2570,6 +2626,8 @@ async function pump(
         if (pid && ctx.jobsEnabled && !isText && !siteTranscript) await ledgerRow();
         // A cancel during the ledger write must not still post the request.
         if (epoch !== get().epoch) return;
+        // Nor may a backend gone during it: the file fails instead.
+        if (liveCtlUrl(ctx) === null) throw new RunBackendGone();
         let videoPid: string | undefined;
         let videoReq: Promise<UrlMediaDownload | null> | undefined;
         let res: BatchResult;
@@ -2624,17 +2682,20 @@ async function pump(
           orphanWatch(pid);
           handedOff = true;
         } else {
-          failFile(next.path, uploadTooLargeText(e) ?? String(e));
+          failFile(next.path, e instanceof RunBackendGone ? e.message : uploadTooLargeText(e) ?? String(e));
         }
         // The queue item keeps the raw error; the doorway gets the templated one.
         // A text source only ran the translate stage, so it toasts as a translation
         // failure. A run handed to its headless watcher gets no "try again": a retry
         // stops that watcher and deletes the server job that would land in History.
-        const backendLabel = configuredBackendLabel(ctx.backendId) ?? "the backend";
-        const kind = isText ? "translate" : "transcribe";
-        useApp.getState().setLogsDoorway(
-          handedOff ? handedOffDoorway(kind, backendLabel) : transportErrorDoorway(kind, e, backendLabel),
-        );
+        // A gone backend is no transport failure: its row's message says what to do.
+        if (!(e instanceof RunBackendGone)) {
+          const backendLabel = configuredBackendLabel(ctx.backendId) ?? "the backend";
+          const kind = isText ? "translate" : "transcribe";
+          useApp.getState().setLogsDoorway(
+            handedOff ? handedOffDoorway(kind, backendLabel) : transportErrorDoorway(kind, e, backendLabel),
+          );
+        }
       } finally {
         pollingDone = true;
         activeCancel = null;

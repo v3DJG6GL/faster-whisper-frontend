@@ -15,6 +15,7 @@ const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").get
 const fetchUrlVideoOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideoOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideo>[0]) => Promise<string | null>>();
 const getJobResult = vi.fn<(args: Parameters<typeof import("./api").getJobResult>[0]) => ReturnType<typeof import("./api").getJobResult>>();
+const cancelBackendTranscription = vi.fn<(args: Parameters<typeof import("./api").cancelBackendTranscription>[0]) => Promise<void>>();
 const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
 const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
@@ -64,6 +65,8 @@ vi.mock("./api", async (importOriginal) => {
       fetchUrlVideo.getMockImplementation() ? fetchUrlVideo(a) : orig.fetchUrlVideo(a),
     getJobResult: (a: Parameters<typeof orig.getJobResult>[0]) =>
       getJobResult.getMockImplementation() ? getJobResult(a) : orig.getJobResult(a),
+    cancelBackendTranscription: (a: Parameters<typeof orig.cancelBackendTranscription>[0]) =>
+      cancelBackendTranscription.getMockImplementation() ? cancelBackendTranscription(a) : orig.cancelBackendTranscription(a),
     saveTranscriptMedia: (...a: Parameters<typeof orig.saveTranscriptMedia>) =>
       saveTranscriptMedia.getMockImplementation() ? saveTranscriptMedia(...a) : orig.saveTranscriptMedia(...a),
   };
@@ -77,7 +80,7 @@ import {
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, clearWipedRowMediaPaths, lostContact, translateParsed, reconcileRetryOptions, refreshRowMediaPaths, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
-  SITE_TRANSCRIPT_FALLBACK,
+  SITE_TRANSCRIPT_FALLBACK, RUN_BACKEND_GONE,
   addFiles, stageFiles, reattachRun, ingestJobResult,
 } from "./transcribeRun";
 import { MULTI_LANGUAGE } from "./languages";
@@ -2806,5 +2809,113 @@ describe("linkPrefetchFor — a prefetched media id only goes back to the server
     expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: now + 30 }, "A")).toBeUndefined();
     expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: now + 600 }, "A")).toBe("m");
     expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: undefined }, "A")).toBe("m");
+  });
+});
+
+describe("a run whose backend is removed mid-run", () => {
+  // A sync pull keeps a removed backend's key, resolved by id at call time: once "b1" is gone
+  // from a loaded config, nothing more may go to the run's frozen address.
+  const B1 = { id: "b1", name: "B1", serverUrl: "http://x" } as never;
+  let prev: { backends: unknown; configLoaded: boolean; configLoadFailed: boolean; caps: unknown };
+  let ticks: (() => void)[];
+  beforeEach(() => {
+    const st = useApp.getState();
+    prev = { backends: st.backends, configLoaded: st.configLoaded, configLoadFailed: st.configLoadFailed, caps: st.caps };
+    useApp.setState({ backends: [B1], configLoaded: true, configLoadFailed: false });
+    ticks = [];
+    vi.stubGlobal("window", {
+      setInterval: (fn: () => void) => ticks.push(fn),
+      clearInterval: () => {},
+    });
+    useTranscriptHistory.setState({ records: [], loaded: true });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcribeFile.mockReset();
+    translateText.mockReset();
+    getTranscribeProgress.mockReset();
+    cancelBackendTranscription.mockReset();
+    useApp.setState(prev as never);
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageMeta: {}, stageTimes: {} });
+  });
+  const gone = () => useApp.setState({ backends: [] });
+  const statuses = () => useTranscribeRun.getState().queue.map((it) => [it.path, it.status, it.error]);
+
+  it("the in-flight file still lands; every file still queued fails without a request", async () => {
+    transcribeFile.mockImplementation((async () => {
+      gone(); // removed while the first upload is out
+      return oneLine("first");
+    }) as never);
+    useTranscribeRun.setState({ files: ["/a.mp3", "/b.mp3", "/c.mp3"], queue: [], running: false });
+    startRun(undefined, {}, RUN_CTX);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    expect(transcribeFile).toHaveBeenCalledTimes(1);
+    expect(statuses()).toEqual([
+      ["/a.mp3", "done", undefined],
+      ["/b.mp3", "failed", RUN_BACKEND_GONE],
+      ["/c.mp3", "failed", RUN_BACKEND_GONE],
+    ]);
+    expect(useTranscribeRun.getState().queue[0].result?.text).toBe("first");
+  });
+
+  it("a backend that still exists runs every file to the same address", async () => {
+    transcribeFile.mockImplementation((async () => oneLine("ok")) as never);
+    useTranscribeRun.setState({ files: ["/a.mp3", "/b.mp3"], queue: [], running: false });
+    startRun(undefined, {}, RUN_CTX);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    expect(transcribeFile.mock.calls.map(([a]) => a.serverUrl)).toEqual(["http://x", "http://x"]);
+    expect(statuses().map(([, st]) => st)).toEqual(["done", "done"]);
+  });
+
+  it("before the config has loaded the list proves nothing: the run goes out as before", async () => {
+    useApp.setState({ backends: [], configLoaded: false });
+    transcribeFile.mockImplementation((async () => oneLine("ok")) as never);
+    useTranscribeRun.setState({ files: ["/a.mp3"], queue: [], running: false });
+    startRun(undefined, {}, RUN_CTX);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    expect(transcribeFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("the progress poll stops and a Cancel sends no server abort once the backend is gone", async () => {
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({ stage: "transcribing" } as never));
+    cancelBackendTranscription.mockImplementation(() => Promise.resolve());
+    transcribeFile.mockImplementation((() => new Promise(() => {})) as never);
+    useTranscribeRun.setState({ files: ["/a.mp3", "/b.mp3"], queue: [], running: false });
+    startRun(undefined, {}, RUN_CTX);
+    await vi.waitFor(() => expect(transcribeFile).toHaveBeenCalledTimes(1));
+    ticks[0]();
+    await flush();
+    expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+    gone();
+    ticks[0]();
+    await flush();
+    expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+    cancelRun();
+    expect(cancelBackendTranscription).not.toHaveBeenCalled();
+  });
+
+  it("a Cancel on a live backend still aborts the job on the server", async () => {
+    cancelBackendTranscription.mockImplementation(() => Promise.resolve());
+    transcribeFile.mockImplementation((() => new Promise(() => {})) as never);
+    useTranscribeRun.setState({ files: ["/a.mp3"], queue: [], running: false });
+    startRun(undefined, {}, RUN_CTX);
+    await vi.waitFor(() => expect(transcribeFile).toHaveBeenCalledTimes(1));
+    cancelRun();
+    expect(cancelBackendTranscription).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: "http://x", backendId: "b1" }));
+  });
+
+  it("a text source keeps its answered chunks and sends no further chunk", async () => {
+    useApp.setState({ caps: { ...useApp.getState().caps, b1: {} } as never });
+    translateText.mockImplementation((a) => {
+      gone(); // removed while the first chunk is out
+      return Promise.resolve({ results: a.texts.map((t) => ({ de: `${t}-de` })) });
+    });
+    const segments = Array.from({ length: 401 }, (_, i) => ({ text: `cue ${i}` }));
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, RUN_CTX);
+    expect(translateText).toHaveBeenCalledTimes(1);
+    expect(r.segments![0].translations).toEqual({ de: "cue 0-de" });
+    expect(r.segments![399].translations).toEqual({ de: "cue 399-de" });
+    expect(r.segments![400].translations).toBeUndefined();
+    expect(r.warnings).toContain("The backend was removed mid-run, so segment 401 was not translated.");
   });
 });
