@@ -3307,8 +3307,9 @@ export async function pushNow(manual = false): Promise<void> {
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
       const pushUrl = liveSyncTarget(backend);
       if (pushUrl === null) {
-        // Past the first attempt an earlier one reached the (old) server, so a prior failure is stale.
-        if (attempt === 0) endWithoutServer();
+        // Past the first attempt (or a free re-seed, which repeats attempt 0) an earlier one reached
+        // the (old) server, so a prior failure is stale.
+        if (attempt === 0 && !reseeded) endWithoutServer();
         else if (useApp.getState().syncStatus === "syncing") idleStatus();
         schedulePush(0); // let the corrected address receive this state instead
         return;
