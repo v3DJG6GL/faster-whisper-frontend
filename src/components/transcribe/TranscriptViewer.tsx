@@ -28,8 +28,9 @@ import {
   type TextTranslationResult,
 } from "@/lib/api";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
-  runChunkedTranslate, translateCtls as trCtls, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
+  newTranslateRun, runChunkedTranslate, translateCtls as trCtls, translateOptsFrom, untranslatedIndexes,
+  type TranslateRunUi,
 } from "@/lib/retroTranslate";
 import { isAnsweredError, transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -652,6 +653,8 @@ export function TranscriptViewer({
       // Stamped before the request: a poll sent before the current chunk began must not
       // scale its (previous-chunk) progress onto the new chunk's frame.
       const sentAt = Date.now();
+      // A gone backend's run sends nothing more (liveCtlUrl); its chunk loop ends the run.
+      if (liveCtlUrl(ctl) === null) return;
       getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
         .then((p) => {
           if (trCtls.get(okey) !== ctl) return;
@@ -697,6 +700,16 @@ export function TranscriptViewer({
         // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
         textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),
         translate: async (texts, idxs) => {
+          // The backend removed mid-run (deleted, or a sync pull, which keeps its key): end the
+          // run as cancelled without another request; the merged chunks stay, the rest stay
+          // in the resume set.
+          const gone = () => {
+            if (liveCtlUrl(ctl) !== null) return false;
+            ctl.cancelled = true;
+            return true;
+          };
+          const unsent: TextTranslationResult = { results: [] };
+          if (gone()) return unsent;
           if (!groups) {
             // Caps never fetched for this backend: fetch them now (never throws). A server that
             // really reports nothing (older backend) keeps the documented ceiling.
@@ -707,7 +720,7 @@ export function TranscriptViewer({
             groups = gs;
           }
           const ask = (group: string[]) =>
-            translateText({
+            gone() ? Promise.resolve(unsent) : translateText({
               serverUrl,
               backendId: backend.id,
               texts,

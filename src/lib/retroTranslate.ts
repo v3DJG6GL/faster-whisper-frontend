@@ -1,11 +1,12 @@
 // The viewer's chunked retro-translate run: a pure progress
 // state machine for the mini progress card plus the chunk-loop driver that
-// feeds mergeSegmentTranslations per chunk. Kept free of React/IPC imports so
+// feeds mergeSegmentTranslations per chunk. Kept free of IPC imports so
 // vitest can exercise the chunk math and the poll folding directly — the
 // TranscriptViewer supplies the actual translateText call and the store merge.
 import type { BatchProgress } from "./types";
 import type { TextTranslationResult } from "./api";
 import { ownProp } from "./own";
+import { useApp } from "./store";
 
 /** Segments per /v1/text/translations request. Small on purpose: results
  *  merge into the transcript per chunk, so the chunk size IS the "live fill"
@@ -450,9 +451,20 @@ export interface TranslateCtl {
  *  must find the same ctl to gate re-entry and serve Cancel. */
 export const translateCtls = new Map<string, TranslateCtl>();
 
-/** Cancel the live run under `key`: stop the chunk loop and abort its request on the server
- *  by progress id (`abort` = api's cancelTextTranslation, passed in: this module stays free
- *  of IPC). The one cancel the viewer's card and the other-runs strip share — a run whose
+/** Where a live run may still send (poll, chunk, abort), checked when each request leaves:
+ *  the address frozen at run start while its backend exists, null once the config is loaded
+ *  and the backend is gone (deleted, or removed by a sync pull). Keys resolve by backend id
+ *  at call time and a pull keeps a removed backend's key, so a gone backend's run sends
+ *  nothing more to the frozen address. Before the config loads there is no list to check. */
+export function liveCtlUrl(ctl: Pick<TranslateCtl, "serverUrl" | "backendId">): string | null {
+  const st = useApp.getState();
+  if (st.backends.some((b) => b.id === ctl.backendId)) return ctl.serverUrl;
+  return st.configLoaded && !st.configLoadFailed ? null : ctl.serverUrl;
+}
+
+/** Cancel the live run under `key`: stop the chunk loop and, while its backend exists
+ *  (liveCtlUrl), abort its request on the server by progress id (`abort` = api's
+ *  cancelTextTranslation, passed in: this module stays free of IPC). The one cancel the viewer's card and the other-runs strip share — a run whose
  *  viewer is closed during a new transcription is cancelled from the strip. False = no live
  *  run under `key`, or it is already cancelled. */
 export function cancelTranslateRun(
@@ -462,7 +474,9 @@ export function cancelTranslateRun(
   const ctl = translateCtls.get(key);
   if (!ctl || ctl.cancelled) return false;
   ctl.cancelled = true;
-  void abort({ serverUrl: ctl.serverUrl, backendId: ctl.backendId, progressId: ctl.pid }).catch(() => {});
+  // A gone backend's run stops locally only: its held key must not go to the frozen address.
+  const serverUrl = liveCtlUrl(ctl);
+  if (serverUrl !== null) void abort({ serverUrl, backendId: ctl.backendId, progressId: ctl.pid }).catch(() => {});
   return true;
 }
 

@@ -3,11 +3,12 @@
 // (TranscriptViewer) only wires these to translateText + the store.
 import { describe, expect, it, vi } from "vitest";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
-  runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type ChunkedTranslateArgs, type TranslateRunUi,
-  translateCtls, translateOptsFrom, translationKeyBudget, untranslatedIndexes, MAX_TRANSLATION_KEYS,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, liveCtlUrl,
+  newTranslateRun, runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type ChunkedTranslateArgs,
+  type TranslateRunUi, translateCtls, translateOptsFrom, translationKeyBudget, untranslatedIndexes, MAX_TRANSLATION_KEYS,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
+import { useApp } from "./store";
 import otherRunsSrc from "../components/transcribe/OtherTranslateRuns.tsx?raw";
 import viewerSrc from "../components/transcribe/TranscriptViewer.tsx?raw";
 import progressCardSrc from "../components/transcribe/TranslateProgressCard.tsx?raw";
@@ -548,6 +549,22 @@ describe("cancelTranslateRun", () => {
       translateCtls.delete("rec-3");
     }
   });
+  it("a run whose backend is gone stops locally and sends no server abort", () => {
+    // A sync pull keeps a removed backend's key: the frozen address must not get it.
+    const prev = useApp.getState();
+    useApp.setState({ backends: [], configLoaded: true, configLoadFailed: false });
+    const ctl = { pid: "p5", cancelled: false, serverUrl: "http://srv", backendId: "b1" };
+    translateCtls.set("rec-5", ctl);
+    const abort = vi.fn(() => Promise.resolve());
+    try {
+      expect(cancelTranslateRun("rec-5", abort)).toBe(true);
+      expect(ctl.cancelled).toBe(true);
+      expect(abort).not.toHaveBeenCalled();
+    } finally {
+      translateCtls.delete("rec-5");
+      useApp.setState({ backends: prev.backends, configLoaded: prev.configLoaded, configLoadFailed: prev.configLoadFailed });
+    }
+  });
   it("the other-runs strip offers that Cancel on each live row", () => {
     expect(otherRunsSrc).toMatch(/cancelTranslateRun\(key, cancelTextTranslation\)/);
     expect(otherRunsSrc).toMatch(/\? "Cancelling…" : "Cancel"/);
@@ -581,3 +598,34 @@ describe("cancelTranslateRun", () => {
   });
 });
 
+
+describe("liveCtlUrl", () => {
+  const ctl = { serverUrl: "http://frozen:8000", backendId: "b1" };
+  const set = (ids: string[], configLoaded: boolean, configLoadFailed = false) =>
+    useApp.setState({
+      backends: ids.map((id) => ({ id, name: id, serverUrl: "http://moved:9000" }) as never),
+      configLoaded,
+      configLoadFailed,
+    });
+  it("keeps the frozen address while the backend exists (even repointed), null once it is gone", () => {
+    const prev = useApp.getState();
+    try {
+      set(["b1"], true);
+      expect(liveCtlUrl(ctl)).toBe("http://frozen:8000");
+      set(["b2"], true);
+      expect(liveCtlUrl(ctl)).toBeNull();
+      // No backend list to check yet, or it failed to load: the frozen address stands.
+      set([], false);
+      expect(liveCtlUrl(ctl)).toBe("http://frozen:8000");
+      set([], true, true);
+      expect(liveCtlUrl(ctl)).toBe("http://frozen:8000");
+    } finally {
+      useApp.setState({ backends: prev.backends, configLoaded: prev.configLoaded, configLoadFailed: prev.configLoadFailed });
+    }
+  });
+  it("the viewer's poll and every chunk request check it before sending", () => {
+    expect(viewerSrc).toMatch(/if \(liveCtlUrl\(ctl\) === null\) return;\s*getTranscribeProgress\(/);
+    expect(viewerSrc).toMatch(/if \(gone\(\)\) return unsent;\s*if \(!groups\)/);
+    expect(viewerSrc).toMatch(/gone\(\) \? Promise\.resolve\(unsent\) : translateText\(/);
+  });
+});
