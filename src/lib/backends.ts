@@ -9,8 +9,11 @@ import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
 /** Rust `str::trim` at both edges: the Unicode White_Space property (U+FEFF is not in it). */
-const RUST_TRIM =
-  /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+const RUST_WS = String.raw`[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`;
+// The trailing trims in this file only start at the FIRST character of a run (`(?<!…)`): a plain
+// `[…]+$` retries from every position of a run that something follows, quadratic on a synced
+// address with a long run inside it. Same matches, linear.
+const RUST_TRIM = new RegExp(String.raw`^${RUST_WS}+|(?<!${RUST_WS})${RUST_WS}+$`, "g");
 
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
  *  judge the same string the parsers do.
@@ -30,7 +33,7 @@ export function stripUrlNoise(raw: string): string {
       .replace(RUST_TRIM, "")
       .replace(/[\t\n\r]/g, "")
       // eslint-disable-next-line no-control-regex
-      .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "")
+      .replace(/^[\x00-\x20]+|(?<![\x00-\x20])[\x00-\x20]+$/g, "")
   );
 }
 
@@ -41,7 +44,8 @@ const hasHttpScheme = (t: string): boolean => /^https?:\/\//i.test(t);
  *  the scheme to http (LAN servers are the common case, so "host:8000" is accepted).
  *  "" when it carries a scheme other than http(s). */
 export function normalizeUrl(raw: string): string {
-  const t = stripUrlNoise(raw).replace(/\/+$/, "");
+  // Lookbehind: linear on a long inner slash run (see RUST_TRIM).
+  const t = stripUrlNoise(raw).replace(/(?<!\/)\/+$/, "");
   if (hasHttpScheme(t)) return t;
   return isSchemelessAddress(t) ? `http://${t}` : "";
 }

@@ -355,3 +355,38 @@ describe("editorProbesAllowed", () => {
     expect(gate({ probeUrl: "http://other.example:8000", keyStored: false })).toBe(true);
   });
 });
+
+describe("the edge trims stay linear on a synced address", () => {
+  // The previous trims, kept verbatim: the new ones must match them on every input.
+  const oldRustTrim =
+    /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+  const oldStrip = (raw: string) =>
+    // eslint-disable-next-line no-control-regex
+    raw.replace(oldRustTrim, "").replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+
+  it("matches the previous trims on every string of up to 6 picks over the trimmed classes", () => {
+    // Rust-only space, ASCII space (both classes), C0-only, a removed tab, a slash and a letter.
+    const alphabet = ["\u3000", " ", "\x01", "\t", "/", "a"];
+    let level = [""];
+    for (let len = 0; len <= 6; len++) {
+      if (len > 0) level = level.flatMap((x) => alphabet.map((c) => x + c));
+      for (const s of level) {
+        expect(stripUrlNoise(s)).toBe(oldStrip(s));
+        // A scheme up front makes normalizeUrl return its trimmed address as is.
+        expect(normalizeUrl("http://h" + s)).toBe(oldStrip("http://h" + s).replace(/\/+$/, ""));
+      }
+    }
+  });
+
+  it("does not go quadratic on a long run inside the address", () => {
+    const run = 200_000;
+    const t0 = performance.now();
+    for (const ch of ["\u3000", "\x01", "/"]) {
+      const s = "http://h" + ch.repeat(run) + "x";
+      expect(stripUrlNoise(s)).toBe(s);
+      expect(normalizeUrl(s)).toBe(s);
+    }
+    // The old trailing branches take minutes on these; linear ones a few ms.
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
+});
