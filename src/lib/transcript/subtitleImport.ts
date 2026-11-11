@@ -235,12 +235,15 @@ export interface RawCue {
  *  of `before` that is a prefix of `lines`. KMP over the stripped lines, linear in both: trying
  *  every overlap length was quadratic for two long cues sharing none, and the roll-up scan asks
  *  this of every contiguous multi-line pair of a file (or a site's subtitle track). Comparing
- *  line by line equals comparing the "\n"-joined runs: a stripped line holds no "\n". */
+ *  line by line equals comparing the "\n"-joined runs: a stripped line holds no "\n". Only the
+ *  last |lines| lines of `before` are read — the overlap can be no longer — so each call costs
+ *  O(|lines|) however long `before` is: the dedupe keeps one long cue as the baseline for every
+ *  pure-repeat cue after it, and re-reading all of it per call was quadratic on a crafted file. */
 export function leadOverlap(before: string[], lines: string[]): number {
   const mine = lines.map(stripMarkup);
-  const theirs = before.map(stripMarkup);
   const m = mine.length;
   if (m === 0) return 0;
+  const theirs = before.slice(-m).map(stripMarkup);
   // fail[i]: the longest proper prefix of mine[0..i] that is also its suffix.
   const fail = new Array<number>(m).fill(0);
   for (let i = 1, k = 0; i < m; i++) {

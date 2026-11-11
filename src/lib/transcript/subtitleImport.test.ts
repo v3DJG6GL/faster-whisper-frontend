@@ -1114,6 +1114,42 @@ describe("leadOverlap", () => {
     expect(leadOverlap(["x", "<i>one</i>", "two"], ["one", "two", "three"])).toBe(2);
   });
 
+  it("reads only as many trailing lines of a long `before` as `lines` holds", () => {
+    const reference = (before: string[], lines: string[]) => {
+      let k = Math.min(lines.length, before.length);
+      while (k > 0 && before.slice(-k).join("\n") !== lines.slice(0, k).join("\n")) k--;
+      return k;
+    };
+    const alphabet = ["a", "b", "", "a b"];
+    let seed = 17;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 3000; round++) {
+      const before = Array.from({ length: rand(40) }, () => alphabet[rand(alphabet.length)]);
+      const lines = Array.from({ length: rand(5) }, () => alphabet[rand(alphabet.length)]);
+      expect(leadOverlap(before, lines), JSON.stringify([before, lines])).toBe(reference(before, lines));
+    }
+    expect(leadOverlap(["<i>a</i>", "<b>b</b>", "x", "<i>a</i>"], ["a"])).toBe(1);
+    expect(leadOverlap(["a", "b"], [])).toBe(0);
+  });
+
+  it("one long kept cue followed by thousands of pure repeats of its last line dedupes quickly", () => {
+    // A rolling file (one freeze cue bridges a roll), then a cue of M lines and M contiguous cues
+    // that each only repeat its last line: every repeat is checked against that same long cue.
+    const M = 5000;
+    const cues = [
+      { start: 0, end: 1, lines: ["one"] },
+      { start: 1, end: 1.01, lines: ["one"] },
+      { start: 1.01, end: 2, lines: ["one", "two"] },
+      { start: 2, end: 3, lines: Array.from({ length: M }, (_, i) => `<i>line ${i}</i>`) },
+      ...Array.from({ length: M }, (_, j) => ({ start: 3 + 0.2 * j, end: 3 + 0.2 * (j + 1), lines: [`line ${M - 1}`] })),
+    ];
+    const t0 = performance.now();
+    const out = dedupeRollingCues(cues);
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(out.map((c) => c.lines.length)).toEqual([1, 1, M]);
+    expect(out[2].end).toBeCloseTo(3 + 0.2 * M);
+  });
+
   it("two long contiguous cues that share no line parse quickly", () => {
     const cue = (n: number, from: string, to: string, tag: string) =>
       `${n}\n${from} --> ${to}\n` + Array.from({ length: 8000 }, (_, i) => `${tag} ${i}`).join("\n");
