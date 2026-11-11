@@ -2904,6 +2904,34 @@ describe("a run whose backend is removed mid-run", () => {
     expect(cancelBackendTranscription).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: "http://x", backendId: "b1" }));
   });
 
+  it("a link's site-subtitle fallback is not posted when the backend goes during its ledger write", async () => {
+    const url = "https://youtu.be/gone";
+    const { _resetLedgerForTests } = await import("./jobsLedger");
+    _resetLedgerForTests();
+    fetchUrlSubtitles.mockImplementation(async () => { throw new Error("HTTP 403"); });
+    transcribeUrl.mockImplementation((async () => oneLine("posted")) as never);
+    // The fallback is marked on the item just before its ledger row is written: remove the
+    // backend there, after the check that runs before the fallback.
+    const off = useTranscribeRun.subscribe((s) => {
+      if (s.queue.some((it) => it.path === url && it.siteFallback)) gone();
+    });
+    try {
+      useTranscribeRun.setState({
+        files: [url], queue: [], running: false,
+        urlMeta: { [url]: { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } } },
+      });
+      startRun(undefined, {}, { ...RUN_CTX, jobsEnabled: true });
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      expect(transcribeUrl).not.toHaveBeenCalled();
+      expect(statuses()).toEqual([[url, "failed", RUN_BACKEND_GONE]]);
+    } finally {
+      off();
+      fetchUrlSubtitles.mockReset();
+      transcribeUrl.mockReset();
+      useTranscribeRun.setState({ urlMeta: {} });
+    }
+  });
+
   it("a text source keeps its answered chunks and sends no further chunk", async () => {
     useApp.setState({ caps: { ...useApp.getState().caps, b1: {} } as never });
     translateText.mockImplementation((a) => {

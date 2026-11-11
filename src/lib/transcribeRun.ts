@@ -2415,6 +2415,8 @@ async function runLink(
       await ledger();
       if (epoch !== get().epoch) throw new Error("cancelled");
     }
+    // Nor one gone during the ledger write.
+    if (liveCtlUrl(ctx) === null) throw new RunBackendGone();
     const res = await transcribeUrl({ ...req, sourceUrl: url, options });
     return { res: attachFetched(res, got, url, meta) };
   }
