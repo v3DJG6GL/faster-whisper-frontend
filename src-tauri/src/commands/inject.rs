@@ -221,7 +221,8 @@ pub async fn get_focused_app(
     let focused = crate::focus::focused_app(guard.inner()).await;
     // The window TITLE can carry sensitive data (open document / email subject / private tab names)
     // and this is polled ~every 700ms during a session, so keep it OUT of the default-on `info` line —
-    // log only app_id + editable there; the full record (incl. title) goes to `debug` (off by default).
+    // log only app_id + editable there; `debug` (off by default) adds is_self and the title's length,
+    // never the title itself (`focus_debug`).
     // The `info` line fires only when app_id/editable CHANGE: at the ~700ms poll an unconditional
     // line floods the log ring and file over a long session, pushing out the diagnostics that matter.
     if focus_log_changed(focused.as_ref().map(|f| (f.app_id.clone(), f.editable))) {
@@ -230,8 +231,24 @@ pub async fn get_focused_app(
             None => tracing::info!("[focused-app] none"),
         }
     }
-    tracing::debug!("[focused-app] {focused:?}");
+    tracing::debug!("[focused-app] {}", focus_debug(&focused));
     Ok(focused)
+}
+
+/// The `debug` record of a focus read, WITHOUT the window title: a sync peer can raise the log
+/// level to debug (the log level syncs with no consent row), and the title can carry an open
+/// document, an email subject or a private tab name. Its length is kept for diagnostics.
+fn focus_debug(focused: &Option<crate::focus::FocusedApp>) -> String {
+    match focused {
+        Some(f) => format!(
+            "id={:?} editable={:?} self={} title_chars={}",
+            f.app_id,
+            f.editable,
+            f.is_self,
+            f.title.chars().count()
+        ),
+        None => "none".into(),
+    }
 }
 
 /// The last app_id + editable `get_focused_app` logged at `info`, own-window "self" included.
@@ -263,7 +280,7 @@ pub async fn get_focused_other_app(
 ) -> Result<Option<crate::focus::FocusedApp>, String> {
     let focused = crate::focus::focused_app(guard.inner()).await;
     // Keep the window title out of the default-on `info` line (see get_focused_app) — it can hold
-    // sensitive data; log app_id + editable at info, the full record at `debug` (off by default).
+    // sensitive data; log app_id + editable at info, the title-free record at `debug` (`focus_debug`).
     match &focused {
         Some(f) => tracing::info!(
             "[focused-other-app] id={} editable={:?}",
@@ -272,7 +289,7 @@ pub async fn get_focused_other_app(
         ),
         None => tracing::info!("[focused-other-app] none"),
     }
-    tracing::debug!("[focused-other-app] {focused:?}");
+    tracing::debug!("[focused-other-app] {}", focus_debug(&focused));
     Ok(focused)
 }
 
