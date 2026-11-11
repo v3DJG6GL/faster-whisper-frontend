@@ -1402,13 +1402,19 @@ const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 export function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
   // Case-folded: two inbound ids differing only in case can name one keyring entry (`foldedId`).
-  return dedupeById(list.filter(
-    (b): b is Backend =>
-      !!b && typeof b === "object" &&
-      typeof (b as Backend).id === "string" &&
-      typeof (b as Backend).serverUrl === "string" &&
-      !isReservedId((b as Backend).id),
+  // Deduped and capped BEFORE the fill: a peer's blob may list ~150k minimal entries within the
+  // body cap, and the fill never changes an id, so the result is the same either way.
+  return dedupeById(
+    list.filter(
+      (b): b is Backend =>
+        !!b && typeof b === "object" &&
+        typeof (b as Backend).id === "string" &&
+        typeof (b as Backend).serverUrl === "string" &&
+        !isReservedId((b as Backend).id),
+    ),
+    foldedId,
   )
+    .slice(0, MAX_SYNCED_ENTRIES)
     // FILL the remaining leaves rather than filtering on them. Rust's `Backend` requires
     // `name`/`model`/`language`/`prompt`/`endpoint`/`responseFormat` with NO serde default, so a
     // filter would DROP a legitimately older peer's backend entirely — along with the keyring
@@ -1451,10 +1457,7 @@ export function sanitizeBackends(list: unknown): Backend[] {
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
       decodeOverrides: clampDecodeOverrides(b.decodeOverrides),
       translationOverrides: clampTranslationOverrides(b.translationOverrides),
-    })),
-    foldedId,
-  )
-    .slice(0, MAX_SYNCED_ENTRIES);
+    }));
 }
 
 /** Drop inbound app rules that aren't shaped like rules, and clamp the fields of the rest. Rust

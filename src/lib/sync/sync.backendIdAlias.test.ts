@@ -47,6 +47,17 @@ describe("a backend id that is a case alias of a local one", () => {
     expect(list.map((b) => b.id)).toEqual(["abc"]);
   });
 
+  it("sanitizeBackends caps at 500 distinct ids, counted after the dedupe, and fills only those", () => {
+    // Duplicates (exact and case-only) ahead of the cap must not use up its slots.
+    const raw: unknown[] = [];
+    for (let i = 0; i < 700; i++) raw.push({ id: `b${i}`, serverUrl: "" }, { id: `B${i}`, serverUrl: "x" });
+    raw.push(null, { id: 5 }, { id: "b0", serverUrl: "" });
+    const list = sanitizeBackends(raw);
+    expect(list).toHaveLength(500);
+    expect(list.map((b) => b.id)).toEqual(Array.from({ length: 500 }, (_, i) => `b${i}`));
+    expect(list[499]).toMatchObject({ name: "", model: "", language: "auto", endpoint: "stream", hasApiKey: false });
+  });
+
   it("raises no review row for the alias", () => {
     const incoming = {
       backends: { list: [backend(), backend({ id: ALIAS, serverUrl: "http://evil.example" })], secrets: { [ALIAS]: "x" } },
