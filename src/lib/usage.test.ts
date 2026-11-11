@@ -330,6 +330,21 @@ describe("usage poll gates", () => {
     useApp.getState().setUrlOverride("b1", null);
     await tick(1_000);
   });
+  it("a backend removed while an earlier backend's fetch is in flight gets no request", async () => {
+    useApp.setState({ backends: [B1, B2] });
+    await tick(30_000); // settle the pass the edit armed
+    getUsageStats.mockClear();
+    let release!: (v: null) => void;
+    getUsageStats.mockImplementationOnce(() => new Promise((r) => (release = r)) as never);
+    await tick(30_000); // the tick's pass: b1's fetch hangs, b2 waits behind it
+    useApp.setState({ backends: [B1] }); // b2 removed (e.g. by a sync pull) meanwhile
+    release(null);
+    await settle();
+    await tick(1_000);
+    const ids = getUsageStats.mock.calls.map(([a]) => (a as { backendId?: string }).backendId);
+    expect(ids).not.toContain("b2");
+    await restoreSingleBackend();
+  });
   it("a fetch sent with a rotated-out key does not re-install the old caller's numbers", async () => {
     await tick(30_000); // settle any pass the previous case left pending
     getUsageStats.mockClear();

@@ -257,6 +257,11 @@ async function refreshView(reopened = false): Promise<void> {
 }
 
 async function refreshOne(backend: Backend): Promise<void> {
+  // refreshAll walks a list read before its first await: a backend removed meanwhile (a sync pull
+  // keeps its key in the keyring, resolvable by id) must not get a key-bearing request. An edited
+  // one is skipped too — the edit already requested the rerun that fetches it as it is now.
+  const live = useApp.getState().backends.find((x) => x.id === backend.id);
+  if (!live || live.serverUrl !== backend.serverUrl || live.hasApiKey !== backend.hasApiKey) return;
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
   if (effectiveServerKind(backend, ownProp(connections, backend.id)) === "standard") {
