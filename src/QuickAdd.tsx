@@ -322,9 +322,19 @@ export default function QuickAdd() {
     // would then re-sync over the refused rows. A flight superseded while it queued sends nothing:
     // the newer one sends the newest rows (both read when the flight starts, as one pair).
     const mySeq = ++saveSeq.current;
-    const run = saveFlight.current.then<PipelineSaveResult | string | null>(() => {
+    const run = saveFlight.current.then<PipelineSaveResult | string | null>(async () => {
       const t = target.current;
       if (!t || mySeq !== saveSeq.current) return null;
+      // The target was read at the last refresh/summon, and this window stays open across a sync
+      // pull or a Backends delete: a backend no longer in config.json gets no PATCH (a pull leaves
+      // its key in the keyring, and the key resolves by id). Only the GONE case: a backend that
+      // still exists keeps its pinned address. A failed read keeps today's send.
+      const cfg = await readConfig().catch(() => null);
+      if (mySeq !== saveSeq.current) return null;
+      if (cfg && !cfg.backends.some((b) => b.id === t.backendId)) {
+        void refresh();
+        return null;
+      }
       // Held, not sent, while a case twin remains: the server would 422 the whole map. Read with
       // the rows it guards, at the flight's start — an edit made while this queued counts.
       const twin = mapRowTwinProblems(rowsRef.current).values().next().value;
