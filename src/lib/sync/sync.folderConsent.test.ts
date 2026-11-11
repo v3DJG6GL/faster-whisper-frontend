@@ -286,7 +286,8 @@ describe("securityChanges: folder moves", () => {
     expect(row("/home/u/\u2764\ufe0f\u200dx")).toBe("/home/u/\u2764 \\u{200D}x"); // kept VS16 drawn as a space
     expect(row("/home/u/\u{1F600}\u200d\u0915")).toBe("/home/u/\u{1F600}\\u{200D}\u0915");
     expect(row("/home/u/\u0628\u200cx")).toBe("/home/u/\u0628\\u{200C}x");
-    expect(row("/home/u/\u0915\u094d\u200dx")).toBe("/home/u/\u0915\u094d\\u{200D}x");
+    expect(row("/home/u/\u0915\u200dx")).toBe("/home/u/\u0915\\u{200D}x");
+    expect(row("/home/u/\u0915\u200c-2025")).toBe("/home/u/\u0915\\u{200C}-2025");
     expect(row("/home/u/\u0915\u200d\u{1F600}")).toBe("/home/u/\u0915\\u{200D}\u{1F600}");
   });
   it("renders legitimate script, emoji, flag and keycap folder names as before", () => {
@@ -308,6 +309,11 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u{1F3C3}\u200d\u27a1\ufe0f", // facing right
       "/home/u/\u09b0\u200d\u09cd\u09af", // Bengali ya-phala after ra
       "/home/u/\u0dc1\u0dca\u200d\u0dbb\u0dd3", // Sinhala shri
+      // A joiner right after a virama shapes the glyph before it, whatever follows.
+      "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d-2025", // Malayalam chillu n before '-'
+      "/home/u/\u09a4\u09cd\u200d2025", // Bengali khanda ta before a digit
+      "/home/u/\u0915\u094d\u200dx", // Devanagari half ka before Latin
+      "/home/u/\u0915\u094d\u200c_a.b", // explicit virama before '_'
       "/home/u/1\ufe0f\u20e3", // keycap
       "/home/u/#\ufe0f\u20e3 Takes",
       "/home/u/Musik \u2764\ufe0f",

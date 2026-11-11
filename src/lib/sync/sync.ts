@@ -3823,6 +3823,12 @@ const EMOJI_BASE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
  *  joiner renders as nothing. */
 const JOINING_LETTER =
   /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Nko}\p{scx=Mongolian}\p{scx=Myanmar}\p{scx=Khmer}ऀ-෿]$/u;
+/** The Brahmic viramas of U+0900–U+0DFF: every code point there with canonical combining class 9
+ *  (UnicodeData.txt, Unicode 16), which a regex property cannot select. Devanagari, Bengali,
+ *  Gurmukhi, Gujarati, Oriya, Tamil, Telugu and Kannada virama, Malayalam vertical bar, circular
+ *  and plain virama, Sinhala al-lakuna. A joiner right after one changes the glyph drawn BEFORE it
+ *  (a half form, a chillu, a khanda ta), whatever follows. */
+const VIRAMA = /^[\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D3B\u0D3C\u0D4D\u0DCA]$/u;
 
 /** Code points that draw as a lone `.` yet have no decomposition to one, so NFKD keeps them:
  *  Lisu tone mya ti, the Arabic-Indic and Persian zeros, the Syriac supralinear and sublinear
@@ -3887,7 +3893,8 @@ function edgeBlankText(s: string): string {
  *  The blank edges Rust trims are written out compactly (`edgeBlankText`). Kept: a ZWJ or VS16 right after an emoji
  *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
  *  mark of a script it shapes (`JOINING_LETTER`) — a ZWJ only before an emoji, a script's joiner
- *  only before a letter or mark of such a script, as a joiner before anything else joins nothing —
+ *  only before a letter or mark of such a script (or, right after a `VIRAMA`, before any visible
+ *  code point), as a joiner before anything else joins nothing —
  *  plus a keycap's VS16 (`1️⃣`) and a subdivision flag's tag run (`🏴` + 2–7 tag digits or
  *  lower-case tag letters + U+E007F). A path with none of the
  *  escaped ones (folder-picker paths, emoji and script names included, except a rare name
@@ -3942,11 +3949,16 @@ function escapeHiddenPathChars(p: string): string {
     else if (code === 0x200c || code === 0x200d)
       // A kept joiner must shape with what follows too: an emoji's ZWJ only before another emoji,
       // a script's ZWNJ/ZWJ only before a letter or mark of a script it shapes. Before anything
-      // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`.
+      // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`. Except
+      // right after a virama: there it shapes what PRECEDES it (`അവന്\u{200D}-2025`, a chillu),
+      // so any visible code point may follow.
       hide =
         !(code === 0x200d ? base !== null : base === "script") ||
         !visible(cps[i + 1]) ||
-        !(base === "script" ? JOINING_LETTER : EMOJI_BASE).test(cps[i + 1] ?? "");
+        !(
+          (base === "script" && VIRAMA.test(cps[i - 1] ?? "")) ||
+          (base === "script" ? JOINING_LETTER : EMOJI_BASE).test(cps[i + 1] ?? "")
+        );
     else if (code >= 0xfe00 && code <= 0xfe0f)
       hide = !(code === 0xfe0f && (base === "emoji" || (/^[0-9#*]$/.test(cps[i - 1] ?? "") && cps[i + 1] === "⃣")));
     else if (code === 0x20) hide = isSep(cps[i - 1]) || isSep(cps[i + 1]) || cps[i - 1] === " ";
