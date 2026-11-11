@@ -5,7 +5,7 @@
 // backend the list lacks.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { applyBlob, categorySelection, resetSyncState, sanitizeBackends, securityChanges } from "./sync";
+import { applyBlob, categorySelection, resetSyncState, sanitizeBackends, sanitizeProfiles, securityChanges } from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
@@ -56,6 +56,17 @@ describe("a backend id that is a case alias of a local one", () => {
     expect(list).toHaveLength(500);
     expect(list.map((b) => b.id)).toEqual(Array.from({ length: 500 }, (_, i) => `b${i}`));
     expect(list[499]).toMatchObject({ name: "", model: "", language: "auto", endpoint: "stream", hasApiKey: false });
+  });
+
+  it("sanitizeProfiles caps at 500 distinct ids, counted after the dedupe, and fills only those", () => {
+    const raw: unknown[] = [];
+    for (let i = 0; i < 700; i++) raw.push({ id: `p${i}`, name: "", hotkey: [] }, { id: `p${i}`, name: "dup", hotkey: [] });
+    raw.push(null, { id: 5 }, { id: "p0", name: "late", hotkey: [] });
+    const list = sanitizeProfiles(raw);
+    expect(list).toHaveLength(500);
+    expect(list.map((p) => p.id)).toEqual(Array.from({ length: 500 }, (_, i) => `p${i}`));
+    expect(list[0].name).toBe("");
+    expect(list[499]).toMatchObject({ backendId: null });
   });
 
   it("raises no review row for the alias", () => {

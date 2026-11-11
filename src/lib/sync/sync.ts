@@ -1005,7 +1005,10 @@ export function sanitizeProfiles(list: unknown): Profile[] {
         // the window and kills config persistence for the session. `safePasteShortcut` already
         // makes exactly this check on its own chord field.
         isCodeList((p as Profile).hotkey),
-    )
+    ))
+    // Deduped and capped BEFORE the fill, as `sanitizeBackends` does: a peer's blob may list
+    // ~100k minimal entries within the body cap, and the fill never changes an id.
+    .slice(0, MAX_SYNCED_ENTRIES)
     .map((p) => ({
       ...p,
       // Two sinks for an unknown activation: `GLYPH[p.activation]` in Dashboard is rendered AS A
@@ -1070,9 +1073,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // type check: it is gated on `p.backendId &&`, so a FALSY non-string (`0`, `false`) skips it
       // and rejects the whole `Config`. `null` is the app's own "no backend chosen" value.
       backendId: typeof p.backendId === "string" ? p.backendId : null,
-    }))
-    )
-    .slice(0, MAX_SYNCED_ENTRIES);
+    }));
 }
 
 /** The quick-add pin as Rust requires it: both leaves present and both strings.
