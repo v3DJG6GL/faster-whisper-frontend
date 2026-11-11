@@ -1203,6 +1203,25 @@ describe("leadOverlap", () => {
     expect(out[2].end).toBeCloseTo(3 + 0.2 * M);
   });
 
+  it("one kept cue of a single multi-MB line followed by thousands of pure repeats dedupes quickly", () => {
+    // Bounding the read to the new cue's line COUNT left the length: one line of 1 MB (stripping
+    // to "x x") was re-stripped for every repeat cue after it.
+    const N = 2000;
+    const big = "x" + " ".repeat(1_000_000) + "x";
+    const cues = [
+      { start: 0, end: 1, lines: ["a"] },
+      { start: 1, end: 1.01, lines: ["a"] },
+      { start: 1.01, end: 2, lines: ["a", "b"] },
+      { start: 2, end: 3, lines: [big] },
+      ...Array.from({ length: N }, (_, j) => ({ start: 3 + 0.2 * j, end: 3 + 0.2 * (j + 1), lines: ["x x"] })),
+    ];
+    const t0 = performance.now();
+    const out = dedupeRollingCues(cues);
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(out.map((c) => c.lines)).toEqual([["a"], ["b"], [big]]);
+    expect(out[2].end).toBeCloseTo(3 + 0.2 * N);
+  });
+
   it("two long contiguous cues that share no line parse quickly", () => {
     const cue = (n: number, from: string, to: string, tag: string) =>
       `${n}\n${from} --> ${to}\n` + Array.from({ length: 8000 }, (_, i) => `${tag} ${i}`).join("\n");

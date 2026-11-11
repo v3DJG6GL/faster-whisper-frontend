@@ -250,9 +250,16 @@ export interface RawCue {
  *  pure-repeat cue after it, and re-reading all of it per call was quadratic on a crafted file. */
 export function leadOverlap(before: string[], lines: string[]): number {
   const mine = lines.map(stripMarkup);
+  return overlapOfStripped(before.slice(-mine.length).map(stripMarkup), mine);
+}
+
+/** leadOverlap's KMP core over lines already stripped. Line count bounds the read, not line
+ *  length: a kept cue of one multi-MB line would be re-stripped per pure-repeat cue after it,
+ *  so the dedupe keeps that baseline stripped once and calls this directly. */
+function overlapOfStripped(before: string[], mine: string[]): number {
   const m = mine.length;
   if (m === 0) return 0;
-  const theirs = before.slice(-m).map(stripMarkup);
+  const theirs = before.slice(-m);
   // fail[i]: the longest proper prefix of mine[0..i] that is also its suffix.
   const fail = new Array<number>(m).fill(0);
   for (let i = 1, k = 0; i < m; i++) {
@@ -338,9 +345,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   // file whose line is repeated across a cue boundary ("Wait." / "Wait. Did you hear that?"),
   // and stripping that line loses words the file really holds.
   const rollUp = rolling || (opensWithPrev >= 3 && opensWithPrev * 2 > multi);
-  // The RAW lines of the last cue kept: its stripped `out` entry has lost the lines it
-  // repeated, and a three-line roll repeats those too ([1,2,3] → [2,3,4]).
-  let prevRaw: string[] = [];
+  // The RAW lines of the last cue kept (markup-stripped once, here: a pure-repeat cue keeps
+  // this baseline for every cue after it): its `out` entry has lost the lines it repeated,
+  // and a three-line roll repeats those too ([1,2,3] → [2,3,4]).
+  let prevStripped: string[] = [];
   for (const [i, cue] of cues.entries()) {
     // A text-less cue goes in every file: it yields no segment, and kept it would stretch
     // the line before it through its silence (or, in a rolling file, become the baseline the
@@ -348,8 +356,9 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     if (!hasText(cue) || (rolling && isFreeze(cue, i))) continue;
     const prev = out[out.length - 1];
     let lines = cue.lines;
+    const stripped = lines.map(stripMarkup);
     if (prev && rollUp && contiguousAfter(prev, cue)) {
-      let k = leadOverlap(prevRaw, lines);
+      let k = overlapOfStripped(prevStripped, stripped);
       if (k === lines.length && !rolling) k = 0;
       if (k === lines.length) {
         if (cue.end !== undefined) prev.end = Math.max(prev.end ?? cue.end, cue.end);
@@ -357,7 +366,7 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
       }
       lines = lines.slice(k);
     }
-    prevRaw = cue.lines;
+    prevStripped = stripped;
     out.push({ ...cue, lines });
   }
   return out;
