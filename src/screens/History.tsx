@@ -107,6 +107,18 @@ function snippetOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, string>
   return hit;
 }
 
+/** A list row's speaker count, memoised by record identity like snippetOf: with no speaker list
+ *  the count walks every segment until it has seen 256 names, which on a ~1M-segment result
+ *  with one speaker is the whole result per row per render. */
+function speakerCountOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, number>): number {
+  let hit = cache.get(r);
+  if (hit === undefined) {
+    hit = speakerOrder(r.result ?? { text: "" }).length;
+    cache.set(r, hit);
+  }
+  return hit;
+}
+
 type Segment = "all" | "file" | "url" | "text" | "dictation";
 type KindSegment = Exclude<Segment, "all">;
 
@@ -376,6 +388,7 @@ export default function History() {
   // Per-mount haystack cache, filled lazily: browsing without searching builds none.
   const [haystackCache] = useState(() => new WeakMap<TranscriptRecord, Haystack>());
   const [snippetCache] = useState(() => new WeakMap<TranscriptRecord, string>());
+  const [speakerCountCache] = useState(() => new WeakMap<TranscriptRecord, number>());
 
   // Search first (global — every kind, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
@@ -873,7 +886,7 @@ export default function History() {
 
   const fileRow = (rec: TranscriptRecord, last: boolean) => {
     const ok = rec.status === "done";
-    const speakers = ok ? speakerOrder(rec.result ?? { text: "" }).length : 0;
+    const speakers = ok ? speakerCountOf(rec, speakerCountCache) : 0;
     const edited =
       !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
     const shownModel = shortModelName(rec.model, 40);
