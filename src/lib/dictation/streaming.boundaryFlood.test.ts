@@ -15,6 +15,13 @@ function topLevel(name: string): string {
   return streamingSrc.slice(at, streamingSrc.indexOf("\n}\n", at) + 2);
 }
 
+/** A top-level `const NAME = ...;` of streaming.ts. */
+function constDecl(name: string): string {
+  const m = streamingSrc.match(new RegExp(`^const ${name} = [^;]+;`, "m"));
+  expect(m, `${name} moved — update streaming.boundaryFlood.test.ts`).not.toBeNull();
+  return m![0];
+}
+
 /** The boundary handler, `(e) => {...}`. */
 function boundaryHandler(): string {
   const open = '"stream://boundary", ';
@@ -37,16 +44,20 @@ class CountingPromise<T> extends Promise<T> {
 }
 
 const PRELUDE = `
+// enqueueInject warns per dropped task; a flood test drops tens of thousands.
+const console = { warn() {}, error: globalThis.console.error };
 const MAX_BANKED_DOC = 8 * 1024 * 1024;
 const MAX_INJECT_DEPTH = 64;
 const log = [];
 let committedDoc = "", bankedDoc = "", clipBaseline = "", clipClosed = null, seenDoc = "";
 let utteranceDocEnd = 0, lastUtterance = null;
-let insertCfg = { live: true, activation: "handsfree" };
+let insertCfg = { live, activation: "handsfree" };
 let injectChain = Start.resolve();
 let injectDepth = { n: 0 };
 let boundaryTail = null;
-let breakChars = { n: 0 };
+let uncountedCost = { n: 0 };
+${constDecl("UNCOUNTED_LINK_COST")}
+${constDecl("MAX_UNCOUNTED_COST")}
 let clipBooked = null, clipLanded = false, clipLastCopy = null;
 let injectedText = "", carryText = "", carrySep = "", owedUtterances = [];
 let phraseDirty = false, lastPhraseDiverted = false, lastTypedApp = undefined;
@@ -103,7 +114,9 @@ return {
   hold() { let open; gate = new Promise((r) => { open = r; }); return () => { gate = null; open(); }; },
   async drain() { for (let c = injectChain; ; c = injectChain) { await c; await null; if (c === injectChain) return; } },
   state: () => ({ log: [...log], injectedText, carryText, carrySep, owed: owedUtterances.map((o) => ({ ...o })), clipDirty, clipBooked, clipLanded, clipLastCopy, bankedDoc, phraseDirty }),
-  breakChars: () => breakChars.n,
+  cost: () => uncountedCost.n,
+  budget: MAX_UNCOUNTED_COST,
+  linkCost: UNCOUNTED_LINK_COST,
 };
 `;
 
@@ -114,7 +127,9 @@ type Env = {
   hold(): () => void;
   drain(): Promise<void>;
   state(): Record<string, unknown> & { log: string[] };
-  breakChars(): number;
+  cost(): number;
+  budget: number;
+  linkCost: number;
 };
 
 const stats = { resets: 0 };
@@ -124,7 +139,7 @@ ${topLevel("enqueueInject")}
 ${topLevel("oweDroppedInsert")}
 const handler = ${boundaryHandler()};
 ${ENV_API}`;
-  const { code } = await transformWithOxc(`function makeEnv(Start, stats, settleOwedUtterances, untypedRemainder, joinCarry, noCoalesce) {${src}}`, "env.ts");
+  const { code } = await transformWithOxc(`function makeEnv(Start, stats, settleOwedUtterances, untypedRemainder, joinCarry, noCoalesce, live) {${src}}`, "env.ts");
   return new Function(`${code}\nreturn makeEnv;`)() as (
     start: PromiseConstructor,
     s: typeof stats,
@@ -132,11 +147,12 @@ ${ENV_API}`;
     rem: typeof untypedRemainder,
     join: typeof joinCarry,
     noCoalesce: boolean,
+    live: boolean,
   ) => Env;
 })();
 
-async function env(noCoalesce = false, start: PromiseConstructor = Promise): Promise<Env> {
-  return (await compiled)(start, stats, settleOwedUtterances, untypedRemainder, joinCarry, noCoalesce);
+async function env(noCoalesce = false, start: PromiseConstructor = Promise, live = true): Promise<Env> {
+  return (await compiled)(start, stats, settleOwedUtterances, untypedRemainder, joinCarry, noCoalesce, live);
 }
 
 /** A dictation with every shape a break meets: typed and untyped phrases (a carry), separators
@@ -224,14 +240,46 @@ describe("the hard break under a boundary flood", () => {
     for (let i = 0; i < 400; i++) {
       e.bareDoc(big + i);
       e.boundary("");
-      peak = Math.max(peak, e.breakChars());
+      peak = Math.max(peak, e.cost());
     }
-    expect(peak).toBeLessThanOrEqual(8 * 1024 * 1024);
-    // Two documents fit the budget; every later break holds none and repeats the tail pair.
-    expect(CountingPromise.thens - before).toBeLessThanOrEqual(3 * 2);
+    expect(peak).toBeLessThanOrEqual(e.budget);
+    // Two documents fit the budget (the first break also queues its counted separator task); every
+    // later break holds none and repeats the tail pair.
+    expect(CountingPromise.thens - before).toBeLessThanOrEqual(2 * 2 + 3);
     open();
     await e.drain();
-    expect(e.breakChars()).toBe(0);
+    expect(e.cost()).toBe(0);
+  });
+
+  it("one-char finals dropped at the cap, each with a long-separator break, stay within the budget", async () => {
+    // Every break holds a document ("x"), so none repeats the tail; each dropped final owes its
+    // record from one more uncounted link. Charged at their real cost, the links stop at the budget.
+    // A "stop"-timing session: the links are the same, and the drain skips carrying thousands of
+    // one-char remainders (the carry's own quadratic joins, not what this test is about).
+    const e = await env(false, CountingPromise as unknown as PromiseConstructor, false);
+    const open = e.hold();
+    e.final("Stuck.");
+    for (let i = 0; i < 63; i++) e.final("q", false);
+    const sep = " ".repeat(520);
+    const before = CountingPromise.thens;
+    const rounds = 40_000;
+    let peak = 0;
+    for (let i = 0; i < rounds; i++) {
+      e.final("x", false);
+      e.boundary(sep);
+      peak = Math.max(peak, e.cost());
+    }
+    // Each link costs at least linkCost. Past the budget a break holds no document and owes no
+    // record, so only the pair a counted task (or the last owe link) cut off from the tail adds
+    // more: one per counted task at most, the queue's 64 and one.
+    expect(peak).toBeLessThanOrEqual(e.budget + 65 * (2 * e.linkCost + sep.length));
+    const links = CountingPromise.thens - before;
+    expect(links).toBeLessThanOrEqual(e.budget / e.linkCost + 65 * 2);
+    expect(links).toBeLessThan(rounds);
+    open();
+    await e.drain();
+    expect(e.cost()).toBe(0);
+    expect(e.state().log[0]).toBe('type "Stuck."');
   });
 
   it("finals dropped at the cap before a break still owe their records into the carry", async () => {

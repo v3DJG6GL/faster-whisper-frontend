@@ -1202,8 +1202,15 @@ function oweRecord(id: string, from: number): void {
  *  session token — never the dropped task's target/clip strings, which would otherwise stay alive
  *  until the chain drains and undo the flood cap's memory bound (MAX_INJECT_DEPTH). */
 function oweDroppedInsert(cfg: InsertCfg | null, id: string, from: number): void {
+  // Uncounted like the boundary links, and a drop at the cap is the flood already: past the
+  // budget the record is not owed (its History entry keeps no offset) and nothing is appended.
+  const cost = UNCOUNTED_LINK_COST + id.length;
+  const held = uncountedCost;
+  if (held.n + cost > MAX_UNCOUNTED_COST) return;
+  held.n += cost;
   boundaryTail = null;
   injectChain = injectChain.then(() => {
+    held.n -= cost;
     if (insertCfg === cfg) oweRecord(id, from);
   });
 }
@@ -1356,10 +1363,20 @@ const MAX_INJECT_DEPTH = 64;
  *  break of the same session would only repeat it — its own links are skipped. Reset with
  *  `injectChain`. */
 let boundaryTail: { cfg: InsertCfg | null } | null = null;
-/** `docAtBreak` chars held by unrun boundary links, budgeted at MAX_BANKED_DOC: a server
- *  alternating a big final with a break would otherwise park a document copy per link. Per chain
- *  generation like `injectDepth`, so an abandoned chain's links release their own count. */
-let breakChars = { n: 0 };
+/** What the uncounted links (the boundary pair, oweDroppedInsert) still waiting on the chain hold:
+ *  their `docAtBreak` and separator chars plus UNCOUNTED_LINK_COST per link. One budget for all of
+ *  them, however the server interleaves its frames (a big final per break, or a one-char final and
+ *  a 520-char separator per break): past MAX_UNCOUNTED_COST a break holds no document and a dropped
+ *  final owes nothing, so only the break pair a counted task cuts off from the tail still adds —
+ *  at most one per MAX_INJECT_DEPTH task. Per chain generation like `injectDepth`, so an abandoned
+ *  chain's links release their own count. */
+let uncountedCost = { n: 0 };
+/** A link's closure and promise reactions, in chars, so that a link holding no text still costs. */
+const UNCOUNTED_LINK_COST = 256;
+/** The documents MAX_BANKED_DOC bounds anyway, plus a full counted queue's worth of break pairs
+ *  with a generous separator (Rust caps it at MAX_SUFFIX+8 = 520) between its tasks. A real session
+ *  holds a few KB here; oweDroppedInsert is the flood cap's own path and never runs for one. */
+const MAX_UNCOUNTED_COST = MAX_BANKED_DOC + (MAX_INJECT_DEPTH + 1) * 2 * (UNCOUNTED_LINK_COST + 1024);
 /** Queue `fn` on the inject chain; false when the queue is full and it was dropped. */
 function enqueueInject(fn: () => Promise<void>): boolean {
   const d = injectDepth;
@@ -2928,10 +2945,12 @@ async function ensureListeners(): Promise<void> {
     // the final handler's `target`), captured BEFORE the clear below — the chained link needs it
     // to see what of this document never got typed.
     let docAtBreak = committedDoc.replace(/^\s+/, "");
-    // Past the budget the copy is not kept (see breakChars): the link's carry would drop that much
-    // anyway (its own MAX_BANKED_DOC ceiling), so a real session — a few KB per break — never gets here.
-    const held = breakChars;
-    if (held.n + docAtBreak.length > MAX_BANKED_DOC) docAtBreak = "";
+    // Past the budget the copy is not kept (see uncountedCost): the link's carry would drop that
+    // much anyway (its own MAX_BANKED_DOC ceiling), so a real session — a few KB per break — never
+    // gets here. The links themselves stay (the reset must never drop); an empty break then repeats
+    // the tail pair below, so past the budget only a counted task between breaks adds another.
+    const held = uncountedCost;
+    if (held.n + docAtBreak.length + sep.length + 2 * UNCOUNTED_LINK_COST > MAX_UNCOUNTED_COST) docAtBreak = "";
     committedDoc = "";
     clipBaseline = "";
     clipClosed = null;
@@ -2965,10 +2984,10 @@ async function ensureListeners(): Promise<void> {
     const repeatsTail = docAtBreak === "" && boundaryTail !== null && boundaryTail.cfg === insertCfg;
     if (!repeatsTail) {
       const cfg = insertCfg;
-      const chars = docAtBreak.length;
-      held.n += chars;
+      const cost = docAtBreak.length + sep.length + UNCOUNTED_LINK_COST;
+      held.n += cost;
       injectChain = injectChain.then(() => {
-        held.n -= chars;
+        held.n -= cost;
         if (insertCfg !== cfg) return;
         // The clipboard window ends with the document — after every phrase queued before the
         // break has booked into it (see bumpPhraseEnd's queued close, which this timer-cancel
@@ -3149,7 +3168,9 @@ async function ensureListeners(): Promise<void> {
     if (!(repeatsTail && boundaryTail !== null && boundaryTail.cfg === insertCfg)) {
       const cfg = insertCfg;
       const live = !!insertCfg?.live;
+      held.n += UNCOUNTED_LINK_COST;
       injectChain = injectChain.then(async () => {
+        held.n -= UNCOUNTED_LINK_COST;
         if (insertCfg !== cfg) return;
         if (live && clipDirty && beganInjection) await giveClipboardBack();
         // Re-check after the awaited restore (as bumpPhraseEnd's link does): cancelLive swaps in a
@@ -4043,7 +4064,7 @@ async function startLiveInner(
   injectChain = Promise.resolve();
   injectDepth = { n: 0 }; // a new generation — the old chain's finallys decrement their own counter
   boundaryTail = null;
-  breakChars = { n: 0 };
+  uncountedCost = { n: 0 };
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
   resetServerWork(); // …and anything the previous session's server was reported doing
 
@@ -4466,7 +4487,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   injectChain = Promise.resolve();
   injectDepth = { n: 0 };
   boundaryTail = null;
-  breakChars = { n: 0 };
+  uncountedCost = { n: 0 };
   // A push-to-talk picker still open over this session: take it down. The asker then resolves
   // "aborted" and its stale task returns on the insertCfg guard.
   if (settlePickerOpen) {
