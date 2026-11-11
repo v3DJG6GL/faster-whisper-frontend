@@ -1202,6 +1202,7 @@ function oweRecord(id: string, from: number): void {
  *  session token — never the dropped task's target/clip strings, which would otherwise stay alive
  *  until the chain drains and undo the flood cap's memory bound (MAX_INJECT_DEPTH). */
 function oweDroppedInsert(cfg: InsertCfg | null, id: string, from: number): void {
+  boundaryTail = null;
   injectChain = injectChain.then(() => {
     if (insertCfg === cfg) oweRecord(id, from);
   });
@@ -1348,6 +1349,17 @@ let injectDepth = { n: 0 };
  *  machine can inject, which is the flood and not a user. Dropping the newest rather than the
  *  oldest keeps the text already committed to the queue intact. */
 const MAX_INJECT_DEPTH = 64;
+/** The hard break chains its two links directly (so the flood cap can never drop them), which
+ *  leaves them outside MAX_INJECT_DEPTH — and the untrusted server sends `stream://boundary` at
+ *  any rate. Set (to the session token) right after the boundary handler appended its pair;
+ *  cleared by every other append. While set, the chain's tail is that pair, so another empty
+ *  break of the same session would only repeat it — its own links are skipped. Reset with
+ *  `injectChain`. */
+let boundaryTail: { cfg: InsertCfg | null } | null = null;
+/** `docAtBreak` chars held by unrun boundary links, budgeted at MAX_BANKED_DOC: a server
+ *  alternating a big final with a break would otherwise park a document copy per link. Per chain
+ *  generation like `injectDepth`, so an abandoned chain's links release their own count. */
+let breakChars = { n: 0 };
 /** Queue `fn` on the inject chain; false when the queue is full and it was dropped. */
 function enqueueInject(fn: () => Promise<void>): boolean {
   const d = injectDepth;
@@ -1356,6 +1368,7 @@ function enqueueInject(fn: () => Promise<void>): boolean {
     return false;
   }
   d.n++;
+  boundaryTail = null;
   injectChain = injectChain
     .then(fn)
     .catch((e) => console.error("inject failed:", e))
@@ -1469,6 +1482,7 @@ function bumpPhraseEnd(deferred = false): void {
     // close; the session token guards a cancel-then-restart (both reset all of this themselves).
     {
       const cfg = insertCfg;
+      boundaryTail = null;
       injectChain = injectChain.then(async () => {
         if (insertCfg !== cfg) return;
         if (clipDirty && beganInjection) {
@@ -2913,7 +2927,11 @@ async function ensureListeners(): Promise<void> {
     // The finished document in the typed baseline's coordinates (leading whitespace stripped, like
     // the final handler's `target`), captured BEFORE the clear below — the chained link needs it
     // to see what of this document never got typed.
-    const docAtBreak = committedDoc.replace(/^\s+/, "");
+    let docAtBreak = committedDoc.replace(/^\s+/, "");
+    // Past the budget the copy is not kept (see breakChars): the link's carry would drop that much
+    // anyway (its own MAX_BANKED_DOC ceiling), so a real session — a few KB per break — never gets here.
+    const held = breakChars;
+    if (held.n + docAtBreak.length > MAX_BANKED_DOC) docAtBreak = "";
     committedDoc = "";
     clipBaseline = "";
     clipClosed = null;
@@ -2938,9 +2956,19 @@ async function ensureListeners(): Promise<void> {
     // skipped, a paste Rust refused with nothing written) would otherwise be cleared with the
     // baseline and never typed anywhere. It goes out ahead of the next typed phrase, joined by
     // this break's separator. Live sessions only: a "stop"-timing session types bankedDoc whole.
-    {
+    //
+    // An empty break whose session's pair is still the chain's tail (boundaryTail) appends neither
+    // link: each reads its state when it runs, and with nothing queued since that pair they would
+    // only redo it — no carry (nothing to carry), the same owed settle, the same cleared window
+    // and baseline, no clipboard debt left to pay. The flood of breaks this keeps off the chain
+    // is the untrusted server's to send at any rate.
+    const repeatsTail = docAtBreak === "" && boundaryTail !== null && boundaryTail.cfg === insertCfg;
+    if (!repeatsTail) {
       const cfg = insertCfg;
+      const chars = docAtBreak.length;
+      held.n += chars;
       injectChain = injectChain.then(() => {
+        held.n -= chars;
         if (insertCfg !== cfg) return;
         // The clipboard window ends with the document — after every phrase queued before the
         // break has booked into it (see bumpPhraseEnd's queued close, which this timer-cancel
@@ -3116,7 +3144,9 @@ async function ensureListeners(): Promise<void> {
     // only after its paste lands, which a synchronous read here would miss. Chained directly so
     // the flood cap can never drop it; the session token guards a cancel-then-restart (both reset
     // all of this themselves).
-    {
+    // Skipped like the reset link, but only while nothing (the separator task above) went on the
+    // chain since the tail pair: this restore then has no debt to pay that pair's did not.
+    if (!(repeatsTail && boundaryTail !== null && boundaryTail.cfg === insertCfg)) {
       const cfg = insertCfg;
       const live = !!insertCfg?.live;
       injectChain = injectChain.then(async () => {
@@ -3128,6 +3158,7 @@ async function ensureListeners(): Promise<void> {
         if (insertCfg !== cfg) return;
         clipDirty = false;
       });
+      boundaryTail = { cfg };
     }
   });
 
@@ -3268,6 +3299,7 @@ async function ensureListeners(): Promise<void> {
         // chains its own endInjection.
         {
           const tailCfg = cfg;
+          boundaryTail = null;
           injectChain = injectChain
             .then(() => (insertCfg === tailCfg ? finalClip() : undefined))
             .catch((e) => console.error("final clip failed:", e));
@@ -4010,6 +4042,8 @@ async function startLiveInner(
   clearPhraseEnd();
   injectChain = Promise.resolve();
   injectDepth = { n: 0 }; // a new generation — the old chain's finallys decrement their own counter
+  boundaryTail = null;
+  breakChars = { n: 0 };
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
   resetServerWork(); // …and anything the previous session's server was reported doing
 
@@ -4431,6 +4465,8 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   insertCfg = null;
   injectChain = Promise.resolve();
   injectDepth = { n: 0 };
+  boundaryTail = null;
+  breakChars = { n: 0 };
   // A push-to-talk picker still open over this session: take it down. The asker then resolves
   // "aborted" and its stale task returns on the insertCfg guard.
   if (settlePickerOpen) {

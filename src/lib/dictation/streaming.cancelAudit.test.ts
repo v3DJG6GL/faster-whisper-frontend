@@ -232,7 +232,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
 
   it("the boundary captures the document before clearing it", () => {
     const m = mask(boundaryBody);
-    const capture = m.indexOf("const docAtBreak = committedDoc");
+    const capture = m.indexOf("let docAtBreak = committedDoc");
     const clear = m.search(/\bcommittedDoc =\s+;/);
     expect(capture).toBeGreaterThanOrEqual(0);
     expect(clear).toBeGreaterThan(capture);
