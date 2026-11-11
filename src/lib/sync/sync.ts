@@ -3864,8 +3864,8 @@ const JOINING_LETTER =
  *  non-letter or at the end of a name, each with the consonants it does so for (and the nukta
  *  that may sit between): every Devanagari and Gujarati consonant (an explicit half form, Unicode
  *  core spec §12.1, Gujarati following it in §12.4), but in Bengali only ta (khanda ta, §12.2) and
- *  in Malayalam only a chillu's consonant (the pre-5.1 encoding, §12.9, plus the three chillus
- *  Unicode 9 added). After any other base (a peer's `ক্\u{200D}` folder reads as `ক্`), after a
+ *  in Malayalam only a pre-5.1 chillu's consonant (§12.9; the three chillus Unicode 9 added, for
+ *  ma, ya and llla, exist only as atomic code points, so their ZWJ draws as nothing). After any other base (a peer's `ক্\u{200D}` folder reads as `ক্`), after a
  *  virama of another script (Tamil, Gurmukhi, Telugu, Kannada, Oriya, Sinhala, Malayalam's
  *  vertical bar and circular viramas), or for a ZWNJ after any virama (it asks for the explicit
  *  virama a non-letter already gets), the joiner draws as nothing before a non-letter.
@@ -3874,7 +3874,7 @@ const HALF_FORM_BASE = new Map<string, { consonant: RegExp; nukta?: string }>([
   ["\u094D", { consonant: /^(?=\p{L})[\u0915-\u0939\u0958-\u095F\u0978-\u097F]$/u, nukta: "\u093C" }],
   ["\u0ACD", { consonant: /^(?=\p{L})[\u0A95-\u0AB9\u0AF9]$/u, nukta: "\u0ABC" }],
   ["\u09CD", { consonant: /^\u09A4$/u }],
-  ["\u0D4D", { consonant: /^[\u0D15\u0D23\u0D28\u0D30\u0D32\u0D33\u0D2E\u0D2F\u0D34]$/u }],
+  ["\u0D4D", { consonant: /^[\u0D15\u0D23\u0D28\u0D30\u0D32\u0D33]$/u }],
 ]);
 /** Whether the ZWJ at `i` follows a consonant's half-form virama (`क्\u{200D}`, `क़्\u{200D}`). */
 const afterHalfForm = (cps: string[], i: number): boolean => {
