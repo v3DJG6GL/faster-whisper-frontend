@@ -30,6 +30,7 @@ type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 const { useApp } = await import("../store");
 const { trText } = await import("./cueSplit");
 const { translationTracks } = await import("./exportTracks");
+const { joinSegmentTexts } = await import("./transcriptFormats");
 
 const CAPTURE = {
   text: "hello there",
@@ -1143,6 +1144,43 @@ describe("recordText", () => {
     const out = recordText(rec(many), 200);
     expect(out).toHaveLength(200);
     expect(out).toBe("あ。".repeat(100));
+  });
+
+  it("keeps only the parts the join keeps, with the same output as pushing every part", () => {
+    // The bounded branch as it was: every part pushed, the join dropping the blank ones.
+    const pushAll = (r: TranscriptRecord, max: number) => {
+      const segs = r.result!.segments!;
+      const part = (i: number) => (r.edits?.[i] ?? segs[i].text).trim();
+      const parts: string[] = [];
+      let n = 0;
+      for (let i = 0; i < segs.length && n < max; i++) {
+        const p = part(i);
+        parts.push(p);
+        if (joinSegmentTexts([p])) n += p.length;
+      }
+      return joinSegmentTexts(parts).slice(0, max);
+    };
+    const shapes = [
+      ["", "  ", "\t"],
+      ["\u200e", "\u200b", "\u200e\u200b"],
+      ["", "你好", "\u200e", " ", "世界", "\u200b", "Hello", "", "テスト", " world "],
+      ["\u200e", "a", "\u200e", "", "bcd", "  ", "\u200e", "日本"],
+      [" Hello.", "你好。", "  ", "世界", " world", "テスト。", "", "end.", "再见", "x"],
+    ];
+    for (const texts of shapes) {
+      const r = rec({ text: "", segments: segmentsOf(texts) });
+      for (const max of [0, 1, 2, 3, 5, 8, 13, 200]) expect(recordText(r, max)).toBe(pushAll(r, max));
+      const e = rec({ text: "", segments: segmentsOf(texts) }, { edits: { 0: "Bonjour", 2: "" } });
+      for (const max of [1, 4, 9, 200]) expect(recordText(e, max)).toBe(pushAll(e, max));
+    }
+  });
+
+  it("bounds a record of ~1M blank segments to its real text", () => {
+    const texts = Array.from({ length: 1_000_000 }, () => "");
+    texts[500_000] = "real";
+    texts[999_999] = "end";
+    const out = recordText(rec({ text: "", segments: segmentsOf(texts) }), 200);
+    expect(out).toBe("real end");
   });
 });
 

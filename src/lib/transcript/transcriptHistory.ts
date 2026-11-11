@@ -763,10 +763,14 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
   let n = 0;
   for (let i = 0; i < segs.length && n < max; i++) {
     const p = part(i);
-    parts.push(p);
     // Only a part the join keeps counts: a format-only part (a bare U+200E survives
-    // trim()) is dropped there, and counting it would end the loop short of `max`.
-    if (joinSegmentTexts([p])) n += p.length;
+    // trim()) is dropped there, and counting it would end the loop short of `max`. Nor is a
+    // dropped part kept: a server result of ~1M blank segments never reaches `max`, and the
+    // final join would walk every one of them again.
+    if (joinSegmentTexts([p])) {
+      parts.push(p);
+      n += p.length;
+    }
   }
   return joinSegmentTexts(parts).slice(0, max);
 }

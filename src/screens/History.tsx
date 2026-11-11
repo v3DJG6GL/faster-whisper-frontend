@@ -95,6 +95,18 @@ function haystackOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, Haysta
   return h;
 }
 
+/** A list row's text snippet, memoised by record identity like haystackOf: the list is not
+ *  virtualised, so each render (every keystroke, copy, arm-delete) would otherwise re-walk
+ *  every visible record's segments, and a server result can carry ~1M of them. */
+function snippetOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, string>): string {
+  let hit = cache.get(r);
+  if (hit === undefined) {
+    hit = stripControlChars(recordText(r, 200), 160);
+    cache.set(r, hit);
+  }
+  return hit;
+}
+
 type Segment = "all" | "file" | "url" | "text" | "dictation";
 type KindSegment = Exclude<Segment, "all">;
 
@@ -363,6 +375,7 @@ export default function History() {
 
   // Per-mount haystack cache, filled lazily: browsing without searching builds none.
   const [haystackCache] = useState(() => new WeakMap<TranscriptRecord, Haystack>());
+  const [snippetCache] = useState(() => new WeakMap<TranscriptRecord, string>());
 
   // Search first (global — every kind, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
@@ -846,7 +859,7 @@ export default function History() {
           <span className="shrink-0 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
         </div>
         <div className="truncate text-[12px] text-faint">
-          {stripControlChars(recordText(rec, 200), 160)}
+          {snippetOf(rec, snippetCache)}
         </div>
       </div>
       {/* Action clicks must not also expand the row (the whole row is a button). */}
@@ -869,7 +882,7 @@ export default function History() {
     const langShown = langText(rec.language ?? "", 12).trim();
     const targetsShown = langTexts(rec.result?.translation?.targets ?? []);
     const snippet = ok
-      ? stripControlChars(recordText(rec, 200), 160)
+      ? snippetOf(rec, snippetCache)
       : stripControlChars(rec.error ?? "failed", 160);
     return (
       <div key={rec.id} className={cn("flex items-center gap-3 py-3", !last && "border-b border-line")}>
