@@ -2399,6 +2399,7 @@ pub async fn download_result_media(
     // A typed flag, not a match on the error text: `Ok(None)` (no local copy, run fine) and
     // `Err` (failed fetch) are opposite outcomes, and a `.context()` would blur them.
     let mut over_cap = false;
+    let mut file: Option<tokio::fs::File> = None;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
         // Owner-only like the recordings: `links/` or `video/` may have pre-existed the pick.
@@ -2406,11 +2407,12 @@ pub async fn download_result_media(
         // user pick that may be shared, and a planted file or link at the tmp name must not be
         // written into. The name is unique per call, so a legitimate run never collides.
         let path = tmp.clone();
-        let std_f = tokio::task::spawn_blocking(move || crate::audio::create_new_private(&path))
-            .await
-            .map_err(|e| anyhow::anyhow!("creating the media file: {e}"))?
-            .context("creating the media file")?;
-        let mut f = tokio::fs::File::from_std(std_f);
+        let std_f =
+            tokio::task::spawn_blocking(move || crate::audio::create_new_private_exclusive(&path))
+                .await
+                .map_err(|e| anyhow::anyhow!("creating the media file: {e}"))?
+                .context("creating the media file")?;
+        let f = file.insert(tokio::fs::File::from_std(std_f));
         let mut total: u64 = 0;
         while let Some(chunk) = resp
             .chunk()
@@ -2436,6 +2438,12 @@ pub async fn download_result_media(
         Ok(())
     }
     .await;
+    // Closed before the rename or the remove, once a write still in flight (an error path
+    // returns while one may be) is done: the handle is unshared on Windows, so either would
+    // fail against it.
+    if let Some(f) = file.take() {
+        drop(f.into_std().await);
+    }
     if let Err(e) = write_result {
         let _ = tokio::fs::remove_file(&tmp).await;
         // Over-cap mirrors save_transcript_media's contract: "no copy", not

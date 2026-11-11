@@ -264,10 +264,19 @@ fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
 }
 
 /// The open half of `write_new_private`: a NEW owner-only file (never an existing name, symlink
-/// included), handed back open — for a writer that keeps it, like the session log. Shared as
-/// usual, since these handles live long and the app (or the user) reads the file meanwhile.
+/// included), handed back open and shared as usual — only for a long-lived handle the app (or
+/// the user) reads by name while it is open: the session log. Anything else uses
+/// [`create_new_private_exclusive`].
 pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> {
     open_new_private(path, false)
+}
+
+/// `create_new_private` with the handle unshared on Windows, like `write_new_private`: for a
+/// write-once file (a copy, a download's tmp) closed before anything renames, removes or reads
+/// it by name. Shared, a handle another local account opened between the create and the
+/// owner-only DACL would stay valid and read the content as it is written.
+pub(crate) fn create_new_private_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
+    open_new_private(path, true)
 }
 
 /// `create_new_private`, optionally (`exclusive`, Windows only) with share mode 0.

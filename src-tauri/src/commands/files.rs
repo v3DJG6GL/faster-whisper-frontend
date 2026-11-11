@@ -102,7 +102,7 @@ fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io:
         std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file")
     })?;
     let mtime = meta.modified().ok();
-    let mut out = crate::audio::create_new_private(dest)?;
+    let mut out = crate::audio::create_new_private_exclusive(dest)?;
     if let Err(e) = crate::transport::copy_at_most(&mut inp, &mut out, meta.len()) {
         // Closed first, so our own handle never stands in the way of the delete on Windows.
         drop(out);

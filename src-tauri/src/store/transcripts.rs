@@ -1000,7 +1000,7 @@ pub async fn save_transcript_media(
             // A stale tmp (or such a link) is unlinked first, never followed.
             let _ = std::fs::remove_file(t);
             use std::io::Read as _;
-            let mut out = crate::audio::create_new_private(t)?;
+            let mut out = crate::audio::create_new_private_exclusive(t)?;
             let copied = std::io::copy(&mut (&mut inp).take(MAX_MEDIA_BYTES + 1), &mut out)?;
             if copied > MAX_MEDIA_BYTES {
                 return Err(std::io::Error::other(
