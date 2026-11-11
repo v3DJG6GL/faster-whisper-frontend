@@ -538,11 +538,20 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
             return None;
         }
         let name = old_path.file_name()?;
+        // Only a name the app writes into that subfolder: the base is a free user pick, and a
+        // same-named file of the user's own (`files/interview.mp3`) is not this record's media.
         heal_candidates(key, old_path, &subs)
             .into_iter()
-            .map(|s| base.join(s).join(name))
-            .find(|c| c.exists())
-            .map(|found| found.to_string_lossy().into_owned())
+            .map(|s| (s, base.join(s).join(name)))
+            .find(|(s, c)| {
+                let own = if *s == "dictations" {
+                    is_own_recording(c)
+                } else {
+                    is_own_media(c)
+                };
+                own && c.exists()
+            })
+            .map(|(_, found)| found.to_string_lossy().into_owned())
     });
     if tally.fixed > 0 {
         tracing::info!(
@@ -2007,8 +2016,13 @@ mod tests {
         let (dir, base) = (root.join("history"), root.join("base"));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::create_dir_all(base.join("files")).unwrap();
-        std::fs::write(base.join("files").join("a.wav"), b"").unwrap();
-        let gone = "/fwf-heal-gone/files/a.wav";
+        std::fs::write(
+            base.join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav"),
+            b"",
+        )
+        .unwrap();
+        let gone = "/fwf-heal-gone/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav";
         std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
         // Not UTF-8 = no record the listing could load either: skipped, not a failure.
         std::fs::write(dir.join("bin.json"), [0xff, 0xfe, 0x00]).unwrap();
@@ -2016,7 +2030,12 @@ mod tests {
         let dirs = [dir.clone(), dir.join("missing")];
         assert_eq!(heal_media_paths_in(&dirs, &base), (true, 1));
         let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
-        assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
+        assert!(ok.contains(
+            &*base
+                .join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav")
+                .to_string_lossy()
+        ));
         // A locked record may still point at the gone path: the caller must not stamp the heal.
         let locked = dir.join("locked.json");
         std::fs::write(&locked, format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
@@ -2081,14 +2100,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // The base is a free user pick: a same-named file the app did not write is not the record's.
+    #[test]
+    fn heal_skips_a_same_named_file_the_app_did_not_write() {
+        let root = crate::config::fresh_test_dir("heal-foreign");
+        let (dir, base) = (root.join("history"), root.join("base"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(base.join("files")).unwrap();
+        std::fs::create_dir_all(base.join("dictations")).unwrap();
+        std::fs::write(base.join("files").join("interview.mp3"), b"theirs").unwrap();
+        std::fs::write(base.join("dictations").join("notes.wav"), b"theirs").unwrap();
+        std::fs::write(
+            base.join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav"),
+            b"ours",
+        )
+        .unwrap();
+        let record = |p: &str| format!(r#"{{"sourcePath":"{p}"}}"#);
+        std::fs::write(dir.join("a.json"), record("/fwf-heal-gone/interview.mp3")).unwrap();
+        std::fs::write(
+            dir.join("b.json"),
+            record("/fwf-heal-gone/dictations/notes.wav"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("c.json"),
+            record("/fwf-heal-gone/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav"),
+        )
+        .unwrap();
+        let dirs = std::slice::from_ref(&dir);
+        assert_eq!(heal_media_paths_in(dirs, &base), (true, 1));
+        let a = std::fs::read_to_string(dir.join("a.json")).unwrap();
+        assert!(a.contains("/fwf-heal-gone/interview.mp3"));
+        let b = std::fs::read_to_string(dir.join("b.json")).unwrap();
+        assert!(b.contains("/fwf-heal-gone/dictations/notes.wav"));
+        let c = std::fs::read_to_string(dir.join("c.json")).unwrap();
+        assert!(c.contains(
+            &*base
+                .join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav")
+                .to_string_lossy()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_folder_named_like_a_record_is_no_failed_record() {
         let root = crate::config::fresh_test_dir("heal-dirjson");
         let (dir, base) = (root.join("history"), root.join("base"));
         std::fs::create_dir_all(dir.join("x.json")).unwrap();
         std::fs::create_dir_all(base.join("files")).unwrap();
-        std::fs::write(base.join("files").join("a.wav"), b"").unwrap();
-        let gone = "/fwf-heal-gone/files/a.wav";
+        std::fs::write(
+            base.join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav"),
+            b"",
+        )
+        .unwrap();
+        let gone = "/fwf-heal-gone/files/9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav";
         std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(dir.join("x.json"), dir.join("link.json")).unwrap();
@@ -2098,7 +2166,12 @@ mod tests {
         // Nothing left to re-point: complete, and nothing for a History listing to reload.
         assert_eq!(heal_media_paths_in(dirs, &base), (true, 0));
         let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
-        assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
+        assert!(ok.contains(
+            &*base
+                .join("files")
+                .join("9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b.wav")
+                .to_string_lossy()
+        ));
         let lookup: std::collections::HashMap<&str, &str> =
             [(gone, "/new/files/a.wav")].into_iter().collect();
         std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
