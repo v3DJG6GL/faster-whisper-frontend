@@ -39,6 +39,8 @@ const speakMemo = newSpeakMemo();
  *  possible targets; this is loose on purpose (the list is synced back, so truncating near the
  *  real count would propagate to the user's other devices) while still bounding a hostile list. */
 const MAX_QUICK_LAUNCH = 100;
+/** Ceiling (UTF-16 units) on each quick-launch entry's id / kind / target. */
+const MAX_QUICK_LAUNCH_FIELD = 64;
 
 /**
  * Frontend store. Boots on default settings with no backends/profiles; the persistence
@@ -69,7 +71,15 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
   // `e.kind` rendered as a React child), and with no error boundary in either webview a
   // non-string leaf unmounts the window. Require string leaves here, at the choke point.
   recording.quickLaunch = Array.isArray(recording.quickLaunch)
-    ? recording.quickLaunch.filter((e) => hasStringFields(e, "id", "kind", "target"))
+    ? recording.quickLaunch
+      .filter((e) => hasStringFields(e, "id", "kind", "target"))
+      // Each field bounded too: a synced blob's multi-MB id/target would ride the overlay payload
+      // on every level tick and be persisted. Real ids are UUIDs (36), kinds and targets registry
+      // ids (~20); before the dedupe so a dropped entry never shadows a valid one.
+      .filter((e) => {
+        const { id, kind, target } = e as { id: string; kind: string; target: string };
+        return [id, kind, target].every((v) => v.length <= MAX_QUICK_LAUNCH_FIELD);
+      })
       // First entry per id wins: the editor keys rows and removes by id, so a foreign blob's
       // duplicate ids would make Remove delete both rows (and collide React keys in editor and chip).
       // One pass (a Set): it runs before the ceiling below, on whatever length the blob carries.

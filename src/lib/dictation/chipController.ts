@@ -15,6 +15,7 @@ import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
+import { capCodePoints } from "../sanitize";
 import { routeSourceCode } from "../languages";
 import { isActiveDictation, sessionNoteHoldMs } from "./dictationVisual";
 import { isCapturing } from "./streaming";
@@ -195,6 +196,9 @@ export function tailUnits(s: string, n: number): string {
   return /^[\uDC00-\uDFFF]/.test(t) ? t.slice(1) : t;
 }
 
+/** A language input held to 64 code points before the per-tick chip payload trims it. */
+const capOpt = <S extends string | undefined>(s: S): S => (s === undefined ? s : (capCodePoints(s, 64) as S));
+
 function chipPayload(state: ReturnType<typeof useApp.getState>) {
   const rec = state.settings.recording;
   let chip: {
@@ -216,7 +220,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   if (chipProfile && rec.showProfileOnOverlay) {
     chip = {
       profileTag: chipTagFor(chipProfile),
-      language: effectiveLanguage(chipProfile.language, chipBackend?.language),
+      // Both inputs capped first: a synced language is length-unchecked and this payload is
+      // rebuilt every level tick; the chip shows at most 40 code points anyway.
+      language: effectiveLanguage(capOpt(chipProfile.language), capOpt(chipBackend?.language)),
       mode: chipProfile.endpoint ?? chipBackend?.endpoint,
     };
   }

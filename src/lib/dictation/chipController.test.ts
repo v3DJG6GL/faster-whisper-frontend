@@ -346,6 +346,25 @@ describe("initOverlayController — canStart tells the chip whether its start bu
   });
 });
 
+describe("initOverlayController — the chip's language is bounded before the per-tick payload", () => {
+  it("caps a multi-MB synced language and keeps a real one as is", async () => {
+    const s = useApp.getState();
+    const profile = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: "b1" } as unknown as Profile;
+    const backend = { id: "b1", name: "b1", language: "de" } as unknown as Backend;
+    try {
+      await showChip({ status: "idle", profiles: [{ ...profile, language: "x".repeat(4_000_000) }], backends: [backend], activeProfile: "p1" });
+      const last = () => lastUpdate<{ language?: string }>();
+      expect(last()?.language).toBe("x".repeat(64));
+      useApp.setState({ profiles: [{ ...profile, language: undefined } as unknown as Profile] });
+      expect(last()?.language).toBe("de");
+      useApp.setState({ profiles: [{ ...profile, language: " English " } as unknown as Profile] });
+      expect(last()?.language).toBe("en");
+    } finally {
+      useApp.setState({ profiles: s.profiles, backends: s.backends, activeProfile: s.activeProfile });
+    }
+  });
+});
+
 describe("startOffHint", () => {
   // The Home button and the chip's dictate button share this one gate + wording: "" means a
   // click starts, anything else is the reason it will not — so Home can never say "Press to
