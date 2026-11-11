@@ -66,6 +66,12 @@ export function parseImportedText(ext: string, content: string): ImportedText {
   return out;
 }
 
+/** Whether an imported clock (seconds, >= 0) is one the exports can write: past 2^53 ms the
+ *  writers' integer maths loses precision and then prints exponents ("1e+25:32:00,488"), and
+ *  a 300+ digit field parses to Infinity ("Infinity:NaN"). NaN fails too. The bound is
+ *  ~285,000 years, far past any real file. */
+const writableClock = (v: number): boolean => v * 1000 <= Number.MAX_SAFE_INTEGER;
+
 /** "01:02:03,450" / "01:02:03.450" / "02:03.450" / "02:03" → seconds. */
 function parseClock(s: string): number | undefined {
   const m = /^(?:(\d+):)?(\d+):(\d+)(?:[.,](\d{1,3}))?$/.exec(s.trim());
@@ -73,9 +79,9 @@ function parseClock(s: string): number | undefined {
   const h = m[1] ? parseInt(m[1], 10) : 0;
   const frac = m[4] ? parseInt(m[4].padEnd(3, "0"), 10) / 1000 : 0;
   const v = h * 3600 + parseInt(m[2], 10) * 60 + parseInt(m[3], 10) + frac;
-  // A file or site track can carry a 300+ digit field, which parses to Infinity and would
-  // write "Infinity:NaN" stamps into every export: no clock, so the line reads as text.
-  return Number.isFinite(v) ? v : undefined;
+  // A file or site track can carry an oversized field that every export would write as a
+  // malformed stamp: no clock, so the line reads as text.
+  return writableClock(v) ? v : undefined;
 }
 
 /** Character references a cue may carry (WebVTT allows all HTML ones; sites send
@@ -562,9 +568,9 @@ function parseLrc(body: string): ImportedText {
     while ((tm = tagRe.exec(trimmed)) !== null) {
       if (tm.index !== lastTagEnd) break; // non-tag text interrupted
       const start = parseInt(tm[1], 10) * 60 + parseFloat(tm[2]);
-      // A 300+ digit stamp parses to Infinity: it ends the stamps like non-tag text does
-      // (lastTagEnd stays before it), rather than landing as a segment start.
-      if (!Number.isFinite(start)) break;
+      // An oversized stamp ends the stamps like non-tag text does (lastTagEnd stays before
+      // it), rather than landing as a segment start the exports write malformed.
+      if (!writableClock(start)) break;
       starts.push(start);
       lastTagEnd = tagRe.lastIndex;
     }
@@ -663,9 +669,9 @@ function parseJsonExport(body: string): ImportedText {
             : undefined;
       segments.push({
         text,
-        // JSON.parse turns `1e999` into Infinity: a non-finite or negative clock is none.
-        start: !synth && typeof seg.start === "number" && Number.isFinite(seg.start) && seg.start >= 0 ? seg.start : undefined,
-        end: !synth && typeof seg.end === "number" && Number.isFinite(seg.end) && seg.end >= 0 ? seg.end : undefined,
+        // JSON.parse turns `1e999` into Infinity: a negative or unwritable clock is none.
+        start: !synth && typeof seg.start === "number" && seg.start >= 0 && writableClock(seg.start) ? seg.start : undefined,
+        end: !synth && typeof seg.end === "number" && seg.end >= 0 && writableClock(seg.end) ? seg.end : undefined,
         speaker: name === undefined ? undefined : safeDisplayText(name, SPEAKER_NAME_MAX).trim() || undefined,
       });
     }

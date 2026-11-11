@@ -216,6 +216,27 @@ describe("plain text + errors", () => {
     expect(lrc.segments.map((s) => s.start)).toEqual([1, 2, 3]);
     expect(lrc.segments[1].text).toBe(`[${big}:00.00]chorus`);
   });
+  it("a finite clock past 2^53 ms is none; one at the bound parses and exports unchanged", () => {
+    // 9007199254740 s (2^53 ms floored to the second) is 2501999792:59:00; one second more
+    // is past what the exports' integer maths writes exactly ("1e+25:…" further out).
+    const srtAt = (clock: string) =>
+      parseImportedText("srt", `1\n00:00:01,000 --> 00:00:02,000\nhello\n\n2\n${clock} --> ${clock}\nworld\n`).segments[1];
+    expect(srtAt("2501999792:59:00,000")).toMatchObject({ start: 9007199254740, end: 9007199254740 });
+    expect(srtAt("2501999792:59:01,000")).toEqual({ text: "world" });
+    expect(srtAt(`${"9".repeat(22)}:00:00,000`)).toEqual({ text: "world" });
+    const back = parseImportedText("srt", generateExport({ text: "x", segments: [{ start: 9007199254740, end: 9007199254740, text: "x" }] }, { format: "srt" }));
+    expect(back.segments[0]).toMatchObject({ start: 9007199254740, end: 9007199254740 });
+    // LRC minutes: 150119987579 min is under the bound, one more is over (and ends the stamps).
+    const lrc = parseImportedText("lrc", "[150119987579:00.00]under\n[150119987580:00.00]over\n[00:01.00][150119987580:00.00]mixed\n");
+    expect(lrc.segments.map((s) => s.start)).toEqual([1, 9007199254740]);
+    expect(lrc.segments[0].text).toBe("[150119987580:00.00]mixed");
+    // JSON: the same bound, so every import route agrees.
+    const json = (start: number) =>
+      parseImportedText("json", JSON.stringify({ segments: [{ start, end: start, text: "x" }] })).segments[0];
+    expect(json(9007199254740)).toMatchObject({ start: 9007199254740, end: 9007199254740 });
+    expect(json(9007199254742)).toMatchObject({ start: undefined, end: undefined });
+    expect(json(1e25)).toMatchObject({ start: undefined, end: undefined });
+  });
   it("empty input throws a user-facing message", () => {
     expect(() => parseImportedText("srt", "")).toThrow(/No text found/);
     expect(() => parseImportedText("json", "not json")).toThrow(/Not valid JSON/);
