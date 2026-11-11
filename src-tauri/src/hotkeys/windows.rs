@@ -1367,10 +1367,19 @@ mod imp {
             // entry would swallow the user's next press of this key (the `pending.remove`
             // arm returns None).
             deb.forget(id);
-            tracing::warn!(
-                "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — releasing it \
-                 (a capture hook or a desktop switch ate the release)"
-            );
+            // Only a modifier's VK goes to the log: any key can land here, and the session log
+            // must not record which letters or digits the user typed.
+            if vk_to_evdev_mod(id).is_some() {
+                tracing::warn!(
+                    "[winhook] key {id:#06x} is up per the OS but no key-up ever arrived — \
+                     releasing it (a capture hook or a desktop switch ate the release)"
+                );
+            } else {
+                tracing::warn!(
+                    "[winhook] a non-modifier key is up per the OS but no key-up ever arrived — \
+                     releasing it (a capture hook or a desktop switch ate the release)"
+                );
+            }
             commit(app, held_keys, held, engine, id, false, false);
         }
     }
