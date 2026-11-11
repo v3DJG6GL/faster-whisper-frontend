@@ -34,12 +34,25 @@ import type { JobStatus } from "./types";
 /** Where a ledgered job is asked about: its backend's CURRENT address. The jobs commands resolve
  *  the key by backend id at call time, so the address frozen at post time would send the current
  *  key to a host the backend no longer points at (trade-off: a backend repointed at another server
- *  reports the job not found). A deleted backend keeps the stored address (no key resolves for it,
- *  and the reconcile pass and a watcher forget its rows). */
+ *  reports the job not found). A deleted backend keeps the stored address (the reconcile pass and
+ *  a watcher forget its rows without asking, and `cancelRow` sends it nothing). */
 function rowServerUrl(row: LedgerRow): string {
   const st = useApp.getState();
   const b = st.backends.find((x) => x.id === row.backendId);
   return b ? effectiveServerUrl(b, st.settings) : row.serverUrl;
+}
+
+/** Best-effort cancel of a stopped row's job, only while its backend still exists. A gone
+ *  backend's held key (a sync pull keeps it) would otherwise go to the address frozen at post
+ *  time, which the user may since have left for another server; as in the backend-gone branches,
+ *  the app does not reach such a job, and the server drops it at its TTL. */
+function cancelRow(row: LedgerRow): void {
+  const st = useApp.getState();
+  const b = st.backends.find((x) => x.id === row.backendId);
+  if (!b) return;
+  void deleteJob({ serverUrl: effectiveServerUrl(b, st.settings), backendId: row.backendId, jobId: row.jobId }).catch(
+    () => {},
+  );
 }
 
 /** Copy for the states a returning user sees on a failed record. */
@@ -311,7 +324,7 @@ export function stopOrphan(jobId: string): void {
   watching.get(jobId)?.();
   if (!row) return;
   void forgetRow(jobId);
-  void deleteJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId }).catch(() => {});
+  cancelRow(row);
 }
 /** The pump's hook (retryFile, startRun): stop every lost request whose file the user is
  *  about to run again — a watched one (found by path in `orphans`: the ledger may have
@@ -381,7 +394,7 @@ export async function reconcileJobs(): Promise<void> {
         // the awaits below found the row in passRows and did both already.
         if (stoppedIds.has(row.jobId)) {
           await forgetRow(row.jobId);
-          void deleteJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId: row.jobId }).catch(() => {});
+          cancelRow(row);
           continue;
         }
         // A backend that no longer exists (deleted, a sync pull) cannot be asked; the

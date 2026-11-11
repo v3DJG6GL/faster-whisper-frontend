@@ -389,6 +389,21 @@ describe("reconcileJobs", () => {
     expect(records()).toEqual([]);
   });
 
+  it("stopping a row cancels at its backend's current address, and not at all once the backend is gone", async () => {
+    // The backend has moved since the post: the cancel goes where its key belongs now.
+    useApp.setState({ backends: [{ id: "b1", name: "Local", serverUrl: "http://10.0.0.9:8000" } as never] });
+    await seed(row(JOB_A, T0), { ...row(JOB_B, T0 + 1), backendId: "gone" });
+    stopOrphan(JOB_A);
+    expect(deleteJob).toHaveBeenCalledTimes(1);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A, serverUrl: "http://10.0.0.9:8000" }));
+    // A removed backend's held key would go to the address frozen at post time: no cancel.
+    deleteJob.mockClear();
+    stopOrphan(JOB_B);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deleteJob).not.toHaveBeenCalled();
+    expect(ledgerRows()).toEqual([]);
+  });
+
   it("a running row re-attaches the rail, folds progress, and ingests on done", async () => {
     await seed(row(JOB_A, T0));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running",
