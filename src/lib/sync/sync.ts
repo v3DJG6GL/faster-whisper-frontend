@@ -1229,9 +1229,24 @@ export function disableConflictingProfiles(
  *
  *  Deliberately NOT mirrored into the store's `wellFormed*` floors: those run over the user's own
  *  config.json on every launch with the autosave armed. */
-function dedupeById<T extends { id: string }>(list: T[]): T[] {
+function dedupeById<T extends { id: string }>(list: T[], key: (id: string) => string = (id) => id): T[] {
   const seen = new Set<string>();
-  return list.filter((x) => (seen.has(x.id) ? false : (seen.add(x.id), true)));
+  return list.filter((x) => (seen.has(key(x.id)) ? false : (seen.add(key(x.id)), true)));
+}
+
+/** Backend ids compared as the OS keyring may compare them: Windows Credential Manager matches a
+ *  target name case-insensitively, so `ABC` and `abc` can name ONE stored key. */
+const foldedId = (id: string): string => id.toLowerCase();
+
+/** `inbound` without any backend whose id differs from a LOCAL backend's only in letter case. Such
+ *  an alias is peer-made (every real id is a lower-case `crypto.randomUUID()`), and as a "new"
+ *  backend at the peer's address it would resolve this device's stored key for the real one with
+ *  no api-key row. Dropped like any backend the list lacks: references to it fall back as to an
+ *  unknown backend, and its inbound secret is never written. */
+function dropLocalIdAliases<T extends { id: string }>(inbound: T[], local: readonly { id: string }[]): T[] {
+  const exact = new Set(local.map((b) => b.id));
+  const folded = new Set(local.map((b) => foldedId(b.id)));
+  return inbound.filter((b) => exact.has(b.id) || !folded.has(foldedId(b.id)));
 }
 
 /** Ceiling on how many entries one inbound blob may install. Far above any real profile /
@@ -1379,6 +1394,7 @@ const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 
 export function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
+  // Case-folded: two inbound ids differing only in case can name one keyring entry (`foldedId`).
   return dedupeById(list.filter(
     (b): b is Backend =>
       !!b && typeof b === "object" &&
@@ -1428,8 +1444,9 @@ export function sanitizeBackends(list: unknown): Backend[] {
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
       decodeOverrides: clampDecodeOverrides(b.decodeOverrides),
       translationOverrides: clampTranslationOverrides(b.translationOverrides),
-    }))
-    )
+    })),
+    foldedId,
+  )
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
@@ -1913,7 +1930,7 @@ export async function applyBlob(
     // and `sanitizeBackends` would return `[]`, which the dangling-reference scrub below turns
     // into "every profile's backend is gone".
     if (cats.backends && isPlainObject(blob.backends)) {
-      let inboundBackends = sanitizeBackends(blob.backends.list);
+      let inboundBackends = dropLocalIdAliases(sanitizeBackends(blob.backends.list), st.backends);
       // Element-wise keep-local for the gated backend aspects (the profile
       // chord idiom): addresses and model/decode defaults re-pin to this
       // device's values for backends it already knows; new backends keep the
@@ -4032,7 +4049,8 @@ export function securityChanges(
   // non-array container, a non-string id/serverUrl), so the gate cannot throw on anything the
   // server sends — a throw would escape `void pullNow()` and leave syncStatus stuck on "syncing".
   if (!cats.backends || !incoming.backends) return out;
-  const inBackends = sanitizeBackends(incoming.backends.list);
+  // Without a case alias of a local id: `applyBlob` drops one the same way, so it raises no row.
+  const inBackends = dropLocalIdAliases(sanitizeBackends(incoming.backends.list), local.backends?.list ?? []);
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   out.push(
     ...typedTextChanges(
