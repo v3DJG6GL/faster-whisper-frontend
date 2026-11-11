@@ -3856,23 +3856,27 @@ const EMOJI_BASE = /^[\p{Extended_Pictographic}\p{Emoji_Modifier}]$/u;
 const JOINING_LETTER =
   /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Nko}\p{scx=Mongolian}\p{scx=Myanmar}\p{scx=Khmer}ऀ-෿]$/u;
 /** The viramas after which a ZWJ changes the glyph drawn BEFORE it, so it shows even before a
- *  non-letter or at the end of a name: Devanagari and Gujarati (an explicit half form, Unicode
- *  core spec §12.1, Gujarati following it in §12.4), Bengali (khanda ta, §12.2) and Malayalam (a chillu in the
- *  pre-5.1 encoding, §12.9). Elsewhere a ZWJ after a virama (Tamil, Gurmukhi, Telugu, Kannada,
- *  Oriya, Sinhala, Malayalam's vertical bar and circular viramas) has no defined shape before a
- *  non-letter, and a ZWNJ after any virama asks for the explicit virama a non-letter already
- *  gets: both draw as nothing there. */
-const HALF_FORM_VIRAMA = /^[\u094D\u09CD\u0ACD\u0D4D]$/u;
-/** The consonants of those four scripts (with their nukta forms): a half form, khanda ta or chillu
- *  is a consonant's, so a ZWJ after a virama on anything else (a vowel, a Latin letter, a second
- *  virama, nothing) draws as nothing. */
-const HALF_FORM_CONSONANT = /^[\u0915-\u0939\u0958-\u095F\u0978-\u097F\u0995-\u09B9\u09DC-\u09DF\u09F0\u09F1\u0A95-\u0AB9\u0AF9\u0D15-\u0D3A]$/u;
-const NUKTA = /^[\u093C\u09BC\u0ABC]$/u;
+ *  non-letter or at the end of a name, each with the consonants it does so for (and the nukta
+ *  that may sit between): every Devanagari and Gujarati consonant (an explicit half form, Unicode
+ *  core spec §12.1, Gujarati following it in §12.4), but in Bengali only ta (khanda ta, §12.2) and
+ *  in Malayalam only a chillu's consonant (the pre-5.1 encoding, §12.9, plus the three chillus
+ *  Unicode 9 added). After any other base (a peer's `ক্\u{200D}` folder reads as `ক্`), after a
+ *  virama of another script (Tamil, Gurmukhi, Telugu, Kannada, Oriya, Sinhala, Malayalam's
+ *  vertical bar and circular viramas), or for a ZWNJ after any virama (it asks for the explicit
+ *  virama a non-letter already gets), the joiner draws as nothing before a non-letter.
+ *  Unassigned code points inside a range are no consonant (`\p{L}`). */
+const HALF_FORM_BASE = new Map<string, { consonant: RegExp; nukta?: string }>([
+  ["\u094D", { consonant: /^(?=\p{L})[\u0915-\u0939\u0958-\u095F\u0978-\u097F]$/u, nukta: "\u093C" }],
+  ["\u0ACD", { consonant: /^(?=\p{L})[\u0A95-\u0AB9\u0AF9]$/u, nukta: "\u0ABC" }],
+  ["\u09CD", { consonant: /^\u09A4$/u }],
+  ["\u0D4D", { consonant: /^[\u0D15\u0D23\u0D28\u0D30\u0D32\u0D33\u0D2E\u0D2F\u0D34]$/u }],
+]);
 /** Whether the ZWJ at `i` follows a consonant's half-form virama (`क्\u{200D}`, `क़्\u{200D}`). */
 const afterHalfForm = (cps: string[], i: number): boolean => {
-  if (!HALF_FORM_VIRAMA.test(cps[i - 1] ?? "")) return false;
-  const c = NUKTA.test(cps[i - 2] ?? "") ? cps[i - 3] : cps[i - 2];
-  return HALF_FORM_CONSONANT.test(c ?? "");
+  const form = HALF_FORM_BASE.get(cps[i - 1] ?? "");
+  if (!form) return false;
+  const c = form.nukta !== undefined && cps[i - 2] === form.nukta ? cps[i - 3] : cps[i - 2];
+  return form.consonant.test(c ?? "");
 };
 
 /** Code points that draw as a lone `.` yet have no decomposition to one, so NFKD keeps them:
@@ -3938,7 +3942,7 @@ function edgeBlankText(s: string): string {
  *  The blank edges Rust trims are written out compactly (`edgeBlankText`). Kept: a ZWJ or VS16 right after an emoji
  *  (a VS16 kept so continues the emoji, for a ZWJ sequence), a ZWNJ/ZWJ right after a letter or
  *  mark of a script it shapes (`JOINING_LETTER`) — a ZWJ only before an emoji, a script's joiner
- *  only before a letter or mark of such a script (or, a ZWJ right after a `HALF_FORM_VIRAMA`,
+ *  only before a letter or mark of such a script (or, a ZWJ right after a `HALF_FORM_BASE` virama,
  *  before anything but another hidden character), as a joiner before anything else joins nothing —
  *  plus a keycap's VS16 (`1️⃣`) and a subdivision flag's tag run (`🏴` + 2–7 tag digits or
  *  lower-case tag letters + U+E007F). A path with none of the

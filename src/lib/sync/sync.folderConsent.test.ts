@@ -300,6 +300,17 @@ describe("securityChanges: folder moves", () => {
     expect(row("/home/u/x\u094d\u200d-1")).toBe("/home/u/x\u094d\\u{200D}-1");
     expect(row("/home/u/\u0905\u094d\u200d-1")).toBe("/home/u/\u0905\u094d\\u{200D}-1");
     expect(row("/home/u/\u0915\u094d\u094d\u200d-1")).toBe("/home/u/\u0915\u094d\u094d\\u{200D}-1");
+    // Bengali shapes only khanda ta and Malayalam only a chillu: after any other consonant the
+    // ZWJ before a separator, a space or the path end draws as nothing.
+    expect(row("/home/u/\u0995\u09cd\u200d/x")).toBe("/home/u/\u0995\u09cd\\u{200D}/x");
+    expect(row("/home/u/\u09aa\u09cb\u09b8\u09cd\u200d")).toBe("/home/u/\u09aa\u09cb\u09b8\u09cd\\u{200D}");
+    expect(row("/home/u/\u0d2a\u0d4d\u200d")).toBe("/home/u/\u0d2a\u0d4d\\u{200D}");
+    expect(row("/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d4d\u200d/x")).toBe(
+      "/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d4d\\u{200D}/x",
+    );
+    expect(row("/home/u/\u0d1f\u0d4d\u200d x")).toBe("/home/u/\u0d1f\u0d4d\\u{200D} x");
+    // An unassigned code point inside a consonant range is no consonant.
+    expect(row("/home/u/\u0aa9\u0acd\u200d-1")).toBe("/home/u/\u0aa9\u0acd\\u{200D}-1");
     // Nor does a half-form ZWJ carry another hidden code point.
     expect(row("/home/u/\u0d28\u0d4d\u200d\u200dx")).toBe("/home/u/\u0d28\u0d4d\\u{200D}\\u{200D}x");
     expect(row("/home/u/\u0928\u094d\u200d\ufe0fx")).toBe("/home/u/\u0928\u094d\\u{200D}\\u{FE0F}x");
@@ -334,6 +345,17 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d", // trailing chillu
       "/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d41\u0d15\u0d33\u0d4d\u200d/x", // chillu before '/'
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d x", // chillu before ' '
+      "/home/u/\u0d28\u0d4d\u200d", // chillu n at the path end
+      "/home/u/\u09a4\u09cd\u200d/x", // khanda ta before '/'
+      "/home/u/\u0d2e\u0d4d\u200d", // chillu m (atomic only since Unicode 9)
+      "/home/u/\u0d2f\u0d4d\u200d-1", // chillu y
+      "/home/u/\u0d34\u0d4d\u200d/x", // chillu llla
+      "/home/u/\u0d30\u0d4d\u200d", // chillu rr
+      "/home/u/\u0d23\u0d4d\u200d", // chillu nn
+      "/home/u/\u0d15\u0d4d\u200d \u0d15", // chillu k before ' '
+      "/home/u/\u0995\u09cd\u200d\u09b7", // Bengali conjunct request before a letter
+      "/home/u/\u0915\u094d\u200d-", // Devanagari half ka before '-'
+      "/home/u/\u0a95\u0abc\u0acd\u200d", // Gujarati half ka + nukta at the path end
       "/home/u/1\ufe0f\u20e3", // keycap
       "/home/u/#\ufe0f\u20e3 Takes",
       "/home/u/Musik \u2764\ufe0f",
