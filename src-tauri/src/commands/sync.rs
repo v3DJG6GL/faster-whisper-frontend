@@ -284,8 +284,15 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         .get_mut("backends")
         .and_then(|b| b.get_mut("list"))
     {
-        let parsed: Vec<config::Backend> = serde_json::from_value(list.take())
-            .map_err(|e| format!("The file's server connections are invalid: {e}"))?;
+        let parsed: Vec<config::Backend> = serde_json::from_value(list.take()).map_err(|e| {
+            // serde quotes the offending value whole (a 19 MB string is Debug-escaped into
+            // ~100 MB): bounded here, as json_capped bounds a server body's parse error.
+            let e = crate::transport::bounded_server_text(
+                &e.to_string(),
+                crate::transport::MAX_ERROR_TEXT,
+            );
+            format!("The file's server connections are invalid: {e}")
+        })?;
         if parsed.len() > MAX_ENTRIES {
             return Err(
                 "That file lists far more server connections than the app supports.".into(),
@@ -300,8 +307,15 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         .get_mut("profiles")
         .and_then(|p| p.get_mut("list"))
     {
-        let parsed: Vec<config::Profile> = serde_json::from_value(list.take())
-            .map_err(|e| format!("The file's dictation profiles are invalid: {e}"))?;
+        let parsed: Vec<config::Profile> = serde_json::from_value(list.take()).map_err(|e| {
+            // serde quotes the offending value whole (a 19 MB string is Debug-escaped into
+            // ~100 MB): bounded here, as json_capped bounds a server body's parse error.
+            let e = crate::transport::bounded_server_text(
+                &e.to_string(),
+                crate::transport::MAX_ERROR_TEXT,
+            );
+            format!("The file's dictation profiles are invalid: {e}")
+        })?;
         if parsed.len() > MAX_ENTRIES {
             return Err(
                 "That file lists far more dictation profiles than the app supports.".into(),
