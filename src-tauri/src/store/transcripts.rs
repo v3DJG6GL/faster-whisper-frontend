@@ -1174,8 +1174,13 @@ pub async fn remove_transcript_media(
     .await
 }
 
-/// Remove every media file named after `id` (any extension).
+/// Remove every media file named after `id` (any extension). Only an id shaped like the ones
+/// this app writes (`is_uuid_id`): the command's `valid_id` is just path safety, and the audio
+/// base is a free user pick, so a hex-ish id like `20260901` would unlink the user's own file.
 fn remove_media_for(dir: &Path, id: &str) {
+    if !is_uuid_id(id) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -1378,6 +1383,29 @@ fn wipe_records(dir: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_media_for_only_unlinks_app_shaped_ids() {
+        let dir = crate::config::fresh_test_dir("remove-media-for");
+        let ours = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        for name in [
+            "12345678.wav",
+            "20260901.mp3",
+            &format!("{ours}.mp3"),
+            "keep.txt",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        // A hex-ish id that passes `valid_id` but is not one the app writes: nothing goes.
+        remove_media_for(&dir, "12345678");
+        remove_media_for(&dir, "20260901");
+        assert!(dir.join("12345678.wav").exists());
+        assert!(dir.join("20260901.mp3").exists());
+        remove_media_for(&dir, ours);
+        assert!(!dir.join(format!("{ours}.mp3")).exists());
+        assert!(dir.join("keep.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[cfg(unix)]
     #[test]
