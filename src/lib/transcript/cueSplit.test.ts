@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally, lowOpenAt,
+  WORD_EDGES, BARE_EDGES, GLUED_OPENER,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
@@ -2804,5 +2805,51 @@ describe("splitTokens on a server-sized segment", () => {
     // Split all the way down (a cue holds a few dozen of these words), not cut short.
     expect(cues.length).toBeGreaterThan(2_000);
     expect(cues.map((c) => c.text).join(" ")).toBe(r.text.trim());
+  });
+});
+
+describe("a word's edge trims stay linear on a long run", () => {
+  /** Every string of up to 6 picks from `alphabet`. */
+  const strings = (alphabet: string[]) => {
+    const out = [""];
+    let level = [""];
+    for (let len = 1; len <= 6; len++) out.push(...(level = level.flatMap((x) => alphabet.map((c) => x + c))));
+    return out;
+  };
+
+  it("match the plain trailing forms on every short string", () => {
+    // The previous regexes, kept verbatim: the new ones must match them on every input.
+    const oldWord = /^[^\p{L}]+|[^\p{L}']+$/gu;
+    const oldBare = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu;
+    const oldOpener = /\p{Ps}+["']*$/u;
+    // A letter, an astral letter (the lookbehind reads code points), a digit, the kept "'" and
+    // ".", and a character neither trim keeps.
+    for (const s of strings(["a", "\u{1d400}", "1", "'", ".", "-"])) {
+      expect(s.replace(WORD_EDGES, ""), s).toBe(s.replace(oldWord, ""));
+      expect(s.replace(BARE_EDGES, ""), s).toBe(s.replace(oldBare, ""));
+    }
+    // Two openers (\u201e is one too), both ASCII quotes between and after bracket runs, a letter
+    // and a closer.
+    for (const s of strings(["(", "\u201e", '"', "'", "a", ")"])) {
+      const got = GLUED_OPENER.exec(s);
+      const want = oldOpener.exec(s);
+      expect(got && [got.index, got[0]], s).toEqual(want && [want.index, want[0]]);
+    }
+  });
+
+  it("wrapLines takes a cue with a 40k run of openers or dashes inside a word in linear time", () => {
+    const n = 40_000;
+    const t0 = performance.now();
+    const opener = wrapLines("\u6771\u4eaca" + "(".repeat(n) + "x\u3002\u6771\u4eac", 16, 2);
+    const bare = wrapLines("one two a" + "-".repeat(n) + "b three four five six seven eight nine ten eleven twelve", 42, 2);
+    const name = wrapLines("Mary J. A. a" + "-".repeat(n) + "b Smith went home and then some more words follow here", 42, 2);
+    // The plain trailing forms take seconds on each of these; linear ones a few ms.
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    // The opener run leaves the word it is glued to, the rest is cut as before.
+    expect([opener.length, opener[0], ...opener.slice(-2)]).toEqual([2503, "\u6771\u4eaca", "((((((((((((((x\u3002", "\u6771\u4eac"]);
+    expect(bare.length).toBe(955);
+    expect(bare.slice(-3)).toEqual(["----------------------------b three four", "five six seven eight", "nine ten eleven twelve"]);
+    expect(name.length).toBe(954);
+    expect(name.slice(-2)).toEqual(["------------------------------b Smith went", "home and then some more words follow here"]);
   });
 });

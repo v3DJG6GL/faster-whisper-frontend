@@ -363,6 +363,17 @@ const ABBREV = new Set([
  *  ("Prof. Johnson", "Nr. 5"). Not "etc." or "z.B.", after which a piece may end. */
 const TITLE_ABBREV = new Set(["dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "no.", "nr.", "mme.", "m."]);
 
+// Edge trims of a word of cue text, which comes from an imported subtitle file or a server
+// segment. The `(?<!…)` starts a trailing match only at the first character of a run: a plain
+// `[…]+$` retries from every position of a run that something follows, quadratic on a long one.
+// The matches are the same. Exported for the test that pins them to the plain forms.
+/** A word's edges as nameBefore compares it: no leading non-letters, no trailing ones but "'". */
+export const WORD_EDGES = /^[^\p{L}]+|(?<![^\p{L}'])[^\p{L}']+$/gu;
+/** A word's edges as bare() compares it: letters and digits inside, "'" and "." kept at the end. */
+export const BARE_EDGES = /^[^\p{L}\p{N}]+|(?<![^\p{L}\p{N}'.])[^\p{L}\p{N}'.]+$/gu;
+/** Opening brackets glued to the end of a word, with any ASCII quotes after them ("print(\""). */
+export const GLUED_OPENER = /(?<!\p{Ps})\p{Ps}+["']*$/u;
+
 /** A sentence or clause end, for the original's splitter (breakScore) and the cut of a translation
  *  onto its cues (cutByShare) alike: the mark may sit inside closing quotes or brackets
  *  ('now." Then', '。」然后'). Arabic/Urdu (؟ ۔ ، ؛), Devanagari (। ॥), Armenian (։), Ethiopic
@@ -457,7 +468,7 @@ function nameBefore(before: string, after: string, lang?: string): boolean {
   // Another initial after it makes a name, as in isSentenceEnd: stripped of its stop below, the
   // "A." of "Mary | J. A. Smith" would read as the article opening a sentence.
   if (/^\p{Lu}\.$/u.test(after.split(/\s/)[0])) return true;
-  const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
+  const w = after.split(/\s/)[0].replace(/’/g, "'").replace(WORD_EDGES, "").toLowerCase();
   const opener = SENT_OPENER.get(base) ?? ANY_OPENER;
   if (opener.has(w)) return false;
   // A contraction opens one as its pronoun does ("Plan B. I'm", "Gate B. You'll", "Option B.
@@ -539,7 +550,7 @@ const beforeInitial = (prev: string, next: string, after: string, lang?: string)
   return !SENT_END.test(prev) && !CLAUSE.test(prev) && nameInitials(x) && nameBefore(prev, after, lang);
 };
 
-const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
+const bare = (w: string) => w.toLowerCase().replace(BARE_EDGES, "");
 
 /** Score of breaking between `prev` and `next` (words as written) in a text of `lang`; `before` =
  *  the word before `prev`, `after` the one after `next`. */
@@ -1492,7 +1503,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off would leave
     // „Hallo / “東京… on two lines.
-    const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
+    const open = k >= 0 && !gap ? GLUED_OPENER.exec(toks[k]) : null;
     // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
     // off, the line would end on the no-break space.
     const held = !!open && NBSP_END.test(toks[k].slice(0, open.index));
