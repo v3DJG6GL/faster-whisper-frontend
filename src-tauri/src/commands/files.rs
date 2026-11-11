@@ -59,28 +59,27 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
         }
         return Ok(());
     }
-    let moved = copy_keeping_mtime(src, dest).and_then(|()| {
-        // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
-        // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
-        crate::audio::restrict_file_private(dest);
+    // `copy_keeping_mtime` removes its own partial copy; a failure before it created `dest`
+    // leaves whatever is there alone, since that is not ours (a sync client's same-named file,
+    // or one that appeared while `move_file_waiting_out_a_save` waited).
+    copy_keeping_mtime(src, dest)?;
+    // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
+    // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
+    crate::audio::restrict_file_private(dest);
+    if let Err(e) = std::fs::remove_file(src) {
+        // The full copy is ours: kept, it would trip the callers' never-clobber check on every
+        // retry and strand the file in the old base.
+        let _ = std::fs::remove_file(dest);
         // A source held without delete sharing (a player with a video open for reading) is
         // only found out here, after the whole copy: not a sharing violation the caller should
         // retry, or it would copy the file again on every round.
-        std::fs::remove_file(src).map_err(|e| {
-            if held_open_elsewhere(&e) {
-                std::io::Error::other(e)
-            } else {
-                e
-            }
-        })
-    });
-    // Both callers checked `dest` did not exist, so whatever a failed copy (a full disk) or an
-    // unremovable source left there is ours: kept, it would trip their never-clobber check on
-    // every retry and strand the file in the old base.
-    if moved.is_err() {
-        let _ = std::fs::remove_file(dest);
+        return Err(if held_open_elsewhere(&e) {
+            std::io::Error::other(e)
+        } else {
+            e
+        });
     }
-    moved
+    Ok(())
 }
 
 /// `move_file`'s cross-volume copy, carrying the source's mtime over (`std::fs::copy` does not
@@ -89,7 +88,8 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
 ///
 /// `dest` is created fresh and owner-only: every caller has checked nothing is there, and the
 /// target base may be a shared folder where a link planted in between must not be written
-/// through (the open fails instead, and `move_file` unlinks the link).
+/// through (the open fails instead, and the link is left alone). A failure after the create
+/// (a full disk, a source that grew) removes the partial copy, the only `dest` this made.
 ///
 /// The source is judged on the opened handle and copied from it: the old base may be writable
 /// by another account, which could swap an entry for a FIFO or a link to an endless device
@@ -103,7 +103,12 @@ fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io:
     })?;
     let mtime = meta.modified().ok();
     let mut out = crate::audio::create_new_private(dest)?;
-    crate::transport::copy_at_most(&mut inp, &mut out, meta.len())?;
+    if let Err(e) = crate::transport::copy_at_most(&mut inp, &mut out, meta.len()) {
+        // Closed first, so our own handle never stands in the way of the delete on Windows.
+        drop(out);
+        let _ = std::fs::remove_file(dest);
+        return Err(e);
+    }
     if let Some(t) = mtime {
         let _ = out.set_modified(t);
     }
@@ -135,11 +140,15 @@ fn move_file_waiting_out_a_save(
     let mut tries = 0;
     loop {
         match move_file(src, dest) {
-            // The never-clobber check is redone each round: the rename replaces an existing
-            // destination on Windows, and the wait widens the gap since the caller looked.
-            Err(e) if held_open_elsewhere(&e) && tries < HELD_RETRIES && !dest.exists() => {
+            Err(e) if held_open_elsewhere(&e) && tries < HELD_RETRIES => {
                 tries += 1;
                 std::thread::sleep(HELD_RETRY_GAP);
+                // The never-clobber check, redone after each wait and right before the next
+                // try: the rename replaces an existing destination on Windows, and the wait
+                // widens the gap since the caller looked. Anything there now is not ours.
+                if std::fs::symlink_metadata(dest).is_ok() {
+                    return Err(e);
+                }
             }
             r => return r,
         }
@@ -792,6 +801,33 @@ mod tests {
             assert!(!dest.exists(), "no partial destination blocks the retry");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_move_that_fails_before_copying_leaves_an_existing_destination_alone() {
+        let dir = crate::config::fresh_test_dir("move-keep-dest");
+        let (src, dest) = (dir.join("gone.wav"), dir.join("there.wav"));
+        std::fs::write(&dest, b"theirs").unwrap();
+        // No source: the rename and the copy's open both fail before anything is created.
+        assert!(super::move_file(&src, &dest).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"theirs");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_move_copy_removes_its_own_partial_destination() {
+        let dir = crate::config::fresh_test_dir("move-partial-copy");
+        let dest = dir.join("copy.txt");
+        // A procfs file reports size 0 but reads non-empty: the copy fails as "grew" after the
+        // create, with bytes already written.
+        let src = std::path::Path::new("/proc/self/status");
+        assert!(super::copy_keeping_mtime(src, &dest).is_err());
+        assert!(
+            std::fs::symlink_metadata(&dest).is_err(),
+            "partial copy left behind"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "linux")]
