@@ -239,6 +239,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // The failed write was for a keyless kept backend: the keptKeyless note below the buttons
     // already gives the advice, so the error line says only what went wrong.
     let keylessMatch = false;
+    // The backend whose key write failed, when its id is new to this device: any key the keyring
+    // holds under it is a removed backend's, for whatever host that one used.
+    let staleHeld: Backend | null = null;
+    // Read before the apply: the ids this device had (the gate's entry included).
+    const before = new Set(st.getState().backends.map((b) => b.id));
     try {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
@@ -282,6 +287,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
         if (!isGate) {
           keylessMatch = !match.hasApiKey;
+          staleHeld = before.has(match.id) ? null : match;
           keyWriteFailed = true;
           await setBackendKey(match.id, key);
           keyWriteFailed = false;
@@ -317,6 +323,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       }
       finish();
     } catch (e) {
+      // The held-key notice skipped this backend (the gate's key was to replace its entry), so a
+      // failed write must not leave a removed backend's key to be sent to the gate's address:
+      // drop it, best-effort, and mark the backend keyless (the keptKeyless note then gives the
+      // advice, so the error line says only what went wrong).
+      const held = keyWriteFailed ? staleHeld : null;
+      if (held) {
+        await deleteBackendKey(held.id).catch(() => {});
+        const cur = st.getState().backends.find((b) => b.id === held.id);
+        if (cur) st.getState().upsertBackend({ ...cur, hasApiKey: false });
+        keylessMatch = true;
+      }
       setError(
         keyWriteFailed
           ? `Your settings were restored, but this server's API key couldn't be saved to the system keyring (${String(e)}).${
