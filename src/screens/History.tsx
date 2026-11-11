@@ -35,7 +35,7 @@ import {
   EXPORT_EXTENSIONS, exportOptionsFor, generateExports, speakerOrder,
   type ExportFormat,
 } from "@/lib/transcript/transcriptFormats";
-import { authoredChipTag } from "@/lib/profileTag";
+import { shownChipTag } from "@/lib/profileTag";
 import { profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { backendLabelById } from "@/lib/backends";
 import { langText, langTexts } from "@/lib/languages";
@@ -612,9 +612,10 @@ export default function History() {
   // Gated on what the pill would SHOW, read as the chip reads an authored tag: a `profileTag` on
   // disk is unvalidated (older records stored it after a plain trim), so it can keep format-only
   // characters and U+2800 padding — a raw-truthy check would draw an empty pill or cut a padded
-  // tag's visible part.
+  // tag's visible part. Budgeted (`shownChipTag`): it runs per record on every render, and such an
+  // older record can hold a synced tag's MBs of invisible head.
   const tagBadge = (rec: TranscriptRecord) => {
-    const tag = safeDisplayText(authoredChipTag(rec.profileTag), 16).trim();
+    const tag = safeDisplayText(shownChipTag(rec.profileTag), 16).trim();
     return tag ? <Badge tone="accent">{tag}</Badge> : null;
   };
 

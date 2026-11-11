@@ -24,10 +24,11 @@ export function authoredChipTag(tag: unknown, budget = Infinity): string {
 }
 
 /** `authoredChipTag` for a surface that re-renders it — the chip (rebuilt on every level tick), the
- *  Profiles row badge, the picker header. A synced tag is unbounded, and MBs of invisible head
- *  would be walked on every render, so the walk is budgeted (`leadingTrimBudget`): a tag with
- *  fewer than 32 Ki invisible leading code points (every real one) reads the same, a padded one
- *  reads "…". */
+ *  Profiles row badge, the picker header and History's badge (one per rendered record; a record
+ *  stored before the stored tag was capped can hold a synced tag whole). A synced tag is
+ *  unbounded, and MBs of invisible head would be walked on every render, so the walk is budgeted
+ *  (`leadingTrimBudget`): a tag with fewer than 32 Ki invisible leading code points (every real
+ *  one) reads the same, a padded one reads "…". */
 export const shownChipTag = (tag: unknown): string => authoredChipTag(tag, leadingTrimBudget(AUTHORED_TAG_MAX));
 
 /** The effective chip tag for a Profile: its authored tag (`shownChipTag`), else derived from
