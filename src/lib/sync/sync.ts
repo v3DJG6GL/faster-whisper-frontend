@@ -1461,61 +1461,71 @@ export function sanitizeBackends(list: unknown): Backend[] {
     }));
 }
 
+const isAppRuleShape = (r: unknown): r is AppRule =>
+  !!r && typeof r === "object" &&
+  typeof (r as AppRule).id === "string" &&
+  typeof (r as AppRule).appId === "string";
+
+const fillAppRule = (r: AppRule): AppRule => ({
+  ...r,
+  // The rule's KEY, normalized as the editor does (see `normalizeAppId`).
+  appId: normalizeAppId(r.appId),
+  block: r.block === true,
+  // The rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
+  // number or object, so one malformed rule unmounts the audit screen.
+  name: typeof r.name === "string" ? r.name : undefined,
+  pasteShortcut:
+    r.pasteShortcut == null
+      ? r.pasteShortcut
+      : safePasteShortcut(r.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
+  // Sibling of the clamp above, and of the `general` clamp in `applyBlob`: Rust keeps app
+  // rules as opaque JSON and never checks a per-rule insertMethod, so this is its floor.
+  // `null`/absent means "inherit the global", which stays valid.
+  insertMethod:
+    r.insertMethod == null
+      ? r.insertMethod
+      : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
+  restoreClipboard: r.restoreClipboard == null ? r.restoreClipboard : r.restoreClipboard === true,
+  // Three-state like its neighbours, but junk means AUTO (dropped), not "off": a wrong `true`
+  // would strip clipboard restores from an app that isn't remote, a wrong `false` would
+  // re-arm the 300 ms race on one that is — auto-detect is the only safe reading of a
+  // value nobody meant. `Option<bool>` in Rust rejects a string outright.
+  remoteDesktop:
+    typeof r.remoteDesktop === "boolean"
+      ? r.remoteDesktop
+      : r.remoteDesktop === null
+        ? null
+        : undefined,
+  // `autoEnter` is FORCED OFF on every inbound path, never merely type-checked — the
+  // same treatment the `general` block gets in applyBlob, and for the same reason: the
+  // synthesized Return is sent AFTER the paste, outside the bracketed-paste region, so
+  // it SUBMITS whatever the server-authored transcript put in the buffer. A peer must
+  // not be able to arm that. Clamping the type would still let `true` through, so this
+  // drops the field entirely and lets the local value stand (applyBlob re-pins it via
+  // `APP_RULE_LOCAL_ONLY_FIELDS`).
+  autoEnter: undefined,
+});
+
 /** Drop inbound app rules that aren't shaped like rules, and clamp the fields of the rest. Rust
  *  never checks a rule's fields (the importer only checks each bucket is an array; the pull path
  *  not at all), and app rules raise no consent prompt, so a malformed rule arrives silently. */
 export function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
-  return rules
-    .filter(
-      (r): r is AppRule =>
-        !!r && typeof r === "object" &&
-        typeof (r as AppRule).id === "string" &&
-        typeof (r as AppRule).appId === "string",
-    )
-    .map((r) => ({
-      ...r,
-      // The rule's KEY, normalized as the editor does (see `normalizeAppId`).
-      appId: normalizeAppId(r.appId),
-      block: r.block === true,
-      // The rules list does `r.name?.trim()` in a render body — `?.` guards null/undefined, not a
-      // number or object, so one malformed rule unmounts the audit screen.
-      name: typeof r.name === "string" ? r.name : undefined,
-      pasteShortcut:
-        r.pasteShortcut == null
-          ? r.pasteShortcut
-          : safePasteShortcut(r.pasteShortcut, DEFAULT_PASTE_SHORTCUT),
-      // Sibling of the clamp above, and of the `general` clamp in `applyBlob`: Rust keeps app
-      // rules as opaque JSON and never checks a per-rule insertMethod, so this is its floor.
-      // `null`/absent means "inherit the global", which stays valid.
-      insertMethod:
-        r.insertMethod == null
-          ? r.insertMethod
-          : oneOf<InsertMethod>(r.insertMethod, INSERT_METHODS, "paste"),
-      restoreClipboard: r.restoreClipboard == null ? r.restoreClipboard : r.restoreClipboard === true,
-      // Three-state like its neighbours, but junk means AUTO (dropped), not "off": a wrong `true`
-      // would strip clipboard restores from an app that isn't remote, a wrong `false` would
-      // re-arm the 300 ms race on one that is — auto-detect is the only safe reading of a
-      // value nobody meant. `Option<bool>` in Rust rejects a string outright.
-      remoteDesktop:
-        typeof r.remoteDesktop === "boolean"
-          ? r.remoteDesktop
-          : r.remoteDesktop === null
-            ? null
-            : undefined,
-      // `autoEnter` is FORCED OFF on every inbound path, never merely type-checked — the
-      // same treatment the `general` block gets in applyBlob, and for the same reason: the
-      // synthesized Return is sent AFTER the paste, outside the bracketed-paste region, so
-      // it SUBMITS whatever the server-authored transcript put in the buffer. A peer must
-      // not be able to arm that. Clamping the type would still let `true` through, so this
-      // drops the field entirely and lets the local value stand (applyBlob re-pins it via
-      // `APP_RULE_LOCAL_ONLY_FIELDS`).
-      autoEnter: undefined,
-    }))
+  // One walk that stops at the cap: a peer's blob may list ~180k minimal rules within the body
+  // cap, and every rule kept past the 500th was cut anyway. The appId key is the FILLED one, so
+  // the cap cannot move ahead of the fill as it does for profiles and backends.
+  const out: AppRule[] = [];
+  const ids = new Set<string>();
+  const appIds = new Set<string>();
+  for (const raw of rules) {
+    if (out.length >= MAX_SYNCED_ENTRIES) break;
+    if (!isAppRuleShape(raw)) continue;
+    const r = fillAppRule(raw);
+    const key = appRuleKey(r.appId);
     // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
     // a zombie row on the audit screen. Drop it rather than store it. Tested on the comparison
     // key: a joiner-only appId keeps its joiner when stored but keys to "".
-    .filter((r) => appRuleKey(r.appId).length > 0)
+    if (key.length === 0) continue;
     // Rules are MATCHED by appId and `resolveInjectionTarget` takes the FIRST match, so two rules
     // sharing an appId shadow each other (`dedupeById` keys on `id`, so it can't catch this).
     // Without it a peer prepends `{appId:"konsole", block:false, insertMethod:"direct"}` ahead of
@@ -1526,20 +1536,12 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
     // Unreachable for legitimate configs (`upsertAppRule` keeps appIds unique). Sync sanitizer
     // only, never `wellFormedAppRules`: that floor runs over the user's own config.json at every
     // launch with the autosave armed.
-    .filter(
-      (() => {
-        const ids = new Set<string>();
-        const appIds = new Set<string>();
-        return (r: AppRule) => {
-          const key = appRuleKey(r.appId);
-          if (ids.has(r.id) || appIds.has(key)) return false;
-          ids.add(r.id);
-          appIds.add(key);
-          return true;
-        };
-      })(),
-    )
-    .slice(0, MAX_SYNCED_ENTRIES);
+    if (ids.has(r.id) || appIds.has(key)) continue;
+    ids.add(r.id);
+    appIds.add(key);
+    out.push(r);
+  }
+  return out;
 }
 
 /** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` writes it: a non-empty
