@@ -3188,6 +3188,10 @@ const STATE_UNREADABLE_ERROR =
 const HELD_PUSH_ERROR =
   "This device couldn't save its settings, so nothing was pushed. Fix the problem in the warning at the top (a failed save, or a shortcut used twice), then push again.";
 
+/** The status line of a push refused because the keyring read left backends without their keys. */
+const KEYRING_PUSH_ERROR =
+  "Your API keys couldn't be read from the keyring, so settings weren't pushed. Unlock it and restart the app to resume syncing.";
+
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
@@ -3291,10 +3295,7 @@ export async function pushNow(manual = false): Promise<void> {
       // Refuse rather than degrade: every alternative (a keyless list, an omitted category)
       // erases the server's stored keys through the whole-blob PUT. Said out loud so the
       // user knows why nothing is leaving this device.
-      setRuntime({
-        syncStatus: "error",
-        syncError: "Your API keys couldn't be read from the keyring, so settings weren't pushed. Unlock it and restart the app to resume syncing.",
-      });
+      setRuntime({ syncStatus: "error", syncError: KEYRING_PUSH_ERROR });
       return;
     }
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -3348,11 +3349,19 @@ export async function pushNow(manual = false): Promise<void> {
           // The server copy was deleted under our base (a peer's "Delete server copy", or a
           // wipe): the 409 body is the zero-state. Merging `{}` against the stale snapshot drops
           // every unchanged category and conflicts the changed ones — re-seed from version 0
-          // instead, as pullCore's null-blob arm does, and let the follow-up push send it all.
+          // instead, as pullCore's null-blob arm does, and send it all on the next attempt.
           if (!(await forgetDeadDocument(myGen))) return;
-          setRuntime({ syncStatus: "ok" });
-          schedulePush(0);
-          return;
+          // Within this call's attempt bound, not a fresh push: a server alternating an echo (which
+          // raises `base`) with "deleted" would otherwise loop forever past the check above.
+          blob = await composeLive(syncCats());
+          if (myGen !== gen) return;
+          // The prologue's keyring gate, re-asked for the recompose.
+          if (backendsPushBlocked() && backendsBlobIncomplete(blob)) {
+            setRuntime({ syncStatus: "error", syncError: KEYRING_PUSH_ERROR });
+            return;
+          }
+          base = 0;
+          continue;
         }
         // Same as pullCore: a re-created document drops the dead base, so the merge below is a
         // first-contact one (no snapshot) instead of a 3-way merge against the deleted document.

@@ -90,7 +90,9 @@ vi.mock("../api", async (importOriginal) => {
       api.pushes++;
       api.pushed = args.blob;
       api.pushedBase = args.baseVersion;
-      const conflict = api.conflicts.shift();
+      const next = api.conflicts.shift();
+      // A function answers from the request itself (a server echoing what it was sent).
+      const conflict = typeof next === "function" ? (next as (a: typeof args) => unknown)(args) : next;
       if (conflict) return { ok: false, status: 409, conflict };
       return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 1, device: "me", blob: {} } };
     },
@@ -624,6 +626,26 @@ describe("a 409 against a deleted server copy", () => {
       expect(api.pushes).toBe(pushesBefore + 2);
       expect(api.pushedBase).toBe(0);
       expect(useApp.getState().syncStatus).toBe("error");
+    } finally {
+      api.keys = null;
+      api.conflicts = [];
+    }
+  });
+  // Echoing the re-seed at version 1 raised the base past that check, so "deleted" was accepted
+  // again and a fresh push re-armed: the re-seed now stays inside the call's three attempts.
+  it("stops when the server alternates an echo of the re-seed with a deleted copy", async () => {
+    try {
+      await seedBase();
+      toggleStartMinimized();
+      const dead = () => ({ version: 0, updated_ts: null, device: null, blob: null });
+      const echo = (a: { blob: unknown }) => ({ version: 1, updated_ts: 1, device: "peer", blob: structuredClone(a.blob) });
+      api.conflicts = Array.from({ length: 12 }, (_, i) => (i % 2 === 0 ? dead : echo));
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(api.pushes).toBe(pushesBefore + 3);
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("kept changing");
     } finally {
       api.keys = null;
       api.conflicts = [];
