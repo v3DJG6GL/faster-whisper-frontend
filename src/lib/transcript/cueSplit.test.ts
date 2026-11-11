@@ -576,6 +576,23 @@ describe("wrapLines", () => {
       expect(performance.now() - t0).toBeLessThan(500);
     }
   });
+  it("a long flag run (a server's text) cuts quickly and keeps every flag whole", () => {
+    // Each candidate walked the regional-indicator run back to its start to tell a flag's halves apart.
+    expect(cutByShare("a 🇺🇸🇩🇪🇫🇷 b", [1, 1])).toEqual(["a 🇺🇸🇩🇪🇫🇷", "b"]);
+    const flags = "🇺🇸".repeat(50_000);
+    let t0 = performance.now();
+    expect(cutByShare("a " + flags + " b", [1, 1])).toEqual(["a " + flags, "b"]);
+    expect(performance.now() - t0).toBeLessThan(500);
+    // Words glued inside one run: splitTokens scores a seam at every flag.
+    const N = 5000;
+    const words = Array.from({ length: N }, (_, i) => ({ word: "🇺🇸", start: i * 0.1, end: i * 0.1 + 0.09 }));
+    const r: BatchResult = { text: "🇺🇸".repeat(N), language: "en", words, segments: [{ start: 0, end: N * 0.1, text: "🇺🇸".repeat(N) }] };
+    t0 = performance.now();
+    const { cues } = buildCues(r, { length: "custom", custom: { cpl: 10, lines: 1, maxDur: 3, cps: 17 }, timing: "same" }, ["orig"]);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(cues.map((c) => c.text).join("")).toBe("🇺🇸".repeat(N));
+    expect(cues.every((c) => /^(?:🇺🇸)+$/u.test(c.text))).toBe(true);
+  });
   it("a no-break space is no word break, and a line keeps it as written", () => {
     // /\s/ matches U+00A0, U+202F and U+2007: split by it, "25 000" is cut and wrapped across its
     // no-break space, and a wrapped line rewrites "viens ?" with a plain space.

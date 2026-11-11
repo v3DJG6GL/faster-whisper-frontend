@@ -798,18 +798,28 @@ const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
  *  leading vowel, before a following vowel), inside a Burmese/Khmer consonant stack (right
  *  after the virama), before a killed Burmese/Khmer consonant, or between a flag's two
  *  regional indicators (an odd run of indicators right before i means i is the second half
- *  of a pair). */
-function splitsUnit(text: string, i: number): boolean {
+ *  of a pair: `riOdd`, from riOddBefore). */
+function splitsUnit(text: string, i: number, riOdd: (i: number) => boolean): boolean {
   const cp = text.codePointAt(i)!;
   if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") return true;
   if (LEAD_OR_STACKER.test(text[i - 1]) || VOWEL_TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) return true;
   // One repetition mark rides (the second of a run is a seam again); a ฯ after a space opens a word.
   if (REPEAT_AT.test(text[i]) && !REPEAT_AT.test(text[i - 1] ?? "")
     && !(text[i] === "\u0e2f" && /^\s?$/.test(text[i - 1] ?? ""))) return true;
-  if (!isRI(cp)) return false;
-  let n = 0;
-  for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
-  return n % 2 === 1;
+  return isRI(cp) && riOdd(i);
+}
+/** For `text`, whether an odd run of regional indicators ends right before index i (read back in
+ *  steps of one indicator from i - 2). Built in one pass on first use, then O(1) per index: a
+ *  server's text can hold one long flag run, and walking it back for every candidate was quadratic. */
+function riOddBefore(text: string): (i: number) => boolean {
+  let odd: Uint8Array | undefined;
+  return (i) => {
+    if (!odd) {
+      odd = new Uint8Array(text.length + 1);
+      for (let x = 2; x <= text.length; x++) odd[x] = isRI(text.codePointAt(x - 2)!) ? 1 - odd[x - 2] : 0;
+    }
+    return odd[i] === 1;
+  };
 }
 /** The longest whitespace-free run of spaced text that is still a short word ("東京", "Tokyo"):
  *  a seam inside one is a fallback (cutByShare, wrapTokens); a longer run is a sentence. */
@@ -885,6 +895,7 @@ function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
   let scanned = 0;
   // Right half pushed first, so the left one pops first and the groups come out in text order.
   const stack: [number, number][] = [[0, all.length]];
+  const riOdd = riOddBefore(text);
   for (let r = stack.pop(); r; r = stack.pop()) {
     const [lo, hi] = r;
     scanned += hi - lo;
@@ -893,14 +904,14 @@ function splitTokens(text: string, all: Tok[], L: Budget): Tok[][] {
       out.push(ts);
       continue;
     }
-    const bi = scanned > budget ? Math.floor(ts.length / 2) : bestSeam(text, ts, L);
+    const bi = scanned > budget ? Math.floor(ts.length / 2) : bestSeam(text, ts, L, riOdd);
     stack.push([lo + bi, hi], [lo, lo + bi]);
   }
   return out;
 }
 
 /** The index in `ts` of the seam splitTokens cuts at. */
-function bestSeam(text: string, ts: Tok[], L: Budget): number {
+function bestSeam(text: string, ts: Tok[], L: Budget, riOdd: (i: number) => boolean): number {
   const total = sliceOf(text, ts).length || 1;
   let best = -Infinity;
   let bi = -1;
@@ -933,7 +944,7 @@ function bestSeam(text: string, ts: Tok[], L: Budget): number {
     // Nor inside a unit, as wraps and cutByShare: Whisper times Thai/Lao/Burmese per decoded
     // token, so a "word" can be a lone tone mark, following vowel or killed consonant, and a
     // cue opened on a bare mark (a dotted circle) or ended on a leading vowel.
-    if (splitsUnit(text, at)) s -= 1000;
+    if (splitsUnit(text, at, riOdd)) s -= 1000;
     // Both sides read by index: slicing the token array per candidate would make every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
@@ -1058,6 +1069,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
   // Never right after an opening bracket (the cut goes before it instead), nor right
   // before a closing bracket or stop (the cut goes after it).
   const cand: number[] = [];
+  const riOdd = riOddBefore(text);
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (seams && !seams.has(i)) continue;
@@ -1065,7 +1077,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     // Nor before the first ー (or ｰ) after a character (the second ー of a run is a seam again).
     if (/[ーｰ]/.test(text[i]) && !/[ーｰ]/.test(text[i - 1])) continue;
     // Never inside a grapheme or a Thai/Lao/Burmese/Khmer syllable unit.
-    if (splitsUnit(text, i)) continue;
+    if (splitsUnit(text, i, riOdd)) continue;
     if (
       spaced
         ? BREAK_SPACE.test(text[i])
