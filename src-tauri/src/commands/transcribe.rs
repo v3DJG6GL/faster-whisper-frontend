@@ -217,7 +217,9 @@ async fn fetch_link_media(
     audio_base: Option<String>,
     video: bool,
 ) -> Result<Option<String>, String> {
-    if !crate::store::transcripts::valid_id(&record_id) {
+    // The app's own id shape, not just path safety: the download is renamed onto
+    // `<id>.<ext>` in a user-picked folder, where a hex-ish id names the user's own file.
+    if !crate::store::transcripts::is_uuid_id(&record_id) {
         return Err("malformed record id".into());
     }
     let key = resolve_key_async(api_key, backend_id).await;

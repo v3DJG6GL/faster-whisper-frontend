@@ -972,7 +972,9 @@ pub async fn save_transcript_media(
     source_path: String,
     audio_base: Option<String>,
 ) -> Result<Option<String>, String> {
-    if !valid_id(&id) {
+    // The app's own id shape, not just path safety: the copy lands in a user-picked folder,
+    // and a hex-ish id like `20260901` would replace the user's own `20260901.mp3`.
+    if !is_uuid_id(&id) {
         return Err("malformed record id".into());
     }
     let dir = files_media_dir(&app, audio_base)?;
