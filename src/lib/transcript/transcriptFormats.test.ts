@@ -282,6 +282,19 @@ describe("lrc", () => {
     const out = generateExport(noWords, { format: "lrc", wordTimestamps: true });
     expect(out).toContain("[00:00.40]Speaker 1: Hello there.");
   });
+  it("a hostile segment over the seam-search ceiling joins by the script rule, fast", () => {
+    // Words the text does not hold never advance the search cursor: without the ceiling each
+    // one rescans the whole 1 MB text.
+    const huge: BatchResult = {
+      text: "",
+      segments: [{ start: 0, end: 30, text: "a ".repeat(500_000) }],
+      words: Array.from({ length: 50_000 }, () => ({ word: " zq", start: 0, end: 0.1 })),
+    };
+    const t0 = performance.now();
+    const out = generateExport(huge, { format: "lrc", wordTimestamps: true });
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(out.startsWith("[00:00.00]<00:00.00>zq <00:00.00>zq ")).toBe(true);
+  });
   it("a rounding carry rolls into the minute instead of printing 60 seconds", () => {
     const edge: BatchResult = {
       text: "x",

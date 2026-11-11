@@ -625,6 +625,10 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
   return out.join("\n");
 }
 
+/** Ceiling (text length x word count) on lrcExport's per-segment seam search: the same 16M
+ *  cells as wordAlign's LCS cap. */
+const MAX_SEAM_SEARCH_CELLS = 16_000_000;
+
 function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): string {
   const words = result.words ?? [];
   // Word timing never survives translation — enhanced tags are original-only.
@@ -659,11 +663,16 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
         const cw = ws.map((w) => clean(w.word));
         const text = clean(seg.text);
         const spaced = /\s/.test(text);
+        // A missing word leaves `cur` in place, so each one rescans the rest of the text: a
+        // hostile result (MBs of text, 100k+ words in one segment) costs words x text on the UI
+        // thread. Over the ceiling every seam takes the per-seam script rule; real segments sit
+        // orders of magnitude below it.
+        const search = spaced && text.length * cw.length <= MAX_SEAM_SEARCH_CELLS;
         let cur = 0;
         let prevEnd = -1;
         const body = cw
           .map((c, k) => {
-            const at = spaced ? text.indexOf(c, cur) : -1;
+            const at = search ? text.indexOf(c, cur) : -1;
             const gap = !k || !spaced
               ? false
               : at >= 0 && prevEnd >= 0
