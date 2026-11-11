@@ -183,6 +183,15 @@ describe("a confirm click that lands before the held-key read is back", () => {
     expect((await confirmHeldKeys(read, candidates(), first.ids, noticed)).go).toBe(true);
   });
 
+  it("keeps the real list's read across a Backends off/on toggle", async () => {
+    const read = heldKeyReads();
+    await read(candidates());
+    // Backends switched off (nothing to read), then on again: no second keyring read.
+    expect((await read([])).size).toBe(0);
+    await read(candidates());
+    expect(api.reads).toEqual([["b9"]]);
+  });
+
   it("never decides on a result read for another list", async () => {
     api.keys = { b9: "old-key" };
     const read = heldKeyReads();

@@ -225,6 +225,9 @@ const NO_IDS: ReadonlySet<string> = new Set();
 export function heldKeyReads(): (candidates: string[]) => Promise<ReadonlySet<string>> {
   let last: { key: string; ids: Promise<ReadonlySet<string>> } | null = null;
   return (candidates) => {
+    // Nothing to read (the Backends category switched off): answered without replacing the
+    // real list's read, so switching it back on reuses that read (no second unlock prompt).
+    if (candidates.length === 0) return Promise.resolve(new Set<string>());
     const key = JSON.stringify(candidates);
     if (last?.key !== key) last = { key, ids: readHeldKeys(candidates) };
     return last.ids;
