@@ -329,6 +329,7 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u0915\u094d\u200dx", // Devanagari half ka before Latin
       "/home/u/\u0a95\u0acd\u200d-1", // Gujarati half ka before '-'
       "/home/u/\u0915\u093c\u094d\u200dx", // half qa (ka + nukta) before Latin
+      "/home/u/\u0af9\u0acd\u200d", // Gujarati half zha at the path end
       "/home/u/\u0930\u094d\u200d\u092f", // Marathi eyelash ra
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d", // trailing chillu
       "/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d41\u0d15\u0d33\u0d4d\u200d/x", // chillu before '/'

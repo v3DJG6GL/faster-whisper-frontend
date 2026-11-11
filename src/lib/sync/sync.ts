@@ -3866,7 +3866,7 @@ const HALF_FORM_VIRAMA = /^[\u094D\u09CD\u0ACD\u0D4D]$/u;
 /** The consonants of those four scripts (with their nukta forms): a half form, khanda ta or chillu
  *  is a consonant's, so a ZWJ after a virama on anything else (a vowel, a Latin letter, a second
  *  virama, nothing) draws as nothing. */
-const HALF_FORM_CONSONANT = /^[\u0915-\u0939\u0958-\u095F\u0978-\u097F\u0995-\u09B9\u09DC-\u09DF\u09F0\u09F1\u0A95-\u0AB9\u0D15-\u0D3A]$/u;
+const HALF_FORM_CONSONANT = /^[\u0915-\u0939\u0958-\u095F\u0978-\u097F\u0995-\u09B9\u09DC-\u09DF\u09F0\u09F1\u0A95-\u0AB9\u0AF9\u0D15-\u0D3A]$/u;
 const NUKTA = /^[\u093C\u09BC\u0ABC]$/u;
 /** Whether the ZWJ at `i` follows a consonant's half-form virama (`क्\u{200D}`, `क़्\u{200D}`). */
 const afterHalfForm = (cps: string[], i: number): boolean => {
