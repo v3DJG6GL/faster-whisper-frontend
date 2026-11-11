@@ -886,9 +886,11 @@ export default function Settings() {
                   </div>
                 </>
               )}
+              {/* Wraps (`break-all`), never cut by CSS: a synced folder could hide where it really
+                  points behind a familiar start. The capped text already keeps both ends. */}
               <div
                 title={recDirDisplay === null ? undefined : folderPathText(recDirDisplay, FOLDER_DETAIL_MAX)}
-                className="mt-3 truncate rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
+                className="mt-3 break-all rounded-lg border border-line bg-surface-2 px-3 py-2 font-mono text-[11.5px] text-dim"
               >
                 {recDirDisplay === null ? "resolving…" : folderPathText(recDirDisplay, 200)}
               </div>
