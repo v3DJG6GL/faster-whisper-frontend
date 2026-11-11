@@ -3658,7 +3658,9 @@ function withHeldKeyRows(
         !keyless.has(c.id ?? "") &&
         !(apiKeysGate && inboundSecret(secrets, c.id ?? "") !== undefined),
     )
-    .map((c) => ({ kind: "api-key", id: c.id, backend: c.backend, detail: HELD_KEY_DETAIL }));
+    // The paired server's `url` too: the row names where the held key would go, so it never
+    // depends on the new-backend row surviving the dialog's row cap.
+    .map((c) => ({ kind: "api-key", id: c.id, backend: c.backend, detail: HELD_KEY_DETAIL, url: c.url }));
   return extra.length > 0 ? [...rows, ...extra] : rows;
 }
 

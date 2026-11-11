@@ -80,6 +80,10 @@ describe("a peer re-adding a backend id whose key this device still holds", () =
       ["new-backend", "b9", ""],
       ["api-key", "b9", HELD],
     ]);
+    // The held key's row names the server it would go to, as the new-backend row does.
+    const held = getPendingReview()?.changes.find((c) => c.kind === "api-key");
+    expect(held?.url).toBe(getPendingReview()?.changes.find((c) => c.kind === "new-backend")?.url);
+    expect(held?.url).toContain("evil.example");
     await approvePendingReview();
     expect(getPendingReview()).toBeNull();
     expect(useApp.getState().backends.map((b) => [b.id, b.serverUrl])).toEqual([

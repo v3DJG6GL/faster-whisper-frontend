@@ -872,8 +872,9 @@ function SecurityReviewDialog() {
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const { shown, hidden } = reviewRows(pending.changes);
-  // Only a new server or a moved address carries a `url`: a retention, history or key row
-  // sends nothing anywhere new, so the footer must not warn about "the new address" for it.
+  // Only a new server, a moved address or a held key's row (the new server it would go to) carries
+  // a `url`: a retention, history or changed-key row sends nothing anywhere new, so the footer
+  // must not warn about "the new address" for it.
   const repoints = pending.changes.some((c) => !!c.url);
   return (
     <Modal onClose={busy ? () => {} : rejectPendingReview}>
@@ -908,8 +909,9 @@ function SecurityReviewDialog() {
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim" title={details.get(c)?.title}>
-                {/* `safeIdentityText`: an `api-key` row has no `url`, so this NAME is its only
-                    identity while it decides whether a plaintext key reaches the OS keyring — and
+                {/* `safeIdentityText`: a changed-key row has no `url` (a held key's row shows its
+                    new server's), so this NAME is its only identity while it decides whether a
+                    plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
                     a padded suffix. `consentDetailText`: a typed-text or folder row shows the whole value
                     (`break-all` wraps a long path), resolved of `.`/`..` (the raw path is the
