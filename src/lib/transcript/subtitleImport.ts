@@ -544,6 +544,10 @@ function parseLrc(body: string): ImportedText {
   const tagRe = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
   /** Text-less timestamp lines: LRC's end-of-line marks (an instrumental break). */
   const stops: number[] = [];
+  // Characters the chorus copies below may add: a picked file's line under a million stamps
+  // would otherwise copy its text into a million segments (TBs for every consumer). Real
+  // chorus lines (a few stamps on a short line) never come near 16x the file's size.
+  let budget = 16 * body.length + 1_000_000;
   for (const line of body.split(/\r?\n/)) {
     const trimmed = line.trim();
     // LRC's most common compression repeats a chorus line under several leading stamps
@@ -577,7 +581,12 @@ function parseLrc(body: string): ImportedText {
         unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false))) ? "" : " "),
     );
     if (text) {
-      for (const start of starts) segments.push({ start, text, speaker });
+      // The first stamp always lands; extra copies stop once the file is over budget.
+      segments.push({ start: starts[0], text, speaker });
+      for (let i = 1; i < starts.length && budget >= text.length; i++) {
+        budget -= text.length;
+        segments.push({ start: starts[i], text, speaker });
+      }
     } else for (const start of starts) stops.push(start);
   }
   // Multi-tag lines scatter segments out of source order — sort by time.

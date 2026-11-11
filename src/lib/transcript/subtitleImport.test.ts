@@ -94,6 +94,19 @@ describe("round-trips against generateExport", () => {
     expect(back.segments[0].text).toBe("Hello there.");
     expect(back.segments[0].end).toBeCloseTo(2.1, 2); // next line's start
   });
+  it("lrc: a chorus line keeps a segment per stamp", () => {
+    const back = parseImportedText("lrc", "[00:45.00][00:12.00]Chorus\n[00:20.00]Verse\n");
+    expect(back.segments.map((x) => [x.start, x.text])).toEqual([[12, "Chorus"], [20, "Verse"], [45, "Chorus"]]);
+  });
+  it("lrc: a line under a huge stamp run stops copying its text once over budget", () => {
+    // 200k stamps (1 MB) on a 1 MB line: unbounded, 200k segments x 1 MB of text.
+    const text = "x".repeat(1_000_000);
+    const back = parseImportedText("lrc", "[0:0]".repeat(200_000) + text + "\n[9:0]tail\n");
+    const copies = back.segments.filter((x) => x.text === text).length;
+    // Budget 16 x 2 MB + 1M chars: the first stamp plus 33 copies.
+    expect(copies).toBe(34);
+    expect(back.segments[back.segments.length - 1]).toMatchObject({ start: 540, text: "tail" });
+  });
   it("lrc: CJK word tags reduce to text without spaces the export never wrote", () => {
     const ja = wordLine("今日は晴れ", ["今日", "は", "晴れ"], "ja");
     const back = parseImportedText("lrc", generateExport(ja, { format: "lrc", wordTimestamps: true }));
