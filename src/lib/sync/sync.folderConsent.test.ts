@@ -295,6 +295,11 @@ describe("securityChanges: folder moves", () => {
     expect(row("/home/u/\u0915\u094d\u200c-2025")).toBe("/home/u/\u0915\u094d\\u{200C}-2025");
     expect(row("/home/u/\u0b95\u0bcd\u200d-2025")).toBe("/home/u/\u0b95\u0bcd\\u{200D}-2025");
     expect(row("/home/u/\u0d9a\u0dca\u200d-x")).toBe("/home/u/\u0d9a\u0dca\\u{200D}-x");
+    // A half form is a consonant's: after a virama on anything else the ZWJ draws as nothing.
+    expect(row("/home/u/\u094d\u200d-x")).toBe("/home/u/\u094d\\u{200D}-x");
+    expect(row("/home/u/x\u094d\u200d-1")).toBe("/home/u/x\u094d\\u{200D}-1");
+    expect(row("/home/u/\u0905\u094d\u200d-1")).toBe("/home/u/\u0905\u094d\\u{200D}-1");
+    expect(row("/home/u/\u0915\u094d\u094d\u200d-1")).toBe("/home/u/\u0915\u094d\u094d\\u{200D}-1");
     // Nor does a half-form ZWJ carry another hidden code point.
     expect(row("/home/u/\u0d28\u0d4d\u200d\u200dx")).toBe("/home/u/\u0d28\u0d4d\\u{200D}\\u{200D}x");
     expect(row("/home/u/\u0928\u094d\u200d\ufe0fx")).toBe("/home/u/\u0928\u094d\\u{200D}\\u{FE0F}x");
@@ -323,6 +328,8 @@ describe("securityChanges: folder moves", () => {
       "/home/u/\u09a4\u09cd\u200d2025", // Bengali khanda ta before a digit
       "/home/u/\u0915\u094d\u200dx", // Devanagari half ka before Latin
       "/home/u/\u0a95\u0acd\u200d-1", // Gujarati half ka before '-'
+      "/home/u/\u0915\u093c\u094d\u200dx", // half qa (ka + nukta) before Latin
+      "/home/u/\u0930\u094d\u200d\u092f", // Marathi eyelash ra
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d", // trailing chillu
       "/home/u/\u0d2a\u0d3e\u0d1f\u0d4d\u0d1f\u0d41\u0d15\u0d33\u0d4d\u200d/x", // chillu before '/'
       "/home/u/\u0d05\u0d35\u0d28\u0d4d\u200d x", // chillu before ' '

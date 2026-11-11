@@ -3863,6 +3863,17 @@ const JOINING_LETTER =
  *  non-letter, and a ZWNJ after any virama asks for the explicit virama a non-letter already
  *  gets: both draw as nothing there. */
 const HALF_FORM_VIRAMA = /^[\u094D\u09CD\u0ACD\u0D4D]$/u;
+/** The consonants of those four scripts (with their nukta forms): a half form, khanda ta or chillu
+ *  is a consonant's, so a ZWJ after a virama on anything else (a vowel, a Latin letter, a second
+ *  virama, nothing) draws as nothing. */
+const HALF_FORM_CONSONANT = /^[\u0915-\u0939\u0958-\u095F\u0978-\u097F\u0995-\u09B9\u09DC-\u09DF\u09F0\u09F1\u0A95-\u0AB9\u0D15-\u0D3A]$/u;
+const NUKTA = /^[\u093C\u09BC\u0ABC]$/u;
+/** Whether the ZWJ at `i` follows a consonant's half-form virama (`क्\u{200D}`, `क़्\u{200D}`). */
+const afterHalfForm = (cps: string[], i: number): boolean => {
+  if (!HALF_FORM_VIRAMA.test(cps[i - 1] ?? "")) return false;
+  const c = NUKTA.test(cps[i - 2] ?? "") ? cps[i - 3] : cps[i - 2];
+  return HALF_FORM_CONSONANT.test(c ?? "");
+};
 
 /** Code points that draw as a lone `.` yet have no decomposition to one, so NFKD keeps them:
  *  Lisu tone mya ti, the Arabic-Indic and Persian zeros, the Syriac supralinear and sublinear
@@ -3987,11 +3998,11 @@ function escapeHiddenPathChars(p: string): string {
       // A kept joiner must shape with what follows too: an emoji's ZWJ only before another emoji,
       // a script's ZWNJ/ZWJ only before a letter or mark of a script it shapes. Before anything
       // else it renders as nothing, so a peer's `x\u{200D}y` folder would read as `xy`. Except a
-      // ZWJ right after a half-form virama: there it shapes what PRECEDES it (`അവന്\u{200D}`, a
+      // ZWJ right after a consonant's half-form virama: there it shapes what PRECEDES it (`അവന്\u{200D}`, a
       // chillu, word-final by nature), so a separator, a space or the path end may follow too;
       // only another hidden character may not (it would ride on the visible glyph change).
       hide =
-        code === 0x200d && base === "script" && HALF_FORM_VIRAMA.test(cps[i - 1] ?? "")
+        code === 0x200d && base === "script" && afterHalfForm(cps, i)
           ? hiddenNext(cps[i + 1])
           : !(code === 0x200d ? base !== null : base === "script") ||
             !visible(cps[i + 1]) ||
