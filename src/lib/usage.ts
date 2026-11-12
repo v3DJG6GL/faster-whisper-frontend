@@ -294,11 +294,16 @@ async function refreshOne(backend: Backend): Promise<void> {
   // key presence. A fetch sent with the old key must not re-install the old caller's numbers —
   // which keep-last-known below would then hold for good if the new key's fetch keeps missing.
   if (credentialGeneration(backend.id) !== cred) return;
-  // `series` is server-supplied (Rust caps it at 3,700). We asked for TREND_DAYS buckets, so
-  // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
-  // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.
+  // `series` and `calendar` are server-supplied (Rust caps each at 3,700, the page's "All"
+  // window). We asked for TREND_DAYS buckets, so anything past that is not data we can use — but
+  // it WOULD be stored and then re-serialized by setUsage's two stringify passes on the main
+  // thread, every 30s, for every backend, forever. Only this fixed document is cut: the page's
+  // own (refreshView / refreshYear) keep the window they asked for.
   if (stats?.series && stats.series.length > TREND_DAYS) {
     stats.series = stats.series.slice(-TREND_DAYS);
+  }
+  if (stats?.calendar && stats.calendar.length > TREND_DAYS) {
+    stats.calendar = stats.calendar.slice(-TREND_DAYS);
   }
   // Keep the last-known value on a transient miss — only commit null the first time.
   if (stats === null && hasOwn(usage, backend.id)) return;

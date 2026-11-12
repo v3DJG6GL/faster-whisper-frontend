@@ -789,6 +789,34 @@ describe("usage poll gates", () => {
     }
   });
 
+  // The fixed per-backend document is stored whole and compared by stringify on every poll, and
+  // the server sizes its arrays: Rust lets each run to 3,700 entries, the page's "All" window.
+  it("keeps only the window it asked for of an oversized trend document, and the page's documents whole", async () => {
+    await tick(30_000); // settle any pass the previous case left pending
+    const ok = getUsageStats.getMockImplementation()!;
+    const days = (n: number) => Array.from({ length: n }, (_, i) => ({ day: 20_000 + i }));
+    getUsageStats.mockImplementation(async () => ({ today: {}, total: {}, series: days(3_700), calendar: days(3_700) }) as never);
+    const close = openStatisticsPage();
+    try {
+      await settle();
+      await tick(30_000);
+      const fixed = useApp.getState().usage.b1!;
+      for (const kept of [fixed.series, fixed.calendar]) {
+        expect(kept).toHaveLength(TREND_DAYS);
+        // The newest days, as the window is counted back from today.
+        expect(kept[0].day).toBe(20_000 + 3_700 - TREND_DAYS);
+        expect(kept[TREND_DAYS - 1].day).toBe(20_000 + 3_699);
+      }
+      for (const page of [useApp.getState().usageView, useApp.getState().usageYear]) {
+        expect(page!.stats!.series).toHaveLength(3_700);
+        expect(page!.stats!.calendar).toHaveLength(3_700);
+      }
+    } finally {
+      leavePage(ok, close);
+      await settle();
+    }
+  });
+
   it("a backend set to Standard clears its kept numbers once, instead of freezing them", async () => {
     await tick(30_000); // settle any pass the previous case left pending
     const doc = { today: { words: 12 }, total: {}, series: [] } as never;
