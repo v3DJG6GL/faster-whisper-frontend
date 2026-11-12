@@ -912,15 +912,16 @@ mod retention_tests {
     #[test]
     fn what_the_recording_writers_save_is_a_dictation_file() {
         let dir = scratch_dir("save-real-names");
-        let save = || save_recording(&dir, &[1u8; 64], 16_000).unwrap();
-        let mut saved = vec![save(), save()];
-        // Two saves in one second share the stamp, so the second takes the `-2` counter. When
-        // the clock rolled between them, a third shares the second one's stamp instead.
-        let counted = |p: &PathBuf| p.to_string_lossy().ends_with("-2.wav");
-        if !counted(&saved[1]) {
-            saved.push(save());
-        }
-        assert!(saved.last().is_some_and(counted), "{saved:?}");
+        // One real save pins the stamp format. The counter half takes the clock out: saving
+        // again under the first one's own stem finds it taken, whatever second it is by then.
+        let first = save_recording(&dir, &[1u8; 64], 16_000).unwrap();
+        let stem = first.file_stem().unwrap().to_string_lossy().into_owned();
+        let second = save_recording_as(&dir, &stem, &[1u8; 64], 16_000).unwrap();
+        assert_eq!(
+            second.file_name().unwrap().to_string_lossy(),
+            format!("{stem}-2.wav")
+        );
+        let saved = [first, second];
         for wav in &saved {
             assert!(save_transcript_sidecar(wav, "some words"), "{wav:?}");
         }
