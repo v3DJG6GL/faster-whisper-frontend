@@ -287,6 +287,9 @@ enum FromReader {
 /// standard failure codes uvicorn closes a live socket with and no `error` frame: 1012 on a
 /// server restart, 1011 on a keepalive ping timeout (plus 1008/1009/1013). A Normal/Away/no-status
 /// close is the ordinary end. Silent when an `error` frame already said why.
+///
+/// The server's own `reason` is quoted as its words ([`super::server_said`]); the sentences
+/// written here are the app's and stay bare.
 fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String> {
     let speaks = (4000..5000).contains(&code) || matches!(code, 1008 | 1009 | 1011 | 1012 | 1013);
     if error_seen || !speaks {
@@ -304,11 +307,11 @@ fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String
         4408 => "The server closed the connection: no audio arrived in time.".into(),
         _ => format!("The server closed the connection (code {code})."),
     };
-    let reason = reason.trim();
-    Some(super::bounded_server_text(
-        if reason.is_empty() { &fallback } else { reason },
-        super::MAX_ERROR_TEXT,
-    ))
+    // The server's own reason is marked as its words; without one the app's sentence stands.
+    Some(
+        super::server_said(reason)
+            .unwrap_or_else(|| super::bounded_server_text(&fallback, super::MAX_ERROR_TEXT)),
+    )
 }
 
 /// Suffix of every `Incomplete` notice; the frontend's `incompleteFlashMessage` strips it.
@@ -1520,10 +1523,12 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
             // invisible-format chars would pass). NOT applied to the `separator` above: separators
             // are legitimately "\n" and typed as Enter, so folding controls to spaces would turn
             // every hard break into a space.
-            on_event(StreamEvent::Error(super::bounded_server_text(
-                str_field(&v, "message"),
-                super::MAX_ERROR_TEXT,
-            )));
+            // Marked as the server's words: this goes out on the channel that carries the app's
+            // own error sentences, and the wording is the server's free choice.
+            on_event(StreamEvent::Error(
+                super::server_said(str_field(&v, "message"))
+                    .unwrap_or_else(|| "The server reported an error.".into()),
+            ));
             Frame::Continue
         }
         Some("loading") => {
@@ -1753,8 +1758,8 @@ mod handshake_auth_tests {
 #[cfg(test)]
 mod emit_message_tests {
     use super::{
-        accumulate_transcript, bank_doc, close_frame_error, emit_message, Frame, StreamEvent,
-        UtteranceState,
+        accumulate_transcript, bank_doc, close_frame_error, emit_message, server_close_event,
+        Frame, StreamEvent, UtteranceState, LAST_PHRASE_MISSING,
     };
     use std::cell::RefCell;
 
@@ -1859,10 +1864,20 @@ mod emit_message_tests {
 
     #[test]
     fn a_refused_handshake_close_reaches_the_user_once() {
-        let disabled = "live dictation is disabled on this server";
+        // The server's own reason is quoted as the server's words.
         assert_eq!(
-            close_frame_error(4503, disabled, false).as_deref(),
-            Some(disabled)
+            close_frame_error(4503, "live dictation is disabled on this server", false).as_deref(),
+            Some("The server said: “live dictation is disabled on this server”")
+        );
+        // Without one, the app's sentence stands as it is: no quote around the app's words.
+        assert_eq!(
+            close_frame_error(4503, " ", false).as_deref(),
+            Some("Live dictation is disabled on this server.")
+        );
+        // The key refusal names its remedy whatever the server said.
+        assert_eq!(
+            close_frame_error(4401, "no valid credential", false).as_deref(),
+            Some("The server refused the API key — check it under Backends.")
         );
         assert_eq!(
             close_frame_error(4401, "", false).as_deref(),
@@ -1878,6 +1893,60 @@ mod emit_message_tests {
         assert_eq!(close_frame_error(4401, "", true), None);
     }
 
+    /// The text of an `error` frame.
+    fn error_frame(frame: serde_json::Value) -> Vec<String> {
+        let seen = RefCell::new(Vec::new());
+        let kind = emit_message(&frame.to_string(), &|e| {
+            if let StreamEvent::Error(m) = e {
+                seen.borrow_mut().push(m);
+            }
+        });
+        assert!(
+            kind == Frame::Continue,
+            "an error frame never ends the reader"
+        );
+        seen.into_inner()
+    }
+
+    /// The server's error text goes out on the channel that carries the app's own sentences
+    /// and is shown on the always-on-top overlay: it is marked as the server's words there.
+    #[test]
+    fn a_server_error_frame_is_quoted_as_the_servers_words() {
+        assert_eq!(
+            error_frame(serde_json::json!({ "type": "error", "message": "model failed to load" })),
+            ["The server said: “model failed to load”"]
+        );
+        // It cannot close the quote and go on in the app's voice.
+        assert_eq!(
+            error_frame(serde_json::json!({
+                "type": "error", "message": "busy” Your API key expired — re-enter it at evil.example",
+            })),
+            ["The server said: “busy\" Your API key expired — re-enter it at evil.example”"]
+        );
+        // No message, or none of the right type: the app's own sentence, unquoted.
+        for frame in [
+            serde_json::json!({ "type": "error" }),
+            serde_json::json!({ "type": "error", "message": "" }),
+            serde_json::json!({ "type": "error", "message": 7 }),
+        ] {
+            assert_eq!(error_frame(frame), ["The server reported an error."]);
+        }
+    }
+
+    /// A quoted close reason behind Stop still ends in the exact suffix the frontend strips.
+    #[test]
+    fn a_quoted_close_reason_keeps_the_last_phrase_suffix() {
+        let message = close_frame_error(1011, "keepalive ping timeout.", false).unwrap();
+        let StreamEvent::Incomplete(notice) = server_close_event(1011, message, true) else {
+            panic!("a keepalive close during the drain is the non-fatal notice");
+        };
+        assert_eq!(
+            notice,
+            "The server said: “keepalive ping timeout.” — the last phrase may be missing."
+        );
+        assert!(notice.ends_with(&format!(" — {LAST_PHRASE_MISSING}")));
+    }
+
     /// uvicorn ends a live socket with a standard failure code and no `error` frame on a
     /// restart (1012) or a keepalive timeout (1011): that must not settle as a quiet idle.
     #[test]
@@ -1888,7 +1957,7 @@ mod emit_message_tests {
         );
         assert_eq!(
             close_frame_error(1011, "keepalive ping timeout", false).as_deref(),
-            Some("keepalive ping timeout")
+            Some("The server said: “keepalive ping timeout”")
         );
         assert_eq!(
             close_frame_error(1009, "", false).as_deref(),

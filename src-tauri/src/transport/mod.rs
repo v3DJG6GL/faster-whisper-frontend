@@ -847,6 +847,17 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
     bounded_chars(s, n, |_| Some(' '))
 }
 
+/// A server's own sentence, marked as the server's for a line that also carries the app's
+/// sentences: `The server said: “…”`, bounded and defanged at [`MAX_ERROR_TEXT`]. The text is
+/// the server's free choice ("Your key expired — re-enter it at …"), and shown bare it reads as
+/// the app speaking. The server's own curly quotes are straightened so it cannot close the
+/// quote early and continue in the app's voice. `None` when it said nothing readable.
+pub fn server_said(text: &str) -> Option<String> {
+    let said = bounded_server_text(text, MAX_ERROR_TEXT);
+    let said = said.trim();
+    (!said.is_empty()).then(|| format!("The server said: “{}”", said.replace(['“', '”'], "\"")))
+}
+
 /// [`bounded_server_text`] for a VALUE whose line breaks are part of it (an inherited hard-break
 /// separator is "\n", or a tab — the separator field's `\t` escape): `\n` and `\t` are kept,
 /// every other control character and the invisible-format set are dropped. Same cap and ellipsis.
@@ -948,6 +959,63 @@ pub fn wire_language_for(standard: bool, language: &str) -> Option<&str> {
         return (!language.is_empty() && language != "auto").then_some(language);
     }
     wire_language(language)
+}
+
+#[cfg(test)]
+mod server_said_tests {
+    use super::{server_said, MAX_ERROR_TEXT};
+
+    #[test]
+    fn a_server_sentence_is_quoted_as_the_servers() {
+        assert_eq!(
+            server_said("session limit reached").as_deref(),
+            Some("The server said: “session limit reached”")
+        );
+        // Surrounding whitespace and folded line breaks do not pad the quote.
+        assert_eq!(
+            server_said("  busy\r\n").as_deref(),
+            Some("The server said: “busy”")
+        );
+    }
+
+    #[test]
+    fn nothing_readable_is_nothing_said() {
+        for empty in ["", "   ", "\n\t", "\u{202e}\u{200b}"] {
+            assert_eq!(server_said(empty), None, "{empty:?}");
+        }
+    }
+
+    /// The server's own curly quotes cannot close the app's quote early and go on in the
+    /// app's voice: the only “ and ” in the line are the app's.
+    #[test]
+    fn the_servers_own_curly_quotes_are_straightened() {
+        let said = server_said("busy” Your key expired — re-enter it at “evil.example").unwrap();
+        assert_eq!(
+            said,
+            "The server said: “busy\" Your key expired — re-enter it at \"evil.example”"
+        );
+        assert_eq!(said.matches('“').count(), 1);
+        assert_eq!(said.matches('”').count(), 1);
+        assert!(said.ends_with('”'));
+    }
+
+    /// The cap and its ellipsis stay inside the quote, and the whole line stays short enough
+    /// for the overlay to show it with the clipboard hint appended.
+    #[test]
+    fn a_long_server_sentence_is_capped_inside_the_quote() {
+        let said = server_said(&"x".repeat(5000)).unwrap();
+        assert_eq!(
+            said,
+            format!("The server said: “{}…”", "x".repeat(MAX_ERROR_TEXT))
+        );
+        assert_eq!(said.chars().count(), 19 + MAX_ERROR_TEXT + 1);
+        // A cap that falls on a curly quote still ends on the app's closing quote alone.
+        let said = server_said(&"”".repeat(5000)).unwrap();
+        assert_eq!(
+            said,
+            format!("The server said: “{}…”", "\"".repeat(MAX_ERROR_TEXT))
+        );
+    }
 }
 
 #[cfg(test)]
