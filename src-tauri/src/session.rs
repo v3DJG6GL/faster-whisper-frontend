@@ -236,6 +236,110 @@ fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str
     }
 }
 
+/// Rate limit for the info lines a session logs once per SERVER frame (`final`, `boundary`).
+/// The server decides how many of those frames arrive and the session log file has no size
+/// cap, so a server flooding them would grow it for as long as the session or its drain lasts.
+/// A real session sends them at phrase rate, far below the limit, and logs every one.
+///
+/// Up to [`Self::MAX_LINES`] lines pass per [`Self::WINDOW`]; the rest are counted, and the
+/// count is reported once — with the first line of the next window, or at close. Windows run
+/// on the session's own clock: nothing here reads a server value.
+struct FrameLineLimiter {
+    /// When the current window began (at the first line after the previous one ran out).
+    window_start: std::time::Instant,
+    /// Lines passed in the current window.
+    written: u32,
+    /// Lines dropped since the last report.
+    suppressed: u64,
+}
+
+/// [`FrameLineLimiter::admit`]'s answer for one line.
+#[derive(Debug, PartialEq)]
+struct FrameLine {
+    /// Write this line.
+    log: bool,
+    /// Lines dropped before it that are now to be reported, in one line of their own.
+    suppressed: Option<u64>,
+}
+
+impl FrameLineLimiter {
+    const MAX_LINES: u32 = 20;
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            window_start: now,
+            written: 0,
+            suppressed: 0,
+        }
+    }
+
+    /// Account for one line at `now`.
+    fn admit(&mut self, now: std::time::Instant) -> FrameLine {
+        let mut suppressed = None;
+        if now.saturating_duration_since(self.window_start) >= Self::WINDOW {
+            self.window_start = now;
+            self.written = 0;
+            suppressed = self.take_suppressed();
+        }
+        let log = self.written < Self::MAX_LINES;
+        if log {
+            self.written += 1;
+        } else {
+            self.suppressed = self.suppressed.saturating_add(1);
+        }
+        FrameLine { log, suppressed }
+    }
+
+    /// The dropped lines not yet reported, retired (None when there are none).
+    fn take_suppressed(&mut self) -> Option<u64> {
+        Some(std::mem::take(&mut self.suppressed)).filter(|k| *k > 0)
+    }
+}
+
+/// One session's [`FrameLineLimiter`], shared by the `final` and `boundary` arms of its event
+/// closure (which is `Fn`, hence the lock).
+struct FrameLines {
+    epoch: u64,
+    limiter: Mutex<FrameLineLimiter>,
+}
+
+impl FrameLines {
+    fn new(epoch: u64) -> Self {
+        Self {
+            epoch,
+            limiter: Mutex::new(FrameLineLimiter::new(std::time::Instant::now())),
+        }
+    }
+
+    /// Whether the caller's per-frame line is written; reports earlier dropped lines first.
+    fn admit(&self) -> bool {
+        let line = self.lock().admit(std::time::Instant::now());
+        self.report(line.suppressed);
+        line.log
+    }
+
+    /// Report the lines dropped since the last report: a flood that ends with the session
+    /// has no next window to report them in.
+    fn close(&self) {
+        let suppressed = self.lock().take_suppressed();
+        self.report(suppressed);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, FrameLineLimiter> {
+        self.limiter.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn report(&self, suppressed: Option<u64>) {
+        if let Some(k) = suppressed {
+            tracing::warn!(
+                "[stream] session {} {k} further final/boundary lines suppressed (frame flood)",
+                self.epoch
+            );
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct StreamState(pub Mutex<Option<StreamSession>>);
 
@@ -466,6 +570,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     // This closure runs on the WS task, which `finish()` DETACHES to drain in the background —
     // so it can fire after the session is gone. Gate every emit on `epoch` so a superseded/
     // cancelled session's late drain can't bleed into the next one (see ACTIVE_EPOCH).
+    let frame_lines = FrameLines::new(epoch);
     let on_event = move |ev: StreamEvent| match ev {
         StreamEvent::Ready { overrides_ignored } => {
             emit_if_active(&appc, epoch, "stream://status", "ready");
@@ -492,12 +597,14 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             last,
             utterance,
         } => {
-            tracing::info!(
-                "[stream] session {epoch} final committed={} tail={} last={}",
-                committed.len(),
-                tail.len(),
-                last
-            );
+            if frame_lines.admit() {
+                tracing::info!(
+                    "[stream] session {epoch} final committed={} tail={} last={}",
+                    committed.len(),
+                    tail.len(),
+                    last
+                );
+            }
             emit_if_active(
                 &appc,
                 epoch,
@@ -549,7 +656,9 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             );
         }
         StreamEvent::Boundary { separator, .. } => {
-            tracing::info!("[stream] session {epoch} boundary (hard break)");
+            if frame_lines.admit() {
+                tracing::info!("[stream] session {epoch} boundary (hard break)");
+            }
             emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
         StreamEvent::Incomplete(m) => {
@@ -570,6 +679,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             emit_if_active(&appc, epoch, "stream://error", m);
         }
         StreamEvent::Closed => {
+            frame_lines.close();
             tracing::info!("[stream] session {epoch} closed");
             emit_if_active(&appc, epoch, "stream://status", "closed");
         }
@@ -1576,7 +1686,77 @@ fn run_record_capture(
 
 #[cfg(test)]
 mod tests {
-    use super::{streams_to_mute, MuteCmd, MuteSlot};
+    use super::{streams_to_mute, FrameLine, FrameLineLimiter, MuteCmd, MuteSlot};
+
+    /// What the limiter answers for `n` lines at `now`: how many it passed, and each report.
+    fn admit_n(l: &mut FrameLineLimiter, now: std::time::Instant, n: u32) -> (u32, Vec<u64>) {
+        let (mut passed, mut reports) = (0, Vec::new());
+        for _ in 0..n {
+            let FrameLine { log, suppressed } = l.admit(now);
+            passed += u32::from(log);
+            reports.extend(suppressed);
+        }
+        (passed, reports)
+    }
+
+    #[test]
+    fn frame_lines_at_a_real_rate_all_pass_and_report_nothing() {
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        // A full window's worth at once, then the same again in every later window.
+        for sec in 0..5 {
+            let now = t0 + Duration::from_secs(sec);
+            let (passed, reports) = admit_n(&mut l, now, FrameLineLimiter::MAX_LINES);
+            assert_eq!(passed, FrameLineLimiter::MAX_LINES, "second {sec}");
+            assert!(reports.is_empty(), "second {sec}");
+        }
+        assert_eq!(l.take_suppressed(), None);
+    }
+
+    #[test]
+    fn frame_lines_past_the_limit_are_counted_and_reported_once_on_the_next_window() {
+        use std::time::Duration;
+        let max = FrameLineLimiter::MAX_LINES;
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        // A flood inside one window: the first MAX pass, every later one is only counted.
+        assert_eq!(admit_n(&mut l, t0, max + 1), (max, vec![]));
+        let late = t0 + FrameLineLimiter::WINDOW - Duration::from_millis(1);
+        assert_eq!(admit_n(&mut l, late, 499), (0, vec![]));
+        // The first line of the next window passes and carries the one report.
+        let next = t0 + FrameLineLimiter::WINDOW;
+        assert_eq!(
+            l.admit(next),
+            FrameLine {
+                log: true,
+                suppressed: Some(500)
+            }
+        );
+        // The window restarted with it: MAX lines in all, and the count starts over.
+        assert_eq!(admit_n(&mut l, next, max + 2), (max - 1, vec![]));
+        let after = next + FrameLineLimiter::WINDOW;
+        assert_eq!(admit_n(&mut l, after, 2), (2, vec![3]));
+        assert_eq!(l.take_suppressed(), None);
+    }
+
+    #[test]
+    fn frame_lines_dropped_before_the_close_are_reported_at_the_close() {
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        admit_n(&mut l, t0, FrameLineLimiter::MAX_LINES + 7);
+        assert_eq!(l.take_suppressed(), Some(7));
+        // Reported once: a second close, or the next window, has nothing left to say.
+        assert_eq!(l.take_suppressed(), None);
+        let next = t0 + FrameLineLimiter::WINDOW;
+        assert_eq!(
+            l.admit(next),
+            FrameLine {
+                log: true,
+                suppressed: None
+            }
+        );
+    }
 
     #[test]
     fn a_discarded_recording_takes_its_sidecar_along() {
