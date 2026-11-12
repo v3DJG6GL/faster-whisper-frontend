@@ -6,7 +6,7 @@ import { useApp } from "../store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
-  isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs, liveActivation,
+  isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs, liveActivation, dropPreviewTicks,
 } from "./streaming";
 import type { TargetPick } from "./streaming";
 import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
@@ -435,7 +435,9 @@ export function showCorrectionCopiedNote(): void {
   // A repeat inside the hold: drop the note first so the chip sees a fresh edge.
   if (s.sessionNote === "correction-copied") s.setDictation({ sessionNote: null });
   // translateFailure would turn the clipboard pulse into the "untranslated" one, and the last
-  // session's words would hold the label slot once the note ends.
+  // session's words would hold the label slot once the note ends — also when they are still on
+  // their way: a session that settled a moment ago can have its closing final's paint pending.
+  dropPreviewTicks();
   s.setDictation({ sessionOutcome: "clipboard", sessionNote: "correction-copied", translateFailure: null, partial: "" });
   // No session will reset it soon, and an unchanged note sends the chip no edge, so the NEXT
   // divert would show nothing: drop it once the chip and its window (hold + 200 ms) are done.

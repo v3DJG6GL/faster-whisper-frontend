@@ -107,6 +107,13 @@ function clearWorkTimer(): void {
 function publishServerWork(v: ServerWork): void {
   if (useApp.getState().serverWork !== v) useApp.getState().setDictation({ serverWork: v });
 }
+// Floor between two publishes out of syncServerWork. `stream://utterance` frames come at the
+// untrusted server's rate, and every flip of `serverWork` re-broadcasts the chip cross-window and
+// rewrites the tray tooltip over the IPC (chipController.ts). A real session's edges are far
+// apart (an `open` and its `decoding` by the server's commit silence, ~1.2 s), so they publish
+// on the leading edge as before; only a flood waits, and then settles on the latest state.
+const WORK_MIN_MS = 33;
+let lastWorkPublishAt = 0;
 /** Publish what the server's last statement is worth NOW, and wake up when that changes by the
  *  mere passage of time (an `open` going stale). Never clears "loading": that one is owned by
  *  the `loading`/`ready` pair, and a speech edge during a cold load lands here with nothing held. */
@@ -114,7 +121,20 @@ function syncServerWork(): void {
   clearWorkTimer();
   const now = performance.now();
   const v = pendingDisplay(pending, now);
-  if (v !== null || useApp.getState().serverWork !== "loading") publishServerWork(v);
+  const shown = useApp.getState().serverWork;
+  if (v !== shown && (v !== null || shown !== "loading")) {
+    const wait = WORK_MIN_MS - (now - lastWorkPublishAt);
+    if (wait > 0) {
+      // Too soon after the last one: re-ask when the floor has passed rather than carry `v`, so
+      // the "loading" rule and whatever arrived meanwhile are judged then. The one timer is
+      // enough — this call re-arms the staleness wake-up itself — and every reset path already
+      // clears it (clearWorkTimer).
+      workTimer = setTimeout(syncServerWork, Math.ceil(wait));
+      return;
+    }
+    lastWorkPublishAt = now;
+    publishServerWork(v);
+  }
   const next = msUntilStale(pending, now);
   if (next !== null) workTimer = setTimeout(syncServerWork, next + 5);
 }
@@ -195,16 +215,65 @@ const PARTIAL_MIN_MS = 33;
 let lastPartialAt = 0;
 let partialTimer: ReturnType<typeof setTimeout> | undefined;
 let latestPartial: string | null = null;
+// `stream://final` paints through a pacer of its OWN (showFinalPreview): the untrusted server
+// picks the final rate just as it picks the partial rate, and each changed `partial` costs the
+// same cross-window chip emit. Not the partial pacer's clock: a server sends its last partial
+// milliseconds before the final, so a final would land on that pacer's trailing tick — late, and
+// dropped once the session settles. `finalOwed` is the document a final has committed but not
+// yet painted; whatever paints a preview that includes it clears it.
+let lastFinalAt = 0;
+let finalTimer: ReturnType<typeof setTimeout> | undefined;
+let finalOwed = false;
 function resetPartialPreview(): void {
   if (partialTimer) {
     clearTimeout(partialTimer);
     partialTimer = undefined;
   }
+  if (finalTimer) {
+    clearTimeout(finalTimer);
+    finalTimer = undefined;
+  }
+  finalOwed = false;
   latestPartial = null;
+}
+function paintFinal(): void {
+  lastFinalAt = performance.now();
+  finalOwed = false;
+  useApp.getState().setDictation({ partial: committedDoc });
+}
+/** Show the document a `final` just folded into `committedDoc`. Leading edge when the last
+ *  final was painted at least PARTIAL_MIN_MS ago — every final of a real session bar one that
+ *  follows another back to back (an utterance final and the closing one) — else ONE trailing
+ *  tick, which re-reads `committedDoc` so it paints the newest document. That tick is NOT gated
+ *  on `inSession()`: the closing final's text must still land after the session settled. The
+ *  writers that must not be repainted over (boundary, flashError, a start, a cancel, the
+ *  correction-copied note) drop it through resetPartialPreview. */
+function showFinalPreview(): void {
+  // First, and before arming below: it drops any pending partial tick, which holds the PRE-final
+  // text and would otherwise land up to PARTIAL_MIN_MS later and regress this publish — and the
+  // previous final's own tick.
+  resetPartialPreview();
+  const wait = PARTIAL_MIN_MS - (performance.now() - lastFinalAt);
+  if (wait <= 0) {
+    paintFinal();
+    return;
+  }
+  finalOwed = true;
+  finalTimer = setTimeout(() => {
+    finalTimer = undefined;
+    paintFinal();
+  }, Math.ceil(wait));
+}
+/** For a writer of the store's `partial` outside this module: drop every pending preview tick,
+ *  so none repaints over what it is about to write. */
+export function dropPreviewTicks(): void {
+  resetPartialPreview();
 }
 function flushPartial(): void {
   if (latestPartial === null) return;
   lastPartialAt = performance.now();
+  // `latestPartial` opens with the whole `committedDoc`, so this paints an owed final too.
+  finalOwed = false;
   // Status is re-read HERE, not carried from the frame — same rule the level ticks follow. A
   // trailing tick fires up to PARTIAL_MIN_MS after its frame, and asserting the frame-time
   // "listening" then would resurrect the status the handler's own guard exists to protect.
@@ -2354,6 +2423,13 @@ async function ensureListeners(): Promise<void> {
     // its cancel affordance. Leading edge then a trailing tick, so the preview settles on the last
     // text. Only the preview is throttled: `bumpPhraseEnd()` below stays on every frame.
     latestPartial = committedDoc + sep + live;
+    // A final's trailing tick still pending (see showFinalPreview) would paint its document OVER
+    // this newer preview: drop it. This preview carries that document, so its own publish below
+    // pays what the tick owed (`finalOwed` stays up until it does).
+    if (finalTimer) {
+      clearTimeout(finalTimer);
+      finalTimer = undefined;
+    }
     const pWait = PARTIAL_MIN_MS - (performance.now() - lastPartialAt);
     if (pWait <= 0) {
       if (partialTimer) {
@@ -2365,8 +2441,10 @@ async function ensureListeners(): Promise<void> {
       partialTimer = setTimeout(() => {
         partialTimer = undefined;
         // Re-ask the leading edge's `inSession()` question at fire time rather than resurrecting
-        // a stale preview into an idle or errored chip.
+        // a stale preview into an idle or errored chip. A session that settled meanwhile still
+        // gets the final this partial took over from: committed text, not a preview.
         if (inSession()) flushPartial();
+        else if (finalOwed) paintFinal();
       }, pWait);
     }
     // Still speaking → keep deferring the per-phrase actions (Enter / clipboard restore / clipboard
@@ -2403,10 +2481,8 @@ async function ensureListeners(): Promise<void> {
     if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();
     // committed+tail is the whole document so far — fold it in and show it.
     committedDoc = e.payload.committed + e.payload.tail;
-    // Drop any pending partial tick first: it holds the PRE-final text and would otherwise
-    // land up to PARTIAL_MIN_MS later and regress this publish.
-    resetPartialPreview();
-    setDictation({ partial: committedDoc });
+    // Only the paint is paced; the document above and everything below run on every frame.
+    showFinalPreview();
     // The utterance this final belongs to — null for a release final (no ordinal, or the closing
     // final's phantom next ordinal, see FinalFrame), so its held-back words fold into the last
     // utterance's record instead of opening a one-word record of their own.
