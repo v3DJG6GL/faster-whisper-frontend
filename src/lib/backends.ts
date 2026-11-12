@@ -366,6 +366,58 @@ export function authorityOf(raw: string): { host: string; hasUserinfo: boolean }
   }
 }
 
+/** What stands in for an address's password where the address is shown without being asked for. */
+const PASSWORD_MASK = "•••";
+
+/** Where an address AS WRITTEN keeps its password: after the first ":" of the userinfo, up to the
+ *  LAST "@" of the authority — which starts after a lenient http(s) scheme (or at the start, for
+ *  the schemeless `host:8000` form) and ends at the first "/", "\", "?" or "#". Only a proposal:
+ *  `maskAddressPassword` has the parser confirm it. `indexOf` scans, since an address from the
+ *  sync path is uncapped. */
+function passwordSpan(text: string): [number, number] | null {
+  const start = /^\s*(?:https?:[\\/]*)?/i.exec(text)?.[0].length ?? 0;
+  let end = text.length;
+  for (const stop of ["/", "\\", "?", "#"]) {
+    const i = text.indexOf(stop, start);
+    if (i !== -1 && i < end) end = i;
+  }
+  const at = end > start ? text.lastIndexOf("@", end - 1) : -1;
+  const colon = text.indexOf(":", start);
+  return at >= start && colon !== -1 && colon + 1 < at ? [colon + 1, at] : null;
+}
+
+/** An address for a surface that prints it unasked (a security-review row): whole, but for the
+ *  PASSWORD of a login written into it (`anna:•••@host`). The scheme, the user name and
+ *  everything from the authority's last "@" on stay as written — a user name that looks like a host
+ *  is the evidence the review exists to show. Display only: never store or compare the result.
+ *
+ *  Text the app does not read as an address with a non-empty password comes back unchanged. The
+ *  span is found in the text (`passwordSpan`) and then proven: with the span swapped for a probe
+ *  the address must parse to the same URL with exactly the probe as its password, so the mask can
+ *  neither cover a character of the host or path nor leave part of the password out. A spelling
+ *  the text rule cannot place (a tab inside the scheme) is rebuilt from the parsed parts. */
+export function maskAddressPassword(address: string): string {
+  const read = (s: string): URL | null => {
+    try {
+      return new URL(typedServerUrl(s));
+    } catch {
+      return null;
+    }
+  };
+  const u = read(address);
+  if (!u?.password) return address;
+  const span = passwordSpan(address);
+  if (span) {
+    const [a, b] = span;
+    const want = new URL(u.href);
+    want.password = "x";
+    if (read(`${address.slice(0, a)}x${address.slice(b)}`)?.href === want.href) {
+      return `${address.slice(0, a)}${PASSWORD_MASK}${address.slice(b)}`;
+    }
+  }
+  return `${u.protocol}//${u.username}:${PASSWORD_MASK}@${u.host}${u.pathname}${u.search}${u.hash}`;
+}
+
 /** The disambiguating separator. Defined once so the label builder and the forgery test below can
  *  never drift apart — the whole guard rests on the two meaning the same string. */
 const SEP = " \u00b7 ";

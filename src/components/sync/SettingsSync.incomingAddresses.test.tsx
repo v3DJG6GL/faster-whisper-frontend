@@ -75,4 +75,53 @@ describe("IncomingAddresses", () => {
     const list = [...decoys(21), backend({ id: "home", name: "Home", serverUrl: "http://home.lan:8000" })];
     expect(rows(list).some((r) => r.startsWith("Home"))).toBe(false);
   });
+
+  // The list holds this device's own backends too (the unchanged rows): a hover that showed the
+  // whole address would put a login's password on screen while the row itself shows the host.
+  describe("the row's hover title", () => {
+    const titles = (list: unknown) =>
+      [...renderToStaticMarkup(<IncomingAddresses list={list} />).matchAll(/<li[^>]*?(?: title="([^"]*)")?>/g)].map(
+        (m) => m[1],
+      );
+
+    it("is the whole address when it carries no login", () => {
+      const list = [
+        backend({ id: "n1", name: "New", serverUrl: "https://new.example/v1?x=a:b@c" }),
+        backend({ id: "n2", name: "Odd", serverUrl: "http://[::1]:8000" }),
+      ];
+      expect(titles(list)).toEqual(["https://new.example/v1?x=a:b@c", "http://[::1]:8000"]);
+    });
+
+    it("is only the host when the address carries a login", () => {
+      const list = [
+        backend({ id: "n1", name: "New", serverUrl: "https://anna:hunter2@whisper.example/v1" }),
+        backend({ id: "n2", name: "User", serverUrl: "http://anna@host.lan:8000" }),
+        backend({ id: "home", name: "Home", serverUrl: "http://otto:geheim@home.lan:8000" }),
+      ];
+      const html = renderToStaticMarkup(<IncomingAddresses list={list} />);
+      expect(titles(list)).toEqual(["home.lan:8000", "whisper.example", "host.lan:8000"]);
+      expect(html).not.toContain("hunter2");
+      expect(html).not.toContain("geheim");
+    });
+
+    it("covers this device's own unchanged backend, at its address override too", () => {
+      useApp.setState({
+        backends: [
+          backend({ id: "home", name: "Home", serverUrl: "http://otto:geheim@home.lan:8000" }),
+          backend({ id: "work", name: "Work", serverUrl: "https://work.example" }),
+        ],
+        settings: {
+          ...useApp.getState().settings,
+          sync: { ...DEFAULT_SYNC, urlOverrides: { work: "http://otto:geheim@10.0.0.9:9000" } },
+        },
+      });
+      const list = [
+        backend({ id: "home", name: "Home", serverUrl: "http://otto:geheim@home.lan:8000" }),
+        backend({ id: "work", name: "Work", serverUrl: "https://work.example" }),
+      ];
+      const html = renderToStaticMarkup(<IncomingAddresses list={list} />);
+      expect(titles(list).sort()).toEqual(["10.0.0.9:9000", "home.lan:8000"]);
+      expect(html).not.toContain("geheim");
+    });
+  });
 });

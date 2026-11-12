@@ -32,7 +32,7 @@ import {
   syncPush,
 } from "../api";
 import { configReady, configSaveHeld, evdevPermittedNow, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
-import { effectiveServerUrl, normalizeUrl, serverUrlFromPeer } from "../backends";
+import { effectiveServerUrl, maskAddressPassword, normalizeUrl, serverUrlFromPeer } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
@@ -4096,15 +4096,49 @@ function escapeHiddenPathChars(p: string): string {
  *  (`safeHeadTailText`). A folder-picker path within `max` renders as `safeIdentityText`. */
 export const folderPathText = (p: string, max: number): string => safeHeadTailText(escapeHiddenPathChars(p), max);
 
+/** The pieces of a new-server or moved-address row's `detail` (`securityChanges`), shared with
+ *  the render that takes it apart again (`addressDetailText`). */
+const NO_ADDRESS = "(no address)";
+const ADDRESS_CLEARED = "(none: the address would be cleared)";
+const ADDRESS_ARROW = " → ";
+
+/** A new-server or moved-address row's `detail` as shown: each address whole but for the password
+ *  of a login written into it (`maskAddressPassword`). The dialog opens by itself on a pull, and
+ *  the row would otherwise print this device's own stored password, and the peer's, on screen
+ *  unasked. Masked HERE and never in `detail`: that string is part of the row's identity
+ *  (`changeKey`), so rewriting it would re-raise or re-match a review. The mask runs before the
+ *  length cap — a cut inside the password would leave a half the mask can no longer find.
+ *
+ *  A move that changes only the password would show two identical sides, so it says so (after the
+ *  cap, where a long address cannot push it out of view). */
+function addressDetailText(c: Pick<SecurityChange, "kind" | "detail" | "url">): string {
+  const cap = consentDetailCap(c.kind);
+  if (c.kind !== "server-url") return safeIdentityText(maskAddressPassword(c.detail), cap);
+  // The row's own `url` says where the new side begins: an address may hold the arrow itself.
+  const tail = c.url === undefined ? null : `${ADDRESS_ARROW}${c.url || ADDRESS_CLEARED}`;
+  const sides =
+    tail !== null && c.detail.endsWith(tail)
+      ? [c.detail.slice(0, c.detail.length - tail.length), tail.slice(ADDRESS_ARROW.length)]
+      : c.detail.split(ADDRESS_ARROW);
+  const masked = sides.map(maskAddressPassword);
+  const text = safeIdentityText(masked.join(ADDRESS_ARROW), cap);
+  return sides.length === 2 && masked[0] === masked[1] && sides[0] !== sides[1]
+    ? `${text} · only the password differs`
+    : text;
+}
+
 /** A consent row's `detail` as the review dialog shows it (`consentDetailCap`). A folder path is
  *  uncapped (only `is_absolute` is checked) and the OS opens it with its `.` / `..` components
  *  resolved, so the row shows the resolved path (`resolvedFolderPath`); one still past the cap
  *  keeps its head AND its tail, so the destination's end stays in view. A path within the cap
- *  with nothing to resolve renders whole, as every other row. */
-export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail">): string =>
+ *  with nothing to resolve renders whole, as every other row — an address row with its passwords
+ *  masked (`addressDetailText`). */
+export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail" | "url">): string =>
   c.kind === "audio-folder" || c.kind === "log-folder"
     ? folderPathText(resolvedFolderPath(c.detail), FOLDER_DETAIL_MAX)
-    : safeIdentityText(c.detail, consentDetailCap(c.kind));
+    : c.kind === "new-backend" || c.kind === "server-url"
+      ? addressDetailText(c)
+      : safeIdentityText(c.detail, consentDetailCap(c.kind));
 
 /** The path as the peer wrote it (hidden characters escaped), for the row's tooltip — only for a
  *  folder row whose shown path was resolved or escaped (`consentDetailText`), so the user can still
@@ -4303,7 +4337,7 @@ export function securityChanges(
     // An empty `serverUrl` is `sanitizeBackends` blanking an unsupported scheme: say so rather
     // than render a blank target. `url` stays empty so the repoint footer stays off.
     if (!cur) {
-      out.push({ kind: "new-backend", id: b.id, backend: name, detail: b.serverUrl || "(no address)", url: b.serverUrl });
+      out.push({ kind: "new-backend", id: b.id, backend: name, detail: b.serverUrl || NO_ADDRESS, url: b.serverUrl });
     } else if (
       gates?.serverAddresses !== false &&
       normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)
@@ -4312,7 +4346,7 @@ export function securityChanges(
         kind: "server-url",
         id: b.id,
         backend: name,
-        detail: `${cur.serverUrl || "(no address)"} → ${b.serverUrl || "(none: the address would be cleared)"}`,
+        detail: `${cur.serverUrl || NO_ADDRESS}${ADDRESS_ARROW}${b.serverUrl || ADDRESS_CLEARED}`,
         url: b.serverUrl,
       });
     }

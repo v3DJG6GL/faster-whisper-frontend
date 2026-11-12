@@ -769,7 +769,14 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           const auth = authorityOf(url);
           const warn = insecureUrlWarning(url);
           return (
-            <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
+            // The hover shows the whole address, but only the host of one that carries a login: the
+            // list holds this device's own backends too, and the whole one would put the password
+            // on screen for anyone looking at it.
+            <li
+              key={`${b.id}-${i}`}
+              className="font-mono text-[12px]"
+              title={auth?.hasUserinfo ? safeHostText(auth.host, 300) : safeText(url, 300)}
+            >
               {backendDisplayName(b.name, NOTICE_NAME_CAP)} →{" "}
               {/* The host through the IDENTITY helper, which marks a truncation: `serverUrl` has no
                   length cap on the sync/import path, and the plain filter's markerless 80-code-point
