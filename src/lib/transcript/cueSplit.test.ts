@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally, lowOpenAt,
-  WORD_EDGES, BARE_EDGES, JoinedToken, mixedTokens, opensAt, quoteFlags, quoteSeams, quotesBefore,
+  WORD_EDGES, BARE_EDGES, BREAKS_ANYWHERE, JoinedToken, mixedTokens, opensAt, quoteFlags, quoteSeams, quotesBefore, tokenUnits, units,
   type CueOptions, type QuoteCtx,
 } from "./cueSplit";
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
@@ -2901,6 +2901,14 @@ describe("a word's edge trims stay linear on a long run", () => {
   });
 });
 
+/** Every string of up to `max` picks from `alphabet`. */
+const strings = (alphabet: string[], max: number) => {
+  const out = [""];
+  let level = [""];
+  for (let len = 1; len <= max; len++) for (const x of (level = level.flatMap((y) => alphabet.map((c) => y + c)))) out.push(x);
+  return out;
+};
+
 describe("mixedTokens keeps its last token in pieces", () => {
   // The tokenizer as it was while the last token was one string, re-read by every match that
   // joined it — kept verbatim, with the regexes it ran on that string: the one that keeps the
@@ -3006,13 +3014,6 @@ describe("mixedTokens keeps its last token in pieces", () => {
   // With digits of both widths, a closing bracket, a low and a high typographic quote (\u201e is
   // an opening bracket by class, \u201c an initial quote) and an astral letter.
   const atoms = [...wide, "０", "1", ")", "\u201e", "\u201c", "\u{1d400}"];
-  /** Every string of up to `max` picks from `alphabet`. */
-  const strings = (alphabet: string[], max: number) => {
-    const out = [""];
-    let level = [""];
-    for (let len = 1; len <= max; len++) for (const x of (level = level.flatMap((y) => alphabet.map((c) => y + c)))) out.push(x);
-    return out;
-  };
   /** Segments around a cue's text: none, an open quote of each kind before it with its closer after,
    *  and letters at its edges with a typographic closer to come. */
   const contexts: (QuoteCtx | undefined)[] = [
@@ -3134,6 +3135,171 @@ describe("mixedTokens keeps its last token in pieces", () => {
     const t0 = performance.now();
     expect(mixedTokens(s).toks).toEqual([s]);
     expect(mixedTokens("Ａa".repeat(200_000)).toks).toHaveLength(1);
+    expect(performance.now() - t0).toBeLessThan(3_000);
+  });
+});
+
+describe("tokenUnits keeps its last piece in parts", () => {
+  // The function as it was while the last piece was one string in `out`, re-read whole (its
+  // edgeChar and the cap tests) by every unit that came after it — kept verbatim: the one that
+  // keeps the piece's edge and end beside its parts must return the same pieces for every token.
+  function tokenUnitsBefore(w: string, hyphen = true): string[] {
+    const out: string[] = [];
+    let open = "";
+    const u = units(w);
+    // Where the token's trailing run of punctuation units begins: a quote or bracket from there on closes.
+    let tail = u.length;
+    while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
+    // An ASCII quote opens only a word that follows it, and only from a short leading run of
+    // openers and quotes ("(word, """"word): a longer run (a hallucinated wall of quotes) opens
+    // nothing and wraps three to a piece like other punctuation, so it cannot tear the word.
+    const firstWord = u.findIndex((x) => /[\p{L}\p{N}]/u.test(x));
+    const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}\p{Pf}"'¿¡]+$/u.test(x));
+    const quoteOpens = lead !== -1 && lead <= 6;
+    u.forEach((x, k) => {
+      const prev = out[out.length - 1];
+      const last = prev === undefined ? "" : edgeChar(prev, true);
+      // A closing quote or bracket in the trailing run rides even past the three-closer cap
+      // („…...“, / “…...” / (…...)): left behind, it would start a line (a “ would even open
+      // the next unit). A “ or « glued to a letter or digit closes too, mid-token as well
+      // („…“-Verband) — after a CJK character it opens (“你好”). Each class keeps its cap among
+      // itself: a stop counts only the stops before it (え？？？？), so the "," after "…...”" still
+      // rides, and a quote or bracket only the quotes and brackets (a hallucinated run of ")" or
+      // "」" still wraps); six marks in all bound an alternating wall (.".".".").
+      if (prev !== undefined && !open
+        && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x)
+            && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(prev))
+          || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
+          // A hyphen inside a compound ends its line: a line opened with "-" reads as a dialogue
+          // dash. Not the non-breaking U+2011 nor a dash.
+          || (hyphen && /^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
+          // Spanish ¿ ¡ are Po but open what follows them (below), unless they end the token.
+          || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && (k === u.length - 1 || !/^[¿¡]/u.test(x)) && !/\p{P}{6}$/u.test(prev)
+            && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
+              .test(prev)))) out[out.length - 1] += x;
+      // An ASCII quote (or a » ” — German »…«, Swedish ”…”) that starts the token or follows its
+      // openers opens it: as a closer of nothing it ended a line on a bare " or ». One inside a
+      // word (don't, 5'10") rides above.
+      else if (
+        (/^[\p{Ps}\p{Pi}¿¡]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^(?:["']|\p{Pf})$/u.test(x)))
+        && k < u.length - 1
+      ) open += x;
+      else {
+        out.push(open + x);
+        open = "";
+      }
+    });
+    if (open) out.push(open);
+    return out;
+  }
+
+  // What decides a join: a stop, a closer, an opener, an ASCII quote, a letter, a hyphen, and the
+  // two marks that ride in a unit and hide the punctuation before them from the caps.
+  const base = [".", ")", "(", '"', "a", "-", "\u0301", "\ufe0f"];
+  // With the other ASCII quote, a Spanish opener, a Han character and a stop outside the BMP (the
+  // piece's end is then read through surrogate pairs).
+  const core = [...base, "'", "¿", "中", "\u{10100}"];
+  // With typographic quotes, CJK and fullwidth punctuation, a Han character outside the BMP, a
+  // digit and a space (units drop it).
+  const wide = [...core, "\u201c", "\u00bb", "！", "「", "」", "\u{20000}", "1", " "];
+  // With more quotes and stops, a keycap's parts, the other hyphen, a ZWJ, a no-break space and
+  // the two halves of a surrogate pair on their own.
+  const atoms = [...wide, "\u00ab", "\u201d", "\u201e", "…", "‼", "#", "\u20e3", "\u2010", "\u200d", "\u00a0", "\ud840", "\udc00"];
+  // A stop and a dash outside the BMP beside a closer, a stop and a letter: the six marks the
+  // widest cap reads then take up to eleven UTF-16 units (three such stops, ")", two more).
+  const pairs = ["\u{10100}", "\u{10d6e}", ")", ".", "a"];
+  /** The tokens of `texts` the two versions cut differently, with and without `hyphen`, at most five. */
+  const differing = (texts: Iterable<string>) => {
+    const out: unknown[] = [];
+    for (const s of texts) {
+      for (const hyphen of [true, false]) {
+        const want = tokenUnitsBefore(s, hyphen);
+        const got = tokenUnits(s, hyphen);
+        if ((got.length !== want.length || got.some((x, i) => x !== want[i])) && out.length < 5) out.push({ s, hyphen, got, want });
+      }
+    }
+    return out;
+  };
+
+  it("the cap tests read no further back than twelve UTF-16 units", () => {
+    // The piece's end is kept as its last 12 units: six code points, each at most a surrogate
+    // pair. A cut through a pair leaves a lone half, which is no punctuation.
+    const caps = [/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u, /\p{P}{6}$/u, /(?:(?!["'])\p{Po}){3}$/u];
+    let cut = 0;
+    for (const s of strings([".", '"', ")", "a", "\u0301", "\u{10100}", "\udd00"], 7)) {
+      if (s.length > 12) cut++;
+      for (const re of caps) if (re.test(s.slice(-12)) !== re.test(s)) expect({ s, re: re.source }).toBeNull();
+    }
+    expect(cut).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("cuts every short token as before", () => {
+    const sets: [string[], number][] = [[base, 6], [core, 5], [wide, 4], [atoms, 3], [pairs, 7]];
+    let count = 0;
+    for (const [alphabet, max] of sets) {
+      const all = strings(alphabet, max);
+      count += all.length * 2;
+      expect(differing(all)).toEqual([]);
+    }
+    expect(count).toBe(2 * (299_593 + 271_453 + 168_421 + 33_825 + 97_656));
+  }, 60_000);
+
+  it("cuts seeded random longer tokens as before", () => {
+    let seed = 20261113;
+    // From the high bits: the low ones of this generator repeat every few calls.
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), Math.floor((seed / 2 ** 31) * n));
+    const pick = (xs: string[]) => xs[rand(xs.length)];
+    const marks = ["\u0301", "\ufe0f", "\u20e3", "\u{e0100}"];
+    // Marks that join the piece before them, and what starts a new one.
+    const joiners = [".", ")", '"', "'", "…", "‼", "#", "\u00bb", "\u201d", "」", "！", "\u{10100}", ",", "?"];
+    const breakers = ["a", "(", "-", "\u201c", "¿", "中", "1", "\u{20000}", "\u2010", "\u00a0", "\udc00"];
+    const texts: string[] = [];
+    let longest = 0;
+    let grown = 0;
+    for (let round = 0; round < 4000; round++) {
+      const len = 7 + rand(round % 5 ? 80 : 1500);
+      let t: string;
+      if (round % 3 === 2) {
+        // A third of them grow one piece over hundreds of units: a few joining marks, a
+        // combining mark after most (so the caps rarely see three in a row), a rare breaker.
+        const js = Array.from({ length: 1 + rand(5) }, () => pick(joiners));
+        const bare = 2 + rand(10);
+        t = Array.from({ length: len }, () => (rand(60) ? pick(js) + (rand(bare) ? pick(marks) : "") : pick(breakers))).join("");
+        if (tokenUnits(t).some((x) => x.length > 200)) grown++;
+      } else {
+        // The others from all atoms, or from a few only.
+        const alphabet = round % 3 ? atoms : Array.from({ length: 2 + rand(4) }, () => pick(atoms));
+        t = Array.from({ length: len }, () => pick(alphabet)).join("");
+      }
+      longest = Math.max(longest, t.length);
+      texts.push(t);
+    }
+    expect(longest).toBeGreaterThan(2000);
+    expect(grown).toBeGreaterThan(100);
+    expect(differing(texts)).toEqual([]);
+  }, 60_000);
+
+  it("takes a token whose marks hide its stops from the caps in linear time", () => {
+    // As one string, each of these took seconds: every unit re-read the piece it joined.
+    const texts = [".\u0301".repeat(20_000), "‼\ufe0f".repeat(20_000)];
+    const t0 = performance.now();
+    const lines = texts.map((s) => wrapLines(s, 42, 2));
+    const spaced = texts.map((s) => wrapLines(`Hello there ${s} and more`, 42, 2));
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    // Still one piece each, past every cap: capping it would change how such a cue wraps.
+    expect(lines).toEqual(texts.map((s) => [s]));
+    // Beside other words it wraps per unit, as before: 953 lines between the two.
+    expect(spaced.map((l) => l.length)).toEqual([955, 955]);
+    expect(spaced.map((l) => [l[0], l.slice(1, -1).join(""), l[l.length - 1]])).toEqual(texts.map((s) => ["Hello there", s, "and more"]));
+    for (const s of texts) expect(tokenUnits(s)).toEqual([s]);
+  });
+
+  it("stays linear at 400k characters", () => {
+    // Reading the end off the grown string instead would flatten it at every unit.
+    const s = ".\u0301".repeat(200_000);
+    const t0 = performance.now();
+    expect(tokenUnits(s)).toEqual([s]);
+    expect(tokenUnits("#\ufe0f\u20e3".repeat(130_000), false)).toHaveLength(1);
     expect(performance.now() - t0).toBeLessThan(3_000);
   });
 });

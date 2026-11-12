@@ -117,7 +117,7 @@ export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED
 /** Scripts (and CJK punctuation) a line may break between any two characters of. Text
  *  without spaces and without any of these is one word ("Ja.", "Привет!"): it stays whole
  *  rather than being cut into letters. */
-const BREAKS_ANYWHERE = new RegExp(`[${CJK_SCRIPTS}${SYLLABIC}${FULLWIDTH}]`, "u");
+export const BREAKS_ANYWHERE = new RegExp(`[${CJK_SCRIPTS}${SYLLABIC}${FULLWIDTH}]`, "u");
 /** The first (`end` false) or last code point of `s` — "" when empty. Seam tests go
  *  through it: a lone surrogate half is never unspaced, so a per-UTF-16-unit look
  *  misreads an astral (CJK Ext-B) character at the edge. At the end, trailing combining
@@ -732,7 +732,7 @@ const OPENERS_LEAD = /^[\p{Ps}\p{Pi}]*/u;
  *  three openers ride along, as three closers do: uncapped, a hallucinated wall of 「
  *  before a character would be one unit running a line far over the cap. */
 const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]{0,3}[${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]{0,3}`, "gu");
-const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
+export const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** The units a token longer than a line wraps by (a URL, an e-mail address, a German
  *  compound, a run of ・): units() with ASCII punctuation kept on its character, as
  *  mixedTokens keeps it — a closer or stop joins the unit before it (up to three of them),
@@ -741,10 +741,21 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
  *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote or a » ” that starts the
  *  token opens it (»…« / ”…”), as Spanish ¿ ¡ do (¿…? / ¡¡…!!), so no line starts with “ ” ) or
  *  ends on „ » " or ¿. `hyphen` false leaves a compound's hyphen a unit of its own (wrapLines,
- *  when ending the line costs one). */
-function tokenUnits(w: string, hyphen = true): string[] {
+ *  when ending the line costs one). Exported, with `units` and BREAKS_ANYWHERE, for the test
+ *  that pins it to the version that kept the piece as one string. */
+export function tokenUnits(w: string, hyphen = true): string[] {
   const out: string[] = [];
   let open = "";
+  // The piece units are still joining, as the units joined so far (empty before the first piece).
+  // Cue text is a server's or a file's, and a mark after each stop (".\u0301" repeated, "‼\ufe0f")
+  // gets round every cap below, so one piece can take a whole 10 MB token: kept as one string,
+  // each unit re-read all of it, quadratic over the token. What a unit asks of the piece stands
+  // beside it instead, brought up to date from the joined unit alone: `last` = its edgeChar (a
+  // unit that joins starts with a punctuation mark, so its own edge is the piece's), and
+  // `pieceEnd` = its last 12 UTF-16 units, all the cap tests can read (six code points).
+  let piece: string[] = [];
+  let last = "";
+  let pieceEnd = "";
   const u = units(w);
   // Where the token's trailing run of punctuation units begins: a quote or bracket from there on closes.
   let tail = u.length;
@@ -756,8 +767,6 @@ function tokenUnits(w: string, hyphen = true): string[] {
   const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}\p{Pf}"'¿¡]+$/u.test(x));
   const quoteOpens = lead !== -1 && lead <= 6;
   u.forEach((x, k) => {
-    const prev = out[out.length - 1];
-    const last = prev === undefined ? "" : edgeChar(prev, true);
     // A closing quote or bracket in the trailing run rides even past the three-closer cap
     // („…...“, / “…...” / (…...)): left behind, it would start a line (a “ would even open
     // the next unit). A “ or « glued to a letter or digit closes too, mid-token as well
@@ -765,17 +774,21 @@ function tokenUnits(w: string, hyphen = true): string[] {
     // itself: a stop counts only the stops before it (え？？？？), so the "," after "…...”" still
     // rides, and a quote or bracket only the quotes and brackets (a hallucinated run of ")" or
     // "」" still wraps); six marks in all bound an alternating wall (.".".".").
-    if (prev !== undefined && !open
+    if (piece.length && !open
       && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x)
-          && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(prev))
+          && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(pieceEnd))
         || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
         // A hyphen inside a compound ends its line: a line opened with "-" reads as a dialogue
         // dash. Not the non-breaking U+2011 nor a dash.
         || (hyphen && /^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
         // Spanish ¿ ¡ are Po but open what follows them (below), unless they end the token.
-        || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && (k === u.length - 1 || !/^[¿¡]/u.test(x)) && !/\p{P}{6}$/u.test(prev)
+        || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && (k === u.length - 1 || !/^[¿¡]/u.test(x)) && !/\p{P}{6}$/u.test(pieceEnd)
           && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
-            .test(prev)))) out[out.length - 1] += x;
+            .test(pieceEnd)))) {
+      piece.push(x);
+      last = edgeChar(x, true);
+      pieceEnd = (pieceEnd + x).slice(-12);
+    }
     // An ASCII quote (or a » ” — German »…«, Swedish ”…”) that starts the token or follows its
     // openers opens it: as a closer of nothing it ended a line on a bare " or ». One inside a
     // word (don't, 5'10") rides above.
@@ -784,10 +797,14 @@ function tokenUnits(w: string, hyphen = true): string[] {
       && k < u.length - 1
     ) open += x;
     else {
-      out.push(open + x);
+      if (piece.length) out.push(piece.join(""));
+      piece = [open + x];
+      last = edgeChar(piece[0], true);
+      pieceEnd = piece[0].slice(-12);
       open = "";
     }
   });
+  if (piece.length) out.push(piece.join(""));
   if (open) out.push(open);
   return out;
 }
