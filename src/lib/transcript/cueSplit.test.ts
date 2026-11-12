@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines, quoteTally, lowOpenAt,
-  WORD_EDGES, BARE_EDGES, GLUED_OPENER,
-  type CueOptions,
+  WORD_EDGES, BARE_EDGES, JoinedToken, mixedTokens, opensAt, quoteFlags, quoteSeams, quotesBefore,
+  type CueOptions, type QuoteCtx,
 } from "./cueSplit";
 import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
 
@@ -2850,6 +2850,11 @@ describe("splitTokens on a server-sized segment", () => {
   });
 });
 
+/** Opening brackets glued to the end of a word, with any ASCII quotes after them ("print(\""):
+ *  the regex the tokenizer ran on its last token before it kept that token's end in counts
+ *  (mixedTokensBefore below runs it still). */
+const GLUED_OPENER = /(?<!\p{Ps})\p{Ps}+["']*$/u;
+
 describe("a word's edge trims stay linear on a long run", () => {
   /** Every string of up to 6 picks from `alphabet`. */
   const strings = (alphabet: string[]) => {
@@ -2893,5 +2898,242 @@ describe("a word's edge trims stay linear on a long run", () => {
     expect(bare.slice(-3)).toEqual(["----------------------------b three four", "five six seven eight", "nine ten eleven twelve"]);
     expect(name.length).toBe(954);
     expect(name.slice(-2)).toEqual(["------------------------------b Smith went", "home and then some more words follow here"]);
+  });
+});
+
+describe("mixedTokens keeps its last token in pieces", () => {
+  // The tokenizer as it was while the last token was one string, re-read by every match that
+  // joined it — kept verbatim, with the regexes it ran on that string: the one that keeps the
+  // token's end in counts must return the same tokens, gaps and offsets for every text.
+  const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
+  const NBSP = "\\u00a0\\u202f\\u2007";
+  const FW_ALNUM_END = new RegExp(`[${FW_ALNUM}]$`, "u");
+  const FW_ALNUM_START = new RegExp(`^[${FW_ALNUM}]`, "u");
+  const NO_BREAK_RUN = new RegExp(`^[${NBSP}]+$`);
+  const NBSP_END = new RegExp(`[${NBSP}]$`, "u");
+  function mixedTokensBefore(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
+    const toks: string[] = [];
+    const gaps: boolean[] = [];
+    const at: number[] = [];
+    let end = 0;
+    const flags = quoteFlags(t, q);
+    /** Counted quotes of each kind before the current match (from the segment start) — kept
+     *  running, so the pass stays linear. */
+    const quotes: Record<string, number> = quotesBefore(q);
+    /** Counted quotes of each kind in the whole segment. */
+    const total: Record<string, number> = { '"': quotes['"'] + (q?.after['"'] ?? 0), "'": quotes["'"] + (q?.after["'"] ?? 0) };
+    for (let j = 0; j < t.length; j++) if (flags[j]) total[t[j]]++;
+    /** The token that ends on an opening ASCII quote: the next one joins it. */
+    let quoted = -1;
+    for (const [w0, idx0] of quoteSeams(t, flags, q, total)) {
+      let w = w0;
+      let idx = idx0;
+      const gap = idx > end;
+      // Only no-break spaces before it (« さようなら », 東京 avait): no word break, as in a spaced
+      // line — it joins the token before it with them as written, never a break rejoined as " ".
+      const nb = gap && toks.length > 0 && NO_BREAK_RUN.test(t.slice(end, idx)) ? t.slice(end, idx) : "";
+      end = idx + w.length;
+      const k = toks.length - 1;
+      // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
+      let qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+      let c = qr?.[1][0] ?? '"';
+      // A glued run whose first quote closes the quotation before it (他说"你好""再见", or of the
+      // other kind: 他说'你好'"再见"): that quote joins the text it closes and the rest of the run
+      // is judged on its own. Judged as one, the quote opening the next quotation would join
+      // backward too, and a line or part would end on it. A closer followed by an English clitic
+      // stays whole: "東京"'s and '東京''s are possessives, not a second quotation ('你好'"OK",
+      // "你好"'S' and "你好"'T恤' still are: the "clitic" there is quoted on its own or glued to more letters).
+      const runEnd = idx + (qr?.[0].length ?? 0);
+      if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].length > 1 && flags[idx] && quotes[c] % 2 === 1
+        && !(qr[1].slice(1) === "'" && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])(?!'(?![A-Za-z]))/iu.test(t.slice(runEnd)))) {
+        toks[k] += c;
+        quotes[c]++;
+        idx++;
+        w = w.slice(1);
+        qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+        c = qr?.[1][0] ?? '"';
+      }
+      const after = idx + (qr?.[0].length ?? 0);
+      // Glued to the text before it, a quote opens only on positive evidence: an even count of its
+      // kind so far in the segment AND a later one of its kind to close it. The last unpaired one —
+      // a closer whose opener was in the previous segment — joins the text it closes.
+      const opens = !!qr && opensAt(t, after)
+        && (gap || k < 0 || qr[0] !== qr[1]
+          || (quotes[c] % 2 === 0 && total[c] > quotes[c] + qr[1].split(c).length - 1));
+      for (let j = idx; j < end; j++) if (flags[j]) quotes[t[j]]++;
+      // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
+      // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
+      // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off would leave
+      // „Hallo / “東京… on two lines.
+      const open = k >= 0 && !gap ? GLUED_OPENER.exec(toks[k]) : null;
+      // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
+      // off, the line would end on the no-break space.
+      const held = !!open && NBSP_END.test(toks[k].slice(0, open.index));
+      let from = idx;
+      if (open && open.index > 0 && !held) {
+        toks[k] = toks[k].slice(0, open.index);
+        w = open[0] + w;
+        from -= open[0].length;
+      }
+      const opened = quoted === k;
+      if (nb || held) toks[k] += nb + w;
+      // Joins the token before it: a closer or stop, what an opener or opening quote opens, and a
+      // word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews"), which is one word.
+      else if (
+        k >= 0 && !gap
+        && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
+          || (FW_ALNUM_END.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
+          || (/[A-Za-z0-9]$/.test(toks[k]) && FW_ALNUM_START.test(w)))
+      ) toks[k] += w;
+      else {
+        toks.push(w);
+        gaps.push(gap && k >= 0);
+        at.push(from);
+      }
+      quoted = opens && end === after ? toks.length - 1 : -1;
+    }
+    return { toks, gaps, at };
+  }
+
+  // What decides a join at the token's end: an opening bracket, both ASCII quotes, a no-break
+  // space, an initial quote, a letter and a stop that joins backward.
+  const glue = ["(", '"', "'", "\u00a0", "\u00ab", "a", "＊"];
+  // With a fullwidth letter (one word with an ASCII one glued to it), a Han character and a space.
+  const core = [...glue, "！", "Ａ", "中", " "];
+  // With more stops and brackets (fullwidth ones too), and a Han character outside the BMP: the
+  // token's last unit is then half a surrogate pair.
+  const wide = [...core, "＃", "｡", "（", "「", "\u00bb", ".", ",", "\u{20000}"];
+  // With digits of both widths, a closing bracket, a low and a high typographic quote (\u201e is
+  // an opening bracket by class, \u201c an initial quote) and an astral letter.
+  const atoms = [...wide, "０", "1", ")", "\u201e", "\u201c", "\u{1d400}"];
+  /** Every string of up to `max` picks from `alphabet`. */
+  const strings = (alphabet: string[], max: number) => {
+    const out = [""];
+    let level = [""];
+    for (let len = 1; len <= max; len++) for (const x of (level = level.flatMap((y) => alphabet.map((c) => y + c)))) out.push(x);
+    return out;
+  };
+  /** Segments around a cue's text: none, an open quote of each kind before it with its closer after,
+   *  and letters at its edges with a typographic closer to come. */
+  const contexts: (QuoteCtx | undefined)[] = [
+    undefined,
+    { before: { '"': 1, "'": 0 }, after: { '"': 1, "'": 2 } },
+    { before: { '"': 2, "'": 1 }, after: { '"': 0, "'": 1 }, prev: "a", next: "1", closes: { double: true, single: true } },
+    { before: { '"': 0, "'": 0 }, after: { '"': 3, "'": 0 }, prev: "6", lowOpen: { double: true, single: true } },
+  ];
+  /** The texts of `texts` (under each of `qs`) the two tokenizers disagree on, at most five. */
+  const differing = (texts: Iterable<string>, qs: (QuoteCtx | undefined)[]) => {
+    const out: unknown[] = [];
+    for (const s of texts) {
+      for (const q of qs) {
+        const want = JSON.stringify(mixedTokensBefore(s, q));
+        const got = JSON.stringify(mixedTokens(s, q));
+        if (got !== want && out.length < 5) out.push({ s, q, got, want });
+      }
+    }
+    return out;
+  };
+
+  it("no opening mark lies outside the BMP", () => {
+    // The token's end is kept per UTF-16 unit: an astral opening bracket or initial quote would
+    // be read as two halves that open nothing.
+    let astral = 0;
+    for (let c = 0x10000; c <= 0x10ffff; c++) if (/[\p{Ps}\p{Pi}]/u.test(String.fromCodePoint(c))) astral++;
+    expect(astral).toBe(0);
+  });
+
+  it("a token in pieces answers as the regexes on the whole token did", () => {
+    /** What mixedTokensBefore read off the token `s`, and what the pieces `xs` of it answer. */
+    const check = (s: string, xs: string[]) => {
+      const tok = new JoinedToken();
+      for (const x of xs) tok.add(x);
+      const open = GLUED_OPENER.exec(s);
+      const before = open ? s.slice(0, open.index) : "";
+      const stays = tok.len - tok.glued;
+      const want = {
+        text: s, glued: open ? open[0].length : 0, held: !!open && NBSP_END.test(before),
+        openers: /^[\p{Ps}\p{Pi}]+$/u.test(s), openersBefore: !!open && /^[\p{Ps}\p{Pi}]+$/u.test(before),
+        fullwidth: FW_ALNUM_END.test(s), ascii: /[A-Za-z0-9]$/.test(s),
+      };
+      const got = {
+        text: tok.text(), glued: tok.glued, held: tok.glued > 0 && NBSP_END.test(tok.pre),
+        openers: tok.len > 0 && tok.lead === tok.len, openersBefore: tok.glued > 0 && stays > 0 && tok.lead >= stays,
+        fullwidth: FW_ALNUM_END.test(tok.last), ascii: /[A-Za-z0-9]$/.test(tok.last),
+      };
+      if (JSON.stringify(got) !== JSON.stringify(want)) expect({ xs, ...got }).toEqual({ xs, ...want });
+    };
+    // Brackets and quotes of every kind asked about, the letters of both widths, a no-break
+    // space, and a Han character outside the BMP whole and as its two halves — a piece may end
+    // between them.
+    const units = ["(", "\u201e", '"', "'", "\u00ab", "\u00a0", "a", "Ａ", "\u{20000}", "\ud840", "\udc00"];
+    let count = 0;
+    for (const picks of strings(units.map((_, i) => String.fromCharCode(i)), 5)) {
+      const cs = Array.from(picks, (c) => units[c.charCodeAt(0)]);
+      // Every way to cut the picks into pieces: bit i of `cuts` cuts before pick i + 1.
+      for (let cuts = 0; cuts < 2 ** Math.max(0, cs.length - 1); cuts++) {
+        const xs = [""];
+        cs.forEach((c, i) => (i > 0 && (cuts >> (i - 1)) & 1 ? xs.push(c) : (xs[xs.length - 1] += c)));
+        check(cs.join(""), xs);
+        count++;
+      }
+    }
+    expect(count).toBe(1 + 11 + 2 * 11 ** 2 + 4 * 11 ** 3 + 8 * 11 ** 4 + 16 * 11 ** 5);
+    let seed = 11;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    for (let round = 0; round < 4000; round++) {
+      const xs = Array.from({ length: 1 + rand(40) }, () => Array.from({ length: rand(5) }, () => units[rand(round % 3 ? units.length : 6)]).join(""));
+      check(xs.join(""), xs);
+    }
+  }, 60_000);
+
+  it("tokenizes every short string as before", () => {
+    const sets: [string[], number, (QuoteCtx | undefined)[]][] = [
+      [glue, 6, [undefined]], [core, 5, [undefined]], [wide, 4, [undefined]], [atoms, 3, contexts],
+    ];
+    let count = 0;
+    for (const [alphabet, max, qs] of sets) {
+      const all = strings(alphabet, max);
+      count += all.length * qs.length;
+      expect(differing(all, qs)).toEqual([]);
+    }
+    expect(count).toBe(137_257 + 177_156 + 137_561 + 4 * 16_276);
+  }, 60_000);
+
+  it("tokenizes seeded random longer strings as before", () => {
+    let seed = 20261112;
+    const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+    const texts: string[] = [];
+    let longest = 0;
+    for (let round = 0; round < 6000; round++) {
+      // Half of them from a few atoms only, so one token grows over many matches.
+      const alphabet = round % 2 ? atoms : Array.from({ length: 2 + rand(3) }, () => atoms[rand(atoms.length)]);
+      const t = Array.from({ length: 7 + rand(round % 10 ? 54 : 394) }, () => alphabet[rand(alphabet.length)]).join("");
+      longest = Math.max(longest, t.length);
+      texts.push(t);
+    }
+    expect(longest).toBeGreaterThan(300);
+    expect(differing(texts, contexts)).toEqual([]);
+  }, 60_000);
+
+  it("takes a cue that is one long token in linear time", () => {
+    const n = 40_000;
+    // As one string, each of these took seconds: every match re-read the token it joined.
+    const texts = ["＊".repeat(n), "Ａa".repeat(n / 2), "中" + "＃".repeat(n), "＊！".repeat(n / 2)];
+    const t0 = performance.now();
+    const lines = texts.map((s) => wrapLines(s, 42, 2));
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(lines.map((l) => l.length)).toEqual([953, 953, 953, 1000]);
+    expect(lines.map((l) => l.join(""))).toEqual(texts);
+    for (const s of texts) expect(mixedTokens(s).toks).toEqual([s]);
+  });
+
+  it("stays linear at 400k characters", () => {
+    // Reading the end off the grown string instead would flatten it at every match: fast at 40k,
+    // a minute here.
+    const s = "＊".repeat(400_000);
+    const t0 = performance.now();
+    expect(mixedTokens(s).toks).toEqual([s]);
+    expect(mixedTokens("Ａa".repeat(200_000)).toks).toHaveLength(1);
+    expect(performance.now() - t0).toBeLessThan(3_000);
   });
 });

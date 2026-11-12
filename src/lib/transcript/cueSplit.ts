@@ -132,7 +132,7 @@ export function edgeChar(s: string, end: boolean): string {
 }
 /** Whether a letter, digit or opening mark starts `t` at `i` (judged by code point): a glued
  *  quote opens only what such a character begins (tokensOf, quoteSeams, mixedTokens). */
-const opensAt = (t: string, i: number): boolean => /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(i, i + 2), false));
+export const opensAt = (t: string, i: number): boolean => /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(i, i + 2), false));
 /** A blank (not a line break) between two unspaced characters: a phrase space. */
 const PHRASE_SPACE = new RegExp(
   `(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})[^\\S\\n]+(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})`,
@@ -371,8 +371,6 @@ const TITLE_ABBREV = new Set(["dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "no."
 export const WORD_EDGES = /^[^\p{L}]+|(?<![^\p{L}'])[^\p{L}']+$/gu;
 /** A word's edges as bare() compares it: letters and digits inside, "'" and "." kept at the end. */
 export const BARE_EDGES = /^[^\p{L}\p{N}]+|(?<![^\p{L}\p{N}'.])[^\p{L}\p{N}'.]+$/gu;
-/** Opening brackets glued to the end of a word, with any ASCII quotes after them ("print(\""). */
-export const GLUED_OPENER = /(?<!\p{Ps})\p{Ps}+["']*$/u;
 
 /** A sentence or clause end, for the original's splitter (breakScore) and the cut of a translation
  *  onto its cues (cutByShare) alike: the mark may sit inside closing quotes or brackets
@@ -720,6 +718,9 @@ const BREAK_SPACE = new RegExp(`[^\\S${NBSP}]`);
 const NO_BREAK_RUN = new RegExp(`^[${NBSP}]+$`);
 const BREAK_SPACES = new RegExp(`[^\\S${NBSP}]+`);
 const NBSP_END = new RegExp(`[${NBSP}]$`, "u");
+/** An opening bracket, and the opening marks (brackets and initial quotes) a string starts with. */
+const OPEN_BRACKET = /\p{Ps}/u;
+const OPENERS_LEAD = /^[\p{Ps}\p{Pi}]*/u;
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
  *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors,
@@ -1301,7 +1302,7 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
 }
 
 /** A fresh count of the ASCII quotes before a cue (its QuoteCtx), zero without one. */
-function quotesBefore(q?: QuoteCtx): QuoteCount {
+export function quotesBefore(q?: QuoteCtx): QuoteCount {
   return { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
 }
 
@@ -1311,7 +1312,7 @@ function quotesBefore(q?: QuoteCtx): QuoteCount {
  *  inch or foot mark: one glued right after an ASCII digit while the count of its kind so far
  *  is even (6.1", 27") — counted, it would flip the pairing of every quote after it. At an odd
  *  count the same quote closes (他说"是2024"). */
-function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
+export function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
   const n: QuoteCount = quotesBefore(q);
   const out: boolean[] = [];
   for (let j = 0; j < t.length; j++) {
@@ -1435,7 +1436,7 @@ export function lowOpenAt(t: string, j: number, low: string, open: true | undefi
  *  and only when it opens (an even count of its kind so far and a later partner). Either
  *  needs a letter, digit or opener glued after it. Uncut, the opener would ride on the text
  *  before it and a line or part could end on it. */
-function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
+export function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
   const n: Record<string, number> = quotesBefore(q);
   let pos = 0;
   for (const m of t.matchAll(MIXED_TOKEN)) {
@@ -1476,6 +1477,65 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
   }
 }
 
+/** A token mixedTokens is still joining matches onto, as the pieces joined so far. Cue text is a
+ *  server's or a file's, and one token can take every match of a 10 MB cue ("＊＊＊…",
+ *  "ＡaＡa…"): kept as one string, each match re-read the whole of it (and flattened it),
+ *  quadratic over the cue. What a match asks of the token stands beside the pieces instead, each
+ *  a single UTF-16 unit or a count, brought up to date from the joined piece alone. Every class
+ *  asked about (opening marks, fullwidth and ASCII letters and digits, no-break spaces) lies in
+ *  the BMP, so half of a surrogate pair answers as its code point does. Exported for the test
+ *  that pins each answer to the regex once run on the whole token. */
+export class JoinedToken {
+  private parts: string[] = [];
+  /** Its length. */
+  len = 0;
+  /** The length of its leading run of opening marks (brackets and initial quotes): all of it
+   *  while `lead === len`. */
+  lead = 0;
+  /** Its last UTF-16 unit, "" when empty. */
+  last = "";
+  /** Its end: `ps` opening brackets (as many as stand there), then `qs` ASCII quotes (likewise). */
+  private ps = 0;
+  private qs = 0;
+  /** The unit before those brackets and quotes, "" when they start the token. */
+  pre = "";
+
+  /** The length of the opening brackets glued to its end with any ASCII quotes after them
+   *  ("print(\""), 0 without a bracket. */
+  get glued(): number {
+    return this.ps > 0 ? this.ps + this.qs : 0;
+  }
+
+  add(x: string): void {
+    if (!x) return;
+    let i = x.length;
+    while (i > 0 && (x[i - 1] === '"' || x[i - 1] === "'")) i--;
+    let p = i;
+    while (p > 0 && OPEN_BRACKET.test(x[p - 1])) p--;
+    if (p > 0) {
+      this.ps = i - p;
+      this.qs = x.length - i;
+      this.pre = x[p - 1];
+    } else if (i > 0) {
+      // Brackets from its first unit on: they lengthen a bracket run the token ends on.
+      if (this.qs > 0) {
+        this.pre = this.last;
+        this.ps = 0;
+      }
+      this.ps += i;
+      this.qs = x.length - i;
+    } else this.qs += x.length;
+    if (this.lead === this.len) this.lead += OPENERS_LEAD.exec(x)![0].length;
+    this.len += x.length;
+    this.last = x[x.length - 1];
+    this.parts.push(x);
+  }
+
+  text(): string {
+    return this.parts.join("");
+  }
+}
+
 /** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens,
  *  wrapLines and cutByShare tokenize unspaced text by them too), per token whether whitespace stood
  *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
@@ -1492,8 +1552,10 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
  *  was in the previous segment — is ambiguous and joins the text before it. A match where a
  *  closing quote is glued to the next quotation's opener
  *  (他说：“你好。”“我很好。”, "Hello""再见) is first cut between the two (quoteSeams), so the
- *  closer stays with what it closes and the opener rides forward with what it opens. */
-function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
+ *  closer stays with what it closes and the opener rides forward with what it opens.
+ *  Exported, with what it calls (opensAt, quotesBefore, quoteFlags, quoteSeams), for the test
+ *  that pins it to the tokenizer it replaced. */
+export function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
   const at: number[] = [];
@@ -1507,6 +1569,8 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
   for (let j = 0; j < t.length; j++) if (flags[j]) total[t[j]]++;
   /** The token that ends on an opening ASCII quote: the next one joins it. */
   let quoted = -1;
+  /** The last token (toks holds "" for it until the next one starts). */
+  let cur = new JoinedToken();
   for (const [w0, idx0] of quoteSeams(t, flags, q, total)) {
     let w = w0;
     let idx = idx0;
@@ -1528,7 +1592,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     const runEnd = idx + (qr?.[0].length ?? 0);
     if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].length > 1 && flags[idx] && quotes[c] % 2 === 1
       && !(qr[1].slice(1) === "'" && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])(?!'(?![A-Za-z]))/iu.test(t.slice(runEnd)))) {
-      toks[k] += c;
+      cur.add(c);
       quotes[c]++;
       idx++;
       w = w.slice(1);
@@ -1547,33 +1611,42 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off would leave
     // „Hallo / “東京… on two lines.
-    const open = k >= 0 && !gap ? GLUED_OPENER.exec(toks[k]) : null;
+    /** The length of those brackets and quotes at the token's end, 0 without a bracket. */
+    const glued = k >= 0 && !gap ? cur.glued : 0;
     // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
     // off, the line would end on the no-break space.
-    const held = !!open && NBSP_END.test(toks[k].slice(0, open.index));
-    let from = idx;
-    if (open && open.index > 0 && !held) {
-      toks[k] = toks[k].slice(0, open.index);
-      w = open[0] + w;
-      from -= open[0].length;
-    }
+    const held = glued > 0 && NBSP_END.test(cur.pre);
+    /** Whether they move: something stands before them in the token. */
+    const moved = glued > 0 && glued < cur.len && !held;
     const opened = quoted === k;
-    if (nb || held) toks[k] += nb + w;
     // Joins the token before it: a closer or stop, what an opener or opening quote opens, and a
     // word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews"), which is one word.
-    else if (
-      k >= 0 && !gap
-      && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
-        || (FW_ALNUM_END.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
-        || (/[A-Za-z0-9]$/.test(toks[k]) && FW_ALNUM_START.test(w)))
-    ) toks[k] += w;
-    else {
-      toks.push(w);
+    // With the opener moved onto it, the match starts with a bracket and the token is what
+    // stood before the opener: only a token of opening marks or an opening quote takes it,
+    // and then the token reads as it did before the move.
+    const joins = !!nb || held || (moved
+      ? glued + cur.lead >= cur.len || opened
+      : k >= 0 && !gap
+        && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || (cur.len > 0 && cur.lead === cur.len) || opened
+          || (FW_ALNUM_END.test(cur.last) && /^[A-Za-z0-9]/.test(w))
+          || (/[A-Za-z0-9]$/.test(cur.last) && FW_ALNUM_START.test(w))));
+    if (joins) {
+      cur.add(nb);
+      cur.add(w);
+    } else {
+      const whole = cur.text();
+      const run = moved ? whole.slice(cur.len - glued) : "";
+      if (k >= 0) toks[k] = moved ? whole.slice(0, cur.len - glued) : whole;
+      cur = new JoinedToken();
+      cur.add(run);
+      cur.add(w);
+      toks.push("");
       gaps.push(gap && k >= 0);
-      at.push(from);
+      at.push(idx - run.length);
     }
     quoted = opens && end === after ? toks.length - 1 : -1;
   }
+  if (toks.length > 0) toks[toks.length - 1] = cur.text();
   return { toks, gaps, at };
 }
 
