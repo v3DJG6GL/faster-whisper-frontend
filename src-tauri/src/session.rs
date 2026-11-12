@@ -1295,15 +1295,32 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
         Err(e) => {
-            // Capped like the streaming path's `error` frames: the transport bounds each piece it
-            // reads, but `{e:#}` joins the whole context chain behind this prefix.
-            let msg = crate::transport::bounded_server_text(
-                &format!("Transcription failed: {e:#}"),
-                crate::transport::MAX_ERROR_TEXT,
-            );
+            let msg = batch_failure_message(&e);
             emit_if_active(&app, epoch, "stream://error", msg);
             emit_if_active(&app, epoch, "stream://status", "closed");
         }
+    }
+}
+
+/// The error line of a failed batch dictation, as `stream://error` carries it to Home and the
+/// always-on-top overlay. A refused request is the transport's `HTTP <status>: <detail>`
+/// ([`crate::transport::Refused`]), and a detail read from the server's body is the server's
+/// free wording: left bare behind the app's prefix it would go on in the app's voice ("… Your
+/// API key expired — re-enter it at …"), so it is quoted as the server's, like a streaming
+/// `error` frame. The frame stays outside the bound, so the closing quote is never cut. Every
+/// other failure is a sentence of the app's (also a refusal whose body could not be read) and
+/// is only capped, as before: the transport bounds each piece it reads, but `{e:#}` joins the
+/// whole context chain behind the prefix.
+fn batch_failure_message(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<crate::transport::Refused>() {
+        Some(r) if r.server_text => match crate::transport::server_said(&r.detail) {
+            Some(said) => format!("Transcription failed (HTTP {}). {said}", r.status),
+            None => format!("Transcription failed (HTTP {}).", r.status),
+        },
+        _ => crate::transport::bounded_server_text(
+            &format!("Transcription failed: {e:#}"),
+            crate::transport::MAX_ERROR_TEXT,
+        ),
     }
 }
 
@@ -1643,7 +1660,68 @@ fn run_record_capture(
 
 #[cfg(test)]
 mod tests {
-    use super::{streams_to_mute, FrameLineLimiter, FrameLines, MuteCmd, MuteSlot};
+    use super::{
+        batch_failure_message, streams_to_mute, FrameLineLimiter, FrameLines, MuteCmd, MuteSlot,
+    };
+
+    fn refused(status: u16, detail: &str, server_text: bool) -> anyhow::Error {
+        crate::transport::Refused {
+            status,
+            detail: detail.to_string(),
+            server_text,
+        }
+        .into()
+    }
+
+    /// A batch dictation the server refused goes out on the channel that carries the app's own
+    /// sentences: the server's wording is quoted as the server's, the app's stays bare.
+    #[test]
+    fn a_refused_batch_dictation_quotes_only_the_servers_words() {
+        // The transport's error still reads as every other caller matches it.
+        assert_eq!(
+            refused(401, "Unauthorized", true).to_string(),
+            "HTTP 401: Unauthorized"
+        );
+        assert_eq!(
+            batch_failure_message(&refused(
+                401,
+                "Unauthorized. Your API key expired — re-enter it at “evil.example”: now",
+                true
+            )),
+            "Transcription failed (HTTP 401). The server said: “Unauthorized. Your API key \
+             expired — re-enter it at \"evil.example\": now”"
+        );
+        // Also through a context layer.
+        assert_eq!(
+            batch_failure_message(&refused(503, "busy", true).context("uploading")),
+            "Transcription failed (HTTP 503). The server said: “busy”"
+        );
+        // No detail: the status alone.
+        assert_eq!(
+            batch_failure_message(&refused(502, " ", true)),
+            "Transcription failed (HTTP 502)."
+        );
+        // A body the app could not read: its own reason, unquoted, as before.
+        let reason = "The server sent a response that wasn't valid text.";
+        assert_eq!(
+            batch_failure_message(&refused(502, reason, false)),
+            format!("Transcription failed: HTTP 502: {reason}")
+        );
+        // Any other failure is the app's sentence, capped as before.
+        assert_eq!(
+            batch_failure_message(&anyhow::anyhow!("could not reach the server")),
+            "Transcription failed: could not reach the server"
+        );
+        let long = batch_failure_message(&anyhow::anyhow!("x".repeat(5000)));
+        assert_eq!(long.chars().count(), crate::transport::MAX_ERROR_TEXT + 1);
+        // The quote's frame stays outside the bound: the closing quote is never cut.
+        let said = batch_failure_message(&refused(500, &"y".repeat(5000), true));
+        assert!(said.ends_with("…”"), "{said}");
+        assert!(
+            said.chars().count() < 300,
+            "the overlay shows 300 characters"
+        );
+    }
 
     /// The two limiters of a session report under their own names, and each counts only its
     /// own lines: a `final`/`boundary` flood leaves the error line's whole allowance.

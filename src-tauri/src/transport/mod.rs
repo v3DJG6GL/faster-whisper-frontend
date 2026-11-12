@@ -1195,13 +1195,44 @@ pub async fn error_detail(resp: reqwest::Response) -> (u16, String) {
     (status, detail_from(&body))
 }
 
-/// Pass a 2xx response through; anything else becomes `HTTP <status>: <detail>`.
+/// A non-2xx answer as [`ensure_ok`]'s error. It reads `HTTP <status>: <detail>`, the shape
+/// callers and the webview match on; the fields say what a line that QUOTES the detail needs
+/// to know.
+#[derive(Debug)]
+pub struct Refused {
+    pub status: u16,
+    /// The server's bounded `detail` ([`detail_from`]) — or, with `server_text` off, this app's
+    /// own reason for an error body it could not read (too large, timed out, not valid text).
+    pub detail: String,
+    /// `detail` is the SERVER's wording, from a body that was actually read.
+    pub server_text: bool,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP {}: {}", self.status, self.detail)
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Pass a 2xx response through; anything else becomes `HTTP <status>: <detail>` ([`Refused`]).
 pub async fn ensure_ok(resp: reqwest::Response) -> anyhow::Result<reqwest::Response> {
     if resp.status().is_success() {
         return Ok(resp);
     }
-    let (status, detail) = error_detail(resp).await;
-    anyhow::bail!("HTTP {status}: {detail}")
+    let status = resp.status().as_u16();
+    // As `error_detail`, the read kept apart so the error can say whose words the detail is.
+    let (detail, server_text) = match body_capped_to(resp, MAX_ERROR_BODY).await {
+        Ok(body) => (detail_from(&body), true),
+        Err(reason) => (detail_from(&reason), false),
+    };
+    Err(Refused {
+        status,
+        detail,
+        server_text,
+    }
+    .into())
 }
 
 /// Send a built request and read its JSON answer under `cap`: a transport failure is the
