@@ -16,7 +16,7 @@ import {
   type FieldRef,
 } from "./settingsManifest";
 import { DICTATION_HISTORY_FIELDS, FILE_TRANSCRIPTION_FIELDS, TRANSCRIPTION_FIELDS, TRANSCRIPTION_PICK_FIELDS } from "./sync/syncTypes";
-import { catsFromGates } from "./sync/syncGates";
+import { catsFromGates, substituteElementFields } from "./sync/syncGates";
 import { withSettingsDefaults } from "./store";
 import { DEFAULT_SYNC } from "./defaults";
 
@@ -251,5 +251,32 @@ describe("store completion of a pre-split config", () => {
     const vals = Object.values(DEFAULT_SETTING_SYNC);
     expect(vals.some((v) => !v)).toBe(true); // a boolean "sync everything" master can never read on by default
     expect(vals.some((v) => v)).toBe(true);
+  });
+});
+
+// The "API keys" switch says which switch governs a login written into a server address
+// (`user:password@host`). It must not promise that "Server addresses" keeps one home: that
+// switch only holds back a later edit to an address the server already has.
+describe("the API keys switch's note on a login in a server address", () => {
+  it("says the login travels with the server list, and what Server addresses keeps back", () => {
+    expect(SETTING.apiKeys.desc).toContain(
+      "A login written into a server address is not an API key: it is part of the address and travels with the server list. Turning Server addresses off keeps back only later changes to an address.",
+    );
+    expect(SETTING.apiKeys.desc).not.toContain("travels with Server addresses");
+  });
+
+  it("matches what a push composes with Server addresses off", () => {
+    // The compose's own step for that switch: the snapshot is what the server already holds.
+    const live = [
+      { id: "known", serverUrl: "https://anna:changed@host.example" },
+      { id: "added", serverUrl: "https://anna:hunter2@new.example" },
+    ];
+    const snapshot = [{ id: "known", serverUrl: "https://anna:hunter2@host.example" }];
+    expect(substituteElementFields(live, snapshot, ["serverUrl"])).toEqual([
+      // Only the later change is kept back: the login already synced keeps travelling.
+      { id: "known", serverUrl: "https://anna:hunter2@host.example" },
+      // A backend the server does not know yet ships its address whole.
+      { id: "added", serverUrl: "https://anna:hunter2@new.example" },
+    ]);
   });
 });
