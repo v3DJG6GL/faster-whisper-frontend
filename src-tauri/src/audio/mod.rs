@@ -167,19 +167,63 @@ fn push_pcm_capped_at(buf: &mut Vec<u8>, bytes: &[u8], cap: usize) -> bool {
     false
 }
 
-/// The two file names this app writes into the dictations folder — `dictation-*.wav`
-/// and its `.txt` sidecar. Everything else in a user-chosen folder is somebody else's
-/// data: never moved by the layout migration, never deleted by prune or delete-all.
+/// The file names this app writes into the dictations folder — a recording's `.wav` and its
+/// `.txt` sidecar, `dictation-<stem>.wav|.txt` with exactly the stems its writers produce:
+/// - the 19-char `%Y-%m-%d_%H-%M-%S` stamp ([`recording_stamp`]), then an optional `-u<ordinal>`
+///   (a per-utterance clip; 0 is the first utterance), then an optional `-N` (N ≥ 2, no upper
+///   bound) — the counter [`save_recording_as`] appends to a taken name;
+/// - 13 digits: the epoch-millisecond name of the first builds.
+///
+/// Everything else in a user-chosen folder is somebody else's data — a `dictation-notes.txt`
+/// or `dictation-exercise-3.wav` of the user's own included: never moved by the layout
+/// migration, never deleted by prune or delete-all.
 pub fn is_dictation_file(name: &str) -> bool {
-    name.starts_with("dictation-") && (name.ends_with(".wav") || name.ends_with(".txt"))
+    let Some(stem) = name
+        .strip_prefix("dictation-")
+        .and_then(|r| r.strip_suffix(".wav").or_else(|| r.strip_suffix(".txt")))
+    else {
+        return false;
+    };
+    if stem.len() == 13 && stem.bytes().all(|b| b.is_ascii_digit()) {
+        return true;
+    }
+    let (Some(stamp), Some(rest)) = (stem.get(..19), stem.get(19..)) else {
+        return false;
+    };
+    let stamp_ok = stamp.bytes().enumerate().all(|(i, b)| match i {
+        4 | 7 | 13 | 16 => b == b'-',
+        10 => b == b'_',
+        _ => b.is_ascii_digit(),
+    });
+    // A number as `{}` formats it: digits, no leading zero. Judged as a digit string, never
+    // parsed — the counter has no cap, so a parse could overflow.
+    let number = |s: &str| {
+        !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'))
+    };
+    // What follows the stamp: `-u<ordinal>` first when it is a clip, then the counter.
+    let (ordinal, counter) = match rest.strip_prefix("-u") {
+        Some(clip) => match clip.split_once('-') {
+            Some((ordinal, n)) => (Some(ordinal), Some(n)),
+            None => (Some(clip), None),
+        },
+        None if rest.is_empty() => (None, None),
+        None => match rest.strip_prefix('-') {
+            Some(n) => (None, Some(n)),
+            None => return false,
+        },
+    };
+    stamp_ok
+        && ordinal.is_none_or(number)
+        && counter.is_none_or(|n| number(n) && n != "0" && n != "1")
 }
 
 /// Delete saved recordings and their transcript sidecars older than `days` (0 = keep forever).
 /// Best-effort and silent on I/O errors: a failure here must never interrupt a dictation. Only
-/// files [`is_dictation_file`] accepts, so a shared recordings folder loses nothing else.
+/// regular files [`is_dictation_file`] accepts, so a shared recordings folder loses nothing else.
 pub fn prune_recordings(dir: &Path, days: u32) -> usize {
     let removed = prune_older_than(dir, days, |e| {
         is_dictation_file(&e.file_name().to_string_lossy())
+            && e.file_type().is_ok_and(|t| t.is_file())
     });
     if removed > 0 {
         let effective = days.min(MAX_RETENTION_DAYS);
@@ -699,7 +743,7 @@ mod retention_tests {
     fn saved_recording_matches_the_full_wrapper() {
         let dir = scratch_dir("save-wav");
         let pcm: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
-        let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
+        let path = save_recording_as(&dir, "dictation-2026-10-05_09-15-00", &pcm, 16_000).unwrap();
         assert_eq!(
             std::fs::read(&path).unwrap(),
             wav_from_pcm16(&pcm, 16_000, 1)
@@ -715,10 +759,10 @@ mod retention_tests {
         let dir = scratch_dir("save-dangling");
         std::fs::create_dir_all(&dir).unwrap();
         let target = dir.join("nowhere");
-        std::os::unix::fs::symlink(&target, dir.join("dictation-test.wav")).unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("dictation-2026-10-05_09-15-00.wav")).unwrap();
         let pcm = vec![1u8; 64];
-        let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
-        assert_eq!(path, dir.join("dictation-test-2.wav"));
+        let path = save_recording_as(&dir, "dictation-2026-10-05_09-15-00", &pcm, 16_000).unwrap();
+        assert_eq!(path, dir.join("dictation-2026-10-05_09-15-00-2.wav"));
         assert!(!target.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -729,11 +773,12 @@ mod retention_tests {
     fn a_taken_sidecar_name_moves_the_recording_on() {
         let dir = scratch_dir("save-sidecar-taken");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("dictation-test.txt"), b"theirs").unwrap();
-        let path = save_recording_as(&dir, "dictation-test", &[1u8; 64], 16_000).unwrap();
-        assert_eq!(path, dir.join("dictation-test-2.wav"));
+        std::fs::write(dir.join("dictation-2026-10-05_09-15-00.txt"), b"theirs").unwrap();
+        let path =
+            save_recording_as(&dir, "dictation-2026-10-05_09-15-00", &[1u8; 64], 16_000).unwrap();
+        assert_eq!(path, dir.join("dictation-2026-10-05_09-15-00-2.wav"));
         assert_eq!(
-            std::fs::read(dir.join("dictation-test.txt")).unwrap(),
+            std::fs::read(dir.join("dictation-2026-10-05_09-15-00.txt")).unwrap(),
             b"theirs"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -754,10 +799,10 @@ mod retention_tests {
     #[test]
     fn an_absurd_retention_window_is_clamped_not_fatal() {
         let dir = scratch_dir("retention-clamp");
-        seed(&dir, "dictation-old.wav", 400);
+        seed(&dir, "dictation-2026-01-02_03-04-05.wav", 400);
         // u32::MAX days is ~11.7 million years; clamped, this is simply "keep everything".
         assert_eq!(prune_recordings(&dir, u32::MAX), 0);
-        assert!(dir.join("dictation-old.wav").exists());
+        assert!(dir.join("dictation-2026-01-02_03-04-05.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -766,9 +811,12 @@ mod retention_tests {
     #[test]
     fn a_transcript_never_overwrites_an_existing_file() {
         let dir = scratch_dir("sidecar-nofollow");
-        let victim = dir.join("dictation-x.txt");
+        let victim = dir.join("dictation-2026-10-05_09-15-00.txt");
         std::fs::write(&victim, b"original").unwrap();
-        save_transcript_sidecar(&dir.join("dictation-x.wav"), "replacement text");
+        save_transcript_sidecar(
+            &dir.join("dictation-2026-10-05_09-15-00.wav"),
+            "replacement text",
+        );
         assert_eq!(std::fs::read(&victim).unwrap(), b"original");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -776,28 +824,105 @@ mod retention_tests {
     #[test]
     fn keeps_everything_when_retention_is_off() {
         let dir = scratch_dir("retention-off");
-        seed(&dir, "dictation-old.wav", 400);
+        seed(&dir, "dictation-2026-01-02_03-04-05.wav", 400);
         assert_eq!(prune_recordings(&dir, 0), 0);
-        assert!(dir.join("dictation-old.wav").exists());
+        assert!(dir.join("dictation-2026-01-02_03-04-05.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn removes_only_our_files_past_the_window() {
         let dir = scratch_dir("retention-window");
-        seed(&dir, "dictation-old.wav", 40);
-        seed(&dir, "dictation-old.txt", 40);
-        seed(&dir, "dictation-fresh.wav", 2);
+        seed(&dir, "dictation-2026-01-02_03-04-05.wav", 40);
+        seed(&dir, "dictation-2026-01-02_03-04-05.txt", 40);
+        seed(&dir, "dictation-2026-10-05_09-15-00.wav", 2);
         // Someone else's file in a shared folder, old enough to qualify on age alone.
         seed(&dir, "important-tax-return.wav", 400);
         seed(&dir, "notes.txt", 400);
 
         assert_eq!(prune_recordings(&dir, 30), 2);
-        assert!(!dir.join("dictation-old.wav").exists());
-        assert!(!dir.join("dictation-old.txt").exists());
-        assert!(dir.join("dictation-fresh.wav").exists());
+        assert!(!dir.join("dictation-2026-01-02_03-04-05.wav").exists());
+        assert!(!dir.join("dictation-2026-01-02_03-04-05.txt").exists());
+        assert!(dir.join("dictation-2026-10-05_09-15-00.wav").exists());
         assert!(dir.join("important-tax-return.wav").exists());
         assert!(dir.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The prefix alone does not make a file the app's: the folder is a free user pick, so it
+    /// may hold the user's own `dictation-notes.txt`. Only the shapes the writers produce match.
+    #[test]
+    fn only_the_names_the_app_writes_are_dictation_files() {
+        for own in [
+            "dictation-2026-10-05_09-15-00.wav",
+            "dictation-2026-10-05_09-15-00.txt",
+            // The collision counter, which has no upper bound.
+            "dictation-2026-10-05_09-15-00-2.wav",
+            "dictation-2026-10-05_09-15-00-10.txt",
+            "dictation-2026-10-05_09-15-00-123456789012345678901234567890.wav",
+            // Per-utterance clips; 0 is the first utterance.
+            "dictation-2026-10-05_09-15-00-u0.wav",
+            "dictation-2026-10-05_09-15-00-u7.wav",
+            "dictation-2026-10-05_09-15-00-u7.txt",
+            "dictation-2026-10-05_09-15-00-u7-2.wav",
+            "dictation-2026-10-05_09-15-00-u4294967295-12.txt",
+            // The first builds' epoch-millisecond name.
+            "dictation-1781307558123.wav",
+        ] {
+            assert!(is_dictation_file(own), "{own}");
+        }
+        for foreign in [
+            "dictation-notes.txt",
+            "dictation-exercise-3.wav",
+            "dictation-1.wav",
+            "dictation-3.txt",
+            "dictation-178130755812.wav",
+            "dictation-17813075581234.wav",
+            "dictation-2026-10-05_09-15-00-notes.wav",
+            "dictation-2026-10-05_09-15-00-1.wav",
+            "dictation-2026-10-05_09-15-00-0.wav",
+            "dictation-2026-10-05_09-15-00-02.wav",
+            "dictation-2026-10-05_09-15-00-.wav",
+            "dictation-2026-10-05_09-15-00-2-3.wav",
+            "dictation-2026-10-05_09-15-00-u.wav",
+            "dictation-2026-10-05_09-15-00-u07.wav",
+            "dictation-2026-10-05_09-15-00-u7-1.wav",
+            "dictation-2026-10-05_09-15-00-u7-.wav",
+            "dictation-2026-10-05_09-15-00-u7-2-3.wav",
+            "dictation-2026-10-05_09-15-00u7.wav",
+            "dictation-2026-10-05 09-15-00.wav",
+            "dictation-2026-10-05_09-15-0.wav",
+            "dictation-2026-10-05_09-15-000.wav",
+            "dictation-٢٠٢٦-10-05_09-15-00.wav",
+            "dictation-2026-10-05_09-15-00.wav.tmp",
+            "dictation-2026-10-05_09-15-00.mp3",
+            "dictation-2026-10-05_09-15-00",
+            "Dictation-2026-10-05_09-15-00.wav",
+            "dictation-.wav",
+            "dictation-",
+            "",
+        ] {
+            assert!(!is_dictation_file(foreign), "{foreign}");
+        }
+    }
+
+    /// A `dictation-`-prefixed file of the user's own survives the retention prune, whatever
+    /// its age, while every shape the app wrote still goes.
+    #[test]
+    fn a_foreign_dictation_prefixed_file_survives_the_prune() {
+        let dir = scratch_dir("retention-foreign");
+        seed(&dir, "dictation-2026-01-02_03-04-05-u3.wav", 400);
+        seed(&dir, "dictation-2026-01-02_03-04-05-u3-2.txt", 400);
+        seed(&dir, "dictation-1781307558123.wav", 400);
+        seed(&dir, "dictation-notes.txt", 400);
+        seed(&dir, "dictation-exercise-3.wav", 400);
+
+        assert_eq!(prune_recordings(&dir, 30), 3);
+        assert!(!dir.join("dictation-2026-01-02_03-04-05-u3.wav").exists());
+        assert!(!dir.join("dictation-2026-01-02_03-04-05-u3-2.txt").exists());
+        assert!(!dir.join("dictation-1781307558123.wav").exists());
+        assert!(dir.join("dictation-notes.txt").exists());
+        assert!(dir.join("dictation-exercise-3.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

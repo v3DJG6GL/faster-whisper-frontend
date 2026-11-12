@@ -631,9 +631,10 @@ pub(crate) fn is_partial_copy(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("tmp") && !is_own_media(path)
 }
 
-/// Is this a recordings-folder file THIS app wrote (`dictation-*.wav` / `.txt`)? The one
-/// predicate the readout, the wipe and the per-record delete share, so a non-UTF-8 name is
-/// judged the same (lossily) by all three and the readout keeps matching the wipe.
+/// Is this a recordings-folder file THIS app wrote (a name `audio::is_dictation_file` accepts)?
+/// The one predicate the readout, the wipe and the per-record delete share, so a non-UTF-8 name
+/// is judged the same (lossily, so never the app's) by all three and the readout keeps matching
+/// the wipe.
 pub(crate) fn is_own_recording(path: &Path) -> bool {
     path.file_name()
         .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
@@ -1495,16 +1496,20 @@ mod tests {
     fn dictation_audio_removal_spares_foreign_files() {
         let dir = crate::config::fresh_test_dir("dict-rm");
         for n in [
-            "dictation-1.wav",
-            "dictation-1.txt",
+            "dictation-2026-10-05_09-15-00.wav",
+            "dictation-2026-10-05_09-15-00.txt",
             "interview.wav",
             "interview.txt",
         ] {
             std::fs::write(dir.join(n), b"x").unwrap();
         }
-        remove_dictation_audio(dir.join("dictation-1.wav").to_str().unwrap());
-        assert!(!dir.join("dictation-1.wav").exists());
-        assert!(!dir.join("dictation-1.txt").exists());
+        remove_dictation_audio(
+            dir.join("dictation-2026-10-05_09-15-00.wav")
+                .to_str()
+                .unwrap(),
+        );
+        assert!(!dir.join("dictation-2026-10-05_09-15-00.wav").exists());
+        assert!(!dir.join("dictation-2026-10-05_09-15-00.txt").exists());
         remove_dictation_audio(dir.join("interview.wav").to_str().unwrap());
         assert!(dir.join("interview.wav").exists());
         assert!(dir.join("interview.txt").exists());
@@ -1599,11 +1604,18 @@ mod tests {
     #[test]
     fn the_recordings_readout_counts_sidecars_as_files_but_not_as_audio() {
         let dir = crate::config::fresh_test_dir("rec-stats");
-        for stem in ["dictation-1", "dictation-2"] {
+        for stem in [
+            "dictation-2026-10-05_09-15-00",
+            "dictation-2026-10-05_09-15-00-2",
+        ] {
             std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
             std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
         }
-        std::fs::write(dir.join("dictation-3.wav.tmp"), b"1234567").unwrap();
+        std::fs::write(
+            dir.join("dictation-2026-10-05_09-15-00-u3.wav.tmp"),
+            b"1234567",
+        )
+        .unwrap();
         std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
         assert_eq!(recordings_usage(&dir), (12, 4, 2));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1614,19 +1626,27 @@ mod tests {
     fn a_non_utf8_recording_name_is_counted_and_wiped_alike() {
         use std::os::unix::ffi::OsStrExt;
         let dir = crate::config::fresh_test_dir("rec-lossy");
-        let odd = dir.join(std::ffi::OsStr::from_bytes(b"dictation-\xff.wav"));
+        // No name the app writes holds a non-UTF-8 byte, so this one is somebody else's.
+        let odd = dir.join(std::ffi::OsStr::from_bytes(
+            b"dictation-2026-10-05_09-15-0\xff.wav",
+        ));
         std::fs::write(&odd, b"1234").unwrap();
+        std::fs::write(dir.join("dictation-2026-10-05_09-15-00.wav"), b"12").unwrap();
         // The readout promises exactly what the wipe then removes.
-        assert_eq!(recordings_usage(&dir), (4, 1, 1));
+        assert_eq!(recordings_usage(&dir), (2, 1, 1));
         assert_eq!(remove_own_recordings(&dir), Ok(1));
-        assert!(!odd.exists());
+        assert!(odd.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn deleting_all_recordings_counts_audio_not_sidecars() {
         let dir = crate::config::fresh_test_dir("rec-wipe");
-        for stem in ["dictation-1", "dictation-2", "dictation-3"] {
+        for stem in [
+            "dictation-2026-10-05_09-15-00",
+            "dictation-2026-10-05_09-15-00-2",
+            "dictation-2026-10-05_09-15-00-u3",
+        ] {
             std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
             std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
         }
@@ -1634,7 +1654,7 @@ mod tests {
         // The readout's audio count and the wipe's result agree; the sidecars still go.
         assert_eq!(recordings_usage(&dir).2, 3);
         assert_eq!(remove_own_recordings(&dir), Ok(3));
-        assert!(!dir.join("dictation-1.txt").exists());
+        assert!(!dir.join("dictation-2026-10-05_09-15-00.txt").exists());
         assert!(dir.join("song.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1665,7 +1685,7 @@ mod tests {
         assert_eq!(remove_own_recordings(&dir.join("missing")), Ok(0));
         // A path that exists but cannot be listed (here: a regular file) rejects, so
         // "Delete all" never reports "Removed 0" while every file stays on disk.
-        let file = dir.join("dictation-1.wav");
+        let file = dir.join("dictation-2026-10-05_09-15-00.wav");
         std::fs::write(&file, b"1234").unwrap();
         assert!(wipe_records(&file).is_err());
         assert!(remove_own_recordings(&file).is_err());

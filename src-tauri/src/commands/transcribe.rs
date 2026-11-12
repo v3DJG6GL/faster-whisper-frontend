@@ -391,8 +391,8 @@ fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, dest: 
 
 /// inside_app_storage's decision. A custom audio base is an ordinary user folder (~/Videos,
 /// even ~), so only what the app keeps in it is guarded: its AUDIO_SUBDIRS, its HEAL_STAMP,
-/// and in its root the `dictation-*` names the launch layout sweep moves into dictations/
-/// (where retention would later delete them); an export may sit next to them. The default
+/// and in its root the recording names (`is_dictation_file`) the launch layout sweep moves into
+/// dictations/ (where retention would later delete them); an export may sit next to them. The default
 /// base lives under the app data dir, which stays guarded whole. (copy_media_to's source
 /// check is the narrower record-owned or AUDIO_SUBDIRS test.)
 fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &Path) -> bool {
@@ -897,12 +897,14 @@ mod tests {
         assert!(inside(&base.join("dictations/x.wav")));
         assert!(inside(&base.join("dictations/day/x.wav")));
         assert!(inside(&base.join(HEAL_STAMP)));
-        // The launch sweep files a loose dictation-* in the base root into dictations/; only
+        // The launch sweep files a loose recording in the base root into dictations/; only
         // the root is swept, so a subfolder keeps the name.
         assert!(inside(&base.join("dictation-2026-10-14_12-00-00.wav")));
         assert!(inside(&base.join("dictation-2026-10-14_12-00-00.txt")));
         std::fs::create_dir_all(base.join("sub")).unwrap();
-        assert!(!inside(&base.join("sub/dictation-x.wav")));
+        assert!(!inside(&base.join("sub/dictation-2026-10-14_12-00-00.wav")));
+        // Nor is a name the sweep leaves alone: the prefix alone is not the app's.
+        assert!(!inside(&base.join("dictation-notes.wav")));
         assert!(inside(&app_data.join("x.mkv")));
         assert!(!inside(&dir.join("talk.mkv")));
         let _ = std::fs::remove_dir_all(&dir);

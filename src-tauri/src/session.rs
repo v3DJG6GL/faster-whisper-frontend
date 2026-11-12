@@ -1581,7 +1581,7 @@ mod tests {
     #[test]
     fn a_discarded_recording_takes_its_sidecar_along() {
         let dir = crate::config::fresh_test_dir("discard");
-        let wav = dir.join("dictation-1.wav");
+        let wav = dir.join("dictation-2026-10-05_09-15-00.wav");
         std::fs::write(&wav, b"RIFF").unwrap();
         std::fs::write(wav.with_extension("txt"), b"text\n").unwrap();
         super::remove_recording(&wav, true);

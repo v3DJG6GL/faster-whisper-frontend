@@ -329,6 +329,47 @@ pub(crate) fn wait_audio_layout_for(d: std::time::Duration) -> bool {
     AUDIO_LAYOUT.wait_timeout(d)
 }
 
+/// [`ensure_audio_layout`]'s recordings half: move the app's own loose recordings out of
+/// `legacy_rec` into `dict`, appending each (old path, new path) to `map`.
+fn sweep_legacy_recordings(
+    legacy_rec: &std::path::Path,
+    dict: &std::path::Path,
+    map: &mut Vec<(String, String)>,
+) {
+    let Ok(entries) = std::fs::read_dir(legacy_rec) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let src = entry.path();
+        let Some(name) = src.file_name() else {
+            continue;
+        };
+        // Only the app's own files: the legacy folder is a free user pick (~/Music,
+        // a shared Documents folder…), and relocating every .wav/.txt in it would move
+        // foreign files under a folder "Delete all dictations" then wipes.
+        // `file_type` is the entry's own: a planted link is left behind (see
+        // `move_dir_contents`).
+        if !entry.file_type().is_ok_and(|t| t.is_file())
+            || !crate::audio::is_dictation_file(&name.to_string_lossy())
+        {
+            continue;
+        }
+        let dest = dict.join(name);
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            continue; // never clobber (a dangling link included)
+        }
+        if move_file(&src, &dest).is_ok() {
+            map.push((
+                src.to_string_lossy().into_owned(),
+                dest.to_string_lossy().into_owned(),
+            ));
+        }
+    }
+    if legacy_rec.file_name().and_then(|n| n.to_str()) == Some("recordings") {
+        let _ = std::fs::remove_dir(legacy_rec);
+    }
+}
+
 /// One-time (idempotent) migration into the single-base layout: legacy saved
 /// recordings move into `<base>/dictations`, the old app-data media store
 /// splits into `<base>/files` + `<base>/links` by record kind. Run once per
@@ -359,37 +400,7 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     };
     let dict = base.join("dictations");
     if let Some(legacy_rec) = legacy_rec.filter(|l| *l != dict) {
-        if let Ok(entries) = std::fs::read_dir(&legacy_rec) {
-            for entry in entries.flatten() {
-                let src = entry.path();
-                let Some(name) = src.file_name() else {
-                    continue;
-                };
-                // Only the app's own files: the legacy folder is a free user pick (~/Music,
-                // a shared Documents folder…), and relocating every .wav/.txt in it would move
-                // foreign files under a folder "Delete all dictations" then wipes.
-                // `file_type` is the entry's own: a planted link is left behind (see
-                // `move_dir_contents`).
-                if !entry.file_type().is_ok_and(|t| t.is_file())
-                    || !crate::audio::is_dictation_file(&name.to_string_lossy())
-                {
-                    continue;
-                }
-                let dest = dict.join(name);
-                if std::fs::symlink_metadata(&dest).is_ok() {
-                    continue; // never clobber (a dangling link included)
-                }
-                if move_file(&src, &dest).is_ok() {
-                    map.push((
-                        src.to_string_lossy().into_owned(),
-                        dest.to_string_lossy().into_owned(),
-                    ));
-                }
-            }
-            if legacy_rec.file_name().and_then(|n| n.to_str()) == Some("recordings") {
-                let _ = std::fs::remove_dir(&legacy_rec);
-            }
-        }
+        sweep_legacy_recordings(&legacy_rec, &dict, &mut map);
     }
     if let Ok(legacy_media) = crate::store::transcripts::legacy_media_dir(app) {
         if let Ok(entries) = std::fs::read_dir(&legacy_media) {
@@ -899,7 +910,10 @@ mod tests {
     #[test]
     fn a_cross_volume_move_copy_keeps_the_source_mtime() {
         let dir = crate::config::fresh_test_dir("copymtime");
-        let (src, dest) = (dir.join("dictation-a.wav"), dir.join("moved.wav"));
+        let (src, dest) = (
+            dir.join("dictation-2026-10-05_09-15-00.wav"),
+            dir.join("moved.wav"),
+        );
         std::fs::write(&src, b"RIFF").unwrap();
         let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
         crate::config::set_test_mtime(&src, old);
@@ -1131,8 +1145,9 @@ mod tests {
 
         let (dfrom, dto) = (base.join("dfrom"), base.join("dto"));
         std::fs::create_dir_all(&dfrom).unwrap();
-        std::fs::write(dfrom.join("dictation-1.wav"), b"riff").unwrap();
+        std::fs::write(dfrom.join("dictation-2026-10-05_09-15-00.wav"), b"riff").unwrap();
         std::fs::write(dfrom.join("notes.txt"), b"mine").unwrap();
+        std::fs::write(dfrom.join("dictation-notes.txt"), b"mine").unwrap();
         move_dir_contents(
             &dfrom,
             &dto,
@@ -1140,9 +1155,48 @@ mod tests {
             &mut map,
         )
         .unwrap();
-        assert!(dto.join("dictation-1.wav").is_file());
+        assert!(dto.join("dictation-2026-10-05_09-15-00.wav").is_file());
         assert!(dfrom.join("notes.txt").is_file());
         assert!(!dto.join("notes.txt").exists());
+        assert!(dfrom.join("dictation-notes.txt").is_file());
+        assert!(!dto.join("dictation-notes.txt").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // The swept folder is the user's own pick: the launch sweep files only the names the app
+    // writes into dictations/, so a `dictation-notes.txt` of the user's stays where it is.
+    #[test]
+    fn the_layout_sweep_moves_only_the_recordings_the_app_wrote() {
+        let base = crate::config::fresh_test_dir("layout-sweep");
+        let dict = base.join("dictations");
+        std::fs::create_dir_all(&dict).unwrap();
+        let own = [
+            "dictation-2026-10-05_09-15-00.wav",
+            "dictation-2026-10-05_09-15-00.txt",
+            "dictation-2026-10-05_09-15-00-u7-2.wav",
+            "dictation-1781307558123.wav",
+        ];
+        let foreign = [
+            "dictation-notes.txt",
+            "dictation-exercise-3.wav",
+            "interview.wav",
+        ];
+        for name in own.iter().chain(&foreign) {
+            std::fs::write(base.join(name), b"x").unwrap();
+        }
+
+        let mut map = Vec::new();
+        super::sweep_legacy_recordings(&base, &dict, &mut map);
+
+        for name in own {
+            assert!(dict.join(name).is_file(), "{name} moves");
+            assert!(!base.join(name).exists(), "{name} moves");
+        }
+        for name in foreign {
+            assert!(base.join(name).is_file(), "{name} stays");
+            assert!(!dict.join(name).exists(), "{name} stays");
+        }
+        assert_eq!(map.len(), own.len());
         let _ = std::fs::remove_dir_all(&base);
     }
 
