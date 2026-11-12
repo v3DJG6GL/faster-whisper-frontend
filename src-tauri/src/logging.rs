@@ -668,9 +668,143 @@ pub async fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(
     .await
 }
 
+/// Rate limit for log lines written once per SERVER frame: a streaming session's `final`,
+/// `boundary` and `error` lines, and the lines the webview sends through `frontend_log` (some
+/// of them one per frame too). The server decides how many of those frames arrive and the
+/// session log file has no size cap, so a server flooding them would grow it for as long as
+/// the session or its drain lasts. A real session sends them at phrase rate, far below the
+/// limit, and logs every one.
+///
+/// Up to [`Self::MAX_LINES`] lines pass per [`Self::WINDOW`]; the rest are counted, and the
+/// count is reported once — with the first line of the next window, or when the owner asks
+/// for it at its close. Windows run on the core's own clock: nothing here reads a server or
+/// webview value.
+pub(crate) struct FrameLineLimiter {
+    /// When the current window began (at the first line after the previous one ran out).
+    window_start: std::time::Instant,
+    /// Lines passed in the current window.
+    written: u32,
+    /// Lines dropped since the last report.
+    suppressed: u64,
+}
+
+/// [`FrameLineLimiter::admit`]'s answer for one line.
+#[derive(Debug, PartialEq)]
+pub(crate) struct FrameLine {
+    /// Write this line.
+    pub(crate) log: bool,
+    /// Lines dropped before it that are now to be reported, in one line of their own.
+    pub(crate) suppressed: Option<u64>,
+}
+
+impl FrameLineLimiter {
+    pub(crate) const MAX_LINES: u32 = 20;
+    pub(crate) const WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+
+    pub(crate) fn new(now: std::time::Instant) -> Self {
+        Self {
+            window_start: now,
+            written: 0,
+            suppressed: 0,
+        }
+    }
+
+    /// Account for one line at `now`.
+    pub(crate) fn admit(&mut self, now: std::time::Instant) -> FrameLine {
+        let mut suppressed = None;
+        if now.saturating_duration_since(self.window_start) >= Self::WINDOW {
+            self.window_start = now;
+            self.written = 0;
+            suppressed = self.take_suppressed();
+        }
+        let log = self.written < Self::MAX_LINES;
+        if log {
+            self.written += 1;
+        } else {
+            self.suppressed = self.suppressed.saturating_add(1);
+        }
+        FrameLine { log, suppressed }
+    }
+
+    /// The dropped lines not yet reported, retired (None when there are none).
+    pub(crate) fn take_suppressed(&mut self) -> Option<u64> {
+        Some(std::mem::take(&mut self.suppressed)).filter(|k| *k > 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the limiter answers for `n` lines at `now`: how many it passed, and each report.
+    fn admit_n(l: &mut FrameLineLimiter, now: std::time::Instant, n: u32) -> (u32, Vec<u64>) {
+        let (mut passed, mut reports) = (0, Vec::new());
+        for _ in 0..n {
+            let FrameLine { log, suppressed } = l.admit(now);
+            passed += u32::from(log);
+            reports.extend(suppressed);
+        }
+        (passed, reports)
+    }
+
+    #[test]
+    fn frame_lines_at_a_real_rate_all_pass_and_report_nothing() {
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        // A full window's worth at once, then the same again in every later window.
+        for sec in 0..5 {
+            let now = t0 + Duration::from_secs(sec);
+            let (passed, reports) = admit_n(&mut l, now, FrameLineLimiter::MAX_LINES);
+            assert_eq!(passed, FrameLineLimiter::MAX_LINES, "second {sec}");
+            assert!(reports.is_empty(), "second {sec}");
+        }
+        assert_eq!(l.take_suppressed(), None);
+    }
+
+    #[test]
+    fn frame_lines_past_the_limit_are_counted_and_reported_once_on_the_next_window() {
+        use std::time::Duration;
+        let max = FrameLineLimiter::MAX_LINES;
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        // A flood inside one window: the first MAX pass, every later one is only counted.
+        assert_eq!(admit_n(&mut l, t0, max + 1), (max, vec![]));
+        let late = t0 + FrameLineLimiter::WINDOW - Duration::from_millis(1);
+        assert_eq!(admit_n(&mut l, late, 499), (0, vec![]));
+        // The first line of the next window passes and carries the one report.
+        let next = t0 + FrameLineLimiter::WINDOW;
+        assert_eq!(
+            l.admit(next),
+            FrameLine {
+                log: true,
+                suppressed: Some(500)
+            }
+        );
+        // The window restarted with it: MAX lines in all, and the count starts over.
+        assert_eq!(admit_n(&mut l, next, max + 2), (max - 1, vec![]));
+        let after = next + FrameLineLimiter::WINDOW;
+        assert_eq!(admit_n(&mut l, after, 2), (2, vec![3]));
+        assert_eq!(l.take_suppressed(), None);
+    }
+
+    #[test]
+    fn frame_lines_dropped_before_the_close_are_reported_at_the_close() {
+        let t0 = std::time::Instant::now();
+        let mut l = FrameLineLimiter::new(t0);
+        admit_n(&mut l, t0, FrameLineLimiter::MAX_LINES + 7);
+        assert_eq!(l.take_suppressed(), Some(7));
+        // Reported once: a second close, or the next window, has nothing left to say.
+        assert_eq!(l.take_suppressed(), None);
+        let next = t0 + FrameLineLimiter::WINDOW;
+        assert_eq!(
+            l.admit(next),
+            FrameLine {
+                log: true,
+                suppressed: None
+            }
+        );
+    }
 
     #[test]
     fn the_level_directive_clamps_other_targets_to_the_chosen_level() {
