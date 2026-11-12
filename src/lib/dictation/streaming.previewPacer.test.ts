@@ -1,5 +1,6 @@
 // The two store fields a speech server can flip at its own frame rate — `partial` (through
-// `stream://final`) and `serverWork` (through `stream://utterance`) — under a virtual clock. Runs
+// `stream://final`) and `serverWork` (through `stream://utterance` and the `loading` status) —
+// under a virtual clock. Runs
 // the REAL pacers and the REAL partial handler (sliced from the source, types stripped) against a
 // stub store, so the test sees exactly what a session would paint, and when.
 import { describe, expect, it } from "vitest";
@@ -109,6 +110,7 @@ let lastWorkPublishAt = 0;
 ${topLevel("clearWorkTimer")}
 ${topLevel("publishServerWork")}
 ${topLevel("syncServerWork")}
+${topLevel("publishLoading")}
 ${topLevel("endUtterance")}
 ${topLevel("resetServerWork")}
 
@@ -125,6 +127,9 @@ return {
   settle() { store.status = "idle"; },
   utterance(state, ordinal) { onUtteranceFrame(pending, state, ordinal, performance.now()); syncServerWork(); },
   endUtterance,
+  // The status handler's \`loading\` (mic-open half) and \`ready\` clears, as the source has them (pinned below).
+  loading() { if (useApp.getState().status === "listening" && isCapturing()) publishLoading(); },
+  ready() { if (useApp.getState().serverWork === "loading") setDictation({ serverWork: null }); },
   // Every teardown: the module half, then the caller's own patch.
   teardown() { resetServerWork(); setDictation({ serverWork: null }); },
   store, painted, published,
@@ -140,6 +145,8 @@ type Env = {
   settle(): void;
   utterance(state: "open" | "decoding", ordinal: number | null): void;
   endUtterance(): void;
+  loading(): void;
+  ready(): void;
   teardown(): void;
   store: { status: string; partial: string; serverWork: string | null };
   painted: string[];
@@ -393,5 +400,92 @@ describe("syncServerWork's paced publish", () => {
       expect(e.published.slice(before).filter((v) => v !== null)).toEqual([]);
       expect(clock.armed()).toBe(0);
     }
+  });
+});
+
+describe("the `loading` keepalive's paced publish", () => {
+  it("the source's status handler is what this file simulates", () => {
+    const from = streamingSrc.indexOf('reg<string>("stream://status"');
+    const handler = streamingSrc.slice(from, streamingSrc.indexOf('e.payload === "closed"', from));
+    expect(handler).toContain('if (useApp.getState().serverWork === "loading") setDictation({ serverWork: null });');
+    expect(handler).toContain('else if (useApp.getState().status === "listening" && isCapturing()) publishLoading();');
+    // The paced function is the only way "loading" gets into the store.
+    expect(streamingSrc.match(/publishServerWork\("loading"\)/g)).toHaveLength(1);
+    expect(streamingSrc).not.toMatch(/serverWork: "loading"/);
+  });
+
+  it("a real cold load says so on its first frame, and `ready` clears it at once", async () => {
+    const { e, clock } = await env();
+    clock.advance(250); // the handshake
+    e.loading();
+    expect(e.store.serverWork).toBe("loading");
+    for (let i = 0; i < 5; i++) {
+      clock.advance(3000); // the keepalive
+      e.loading();
+      expect(e.store.serverWork).toBe("loading");
+    }
+    clock.advance(1);
+    e.ready();
+    expect(e.store.serverWork).toBeNull();
+    expect(e.published).toEqual(["loading", null]);
+    expect(clock.armed()).toBe(0);
+  });
+
+  it("a `loading` skipped by the floor is said by the next keepalive", async () => {
+    const { e, clock } = await env();
+    e.loading();
+    clock.advance(1);
+    e.ready();
+    clock.advance(1);
+    e.loading(); // inside the floor: skipped, and no timer says it later
+    expect(e.store.serverWork).toBeNull();
+    expect(clock.armed()).toBe(0);
+    clock.advance(3000);
+    expect(e.store.serverWork).toBeNull();
+    e.loading(); // the next keepalive
+    expect(e.store.serverWork).toBe("loading");
+    expect(e.published).toEqual(["loading", null, "loading"]);
+  });
+
+  it.each([
+    ["`ready`", (e: Env) => e.ready()],
+    ["a final / boundary / dropped utterance", (e: Env) => e.endUtterance()],
+  ])("a flood of `loading` alternating with %s publishes at the floor's rate", async (_n, clear) => {
+    const { e, clock } = await env();
+    const ms = 2000;
+    for (let i = 0; i < ms; i++) {
+      if (i % 2) {
+        clear(e);
+        // The clear is never paced: a real `ready` cannot be late or lost.
+        expect(e.store.serverWork).toBeNull();
+      } else e.loading();
+      clock.advance(1);
+    }
+    const shown = e.published.filter((v) => v !== null).length;
+    expect(shown).toBeLessThanOrEqual(paced(ms));
+    expect(shown).toBeGreaterThan(2);
+    // Each clear answers one paced publish.
+    expect(e.published.length).toBeLessThanOrEqual(2 * paced(ms));
+    expect(clock.armed()).toBe(0);
+  });
+
+  it("`loading` alternating with utterance frames shares the one floor", async () => {
+    const { e, clock } = await env();
+    const ms = 2000;
+    for (let i = 0; i < ms; i++) {
+      if (i % 2) e.utterance(i % 4 === 1 ? "open" : "decoding", 1);
+      else e.loading();
+      clock.advance(1);
+    }
+    expect(e.published.length).toBeLessThanOrEqual(paced(ms));
+    expect(e.published.length).toBeGreaterThan(2);
+  });
+
+  it("a `loading` after the mic closed publishes nothing", async () => {
+    const { e, clock } = await env();
+    e.store.status = "transcribing";
+    clock.advance(100);
+    e.loading();
+    expect(e.published).toEqual([]);
   });
 });

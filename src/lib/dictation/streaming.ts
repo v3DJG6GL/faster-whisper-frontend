@@ -107,7 +107,8 @@ function clearWorkTimer(): void {
 function publishServerWork(v: ServerWork): void {
   if (useApp.getState().serverWork !== v) useApp.getState().setDictation({ serverWork: v });
 }
-// Floor between two publishes out of syncServerWork. `stream://utterance` frames come at the
+// Floor between two publishes out of syncServerWork (and publishLoading, on the same clock).
+// `stream://utterance` frames come at the
 // untrusted server's rate, and every flip of `serverWork` re-broadcasts the chip cross-window and
 // rewrites the tray tooltip over the IPC (chipController.ts). A real session's edges are far
 // apart (an `open` and its `decoding` by the server's commit silence, ~1.2 s), so they publish
@@ -137,6 +138,19 @@ function syncServerWork(): void {
   }
   const next = msUntilStale(pending, now);
   if (next !== null) workTimer = setTimeout(syncServerWork, next + 5);
+}
+/** The server's `loading` keepalive while the mic is open. On the same floor as syncServerWork:
+ *  the untrusted server can alternate `loading` with `ready` (or with a `final`, a `boundary`, a
+ *  dropped utterance — each clears it at once) at its own frame rate, and every flip reaches the
+ *  chip broadcast and the tray tooltip. A `loading` inside the floor is skipped, not deferred: the
+ *  keepalive repeats every ~3 s, so the next one says it. The clears stay immediate, so a real
+ *  `ready` is never late; a real cold load's first `loading` has no publish right before it. */
+function publishLoading(): void {
+  if (useApp.getState().serverWork === "loading") return;
+  const now = performance.now();
+  if (now - lastWorkPublishAt < WORK_MIN_MS) return;
+  lastWorkPublishAt = now;
+  publishServerWork("loading");
 }
 /** The utterance ended (its `final`, or `dropped`). The protocol state clears at once — the
  *  per-phrase Enter must not wait on a paint — but the painted state keeps its minimum show
@@ -3307,7 +3321,7 @@ async function ensureListeners(): Promise<void> {
       // …and while the mic is still open, SAY so: on amber "listening" a cold load (tens of
       // seconds) invites speech the server is not transcribing yet. Cleared by `ready` above and by
       // every teardown.
-      else if (useApp.getState().status === "listening" && isCapturing()) publishServerWork("loading");
+      else if (useApp.getState().status === "listening" && isCapturing()) publishLoading();
     } else if (e.payload === "closed") {
       capturing = false; // covers the closes that ran no stopLive (capture death, server-initiated)
       clearStuckWatchdog(); // the stream resolved on its own
