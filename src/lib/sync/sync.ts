@@ -3619,6 +3619,10 @@ export interface SecurityChange {
    *  two entries with the same shown name — two blank ones both read "Untitled profile" — are
    *  still two rows, so one added after the review was raised re-raises it. */
   id?: string;
+  /** `backend` is not a name but the entry's whole ADDRESS (`entryLabel`'s fallback for a backend
+   *  whose name is blank). Display only — it tells the dialog the label may hold a login to mask
+   *  (`consentBackendText`) — and deliberately NOT part of `changeKey`. */
+  backendIsAddress?: true;
 }
 
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
@@ -3717,7 +3721,14 @@ function withHeldKeyRows(
     )
     // The paired server's `url` too: the row names where the held key would go, so it never
     // depends on the new-backend row surviving the dialog's row cap.
-    .map((c) => ({ kind: "api-key", id: c.id, backend: c.backend, detail: HELD_KEY_DETAIL, url: c.url }));
+    .map((c) => ({
+      kind: "api-key",
+      id: c.id,
+      backend: c.backend,
+      detail: HELD_KEY_DETAIL,
+      url: c.url,
+      ...(c.backendIsAddress && { backendIsAddress: true as const }),
+    }));
   return extra.length > 0 ? [...rows, ...extra] : rows;
 }
 
@@ -3770,6 +3781,15 @@ const entryLabel = (e: { name?: unknown; serverUrl?: unknown }, category: "profi
   shownName(e.name) ||
   (category === "profiles" ? "Untitled profile" : (typeof e.serverUrl === "string" && e.serverUrl) || "Untitled backend");
 
+/** The mark a row carries when `entryLabel` labelled its backend by the address (same arguments). */
+const addressLabelMark = (
+  e: { name?: unknown; serverUrl?: unknown },
+  category: "profiles" | "backends",
+): { backendIsAddress?: true } =>
+  category === "backends" && !shownName(e.name) && typeof e.serverUrl === "string" && e.serverUrl
+    ? { backendIsAddress: true }
+    : {};
+
 /**
  * The decode keys whose text the app TYPES into the focused window (the live hard-break
  * separator, the output prefix/suffix) — the same class as the `autoEnter` refusal: a peer that
@@ -3791,6 +3811,7 @@ function typedTextChanges(
     const local = here.get(e.id);
     const cur = local?.decodeOverrides ?? {};
     const name = entryLabel(local ?? e, category);
+    const byAddress = addressLabelMark(local ?? e, category);
     for (const key of TYPED_TEXT_KEYS) {
       const v = next[key];
       if (typeof v !== "string" || v === "" || v === cur[key]) continue;
@@ -3798,6 +3819,7 @@ function typedTextChanges(
         kind: "typed-text",
         id: e.id,
         backend: name,
+        ...byAddress,
         category,
         detail: typedTextDetail(key, v),
       });
@@ -4143,10 +4165,12 @@ export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail" | "u
 /** A review row's backend label as the dialog shows it. The label is the backend's name, but a
  *  backend whose name is blank is labelled by its whole address (`entryLabel`), and the row
  *  would print that address's password right in front of the detail that masks it. Masked HERE
- *  and never in `backend`: the label is part of the row's identity (`changeKey`). A real name,
- *  and an address without a password, come back as written (`maskAddressPassword`). */
-export const consentBackendText = (c: Pick<SecurityChange, "backend">): string =>
-  c.backend ? safeIdentityText(maskAddressPassword(c.backend), 80) : "";
+ *  and never in `backend`: the label is part of the row's identity (`changeKey`). ONLY a label
+ *  that is the address (`backendIsAddress`): a name is free text, and the lenient address reader
+ *  takes many real ones for an address with a login ("My server: me@host") — masking those would
+ *  hide part of the one thing a changed-key row is known by. */
+export const consentBackendText = (c: Pick<SecurityChange, "backend" | "backendIsAddress">): string =>
+  c.backend ? safeIdentityText(c.backendIsAddress ? maskAddressPassword(c.backend) : c.backend, 80) : "";
 
 /** The path as the peer wrote it (hidden characters escaped), for the row's tooltip — only for a
  *  folder row whose shown path was resolved or escaped (`consentDetailText`), so the user can still
@@ -4337,6 +4361,7 @@ export function securityChanges(
   for (const b of inBackends) {
     const cur = here.get(b.id);
     const name = entryLabel(cur ?? b, "backends");
+    const byAddress = addressLabelMark(cur ?? b, "backends");
     // A backend new to this device keeps its inbound address even with "Server addresses" off
     // (there is nothing local to re-pin), so `new-backend` is raised regardless of the gates.
     // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
@@ -4345,7 +4370,14 @@ export function securityChanges(
     // An empty `serverUrl` is `sanitizeBackends` blanking an unsupported scheme: say so rather
     // than render a blank target. `url` stays empty so the repoint footer stays off.
     if (!cur) {
-      out.push({ kind: "new-backend", id: b.id, backend: name, detail: b.serverUrl || NO_ADDRESS, url: b.serverUrl });
+      out.push({
+        kind: "new-backend",
+        id: b.id,
+        backend: name,
+        ...byAddress,
+        detail: b.serverUrl || NO_ADDRESS,
+        url: b.serverUrl,
+      });
     } else if (
       gates?.serverAddresses !== false &&
       normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)
@@ -4354,6 +4386,7 @@ export function securityChanges(
         kind: "server-url",
         id: b.id,
         backend: name,
+        ...byAddress,
         detail: `${cur.serverUrl || NO_ADDRESS}${ADDRESS_ARROW}${b.serverUrl || ADDRESS_CLEARED}`,
         url: b.serverUrl,
       });
@@ -4375,6 +4408,7 @@ export function securityChanges(
         kind: "api-key",
         id: b.id,
         backend: name,
+        ...byAddress,
         detail: localKey
           ? "the stored key would be replaced"
           : "a key would be stored for this server",
