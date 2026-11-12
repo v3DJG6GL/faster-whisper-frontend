@@ -29,6 +29,7 @@ import {
   applyBlob,
   approvePendingReview,
   backendKeyFates,
+  consentBackendText,
   consentDetailText,
   consentDetailTitle,
   deleteAnswerRuntime,
@@ -57,7 +58,7 @@ import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
 import { everyWhileVisible } from "@/lib/windowVisibility";
-import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeHostText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeHostText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -881,7 +882,13 @@ function SecurityReviewDialog() {
   // dialog re-renders on every dictation status change while it is open.
   const changes = pending?.changes;
   const details = useMemo(
-    () => new Map((changes ?? []).map((c) => [c, { text: consentDetailText(c), title: consentDetailTitle(c) }])),
+    () =>
+      new Map(
+        (changes ?? []).map((c) => [
+          c,
+          { text: consentDetailText(c), title: consentDetailTitle(c), backend: consentBackendText(c) },
+        ]),
+      ),
     [changes],
   );
   if (!pending) return null;
@@ -937,14 +944,15 @@ function SecurityReviewDialog() {
                 </div>
               )}
               <div className="mt-0.5 font-mono text-[11px] break-all text-dim" title={details.get(c)?.title}>
-                {/* `safeIdentityText`: a changed-key row has no `url` (a held key's row shows its
+                {/* `consentBackendText` (`safeIdentityText`, a blank-named backend's address label
+                    with its password masked): a changed-key row has no `url` (a held key's row shows its
                     new server's), so this NAME is its only identity while it decides whether a
                     plaintext key reaches the OS keyring — and
                     names are uncapped (a rename raises no review), so a markerless cut could hide
                     a padded suffix. `consentDetailText`: a typed-text or folder row shows the whole value
                     (`break-all` wraps a long path), resolved of `.`/`..` (the raw path is the
                     tooltip), and one past its cap its head and tail. */}
-                {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
+                {details.get(c)?.backend ? `${details.get(c)?.backend} · ` : ""}
                 {details.get(c)?.text}
               </div>
               {auth?.hasUserinfo && (

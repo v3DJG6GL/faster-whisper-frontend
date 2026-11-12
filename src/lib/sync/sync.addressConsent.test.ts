@@ -4,7 +4,14 @@
 // stays whole, since it is part of the identity a re-raised review is matched by.
 
 import { describe, expect, it } from "vitest";
-import { categorySelection, consentDetailCap, consentDetailText, securityChanges, type SecurityChange } from "./sync";
+import {
+  categorySelection,
+  consentBackendText,
+  consentDetailCap,
+  consentDetailText,
+  securityChanges,
+  type SecurityChange,
+} from "./sync";
 import { safeIdentityText } from "../sanitize";
 import { backend } from "./syncTestFixtures";
 
@@ -136,5 +143,42 @@ describe("the other rows", () => {
       const c = { kind, detail: "http://anna:hunter2@host.lan → http://anna:hunter3@host.lan" };
       expect(consentDetailText(c)).toBe(safeIdentityText(c.detail, consentDetailCap(kind)));
     }
+  });
+});
+
+describe("a row's backend label", () => {
+  const all = (incoming: unknown[], local: unknown[]): SecurityChange[] =>
+    securityChanges({ backends: { list: incoming } } as never, { backends: { list: local } } as never, CATS);
+
+  it("shows a real name as written", () => {
+    const [c] = rows([backend({ name: "Work", serverUrl: "http://new.lan" })], [backend({ name: "Work" })]);
+    expect(c.backend).toBe("Work");
+    expect(consentBackendText(c)).toBe("Work");
+    expect(consentBackendText({ backend: "" })).toBe("");
+    // A name that is itself an address without a password is a name like any other.
+    expect(consentBackendText({ backend: "http://anna@host.lan:8000" })).toBe("http://anna@host.lan:8000");
+    expect(consentBackendText({ backend: "http://host.lan:8000" })).toBe("http://host.lan:8000");
+  });
+
+  it("masks the password of the address a blank-named backend is labelled by, on every row kind", () => {
+    const local = backend({ name: "", serverUrl: "http://anna:hunter2@old.lan:8000" });
+    const incoming = backend({ name: "", serverUrl: "http://anna:hunter2@new.lan:8000" });
+    const changes = all([incoming], [local]);
+    expect(changes.length).toBeGreaterThan(0);
+    for (const c of changes) {
+      // The label is the row's identity and stays whole; only what is drawn is masked.
+      expect(c.backend).toBe("http://anna:hunter2@old.lan:8000");
+      expect(consentBackendText(c)).toBe(`http://anna:${M}@old.lan:8000`);
+      expect(`${consentBackendText(c)} · ${consentDetailText(c)}`).not.toContain("hunter2");
+    }
+    // A backend new to this device is labelled by the peer's address.
+    const [added] = all([backend({ id: "b-new", name: " ", serverUrl: "https://bob:s3cret@peer.example" })], []);
+    expect(added.kind).toBe("new-backend");
+    expect(consentBackendText(added)).toBe(`https://bob:${M}@peer.example`);
+  });
+
+  it("masks before the cap, so a cut cannot leave half a password", () => {
+    const url = `http://anna:${"p".repeat(200)}@host.lan`;
+    expect(consentBackendText({ backend: url })).toBe(`http://anna:${M}@host.lan`);
   });
 });

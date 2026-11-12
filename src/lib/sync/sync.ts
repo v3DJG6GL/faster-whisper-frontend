@@ -4140,6 +4140,14 @@ export const consentDetailText = (c: Pick<SecurityChange, "kind" | "detail" | "u
       ? addressDetailText(c)
       : safeIdentityText(c.detail, consentDetailCap(c.kind));
 
+/** A review row's backend label as the dialog shows it. The label is the backend's name, but a
+ *  backend whose name is blank is labelled by its whole address (`entryLabel`), and the row
+ *  would print that address's password right in front of the detail that masks it. Masked HERE
+ *  and never in `backend`: the label is part of the row's identity (`changeKey`). A real name,
+ *  and an address without a password, come back as written (`maskAddressPassword`). */
+export const consentBackendText = (c: Pick<SecurityChange, "backend">): string =>
+  c.backend ? safeIdentityText(maskAddressPassword(c.backend), 80) : "";
+
 /** The path as the peer wrote it (hidden characters escaped), for the row's tooltip — only for a
  *  folder row whose shown path was resolved or escaped (`consentDetailText`), so the user can still
  *  see what was sent. */
