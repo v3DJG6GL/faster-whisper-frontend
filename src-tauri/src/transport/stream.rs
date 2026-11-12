@@ -2229,8 +2229,10 @@ mod clip_tests {
 
     #[test]
     fn clip_names_stay_inside_retention() {
-        let stem = clip_stem("2026-10-05_09-15-00", 7);
-        assert_eq!(stem, "dictation-2026-10-05_09-15-00-u7");
+        // The real stamp, not a literal: a change to its format must fail here.
+        let stamp = crate::audio::recording_stamp();
+        let stem = clip_stem(&stamp, 7);
+        assert_eq!(stem, format!("dictation-{stamp}-u7"));
         assert!(crate::audio::is_dictation_file(&format!("{stem}.wav")));
         assert!(crate::audio::is_dictation_file(&format!("{stem}-2.txt")));
     }

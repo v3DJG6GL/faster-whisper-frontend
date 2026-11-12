@@ -906,6 +906,40 @@ mod retention_tests {
         }
     }
 
+    /// The real writers stay inside the exact predicate: a name retention, delete-all and the
+    /// storage readout no longer recognise would be a recording kept forever. Literal names
+    /// above cannot catch a change to the stamp or the counter format; these calls do.
+    #[test]
+    fn what_the_recording_writers_save_is_a_dictation_file() {
+        let dir = scratch_dir("save-real-names");
+        let save = || save_recording(&dir, &[1u8; 64], 16_000).unwrap();
+        let mut saved = vec![save(), save()];
+        // Two saves in one second share the stamp, so the second takes the `-2` counter. When
+        // the clock rolled between them, a third shares the second one's stamp instead.
+        let counted = |p: &PathBuf| p.to_string_lossy().ends_with("-2.wav");
+        if !counted(&saved[1]) {
+            saved.push(save());
+        }
+        assert!(saved.last().is_some_and(counted), "{saved:?}");
+        for wav in &saved {
+            assert!(save_transcript_sidecar(wav, "some words"), "{wav:?}");
+        }
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), saved.len() * 2, "{names:?}");
+        for name in &names {
+            assert!(is_dictation_file(name), "{name}");
+        }
+        for wav in &saved {
+            let name = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(is_dictation_file(&name(wav)), "{wav:?}");
+            assert!(is_dictation_file(&name(&wav.with_extension("txt"))));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A `dictation-`-prefixed file of the user's own survives the retention prune, whatever
     /// its age, while every shape the app wrote still goes.
     #[test]
