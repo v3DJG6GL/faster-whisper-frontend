@@ -122,6 +122,11 @@ pub struct SyncPull {
     pub state: Option<SyncRemoteState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// `error` is the SERVER's own text — the bounded `detail` of an error body that was
+    /// actually read — and not a sentence of this app's (a body read that failed, a reply that
+    /// would not parse). The webview quotes only the former as the server's words.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub server_text: bool,
 }
 
 /// PUT outcome. `ok` ⇒ stored, `state` carries the new version. A 409 sets
@@ -136,6 +141,9 @@ pub struct SyncPush {
     pub conflict: Option<SyncRemoteState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// As [`SyncPull::server_text`].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub server_text: bool,
 }
 
 /// DELETE outcome (the "Delete server copy" button).
@@ -145,10 +153,15 @@ pub struct SyncDelete {
     pub status: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// As [`SyncPull::server_text`].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub server_text: bool,
 }
 
 /// The three outcomes share `status` (0 = no answer, unreachable) + `error`: the legacy-path probe
-/// reads the status, and a failure carries only the two (no state, no conflict, `ok` false).
+/// reads the status, and a failure carries only the two (no state, no conflict, `ok` false) —
+/// plus `server_text` when the error is the server's own wording (`refused`), never when it is
+/// this app's (`failed`).
 macro_rules! status_outcome {
     ($($t:ty),+) => {$(
         impl Answered for $t {
@@ -158,11 +171,21 @@ macro_rules! status_outcome {
         }
 
         impl $t {
+            /// A failure this app words itself: `server_text` stays off.
             fn failed(status: u16, error: String) -> Self {
                 Self {
                     status,
                     error: Some(error),
                     ..Default::default()
+                }
+            }
+
+            /// A non-2xx answer whose error `body` was read: the error is the server's own
+            /// bounded detail, flagged as such. The one place the flag is set.
+            fn refused(status: u16, body: &str) -> Self {
+                Self {
+                    server_text: true,
+                    ..Self::failed(status, detail_from(body))
                 }
             }
         }
@@ -201,7 +224,7 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
                         ok: true,
                         status: code,
                         state: Some(state),
-                        error: None,
+                        ..Default::default()
                     },
                     Err(e) => SyncPull::failed(code, e),
                 }
@@ -209,8 +232,12 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
                 // Pure error arm: the body goes straight into `detail_from` and nothing
                 // else, so the error-body ceiling is enough — buffering 4 MiB to extract
                 // 200 characters is wasted on the unattended startup/focus-change leg.
-                let (_, detail) = super::error_detail(resp).await;
-                SyncPull::failed(code, detail)
+                // Read here rather than through `error_detail`, which folds a failed read's
+                // reason into the detail: that reason is this app's sentence, not the server's.
+                match body_capped_to(resp, super::MAX_ERROR_BODY).await {
+                    Ok(body) => SyncPull::refused(code, &body),
+                    Err(reason) => SyncPull::failed(code, reason),
+                }
             }
         }
         Err(e) => SyncPull::failed(0, friendly_err(&e)),
@@ -268,8 +295,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                         ok: true,
                         status: code,
                         state: Some(state),
-                        conflict: None,
-                        error: None,
+                        ..Default::default()
                     },
                     Err(e) => SyncPush::failed(code, e),
                 }
@@ -286,7 +312,7 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                     Err(e) => SyncPush::failed(code, e),
                 }
             } else {
-                SyncPush::failed(code, detail_from(&text))
+                SyncPush::refused(code, &text)
             }
         }
         Err(e) => SyncPush::failed(0, friendly_err(&e)),
@@ -314,13 +340,16 @@ async fn delete_at(url: String, api_key: Option<&str>) -> SyncDelete {
                 SyncDelete {
                     ok: true,
                     status: code,
-                    error: None,
+                    ..Default::default()
                 }
             } else {
                 // Pure error arm: `detail_from` extracts at most 200 characters, so the
-                // error-body ceiling is enough.
-                let (_, detail) = super::error_detail(resp).await;
-                SyncDelete::failed(code, detail)
+                // error-body ceiling is enough. Read here, as in `pull_at`: a failed read's
+                // reason is this app's sentence.
+                match body_capped_to(resp, super::MAX_ERROR_BODY).await {
+                    Ok(body) => SyncDelete::refused(code, &body),
+                    Err(reason) => SyncDelete::failed(code, reason),
+                }
             }
         }
         Err(e) => SyncDelete::failed(0, friendly_err(&e)),
@@ -385,6 +414,163 @@ mod tests {
             "transport failure mislabelled: {error}"
         );
         assert_eq!(error, super::super::TOO_LARGE);
+    }
+
+    /// A local server that answers its one request with `response` and closes.
+    fn serve_once(response: Vec<u8>) -> String {
+        // The app installs the TLS provider at startup (lib.rs); the shared client needs it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut sock, _) = listener.accept().unwrap();
+            // The whole request first (head, then the declared body): closing with part of it
+            // unread resets the connection, and the client could lose the response to that.
+            let mut req = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let whole = |req: &[u8]| {
+                let text = String::from_utf8_lossy(req).to_ascii_lowercase();
+                text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+                    let declared = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|n| n.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    body.len() >= declared
+                })
+            };
+            while !whole(&req) {
+                match sock.read(&mut chunk) {
+                    Ok(n) if n > 0 => req.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            let _ = sock.write_all(&response);
+            // Our side is done; wait for the client to close so the answer is never cut short.
+            let _ = sock.shutdown(std::net::Shutdown::Write);
+            while matches!(sock.read(&mut chunk), Ok(n) if n > 0) {}
+        });
+        format!("http://{addr}{SYNC_PATH}")
+    }
+
+    /// One HTTP response: status line, the declared length, and the body bytes actually sent.
+    fn http(status: &str, declared: usize, body: &[u8]) -> Vec<u8> {
+        let mut out = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n"
+        )
+        .into_bytes();
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// What pull, push and delete each make of the same `response`: `(status, error,
+    /// server_text)` and the `server_text` key as the webview receives it.
+    type Outcome = (u16, Option<String>, bool, Option<serde_json::Value>);
+    async fn outcomes(response: &[u8]) -> [Outcome; 3] {
+        fn wire<T: Serialize>(out: &T) -> Option<serde_json::Value> {
+            serde_json::to_value(out)
+                .unwrap()
+                .get("server_text")
+                .cloned()
+        }
+        let pull = pull_at(serve_once(response.to_vec()), None).await;
+        let push = push_at(serve_once(response.to_vec()), None, b"{}".to_vec()).await;
+        let delete = delete_at(serve_once(response.to_vec()), None).await;
+        assert!(!pull.ok && !push.ok && !delete.ok);
+        let (pull_wire, push_wire, delete_wire) = (wire(&pull), wire(&push), wire(&delete));
+        [
+            (pull.status, pull.error, pull.server_text, pull_wire),
+            (push.status, push.error, push.server_text, push_wire),
+            (delete.status, delete.error, delete.server_text, delete_wire),
+        ]
+    }
+
+    /// A non-2xx body that was read is the server's own text, and says so under the exact key
+    /// the webview reads.
+    #[tokio::test]
+    async fn a_read_error_body_is_flagged_as_the_servers_text() {
+        let body = br#"{"detail":"quota exceeded"}"#;
+        for out in outcomes(&http("507 Insufficient Storage", body.len(), body)).await {
+            assert_eq!(
+                out,
+                (
+                    507,
+                    Some("quota exceeded".to_string()),
+                    true,
+                    Some(serde_json::json!(true))
+                )
+            );
+        }
+        // A proxy's plain page is the server side's text too.
+        let page = b"<html>Bad Gateway</html>";
+        for out in outcomes(&http("502 Bad Gateway", page.len(), page)).await {
+            assert_eq!(out.0, 502);
+            assert_eq!(out.1.as_deref(), Some("<html>Bad Gateway</html>"));
+            assert!(out.2);
+        }
+    }
+
+    /// Under the same non-2xx status, a body that could not be read leaves this app's own
+    /// reason in `error` — which must not be handed to the webview as the server's words.
+    #[tokio::test]
+    async fn an_unreadable_error_body_is_not_the_servers_text() {
+        // Not valid UTF-8 (a localized proxy page in a legacy encoding).
+        let latin1 = b"Dienst nicht verf\xfcgbar";
+        for out in outcomes(&http("502 Bad Gateway", latin1.len(), latin1)).await {
+            assert_eq!(
+                out,
+                (
+                    502,
+                    Some("The server sent a response that wasn't valid text.".to_string()),
+                    false,
+                    None
+                )
+            );
+        }
+        // Declared past every ceiling: refused before a byte is read.
+        for out in outcomes(&http("500 Internal Server Error", SYNC_MAX_BODY + 1, b"")).await {
+            assert_eq!(
+                out,
+                (500, Some(super::super::TOO_LARGE.to_string()), false, None)
+            );
+        }
+        // Cut off mid-body: the read fails with a transport reason.
+        for out in outcomes(&http("504 Gateway Timeout", 4096, b"partial")).await {
+            assert_eq!(out.0, 504);
+            assert!(out.1.is_some_and(|e| !e.contains("partial")));
+            assert_eq!((out.2, out.3), (false, None));
+        }
+    }
+
+    /// The app's own sentences under other statuses stay unflagged: no answer at all, a 2xx
+    /// that does not parse, a 409 with no readable conflict.
+    #[tokio::test]
+    async fn the_apps_own_failure_sentences_are_never_flagged() {
+        assert!(!SyncPull::failed(0, "unreachable".into()).server_text);
+        assert!(!SyncPush::failed(0, "unreachable".into()).server_text);
+        assert!(!SyncDelete::failed(0, "unreachable".into()).server_text);
+        let junk = b"not json";
+        let pull = pull_at(serve_once(http("200 OK", junk.len(), junk)), None).await;
+        assert!(!pull.ok && !pull.server_text);
+        assert!(pull
+            .error
+            .is_some_and(|e| e.starts_with("Unexpected response")));
+        let push = |status: &'static str| async move {
+            push_at(
+                serve_once(http(status, junk.len(), junk)),
+                None,
+                b"{}".to_vec(),
+            )
+            .await
+        };
+        let ok = push("200 OK").await;
+        assert!(!ok.ok && !ok.server_text);
+        let conflict = push("409 Conflict").await;
+        assert!(!conflict.ok && !conflict.server_text && conflict.conflict.is_none());
+        assert!(conflict
+            .error
+            .is_some_and(|e| e.starts_with("Unexpected conflict response")));
     }
 
     #[test]
