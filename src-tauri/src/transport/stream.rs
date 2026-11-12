@@ -2085,7 +2085,11 @@ mod server_close_tests {
     /// `FLOOD`, and sets the returned flag only when it got to send them all — when the client
     /// was still connected at the end.
     fn serve_partial_flood() -> (String, Arc<std::sync::atomic::AtomicBool>) {
-        const FLOOD: std::time::Duration = std::time::Duration::from_secs(5);
+        // Far longer than a passing run (which ends when the client drops the socket, in well
+        // under a second): the session has to outlast the flood for the test to fail, and
+        // forwarding the snapshot takes 2 ms per frame queued before it, so on a loaded runner
+        // a short flood could end first with the drain correct.
+        const FLOOD: std::time::Duration = std::time::Duration::from_secs(60);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let outlasted = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2128,7 +2132,9 @@ mod server_close_tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         run(params(url), pcm_rx, stop_rx, move |e| {
-            // A consumer slower than the flood, like the webview emit of a real session.
+            // A consumer slower than the flood, like the webview emit of a real session. On
+            // every event: one that turns fast lets an until-empty loop catch up with the
+            // server and end, and this test would pass on the very loop it guards against.
             std::thread::sleep(std::time::Duration::from_millis(2));
             if matches!(e, StreamEvent::Closed) {
                 sink.lock().unwrap().push("closed");
