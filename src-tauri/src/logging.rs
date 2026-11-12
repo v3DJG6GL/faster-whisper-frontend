@@ -427,15 +427,45 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
     }
 }
 
-/// Delete `fwf-*.log` files older than `keep_days` (by mtime; 0 = keep
-/// forever), except `except` — the session's live file. Also removes the superseded
+/// Whether `name` is a session file `create_session_file` writes: `fwf-` + the 19-char
+/// `%Y-%m-%d_%H-%M-%S` stamp + an optional `-N` (N ≥ 2) + `.log`. The log folder is a free
+/// user pick (and a synced setting), so it may hold someone else's `fwf-notes.log`; only the
+/// app's own names are ever pruned, like the `is_own_*` predicates of the audio folder.
+fn is_own_log_file(name: &str) -> bool {
+    let Some(rest) = name
+        .strip_prefix("fwf-")
+        .and_then(|r| r.strip_suffix(".log"))
+    else {
+        return false;
+    };
+    let (stamp, suffix) = (rest.get(..19), rest.get(19..));
+    let (Some(stamp), Some(suffix)) = (stamp, suffix) else {
+        return false;
+    };
+    let stamp_ok = stamp.bytes().enumerate().all(|(i, b)| match i {
+        4 | 7 | 13 | 16 => b == b'-',
+        10 => b == b'_',
+        _ => b.is_ascii_digit(),
+    });
+    let suffix_ok = suffix.is_empty()
+        || suffix.strip_prefix('-').is_some_and(|n| {
+            (1..=2).contains(&n.len())
+                && !n.starts_with('0')
+                && n.bytes().all(|b| b.is_ascii_digit())
+                && n != "1"
+        });
+    stamp_ok && suffix_ok
+}
+
+/// Delete the app's own session log files (`is_own_log_file`) older than `keep_days` (by mtime;
+/// 0 = keep forever), except `except` — the session's live file. Also removes the superseded
 /// single-file scheme's `fwf.log`/`fwf.prev.log` pair.
 pub fn prune_log_files(dir: &Path, keep_days: u32, except: Option<&Path>) {
     prune_legacy_dir(dir);
     let _ = crate::audio::prune_older_than(dir, keep_days, |e| {
-        let n = e.file_name();
-        let n = n.to_string_lossy();
-        n.starts_with("fwf-") && n.ends_with(".log") && Some(e.path().as_path()) != except
+        e.file_name().to_str().is_some_and(is_own_log_file)
+            && e.file_type().is_ok_and(|t| t.is_file())
+            && Some(e.path().as_path()) != except
     });
 }
 
@@ -869,17 +899,39 @@ mod tests {
         let old = dir.join("fwf-2020-01-01_00-00-00.log");
         let fresh = dir.join("fwf-2099-01-01_00-00-00.log");
         let other = dir.join("keep.txt");
+        let old_n = dir.join("fwf-2020-01-01_00-00-00-12.log");
+        // Not names the app writes: a user's own files in a picked folder survive any age.
+        let foreign: Vec<_> = [
+            "fwf-notes.log",
+            "fwf-2020-01-01.log",
+            "fwf-2020-01-01_00-00-00-1.log",
+        ]
+        .iter()
+        .map(|n| dir.join(n))
+        .collect();
         std::fs::write(&old, "x").unwrap();
         std::fs::write(&fresh, "x").unwrap();
         std::fs::write(&other, "x").unwrap();
+        std::fs::write(&old_n, "x").unwrap();
+        for p in &foreign {
+            std::fs::write(p, "x").unwrap();
+        }
         std::fs::write(dir.join("fwf.log"), "x").unwrap();
         std::fs::write(dir.join("fwf.prev.log"), "x").unwrap();
         // Age the old file's mtime beyond the window.
         let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
         crate::config::set_test_mtime(&old, past);
+        crate::config::set_test_mtime(&old_n, past);
+        for p in &foreign {
+            crate::config::set_test_mtime(p, past);
+        }
 
         prune_log_files(&dir, 7, None);
         assert!(!old.exists(), "old session file pruned");
+        assert!(!old_n.exists(), "old same-second session file pruned");
+        for p in &foreign {
+            assert!(p.exists(), "foreign {p:?} untouched");
+        }
         assert!(fresh.exists(), "fresh session file kept");
         assert!(other.exists(), "unrelated files untouched");
         assert!(!dir.join("fwf.log").exists(), "legacy file removed");
