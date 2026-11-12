@@ -1084,8 +1084,19 @@ function ConflictDialogBody({
   );
 }
 
+/** How many of `backends` carry a login in their server address (`user:password@host`). An export
+ *  writes every address as stored, so those logins are in the file whatever "Include API keys"
+ *  says: that switch covers the keyring's keys only. */
+export const addressLoginCount = (backends: readonly Backend[]): number =>
+  backends.filter((b) => authorityOf(b.serverUrl)?.hasUserinfo).length;
+
+/** The Backup card's warning for `n` such addresses. */
+export const addressLoginsNotice = (n: number): string =>
+  `${plural(n, "server address carries", "server addresses carry")} a user name and password, which the file holds in plain text — with or without the API keys.`;
+
 export function SyncTab() {
   const backends = useApp((st) => st.backends);
+  const addressLogins = addressLoginCount(backends);
   const sync = useApp((st) => st.settings.sync) ?? DEFAULT_SYNC;
   const updateSync = useApp((st) => st.updateSync);
   const syncStatus = useApp((st) => st.syncStatus);
@@ -1189,6 +1200,8 @@ export function SyncTab() {
         <SettingRow
           title="Include API keys"
           desc="Write the stored keys into the file in plain text — only for backups you keep private."
+          // Shown with the switch on or off: it is the off position that reads as "no credentials in the file".
+          expand={addressLogins > 0 ? <Notice tone="warn" className="mt-2.5">{addressLoginsNotice(addressLogins)}</Notice> : undefined}
         >
           <Toggle checked={includeSecrets} onChange={setIncludeSecrets} />
         </SettingRow>

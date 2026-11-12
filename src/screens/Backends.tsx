@@ -40,6 +40,24 @@ import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
 import { adoptWrittenKey, KEY_TOO_LONG, keyWriteOutcome, MAX_SECRET_LEN } from "@/lib/backendKeyWrite";
 
+/** What to say under an address field whose address carries a login (`user:password@host`),
+ *  `null` without one. The address is stored and sent as typed, so the login goes where the
+ *  address goes: config.json, and for the Server URL the sync blob and a settings export — whose
+ *  "API keys" switches cover the keyring's keys only. `device`: "Address on this device", which
+ *  is saved the same way but never leaves this device. Exported for its test. */
+export function addressLoginNotice(url: string, device = false): string | null {
+  if (!authorityOf(storedTypedUrl(url))?.hasUserinfo) return null;
+  const saved = "The user name and password in this address are saved in plain text with the address: they are not kept in the system keyring";
+  return device ? `${saved}.` : `${saved}, and they travel with settings sync and settings exports even when API keys are left out.`;
+}
+
+/** An address as a hover title: whole, or only its host when it carries a login — the whole
+ *  one would show the password to anyone looking at the screen. `auth`: the address's
+ *  authority when the caller has parsed it already. Exported for its test. */
+export function addressTitle(url: string, auth = authorityOf(url)): string {
+  return auth?.hasUserinfo ? safeHostText(auth.host, 200) : safeDisplayText(url, 200);
+}
+
 export function Editor({
   initial,
   initialKey,
@@ -607,6 +625,7 @@ export function Editor({
               <TextInput aria-label="Server URL" value={b.serverUrl} onChange={(e) => set({ serverUrl: e.target.value })} placeholder="http://host:8000" />
             </div>
             {insecureUrlWarning(b.serverUrl) && <Notice className="mt-1">{insecureUrlWarning(b.serverUrl)}</Notice>}
+            {addressLoginNotice(b.serverUrl) && <Notice className="mt-1">{addressLoginNotice(b.serverUrl)}</Notice>}
           </OverrideHeader>
           {/* Per-device address override: connects THIS machine somewhere else while the canonical
               URL above stays shared through settings sync (e.g. localhost on the box running the
@@ -643,6 +662,9 @@ export function Editor({
                 gets only the stored-form `http://` default, so it needs the warning as much as Server URL. */}
             {overrideDraft.trim() && insecureUrlWarning(overrideDraft) && (
               <Notice className="mt-1">{insecureUrlWarning(overrideDraft)}</Notice>
+            )}
+            {addressLoginNotice(overrideDraft, true) && (
+              <Notice className="mt-1">{addressLoginNotice(overrideDraft, true)}</Notice>
             )}
           </OverrideHeader>
           <OverrideHeader title="API key" env={false}>
@@ -1435,14 +1457,14 @@ export default function Backends() {
                             parsed host and the badge. It shows the address requests actually use
                             (`effectiveServerUrl` prefers a per-backend override, sync on or off),
                             flagged when it isn't the configured one. */}
-                        <span className="truncate" title={safeDisplayText(eff, 200)}>
+                        <span className="truncate" title={addressTitle(eff, auth)}>
                           {safeHostText(auth?.host, 80) || safeIdentityText(eff, 80)}
                         </span>
                         {auth?.hasUserinfo && (
                           <Badge tone="warn">address hides the real host</Badge>
                         )}
                         {eff !== b.serverUrl && (
-                          <span title={`Configured: ${safeDisplayText(b.serverUrl, 200)}`}>
+                          <span title={`Configured: ${addressTitle(b.serverUrl)}`}>
                             <Badge tone="warn">override in use</Badge>
                           </span>
                         )}

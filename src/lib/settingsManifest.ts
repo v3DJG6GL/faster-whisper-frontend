@@ -288,7 +288,7 @@ export const MANIFEST = [
     desc: "URLs often differ per network; per-device overrides always win locally. Needs Server list on.",
     machineSpecific: true, custom: "backendUrls", fields: [] },
   { id: "apiKeys", label: "API keys", group: "backends", category: "backends",
-    desc: "Stored on your own server; mirrors the export dialog's “Include API keys”. Needs Server list on.",
+    desc: "Stored on your own server; mirrors the export dialog's “Include API keys”. Needs Server list on. A login written into a server address travels with Server addresses, not with this switch.",
     custom: "backendKeys", fields: [] },
   { id: "modelDecodeDefaults", label: "Model & decode defaults", group: "backends", category: "backends",
     desc: "Model, language, prompt, response format, decode defaults (incl. output prefix/suffix, language detection), live dictation defaults. Needs Server list on.",
