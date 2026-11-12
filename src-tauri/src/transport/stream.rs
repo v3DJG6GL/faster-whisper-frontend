@@ -2200,11 +2200,17 @@ mod server_close_tests {
         let (stop_tx, stop_rx) = watch::channel(false);
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
+        let flood_over = outlasted.clone();
         run(params(url), pcm_rx, stop_rx, move |e| {
             // A consumer slower than the flood, like the webview emit of a real session. On
-            // every event: one that turns fast lets an until-empty loop catch up with the
-            // server and end, and this test would pass on the very loop it guards against.
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            // every event while the server sends: one that turns fast earlier lets an
+            // until-empty loop catch up with the server and end, and this test would pass on
+            // the very loop it guards against. Once the flood is over the verdict is in (the
+            // session outlasted it), so the backlog is forwarded at full speed and a failing
+            // run ends about when the flood does instead of minutes later.
+            if !flood_over.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             if matches!(e, StreamEvent::Closed) {
                 sink.lock().unwrap().push("closed");
             }
