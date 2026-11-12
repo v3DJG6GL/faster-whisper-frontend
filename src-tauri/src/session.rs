@@ -297,17 +297,21 @@ impl FrameLineLimiter {
     }
 }
 
-/// One session's [`FrameLineLimiter`], shared by the `final` and `boundary` arms of its event
-/// closure (which is `Fn`, hence the lock).
+/// One [`FrameLineLimiter`] of a session, for the lines its event closure (which is `Fn`,
+/// hence the lock) writes under one `label`. Each instance has a budget of its own: a flood of
+/// one kind of frame never uses up the lines of another kind.
 struct FrameLines {
     epoch: u64,
+    /// The kind of line, as the suppressed-lines report names it.
+    label: &'static str,
     limiter: Mutex<FrameLineLimiter>,
 }
 
 impl FrameLines {
-    fn new(epoch: u64) -> Self {
+    fn new(epoch: u64, label: &'static str) -> Self {
         Self {
             epoch,
+            label,
             limiter: Mutex::new(FrameLineLimiter::new(std::time::Instant::now())),
         }
     }
@@ -330,12 +334,17 @@ impl FrameLines {
         self.limiter.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The one line that stands for `k` dropped lines.
+    fn summary(&self, k: u64) -> String {
+        format!(
+            "[stream] session {} {k} further {} lines suppressed (frame flood)",
+            self.epoch, self.label
+        )
+    }
+
     fn report(&self, suppressed: Option<u64>) {
         if let Some(k) = suppressed {
-            tracing::warn!(
-                "[stream] session {} {k} further final/boundary lines suppressed (frame flood)",
-                self.epoch
-            );
+            tracing::warn!("{}", self.summary(k));
         }
     }
 }
@@ -570,7 +579,11 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
     // This closure runs on the WS task, which `finish()` DETACHES to drain in the background —
     // so it can fire after the session is gone. Gate every emit on `epoch` so a superseded/
     // cancelled session's late drain can't bleed into the next one (see ACTIVE_EPOCH).
-    let frame_lines = FrameLines::new(epoch);
+    let frame_lines = FrameLines::new(epoch, "final/boundary");
+    // The server also decides how many `error` frames arrive, and an error does not end the
+    // read: the detached drain keeps logging them. Its own budget, so neither flood can use up
+    // the other's lines.
+    let error_lines = FrameLines::new(epoch, "error");
     let on_event = move |ev: StreamEvent| match ev {
         StreamEvent::Ready { overrides_ignored } => {
             emit_if_active(&appc, epoch, "stream://status", "ready");
@@ -671,15 +684,19 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             // suppressed from the UI and would otherwise vanish entirely.
             // The message is server-supplied and this log is the file users are asked to send
             // for support — fold control chars to spaces so embedded newlines can't forge records.
-            let safe: String = m
-                .chars()
-                .map(|c| if c.is_control() { ' ' } else { c })
-                .collect();
-            tracing::warn!("[stream] session {epoch} error: {safe}");
+            // Only the line is rate-limited; the event below goes out for every frame.
+            if error_lines.admit() {
+                let safe: String = m
+                    .chars()
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect();
+                tracing::warn!("[stream] session {epoch} error: {safe}");
+            }
             emit_if_active(&appc, epoch, "stream://error", m);
         }
         StreamEvent::Closed => {
             frame_lines.close();
+            error_lines.close();
             tracing::info!("[stream] session {epoch} closed");
             emit_if_active(&appc, epoch, "stream://status", "closed");
         }
@@ -1686,7 +1703,7 @@ fn run_record_capture(
 
 #[cfg(test)]
 mod tests {
-    use super::{streams_to_mute, FrameLine, FrameLineLimiter, MuteCmd, MuteSlot};
+    use super::{streams_to_mute, FrameLine, FrameLineLimiter, FrameLines, MuteCmd, MuteSlot};
 
     /// What the limiter answers for `n` lines at `now`: how many it passed, and each report.
     fn admit_n(l: &mut FrameLineLimiter, now: std::time::Instant, n: u32) -> (u32, Vec<u64>) {
@@ -1756,6 +1773,33 @@ mod tests {
                 suppressed: None
             }
         );
+    }
+
+    /// The two limiters of a session report under their own names, and each counts only its
+    /// own lines: a `final`/`boundary` flood leaves the error line's whole allowance.
+    #[test]
+    fn each_kind_of_frame_line_has_its_own_budget_and_its_own_report() {
+        let frames = FrameLines::new(7, "final/boundary");
+        let errors = FrameLines::new(7, "error");
+        assert_eq!(
+            frames.summary(500),
+            "[stream] session 7 500 further final/boundary lines suppressed (frame flood)"
+        );
+        assert_eq!(
+            errors.summary(3),
+            "[stream] session 7 3 further error lines suppressed (frame flood)"
+        );
+        // Fed at each limiter's own window start, so no real time is part of the test.
+        let passed = |lines: &FrameLines, n: u32| {
+            let mut l = lines.lock();
+            let at = l.window_start;
+            admit_n(&mut l, at, n).0
+        };
+        let max = FrameLineLimiter::MAX_LINES;
+        assert_eq!(passed(&frames, max + 100), max);
+        assert_eq!(passed(&errors, max + 1), max);
+        assert_eq!(frames.lock().take_suppressed(), Some(100));
+        assert_eq!(errors.lock().take_suppressed(), Some(1));
     }
 
     #[test]
