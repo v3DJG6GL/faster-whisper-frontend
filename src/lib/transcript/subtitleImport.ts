@@ -453,10 +453,12 @@ export function fixBroadcasterText(lines: string[]): string[] {
  *  the run at every character, and a long run of spaces took quadratic time. */
 const CUE_TIMES = /^(\s|.*?\S)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
 
-/** Every voice span of a multi-voice cue, from one `<v Name>` to the next. */
-const VOICE_SPANS = new RegExp(String.raw`<v(?:\.[^\s>]*)?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?=<v[\s.]|$)`, "g");
+/** Every voice span of a multi-voice cue, from one `<v Name>` to the next. The `.class` list
+ *  stops at a "<" and at VOICE_MAX, as the tag MARKUP_TAG strips does: unbounded, it ran from
+ *  every "<v." of a file's or site track's cue to the cue's end, quadratic on a cue of them. */
+const VOICE_SPANS = new RegExp(String.raw`<v(?:\.[^\s<>]{0,${VOICE_MAX}})?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?=<v[\s.]|$)`, "g");
 /** A cue that is one voice span, optionally closed. */
-const VOICE_CUE = new RegExp(String.raw`^<v(?:\.[^\s>]*)?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?:<\/v>)?$`);
+const VOICE_CUE = new RegExp(String.raw`^<v(?:\.[^\s<>]{0,${VOICE_MAX}})?\s+([^>]{1,${VOICE_MAX}})>([\s\S]*?)(?:<\/v>)?$`);
 
 /** Raw cues → segments, after the rolling-caption and broadcaster cleanup every SRT/VTT
  *  import gets. `<v Name>` voice tags (VTT) carry the speaker; cueText handles the rest. */

@@ -943,6 +943,30 @@ describe("site subtitle cleanup", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v.loud Alice>Hi\n";
     expect(parseImportedText("vtt", vtt).segments).toEqual([{ start: 1, end: 2, text: "Hi", speaker: "Alice" }]);
   });
+  it("voice tags with class lists still carry their speakers", () => {
+    const cue = (text: string) => parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${text}\n`).segments;
+    expect(cue("<v.loud Alice>Hi</v> <v.x.y Bob>Hello</v>")).toEqual([
+      { start: 1, end: 3, text: "Hi", speaker: "Alice" },
+      { start: 1, end: 3, text: "Hello", speaker: "Bob" },
+    ]);
+    expect(cue("<v.loud Alice>Hi")).toEqual([{ start: 1, end: 3, text: "Hi", speaker: "Alice" }]);
+    expect(cue(`<v.${"c".repeat(190)} Alice>Hi</v>`)).toEqual([{ start: 1, end: 3, text: "Hi", speaker: "Alice" }]);
+    // A "<" in the class list is no tag the strip knows either: the cue keeps all its text.
+    const broken = cue("<v.a<b Alice>Hi</v> <v Bob>Hello</v>").map((s) => s.text).join(" ");
+    expect(broken).toContain("Hi");
+    expect(broken).toContain("Hello");
+  });
+  it("a cue of unclosed classed voice tags parses in linear time", () => {
+    // Each "<v." once read its class list to the end of the cue before failing: a 600 KB cue
+    // of them took minutes.
+    const text = "<v.".repeat(200_000);
+    for (const [ext, doc] of [["vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${text}\n`], ["srt", `1\n00:00:01,000 --> 00:00:03,000\n${text}\n`]] as const) {
+      const t0 = performance.now();
+      const { segments } = parseImportedText(ext, doc);
+      expect(performance.now() - t0).toBeLessThan(1_500);
+      expect(segments.map((s) => s.text)).toEqual([text]);
+    }
+  });
   it("a line said twice back to back stays two cues outside a rolling file", () => {
     const r: BatchResult = {
       text: "Thank you. Thank you. Bye.",
