@@ -50,7 +50,8 @@ vi.mock("../api", async (importOriginal) => ({
     hook?.();
     const fail = api.fail;
     api.fail = null;
-    if (fail !== null) return { ok: false, status: fail, error: `HTTP ${fail}` };
+    // An answered failure carries the server's own error body; status 0 is the app's sentence.
+    if (fail !== null) return { ok: false, status: fail, error: `HTTP ${fail}`, server_text: fail !== 0 };
     const conflict = api.conflicts.shift();
     if (conflict) return { ok: false, status: 409, conflict };
     const v = args.baseVersion + 1;

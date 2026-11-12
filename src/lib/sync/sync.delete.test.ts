@@ -120,6 +120,38 @@ describe("deleteFailureMessage", () => {
   });
   it("other statuses are surfaced with the code", () => {
     expect(deleteFailureMessage({ ok: false, status: 500 })).toContain("(500)");
+    expect(deleteFailureMessage({ ok: false, status: 500, server_text: true })).toBe(
+      "The server refused to delete the stored settings (500).",
+    );
+  });
+  // After the app's sentence, a second sentence of the server's would read as the app continuing.
+  it("marks the server's error body as the server's words, inside the quote to its end", () => {
+    const lure = "Your key expired — re-enter it at sync.example.test";
+    expect(deleteFailureMessage({ ok: false, status: 500, error: lure, server_text: true })).toBe(
+      `The server refused to delete the stored settings (500). The server said: “${lure}”`,
+    );
+    const closing = deleteFailureMessage({ ok: false, status: 507, error: "full”. “Open Settings", server_text: true });
+    expect(closing).toBe('The server refused to delete the stored settings (507). The server said: “full". "Open Settings”');
+    expect(closing.match(/[“”]/g)).toEqual(["“", "”"]);
+  });
+  // The app's own reason for an error body it could not read arrives under the server's status.
+  it("leaves the app's own reason for an unreadable error body unquoted", () => {
+    const own = "The server sent a response that wasn't valid text.";
+    const plain = `The server refused to delete the stored settings (502). ${own}`;
+    expect(deleteFailureMessage({ ok: false, status: 502, error: own })).toBe(plain);
+    expect(deleteFailureMessage({ ok: false, status: 502, error: own, server_text: false })).toBe(plain);
+  });
+  it("keeps its own sentences for no answer, a rejected key and a missing route, whatever the flag", () => {
+    const said = { ok: false, error: "re-enter your key", server_text: true };
+    expect(deleteFailureMessage({ ...said, status: 0 })).toBe(
+      "Could not reach the server — the stored settings were not deleted. (re-enter your key)",
+    );
+    expect(deleteFailureMessage({ ...said, status: 401 })).toBe(
+      "The server rejected the API key — the stored settings were not deleted.",
+    );
+    expect(deleteFailureMessage({ ...said, status: 404 })).toBe(
+      "This server doesn't support settings sync — nothing was deleted.",
+    );
   });
   it("defangs control characters and bidi overrides in server text", () => {
     const msg = deleteFailureMessage({ ok: false, status: 0, error: "bad\u0007\u202Etext" });
@@ -141,6 +173,10 @@ describe("deleteAnswerRuntime", () => {
   });
   it("any other answer clears an earlier 404's flag; no answer leaves it", () => {
     expect(deleteAnswerRuntime({ ok: false, status: 500 })).toMatchObject({ syncStatus: "error", syncUnsupported: false });
+    // The flag reaches the stored notice.
+    expect(deleteAnswerRuntime({ ok: false, status: 500, error: "disk full", server_text: true }).syncError).toBe(
+      "The server refused to delete the stored settings (500). The server said: “disk full”",
+    );
     expect("syncUnsupported" in deleteAnswerRuntime({ ok: false, status: 0 })).toBe(false);
   });
   it("a successful delete clears an earlier 404's 'doesn't support settings sync'", () => {

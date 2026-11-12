@@ -289,12 +289,15 @@ export interface SyncRemoteState {
 }
 
 /** Mirror of Rust transport::sync::SyncPull. status 0 = unreachable,
- *  404 = backend build predates sync, 401 = key problem. */
+ *  404 = backend build predates sync, 401 = key problem.
+ *  `server_text`: true only when `error` is the server's own error detail, from a body that was
+ *  read; absent or false, `error` is a sentence the app wrote (the same on push and delete). */
 export interface SyncPullResult {
   ok: boolean;
   status: number;
   state?: SyncRemoteState;
   error?: string;
+  server_text?: boolean;
 }
 
 /** Mirror of Rust transport::sync::SyncPush. A 409 sets `conflict` to the
@@ -305,6 +308,7 @@ export interface SyncPushResult {
   state?: SyncRemoteState;
   conflict?: SyncRemoteState;
   error?: string;
+  server_text?: boolean;
 }
 
 /** Mirror of Rust transport::sync::SyncDelete. */
@@ -312,6 +316,7 @@ export interface SyncDeleteResult {
   ok: boolean;
   status: number;
   error?: string;
+  server_text?: boolean;
 }
 
 /** Rust `sync_device_info` result. */

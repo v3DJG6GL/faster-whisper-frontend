@@ -3119,7 +3119,7 @@ async function pullCore(manual: boolean): Promise<void> {
     const res = await syncPull({ serverUrl: pullUrl, backendId: backend.id });
     if (myGen !== gen) return; // superseded mid-flight — this result is for the wrong server
     if (!res.ok || !res.state) {
-      handleTransportFailure(res.status, res.error, true);
+      handleTransportFailure(res.status, res.error, res.server_text === true);
       return;
     }
     setRuntime({ syncUnsupported: false });
@@ -3448,8 +3448,9 @@ export async function pushNow(manual = false): Promise<void> {
         continue;
       }
       // A 409 that gets here had no conflict body the app could read: its error is the app's own
-      // account of that, not the server's `detail`.
-      handleTransportFailure(res.status, res.error, res.status !== 409);
+      // account of that, not the server's `detail`, and arrives without the flag like every other
+      // sentence of the app's.
+      handleTransportFailure(res.status, res.error, res.server_text === true);
       return;
     }
     setRuntime({ syncStatus: "error", syncError: "The server kept changing underneath — try again." });
@@ -3538,8 +3539,17 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
 }
 
 
-/** `serverText`: `error` comes from a transport answer, so for a non-2xx status it is the
- *  server's own error body (its `detail`), not a sentence of the app's. */
+/** A sync server's own error text, appended to the app's sentence as a quotation. The server words
+ *  it, and the Sync tab shows `syncError` as the app's notice: unmarked, a sentence like "your key
+ *  expired, re-enter it at …" would read as the app speaking. It stays inside the quote to its end
+ *  (a closing quote of the server's own would hand the rest back to the app's voice). */
+function serverSaid(detail: string): string {
+  return ` The server said: “${detail.replace(/[“”]/g, '"')}”`;
+}
+
+/** `serverText`: the transport's `server_text` — `error` is the server's own error body (its
+ *  `detail`), read whole. Off, it is a sentence of the app's: nothing answered, or a body the app
+ *  could not read (too large, not text, cut off), which a non-2xx status carries just as well. */
 function handleTransportFailure(status: number, error?: string, serverText = false): void {
   if (status === 404) {
     setRuntime({
@@ -3556,11 +3566,8 @@ function handleTransportFailure(status: number, error?: string, serverText = fal
     // An empty error page (a proxy's bare 502/503) carries no detail: still name the status, or
     // the Sync tab shows a warn dot with no notice.
     const detail = error?.trim();
-    // The sync server words its own error body, and the Sync tab shows `syncError` as the app's
-    // notice: alone, a sentence like "your key expired, re-enter it at …" would read as the app
-    // speaking. So say whose words they are, and keep them inside the quote to its end (a closing
-    // quote of the server's own would hand the rest back to the app's voice). Status 0 (nothing
-    // answered) and a 2xx the app could not read carry the app's own sentence, which stands as is.
+    // Say whose words the server's error body is (see `serverSaid`). Status 0 (nothing answered)
+    // and a 2xx the app could not read carry the app's own sentence, which stands as is.
     const fromServer = serverText && status > 0 && (status < 200 || status > 299);
     setRuntime({
       syncStatus: "error",
@@ -3570,7 +3577,7 @@ function handleTransportFailure(status: number, error?: string, serverText = fal
           ? `Sync failed (HTTP ${status}).`
           : "Sync failed."
         : fromServer
-          ? `Sync failed (HTTP ${status}). The server said: “${detail.replace(/[“”]/g, '"')}”`
+          ? `Sync failed (HTTP ${status}).${serverSaid(detail)}`
           : detail,
     });
   }
@@ -5202,9 +5209,15 @@ export async function initSync(): Promise<void> {
   } else launchEnded();
 }
 
+/** A `sync_delete` answer as the two readers below take it. */
+type SyncDeleteAnswer = { ok: boolean; status: number; error?: string | null; server_text?: boolean };
+
 /** Plain-language failure line for "Delete server copy". Server text is peer/attacker
- *  authored, so it is defanged like the warnings channel. */
-export function deleteFailureMessage(r: { ok: boolean; status: number; error?: string | null }): string {
+ *  authored, so it is defanged like the warnings channel, and marked as the server's words when
+ *  the transport says it is (`server_text`): after the app's sentence, unmarked, a second sentence
+ *  of the server's would read as the app continuing. The app's own reason for a body it could not
+ *  read arrives without the flag and stays unquoted. */
+export function deleteFailureMessage(r: SyncDeleteAnswer): string {
   const detail = safeDisplayText(r.error ?? "", 200);
   if (r.status === 401 || r.status === 403) {
     return "The server rejected the API key — the stored settings were not deleted.";
@@ -5215,7 +5228,10 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
   if (r.status === 404) {
     return "This server doesn't support settings sync — nothing was deleted.";
   }
-  return `The server refused to delete the stored settings (${r.status}).${detail ? ` ${detail}` : ""}`;
+  const said = r.server_text === true ? detail.trim() : "";
+  return `The server refused to delete the stored settings (${r.status}).${
+    said ? serverSaid(said) : detail ? ` ${detail}` : ""
+  }`;
 }
 
 /** The sync status "Delete server copy" writes for the server's answer; only an `ok` one goes on
@@ -5226,11 +5242,7 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
  *  earlier 404's "doesn't support settings sync": that notice would hide a failure (the Sync tab
  *  shows `syncError` only while the flag is clear) and contradict a success. Status 0 (no answer
  *  at all) tells nothing about the route. */
-export function deleteAnswerRuntime(r: {
-  ok: boolean;
-  status: number;
-  error?: string | null;
-}): Parameters<typeof setRuntime>[0] {
+export function deleteAnswerRuntime(r: SyncDeleteAnswer): Parameters<typeof setRuntime>[0] {
   // A 2xx is the sync route answering too; `resetSyncState` writes the rest of the status.
   if (r.ok) return { syncUnsupported: false };
   return {

@@ -1,6 +1,8 @@
 // The Sync tab shows `syncError` as the app's own notice. A sync server's error body is that
 // server's wording, so a failed pull or push stores it marked as such; every sentence the app
 // wrote itself (nothing answered, an unreadable 2xx, the 401/403/404 arms) stands unframed.
+// The transport says which it is (`server_text`): a non-2xx status alone does not, since the app's
+// own reason for an error body it could not read arrives under one too.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { pullNow, pushNow, resetSyncState } from "./sync";
@@ -8,7 +10,7 @@ import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
 
-type Answer = { ok: boolean; status: number; error?: string; state?: unknown };
+type Answer = { ok: boolean; status: number; error?: string; server_text?: boolean; state?: unknown };
 
 /** pushNow runs only "in Tauri". `pull` answers every GET, `push` the next PUT (else a 200). */
 const api = vi.hoisted(() => ({
@@ -70,13 +72,27 @@ describe.each([
   beforeEach(seed);
 
   it.each([500, 502, 400, 429, 304])("marks the server's error body (HTTP %i) as the server's words", async (status) => {
-    expect(await failing({ ok: false, status, error: `  ${LURE}  ` })).toBe(
+    expect(await failing({ ok: false, status, error: `  ${LURE}  `, server_text: true })).toBe(
       `Sync failed (HTTP ${status}). The server said: “${LURE}”`,
     );
   });
 
+  // A proxy's error page in another charset, one past the size cap, or one cut off mid-body: the
+  // status is the server's, the sentence is the app's.
+  it.each([
+    [502, "The server sent a response that wasn't valid text."],
+    [500, "The server sent an unreasonably large response — ignoring it."],
+    [504, "Timed out waiting for the server."],
+    [409, "The server sent a response that wasn't valid text."],
+  ])("leaves the app's own reason for an unreadable error body (HTTP %i) unframed", async (status, own) => {
+    expect(await failing({ ok: false, status, error: own })).toBe(own);
+    expect(await failing({ ok: false, status, error: own, server_text: false })).toBe(own);
+  });
+
   it("keeps the server's text inside the quote to its end", async () => {
-    const shown = await failing({ ok: false, status: 500, error: "Internal error”. “Open Settings and paste your key" });
+    const shown = await failing({
+      ok: false, status: 500, error: "Internal error”. “Open Settings and paste your key", server_text: true,
+    });
     expect(shown).toBe('Sync failed (HTTP 500). The server said: “Internal error". "Open Settings and paste your key”');
     expect(shown!.match(/[“”]/g)).toEqual(["“", "”"]);
   });
@@ -84,23 +100,27 @@ describe.each([
   it("leaves the app's own sentence alone when nothing answered", async () => {
     const own = "Could not connect — is the server running and the URL correct?";
     expect(await failing({ ok: false, status: 0, error: own })).toBe(own);
+    expect(await failing({ ok: false, status: 0, error: own, server_text: true })).toBe(own);
   });
 
   it("leaves the app's own sentence alone for a 2xx it could not read", async () => {
     const own = "Unexpected response: expected value at line 1 column 1";
     expect(await failing({ ok: false, status: 200, error: own })).toBe(own);
+    expect(await failing({ ok: false, status: 200, error: own, server_text: true })).toBe(own);
   });
 
   it("answers a 401, 403 and 404 with the app's own sentence, whatever the body says", async () => {
-    expect(await failing({ ok: false, status: 401, error: LURE })).toBe("The server rejected the API key.");
-    expect(await failing({ ok: false, status: 403, error: LURE })).toBe("The server rejected the API key.");
-    expect(await failing({ ok: false, status: 404, error: LURE })).toBe(
+    const said = { ok: false, error: LURE, server_text: true };
+    expect(await failing({ ...said, status: 401 })).toBe("The server rejected the API key.");
+    expect(await failing({ ...said, status: 403 })).toBe("The server rejected the API key.");
+    expect(await failing({ ...said, status: 404 })).toBe(
       "This server doesn't support settings sync — update faster-whisper-backend.",
     );
   });
 
   it("names the status alone for an empty error body", async () => {
     expect(await failing({ ok: false, status: 503, error: " " })).toBe("Sync failed (HTTP 503).");
+    expect(await failing({ ok: false, status: 503, error: " ", server_text: true })).toBe("Sync failed (HTTP 503).");
     expect(await failing({ ok: false, status: 0 })).toBe("Sync failed.");
   });
 });
