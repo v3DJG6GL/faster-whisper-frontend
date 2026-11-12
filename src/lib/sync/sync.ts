@@ -3119,7 +3119,7 @@ async function pullCore(manual: boolean): Promise<void> {
     const res = await syncPull({ serverUrl: pullUrl, backendId: backend.id });
     if (myGen !== gen) return; // superseded mid-flight — this result is for the wrong server
     if (!res.ok || !res.state) {
-      handleTransportFailure(res.status, res.error);
+      handleTransportFailure(res.status, res.error, true);
       return;
     }
     setRuntime({ syncUnsupported: false });
@@ -3447,7 +3447,9 @@ export async function pushNow(manual = false): Promise<void> {
         base = remote.version;
         continue;
       }
-      handleTransportFailure(res.status, res.error);
+      // A 409 that gets here had no conflict body the app could read: its error is the app's own
+      // account of that, not the server's `detail`.
+      handleTransportFailure(res.status, res.error, res.status !== 409);
       return;
     }
     setRuntime({ syncStatus: "error", syncError: "The server kept changing underneath — try again." });
@@ -3536,7 +3538,9 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
 }
 
 
-function handleTransportFailure(status: number, error?: string): void {
+/** `serverText`: `error` comes from a transport answer, so for a non-2xx status it is the
+ *  server's own error body (its `detail`), not a sentence of the app's. */
+function handleTransportFailure(status: number, error?: string, serverText = false): void {
   if (status === 404) {
     setRuntime({
       syncStatus: "error",
@@ -3551,10 +3555,23 @@ function handleTransportFailure(status: number, error?: string): void {
   } else {
     // An empty error page (a proxy's bare 502/503) carries no detail: still name the status, or
     // the Sync tab shows a warn dot with no notice.
+    const detail = error?.trim();
+    // The sync server words its own error body, and the Sync tab shows `syncError` as the app's
+    // notice: alone, a sentence like "your key expired, re-enter it at …" would read as the app
+    // speaking. So say whose words they are, and keep them inside the quote to its end (a closing
+    // quote of the server's own would hand the rest back to the app's voice). Status 0 (nothing
+    // answered) and a 2xx the app could not read carry the app's own sentence, which stands as is.
+    const fromServer = serverText && status > 0 && (status < 200 || status > 299);
     setRuntime({
       syncStatus: "error",
       ...(status > 0 ? { syncUnsupported: false } : {}),
-      syncError: error?.trim() || (status ? `Sync failed (HTTP ${status}).` : "Sync failed."),
+      syncError: !detail
+        ? status
+          ? `Sync failed (HTTP ${status}).`
+          : "Sync failed."
+        : fromServer
+          ? `Sync failed (HTTP ${status}). The server said: “${detail.replace(/[“”]/g, '"')}”`
+          : detail,
     });
   }
 }

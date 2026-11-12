@@ -235,7 +235,8 @@ it("an answered push failure after a 404 clears the unsupported-server flag, an 
   await pushNow(true);
   s = useApp.getState();
   expect(s.syncUnsupported).toBe(false);
-  expect(s.syncError).toBe("HTTP 502");
+  // The fake transport's "HTTP 502" stands in for the server's error body: shown as its words.
+  expect(s.syncError).toBe("Sync failed (HTTP 502). The server said: “HTTP 502”");
 });
 
 // A pull's merge dropped because the user edited during its apply's keyring wait (up to 10 s
