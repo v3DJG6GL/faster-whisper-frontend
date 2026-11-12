@@ -956,7 +956,11 @@ pub async fn run<F>(
     // (a write error can break the loop while a `Final` is already in the
     // channel). Without this, a mid-session socket death silently drops the
     // last phrase the server finished.
-    loop {
+    // Bounded by this call's own snapshot of the queue: the reader is still alive (it is
+    // dropped below), so a server that keeps sending frames refills the queue as fast as
+    // this loop — which never awaits — empties it, and "until empty" need never come.
+    let queued = evt_rx.len();
+    for _ in 0..queued {
         match evt_rx.try_recv() {
             Ok(FromReader::Event(e)) => forward!(e),
             Ok(FromReader::ServerClose { code, message }) => {
@@ -2075,6 +2079,68 @@ mod server_close_tests {
             errors,
             ["stream connection too slow — the server is not keeping up with the audio"]
         );
+    }
+
+    /// A one-session local server that sends `partial` frames without pause for up to
+    /// `FLOOD`, and sets the returned flag only when it got to send them all — when the client
+    /// was still connected at the end.
+    fn serve_partial_flood() -> (String, Arc<std::sync::atomic::AtomicBool>) {
+        const FLOOD: std::time::Duration = std::time::Duration::from_secs(5);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let outlasted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = outlasted.clone();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            // Unbatched: Nagle would hold the small frames back for the client's delayed ACK,
+            // and the flood would reach the client in bursts with empty gaps between them.
+            s.set_nodelay(true).unwrap();
+            let mut ws = tokio_tungstenite::tungstenite::accept(s).unwrap();
+            let start = std::time::Instant::now();
+            while start.elapsed() < FLOOD {
+                for _ in 0..5 {
+                    let frame = r#"{"type":"partial","committed":"","pending":"x"}"#;
+                    if ws.send(Message::Text(frame.into())).is_err() {
+                        return;
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let url = format!("ws://{addr}/v1/audio/transcriptions/stream");
+        (url, outlasted)
+    }
+
+    /// The reader outlives the live loop, so a server that never stops sending keeps the event
+    /// queue non-empty: the closing drain forwards what was queued when it began and ends,
+    /// instead of running for as long as the server feeds it. Multi-threaded on purpose — the
+    /// drain never awaits, so only a reader on another worker can refill the queue under it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_server_that_keeps_sending_does_not_hold_the_closing_drain() {
+        let (url, outlasted) = serve_partial_flood();
+        // The live loop ends at once (over the queued-audio ceiling), with the server mid-flood.
+        let (pcm_tx, pcm_rx) = mpsc::unbounded_channel();
+        for _ in 0..125 {
+            pcm_tx.send(vec![0.0f32; 16_000]).unwrap();
+        }
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        run(params(url), pcm_rx, stop_rx, move |e| {
+            // A consumer slower than the flood, like the webview emit of a real session.
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            if matches!(e, StreamEvent::Closed) {
+                sink.lock().unwrap().push("closed");
+            }
+        })
+        .await;
+        drop((pcm_tx, stop_tx));
+        assert!(
+            !outlasted.load(std::sync::atomic::Ordering::SeqCst),
+            "the session ended only once the server stopped sending"
+        );
+        assert_eq!(*seen.lock().unwrap(), ["closed"]);
     }
 
     /// Runs one silence-trimmed recording session whose Stop lands before the connect, with
