@@ -573,9 +573,10 @@ describe("wrapLines", () => {
     for (const w of [" ", "　\t\n"]) {
       const t0 = performance.now();
       expect(cutByShare("a" + w.repeat(200_000 / w.length) + "b", [1, 1])).toEqual(["a", "b"]);
-      expect(performance.now() - t0).toBeLessThan(500);
+      // 100-140 ms each idle; the quadratic trim took 92-98 s on these inputs.
+      expect(performance.now() - t0).toBeLessThan(5_000);
     }
-  });
+  }, 30_000);
   it("a long trailing or inner whitespace run (a server's segment text) splits quickly", () => {
     // The last token runs to the text's end, and every seam trimmed both sides again, run included.
     const W = 16000;
@@ -597,17 +598,20 @@ describe("wrapLines", () => {
     const flags = "🇺🇸".repeat(50_000);
     let t0 = performance.now();
     expect(cutByShare("a " + flags + " b", [1, 1])).toEqual(["a " + flags, "b"]);
-    expect(performance.now() - t0).toBeLessThan(500);
+    // ~140 ms idle; the run walk took 14-22 s here.
+    expect(performance.now() - t0).toBeLessThan(5_000);
     // Words glued inside one run: splitTokens scores a seam at every flag.
-    const N = 5000;
+    const N = 20_000;
     const words = Array.from({ length: N }, (_, i) => ({ word: "🇺🇸", start: i * 0.1, end: i * 0.1 + 0.09 }));
     const r: BatchResult = { text: "🇺🇸".repeat(N), language: "en", words, segments: [{ start: 0, end: N * 0.1, text: "🇺🇸".repeat(N) }] };
     t0 = performance.now();
     const { cues } = buildCues(r, { length: "custom", custom: { cpl: 10, lines: 1, maxDur: 3, cps: 17 }, timing: "same" }, ["orig"]);
-    expect(performance.now() - t0).toBeLessThan(500);
+    // ~290 ms idle at this N; the run walk took 14.4 s (and only 0.7-1.1 s at 5,000 flags,
+    // too close to an idle run to budget between).
+    expect(performance.now() - t0).toBeLessThan(5_000);
     expect(cues.map((c) => c.text).join("")).toBe("🇺🇸".repeat(N));
     expect(cues.every((c) => /^(?:🇺🇸)+$/u.test(c.text))).toBe(true);
-  });
+  }, 30_000);
   it("a no-break space is no word break, and a line keeps it as written", () => {
     // /\s/ matches U+00A0, U+202F and U+2007: split by it, "25 000" is cut and wrapped across its
     // no-break space, and a wrapped line rewrites "viens ?" with a plain space.
