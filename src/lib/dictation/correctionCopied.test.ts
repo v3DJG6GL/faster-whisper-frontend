@@ -1,7 +1,8 @@
 // Quick-Add's correct-on-close re-types the corrected word after its window has hidden; when
-// Rust diverts that insert to the clipboard, the word stays uncorrected and the user's clipboard
-// is replaced. The chip says so, as an end-of-session note: Quick-Add emits the bare fact, the
-// main window writes the note (showCorrectionCopiedNote), the chip controller shows the window.
+// that insert ends on the clipboard instead (a Rust divert, or a target that resolves to
+// clipboard-only), the word stays uncorrected and the user's clipboard is replaced. The chip says
+// so, as an end-of-session note: Quick-Add emits the bare fact, the main window writes the note
+// (showCorrectionCopiedNote), the chip controller shows the window.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import quickAddSrc from "../../QuickAdd.tsx?raw";
 import appSrc from "../../App.tsx?raw";
@@ -142,11 +143,14 @@ describe("showCorrectionCopiedNote — the chip says a correction went to the cl
 });
 
 describe("the correction-copied wire", () => {
-  it("Quick-Add emits only on the diverted branch, with no payload", () => {
-    const m = /else if \(out\.diverted\) \{([\s\S]*?)\n {2}\}/.exec(quickAddSrc);
+  it("Quick-Add emits once, for a landed correction that ended on the clipboard, with no payload", () => {
+    const src = quickAddSrc.replace(/\r\n/g, "\n");
+    // A divert, or a method that resolved to clipboard-only: Rust reports that one as a plain
+    // landing, so the divert flag alone misses it (QuickAdd.correctOnClose.test.ts drives both).
+    const m = /if \(!out\.landed\) [^\n]*\n {2}else if \(out\.diverted \|\| method === "clipboard"\) \{([\s\S]*?)\n {2}\}/.exec(src);
     expect(m).not.toBeNull();
     expect(m![1]).toContain("emitCorrectionCopied()");
-    expect(quickAddSrc.match(/emitCorrectionCopied\(/g)).toHaveLength(1);
+    expect(src.match(/emitCorrectionCopied\(/g)).toHaveLength(1);
   });
 
   it("the main window turns it into the note", () => {

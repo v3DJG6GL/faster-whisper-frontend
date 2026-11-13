@@ -810,10 +810,12 @@ export default function QuickAdd() {
  *  the word in place. Skips if the selection is gone or changed (the "check first" guard), or — on
  *  the typing method only — if its edges carry a line break that typing would turn into Enter.
  *  Paste replaces the active selection; the prior clipboard is restored afterwards when the
- *  resolved restore-clipboard setting says so — unless Rust diverts to the clipboard (focus moved,
- *  or untypeable text on Wayland), in which case the correction stays on the clipboard, the
- *  selection is left as it was, and the dictation chip says so. */
-async function replaceSelectionAfterClose(
+ *  resolved restore-clipboard setting says so — unless the insert ends on the clipboard: Rust
+ *  diverts there (focus moved, or untypeable text on Wayland), or the method resolves to
+ *  clipboard-only in the first place (a read-only field, the app's rule, the global method).
+ *  Then the correction stays on the clipboard, the selection is left as it was, and the
+ *  dictation chip says so. Exported for its test. */
+export async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
   general: GeneralSettings,
@@ -860,9 +862,12 @@ async function replaceSelectionAfterClose(
   });
   // Neither outcome throws, so closeNow's catch never sees them — log them like the skips above.
   if (!out.landed) console.info("[quick-add] correct-on-close wrote nothing (our own window had focus, or the insert could not run — see the inject log)");
-  else if (out.diverted) {
-    console.info("[quick-add] correct-on-close diverted: the correction is on the clipboard, the selection was not replaced");
-    // This window is already hidden, and the divert just replaced the user's clipboard:
+  else if (out.diverted || method === "clipboard") {
+    // `diverted` is only Rust going to the clipboard AGAINST the method asked for; a method
+    // that resolved to clipboard-only comes back as a plain landing, with the same result.
+    const why = out.diverted ? "diverted" : "clipboard-only target";
+    console.info(`[quick-add] correct-on-close ${why}: the correction is on the clipboard, the selection was not replaced`);
+    // This window is already hidden, and the user's clipboard was just replaced:
     // the main window's chip says so (showCorrectionCopiedNote).
     void emitCorrectionCopied().catch((e) => console.error("correction-copied emit failed:", e));
   }
