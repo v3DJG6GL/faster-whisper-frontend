@@ -21,8 +21,8 @@ import { backendForAddress, effectiveServerUrl, fatesAfterSuppliedKey, insecureU
 import { forgetCredential } from "@/lib/capabilities";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import {
-  applyBlob, backendKeyFates, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
-  sanitizeInboundBackends, sanitizeProfiles,
+  applyBlob, backendKeyFates, carriedKeyIds, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob,
+  restorableCategories, sanitizeInboundBackends, sanitizeProfiles,
 } from "@/lib/sync/sync";
 import { STARTERS_LOW_LEVEL_NOTE, startersClearOf, startersNeedLowLevelNote } from "@/lib/starters";
 import { useApp } from "@/lib/store";
@@ -44,6 +44,20 @@ import { imeComposing } from "@/lib/keys";
 type Step = "gate" | "restore" | "starters" | "quickadd";
 
 const ALL_ON = categorySelection(true);
+
+/** The backend whose keyring entry restoreEverything drops when the write of the gate's key over
+ *  `match` fails: `match` itself when its id is new to this device (`before`) and the restored
+ *  copy (`pulled`: the list the apply installs and its keys) carried no key for it — any key held
+ *  under it is then a removed backend's, for whatever host that one used. None when the copy
+ *  carried one: that entry is the key the apply has just written for this very backend.
+ *  Exported for its test. */
+export function staleHeldBackend(
+  match: Backend,
+  before: ReadonlySet<string>,
+  pulled: { list: readonly Backend[]; secrets: unknown },
+): Backend | null {
+  return before.has(match.id) || carriedKeyIds(pulled.list, pulled.secrets).has(match.id) ? null : match;
+}
 
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const st = useApp;
@@ -241,8 +255,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // The failed write was for a keyless kept backend: the keptKeyless note below the buttons
     // already gives the advice, so the error line says only what went wrong.
     let keylessMatch = false;
-    // The backend whose key write failed, when its id is new to this device: any key the keyring
-    // holds under it is a removed backend's, for whatever host that one used.
+    // The backend whose key write failed, when its id is new to this device and the copy carried
+    // no key for it (`staleHeldBackend`): any key the keyring holds under it is a removed
+    // backend's, for whatever host that one used.
     let staleHeld: Backend | null = null;
     // Read before the FIRST attempt's apply: the ids this device had (the gate's entry included).
     // Not re-read per attempt: a retry would count an id an earlier attempt's blob re-added (and
@@ -292,7 +307,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
         if (!isGate) {
           keylessMatch = !match.hasApiKey;
-          staleHeld = before.has(match.id) ? null : match;
+          staleHeld = staleHeldBackend(match, before, pulledBackends);
           keyWriteFailed = true;
           await setBackendKey(match.id, key);
           keyWriteFailed = false;
