@@ -657,6 +657,45 @@ mod wire_field_tests {
         assert_eq!(langs(&r).len(), super::MAX_TRANSLATION_KEYS);
     }
 
+    /// A run that inherits the server's ten targets keeps ten tracks, so it keeps the
+    /// kept-original marker and the `translation.targets` entry of every one of them — a
+    /// dropped marker would show that track's source text as a real translation.
+    #[test]
+    fn kept_markers_and_targets_cover_every_translation_key_the_result_keeps() {
+        let ten = [
+            "de", "fr", "it", "es", "pt-BR", "nl", "pl", "sv", "he", "ja",
+        ];
+        let map: serde_json::Map<String, serde_json::Value> = ten
+            .iter()
+            .map(|l| (l.to_string(), serde_json::json!("a")))
+            .collect();
+        let raw = serde_json::json!({
+            "text": "a", "translation": {"targets": ten},
+            "segments": [{"start": 0.0, "end": 1.0, "text": "a", "translations": map,
+                "translations_kept": ten}]
+        });
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert_eq!(r.segments[0].translations.as_ref().unwrap().len(), 10);
+        assert_eq!(r.segments[0].translations_kept.clone().unwrap(), ten);
+        assert_eq!(r.translation.unwrap().targets, ten);
+
+        // Still server lists: past the key budget they are cut.
+        let many: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
+        let raw = serde_json::json!({
+            "text": "a", "translation": {"targets": many},
+            "segments": [{"start": 0.0, "end": 1.0, "text": "a", "translations_kept": many}]
+        });
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert_eq!(
+            r.segments[0].translations_kept.as_ref().unwrap().len(),
+            super::MAX_TRANSLATION_KEYS
+        );
+        assert_eq!(
+            r.translation.unwrap().targets.len(),
+            super::MAX_TRANSLATION_KEYS
+        );
+    }
+
     /// The translating model is provenance (stored, exported): kept whole up to the model-id
     /// cap, dropped past it — never cut into a name no server knows.
     #[test]
@@ -1580,11 +1619,11 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
                 s.translations = s
                     .translations
                     .map(|m| bound_translation_keys(m, &mut langs));
-                // Kept-original markers are language codes too — same bound,
-                // capped at the translate target ceiling.
+                // Kept-original markers are language codes too — same bound, and
+                // as many as the keys they mark (a run may carry more than it asked for).
                 s.translations_kept = s
                     .translations_kept
-                    .map(|v| bound_texts(&v, super::MAX_TARGETS, LANG_CODE_MAX));
+                    .map(|v| bound_texts(&v, MAX_TRANSLATION_KEYS, LANG_CODE_MAX));
                 s
             })
             .collect(),
@@ -1616,7 +1655,8 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
             model: t
                 .model
                 .and_then(|m| super::model_id_within(&m, super::MODEL_ID_MAX)),
-            targets: bound_texts(&t.targets, super::MAX_TARGETS, LANG_CODE_MAX),
+            // The run's own targets, one per kept track — the result's ceiling, not a request's.
+            targets: bound_texts(&t.targets, MAX_TRANSLATION_KEYS, LANG_CODE_MAX),
             source: t
                 .source
                 .map(|s| super::bounded_server_text(&s, LANG_CODE_MAX)),
@@ -1630,8 +1670,9 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
 /// result carries only the run's targets, which the server caps at its TRANSLATION_MAX_TARGETS
 /// (at most 10; an inherited TRANSLATE_TO can reach that, past this client's own MAX_TARGETS),
 /// so this leaves headroom. The keys come from the server, and every distinct one becomes a
-/// track the viewer builds and sorts as soon as the result is shown.
-const MAX_TRANSLATION_KEYS: usize = 16;
+/// track the viewer builds and sorts as soon as the result is shown. The lists that describe
+/// those tracks (kept-original markers, `translation.targets`) share this ceiling.
+pub(crate) const MAX_TRANSLATION_KEYS: usize = 16;
 
 /// Re-key a translations map through the server-string bound (values are the
 /// translated output and stay untouched, like `text`). `langs` is the keys the result kept so

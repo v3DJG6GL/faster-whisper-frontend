@@ -205,9 +205,13 @@ fn align_segments(
             continue;
         };
         results[at] = super::batch::bound_translation_keys(seg.translations, &mut langs);
-        // Kept-original markers are language codes — bound like the
-        // translation keys, capped at the target ceiling.
-        kept[at] = super::batch::bound_texts(&seg.kept_original, MAX_TARGETS, LANG_CODE_MAX);
+        // Kept-original markers are language codes — bound like the translation keys, and as
+        // many as those (a locked key answers with the server's targets, not the request's).
+        kept[at] = super::batch::bound_texts(
+            &seg.kept_original,
+            super::batch::MAX_TRANSLATION_KEYS,
+            LANG_CODE_MAX,
+        );
     }
     (results, kept)
 }
@@ -473,5 +477,39 @@ mod request_body_tests {
         assert_eq!(results[1]["de"], "B");
         assert!(kept[0].is_empty());
         assert_eq!(kept[1], vec!["de".to_string()]);
+    }
+
+    #[test]
+    fn every_translation_the_response_keeps_keeps_its_kept_original_marker() {
+        // A key locked to ten server targets answers with ten languages whatever was asked;
+        // a marker cut short would show that language's source text as a real translation.
+        let ten = [
+            "de", "fr", "it", "es", "pt-BR", "nl", "pl", "sv", "he", "ja",
+        ];
+        let map: serde_json::Map<String, serde_json::Value> = ten
+            .iter()
+            .map(|l| (l.to_string(), serde_json::json!("OK")))
+            .collect();
+        let parsed: super::ResponseBody = serde_json::from_value(serde_json::json!({
+            "segments": [{ "id": 1, "translations": map, "kept_original": ten }]
+        }))
+        .unwrap();
+        let (results, kept) = super::align_segments(parsed.segments, &[1]);
+        assert_eq!(results[0].len(), 10);
+        assert_eq!(kept[0], ten);
+
+        // Still a server list: it is cut where the keys it describes are.
+        let many: Vec<String> = (0..40).map(|i| format!("x{i}")).collect();
+        let map: serde_json::Map<String, serde_json::Value> = many
+            .iter()
+            .map(|l| (l.clone(), serde_json::json!("OK")))
+            .collect();
+        let parsed: super::ResponseBody = serde_json::from_value(serde_json::json!({
+            "segments": [{ "id": 1, "translations": map, "kept_original": many }]
+        }))
+        .unwrap();
+        let (results, kept) = super::align_segments(parsed.segments, &[1]);
+        assert!(results[0].len() < many.len());
+        assert_eq!(kept[0].len(), results[0].len());
     }
 }
