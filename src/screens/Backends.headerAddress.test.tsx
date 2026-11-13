@@ -39,3 +39,27 @@ describe("backend editor header address", () => {
     expect(h).not.toContain("address hides the real host");
   });
 });
+
+// `http:/host` is stored and sent as `http://host` (storedTypedUrl), so the header parses that
+// form, as the Connection summary below it and the login notice do.
+describe("backend editor header address, lenient scheme", () => {
+  it("shows the real host and the warning behind userinfo", () => {
+    const rest = "localhost:8000@evil.tld/v1";
+    for (const url of [`http:/${rest}`, `http:\\\\${rest}`, `http:${rest}`]) {
+      const h = header(url);
+      expect(h, url).toContain(">evil.tld<");
+      expect(h, url).not.toContain("localhost");
+      expect(h, url).toContain("address hides the real host");
+    }
+  });
+
+  it("shows a long one's parsed host, and keeps a fitting plain one as typed", () => {
+    const long = header(`http:/evil.tld/${"a".repeat(150)}/sync.trusted.example.com`);
+    expect(long).toContain(">evil.tld<");
+    expect(long).not.toContain("trusted");
+    expect(long).not.toContain("address hides the real host");
+    const plain = header("http:/host.lan:8000/v1");
+    expect(plain).toContain(">http:/host.lan:8000/v1<");
+    expect(plain).not.toContain("address hides the real host");
+  });
+});

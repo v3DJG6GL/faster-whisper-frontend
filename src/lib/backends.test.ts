@@ -342,7 +342,9 @@ describe("editorProbesAllowed", () => {
 
   it("the editor's address line keeps a fitting URL whole and shows a long or userinfo one's parsed host", () => {
     // Tail-keeping the whole URL showed its PATH end, which can read as a trusted host.
-    expect(backendsScreenSrc).toContain("const effAuth = authorityOf(effUrl);");
+    // Parsed in the stored form (what requests use): raw, a lenient `http:/…` does not parse.
+    expect(backendsScreenSrc).toContain("const effAuth = authorityOf(storedTypedUrl(effUrl));");
+    expect(authorityOf(storedTypedUrl("http:/localhost:8000@evil.tld/v1"))).toEqual({ host: "evil.tld", hasUserinfo: true });
     expect(backendsScreenSrc).toContain("!effAuth?.hasUserinfo && effUrl.length <= 240 && [...effUrl].length <= 120");
     expect(backendsScreenSrc).toMatch(/\? safeIdentityText\(effUrl, 120\)\s*: safeHostText\(effAuth\?\.host, 120\) \|\| safeIdentityText\(effUrl, 120\);/);
     expect(backendsScreenSrc).not.toContain("safeHostText(effUrl");

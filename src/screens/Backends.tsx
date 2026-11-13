@@ -140,8 +140,10 @@ export function Editor({
   // head-kept cut could hide its host, and a tail-kept one shows its PATH end (which can read as a
   // trusted host), so a long one shows the parsed host it actually connects to instead. So does
   // one with userinfo at any length: `http://localhost:8000<filler>@evil.tld/v1` reads as loopback
-  // head first, and the truncate class hides the real host after the last `@`.
-  const effAuth = authorityOf(effUrl);
+  // head first, and the truncate class hides the real host after the last `@`. Parsed in the
+  // stored form, the one requests use: raw, a lenient `http:/…` would not parse, and the line
+  // would print it whole with no warning. A fitting one without userinfo still reads as typed.
+  const effAuth = authorityOf(storedTypedUrl(effUrl));
   const addressLine =
     !effAuth?.hasUserinfo && effUrl.length <= 240 && [...effUrl].length <= 120
       ? safeIdentityText(effUrl, 120)
