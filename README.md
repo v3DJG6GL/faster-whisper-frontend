@@ -48,6 +48,12 @@ accent, and Hubot Sans / Mona Sans / Geist Mono (all OFL).
 Linux (primary: **KDE Plasma Wayland**; X11 fully supported; GNOME usable with
 documented degradations) and Windows 10/11. x64 only.
 
+Each release carries a `.deb` (Debian/Ubuntu), an AppImage, a native Arch Linux
+package (`.pkg.tar.zst`, built against Arch's own WebKitGTK — install with
+`sudo pacman -U faster-whisper-frontend-*.pkg.tar.zst`), an MSI and an NSIS `.exe`,
+plus a `SHA256SUMS-*.txt` per build leg. The Arch package's recipe is
+`packaging/arch/PKGBUILD`.
+
 ## Where your data lives
 
 The app's folders are named after its identifier, `org.fasterwhisper.frontend`:

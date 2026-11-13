@@ -1,0 +1,5 @@
+# makepkg inputs/outputs (see PKGBUILD header)
+/*.tar.gz
+/*.pkg.tar.zst
+/src/
+/pkg/

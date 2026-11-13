@@ -1,0 +1,82 @@
+# Native Arch Linux package, built from this source tree.
+#
+# release.yml's `arch` job runs this in an archlinux:base-devel container: it
+# packs the checked-out commit into "$pkgname-$pkgver.tar.gz" next to this file
+# (`git archive`), sets pkgver from tauri.conf.json, and runs makepkg. Nothing
+# is fetched from a release page or a mirror; the build pulls only npm and
+# crates.io packages, pinned by the two lock files.
+#
+# Local build, the same way CI does it (from the repo root; builds HEAD):
+#   docker run --rm -v "$PWD:/src" -w /src archlinux:base-devel packaging/arch/ci-build.sh
+# pkgver below is only a placeholder; ci-build.sh rewrites it in its copy.
+#
+# The app is built against Arch's own webkit2gtk-4.1 / gtk3, unlike the
+# AppImage, which ships Ubuntu's WebKitGTK and GStreamer.
+
+pkgname=faster-whisper-frontend
+pkgver=0.1.124
+pkgrel=1
+pkgdesc="Push-to-talk and hands-free dictation client for a self-hosted faster-whisper server"
+arch=('x86_64')
+url="https://forgejo.informethic.ch/v3DJG6GL/faster-whisper-frontend"
+license=('AGPL-3.0-or-later')
+# Linux tray = ksni (D-Bus StatusNotifierItem, no appindicator library), and
+# audio goes over a pure-Rust PulseAudio-protocol client (no libpulse); raw
+# ALSA is the fallback. libX11 is dlopen'ed only (XKB group query).
+depends=(
+  'alsa-lib'
+  'cairo'
+  'dbus'
+  'gdk-pixbuf2'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libgcc'
+  'libsoup3'
+  'libxkbcommon'
+  'webkit2gtk-4.1'
+  # Not linked: WebKit's GStreamer backend loads it to play recordings.
+  'gst-plugins-good'
+)
+# libayatana-appindicator: build-time only. tauri's deb bundler (used as the
+# staging layout below) panics with "Can't detect any appindicator library"
+# when the tray-icon feature is on and none is installed; the app never loads
+# it on Linux (tray = ksni).
+makedepends=('cargo' 'libayatana-appindicator' 'nodejs' 'pnpm')
+optdepends=(
+  'libx11: follow the live keyboard layout when typing into X11 apps'
+  'gst-plugins-bad: play more recording formats in the History viewer'
+  'gst-libav: play more recording formats in the History viewer'
+  'xdg-desktop-portal: text injection on Wayland compositors without the virtual-keyboard protocol (GNOME)'
+)
+# Rust: makepkg's LTO flags fight cargo's own, and the -debug split package
+# isn't worth carrying for an unsigned CI build.
+options=('!lto' '!debug')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  export CARGO_HOME="$srcdir/cargo-home"
+  pnpm install --frozen-lockfile
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')" \
+    --manifest-path src-tauri/Cargo.toml
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  export CARGO_HOME="$srcdir/cargo-home"
+  # The deb bundle is only a staging layout: binary, .desktop file and the
+  # hicolor icons exactly as the .deb release ships them. package() unpacks it.
+  pnpm tauri build --bundles deb -- --frozen
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  local deb
+  deb=$(find src-tauri/target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)
+  [ -n "$deb" ] || { echo "no .deb bundle under src-tauri/target/release/bundle/deb" >&2; return 1; }
+  bsdtar -xOf "$deb" 'data.tar.*' | bsdtar -xf - -C "$pkgdir"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
