@@ -1558,6 +1558,12 @@ function inboundSecret(secrets: unknown, id: string): string | undefined {
   return typeof key === "string" && key && key.length <= MAX_SECRET_LEN ? key : undefined;
 }
 
+/** The ids of `incoming` (the list an apply installs) whose API key the blob carries: the keys
+ *  `reconcileBackendSecrets` writes under them while the apply's "API keys" gate is on. */
+export function carriedKeyIds(incoming: readonly Backend[], secrets: unknown): ReadonlySet<string> {
+  return new Set(incoming.filter((b) => inboundSecret(secrets, b.id) !== undefined).map((b) => b.id));
+}
+
 /** What an import or a restore does to each incoming backend's API key — the disclosure both
  *  consent dialogs show, judged on the list the apply installs (`incoming`, sanitized; empty when
  *  backends are not selected) and the keys it carries (`secrets`, read as the apply writes them).

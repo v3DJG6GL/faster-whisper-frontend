@@ -1097,6 +1097,20 @@ function ConnectStep({
   );
 }
 
+export type RestoreKeyFailure = { kind: "addKeyless" | "dropHeld" | "keep" } | { kind: "moveBack"; serverUrl: string };
+
+/** Which arm RestoreOffer.finishRestore takes for the backend the typed key was meant for (`id`)
+ *  once that key's keyring write has failed, from this device's state before the apply; the
+ *  arms' reasons are at the call. An id the blob added WITH its key is kept as it is: what the
+ *  keyring holds under it is the key the apply has just written for this very backend, not one a
+ *  removed backend left behind. Exported for its test. */
+export function restoreKeyFailure(id: string, inStore: boolean, before: RestorePreApply): RestoreKeyFailure {
+  if (!inStore) return { kind: "addKeyless" };
+  const had = before.backends.get(id);
+  if (!had) return { kind: before.carried.has(id) ? "keep" : "dropHeld" };
+  return before.keyMoved.has(id) ? { kind: "moveBack", serverUrl: had.serverUrl } : { kind: "keep" };
+}
+
 function RestoreOffer({
   draft,
   keyTyped,
@@ -1149,25 +1163,27 @@ function RestoreOffer({
         }
       } catch (e) {
         // Don't lose an applied restore over a keyring failure: a new backend is left keyless
-        // (the sync tab's no-key warning takes it from there), one this device had keeps whatever key it had.
+        // (the sync tab's no-key warning takes it from there) unless the blob carried its key, one
+        // this device had keeps whatever key it had.
         console.error("saving API key failed:", e);
         const id = match.id;
-        const had = before.backends.get(id);
-        if (!s.backends.some((b) => b.id === id)) s.upsertBackend({ ...match, hasApiKey: false });
-        else if (!had) {
-          // The blob added this id, and the held-key notice skipped it (the typed key was to
-          // replace its entry): any key the keyring holds under it is a removed backend's, for
-          // whatever host that one used. Drop it, best-effort, rather than send it to this address.
+        const failure = restoreKeyFailure(id, s.backends.some((b) => b.id === id), before);
+        if (failure.kind === "addKeyless") s.upsertBackend({ ...match, hasApiKey: false });
+        else if (failure.kind === "dropHeld") {
+          // The blob added this id with no key for it, and the held-key notice skipped it (the
+          // typed key was to replace its entry): any key the keyring holds under it is a removed
+          // backend's, for whatever host that one used. Drop it, best-effort, rather than send it
+          // to this address.
           await deleteBackendKey(id).catch(() => {});
           const cur = useApp.getState().backends.find((b) => b.id === id);
           if (cur) useApp.getState().upsertBackend({ ...cur, hasApiKey: false });
-        } else if (before.keyMoved.has(id)) {
+        } else if (failure.kind === "moveBack") {
           // A backend this device had, which the blob moved here with no key carried: its own
           // key, for the host it used, would now go to this address, and the move notice was
           // skipped. The key is the user's, so it is not deleted: the backend goes back to its
           // address, and this server gets a new backend, keyless as above.
           const cur = useApp.getState().backends.find((b) => b.id === id);
-          if (cur) useApp.getState().upsertBackend({ ...cur, serverUrl: had.serverUrl });
+          if (cur) useApp.getState().upsertBackend({ ...cur, serverUrl: failure.serverUrl });
           match = { ...draft, hasApiKey: false };
           useApp.getState().upsertBackend(match);
         }

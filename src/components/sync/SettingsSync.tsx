@@ -29,6 +29,7 @@ import {
   applyBlob,
   approvePendingReview,
   backendKeyFates,
+  carriedKeyIds,
   consentBackendText,
   consentDetailText,
   consentDetailTitle,
@@ -506,8 +507,14 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
  *  then (by id), and the ids whose key this device holds that the apply leaves under an entry that
  *  connects elsewhere with no key carried for it (`backendKeyFates`' moves). The supplied-key
  *  backend's move notice is hidden (the typed key was to replace its entry), so a failed write
- *  must not leave such a key to reach the typed address. */
-export type RestorePreApply = { backends: ReadonlyMap<string, Backend>; keyMoved: ReadonlySet<string> };
+ *  must not leave such a key to reach the typed address. `carried`: the ids whose key the apply
+ *  writes from the blob (`carriedKeyIds`; none when backends are not selected) — a key held under
+ *  one of them afterwards is the restore's own, not one a removed backend left behind. */
+export type RestorePreApply = {
+  backends: ReadonlyMap<string, Backend>;
+  keyMoved: ReadonlySet<string>;
+  carried: ReadonlySet<string>;
+};
 
 /** Per-category selection + hazard preview for a server-side settings blob —
  *  ImportPreview's sibling for the Backends connect-first add flow, where the
@@ -617,6 +624,7 @@ export function RestoreFromServer({
           backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, pre.backends, pre.settings, readHeld)
             .moved.map((m) => m.backend.id),
         ),
+        carried: carriedKeyIds(sel.backends ? installBackends : [], blob.backends?.secrets),
       };
       const ok = await applyBlob(stripMachineFolders(blob), sel, 2, { ignoreGates: true });
       if (!ok) {
