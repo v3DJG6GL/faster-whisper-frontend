@@ -63,12 +63,14 @@ export function fmtTimestamp(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
-/** Seconds → terse duration for chart axis ticks: `47s` · `33m` · `1.7h`. */
-export function fmtDurationAxis(seconds: number): string {
+/** Seconds → terse duration for chart axis ticks: `47s` · `33m` · `1.7h`. `tenths` keeps a
+ *  decimal on the minutes too (`1.5m`), for a gridline that sits on a half minute. */
+export function fmtDurationAxis(seconds: number, tenths = false): string {
   const s = Math.max(0, Math.round(seconds || 0));
   if (s < 60) return `${s}s`;
   // Once the minutes round up to 60, show hours (3599 → "1h", not "60m").
-  if (Math.round(s / 60) < 60) return `${Math.round(s / 60)}m`;
+  const min = tenths ? Number((s / 60).toFixed(1)) : Math.round(s / 60);
+  if (min < 60) return `${dec1(min)}m`;
   return `${dec1(s / 3600)}h`;
 }
 

@@ -37,7 +37,7 @@ import {
   translationRows,
   findStage,
   fmtTimeSaved,
-  niceMax,
+  axisTop,
   parseScope,
   pct,
 
@@ -105,12 +105,37 @@ describe("usageDerive", () => {
     expect(scopeTotals(k, "all").words).toBe(50);
   });
 
-  it("niceMax rounds to 1/2/4/8/10 steps with a floor of 4", () => {
-    expect(niceMax(0)).toBe(4);
-    expect(niceMax(3)).toBe(4);
-    expect(niceMax(17)).toBe(20);
-    expect(niceMax(2500)).toBe(4000);
-    expect(niceMax(9000)).toBe(10000);
+  it("axisTop counts: four whole steps of 1/2/2.5/3/4/5 x 10^k, never under 1", () => {
+    expect(axisTop("words", 0)).toBe(4);
+    expect(axisTop("sessions", 0.5)).toBe(4);
+    expect(axisTop("words", 3)).toBe(4);
+    expect(axisTop("words", 8)).toBe(8);
+    // 9 and 10 used to top out at 10, whose quarters 2.5 and 7.5 printed as "3" and "8".
+    expect(axisTop("errors", 9)).toBe(12);
+    expect(axisTop("requests", 10)).toBe(12);
+    expect(axisTop("words", 13)).toBe(16);
+    expect(axisTop("words", 17)).toBe(20);
+    // A round peak fills the chart: 2.5 steps in from the tens, where they are whole.
+    expect(axisTop("words", 100)).toBe(100);
+    expect(axisTop("words", 2500)).toBe(4000);
+    expect(axisTop("words", 9000)).toBe(10000);
+  });
+
+  it("axisTop durations: four steps on the clock, decimal hours past twelve", () => {
+    expect(axisTop("audio_s", 0)).toBe(4);
+    expect(axisTop("processing_s", 0.4)).toBe(4);
+    expect(axisTop("audio_s", 10)).toBe(12);
+    expect(axisTop("audio_s", 55)).toBe(60);
+    expect(axisTop("audio_s", 90)).toBe(120);
+    // 150 s used to top out at 200 s: gridlines at 150 s and 200 s both read "3m".
+    expect(axisTop("audio_s", 150)).toBe(240);
+    expect(axisTop("audio_s", 300)).toBe(480);
+    expect(axisTop("audio_s", 900)).toBe(960);
+    expect(axisTop("processing_s", 5000)).toBe(7200);
+    expect(axisTop("audio_s", 13 * 3600)).toBe(16 * 3600);
+    expect(axisTop("audio_s", 40 * 3600)).toBe(48 * 3600);
+    expect(axisTop("audio_s", 50 * 3600)).toBe(80 * 3600);
+    expect(axisTop("audio_s", 90 * 3600)).toBe(100 * 3600);
   });
 
   it("time saved: words at 40 wpm minus speech, never negative; formatted", () => {

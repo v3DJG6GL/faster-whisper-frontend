@@ -146,14 +146,32 @@ export function densifyKinds(series: readonly UsageSeriesPoint[], days: number, 
   return out;
 }
 
-/** Round a max up to a clean step so gridline labels read nicely (4 intervals). */
-export function niceMax(v: number): number {
-  if (!(v > 0)) return 4;
+/** Gridline steps in seconds whose four multiples each read as a clock value. No 20 s or
+ *  20 min: four of them make 80, which is no round minute or hour. */
+const CLOCK_STEPS = [
+  1, 2, 3, 4, 5, 10, 15, 30, // seconds
+  60, 120, 180, 240, 300, 600, 900, 1800, // minutes
+  3600, 7200, 10_800, 14_400, 21_600, 28_800, 43_200, // hours
+];
+
+/** The smallest whole 1, 2, 2.5, 3, 4, 5 × 10^k that is at least `v` (itself at least 1). */
+function decimalStep(v: number): number {
   const p = 10 ** Math.floor(Math.log10(v));
   const u = v / p;
-  // Floor at 4: the axis draws 4 equal intervals, so a smaller top yields fractional
-  // quarters that round to DUPLICATE tick labels.
-  return Math.max(4, (u <= 1 ? 1 : u <= 2 ? 2 : u <= 4 ? 4 : u <= 8 ? 8 : 10) * p);
+  // 2.5 from the tens up only: among the units it is no whole count.
+  return (u <= 1 ? 1 : u <= 2 ? 2 : u <= 2.5 && p >= 10 ? 2.5 : u <= 3 ? 3 : u <= 4 ? 4 : u <= 5 ? 5 : 10) * p;
+}
+
+/** The y-axis top for a tallest column of `max`: 4 equal steps up to it, each a value the
+ *  axis label prints exactly. A plain decimal top does not quarter that way — 200 s puts
+ *  lines at 150 s and 200 s that both read "3m", 10 words puts them at 2.5 and 7.5. Durations
+ *  step on the clock (decimal hours past 12 h), counts on whole 1/2/2.5/3/4/5 × 10^k; the
+ *  steps are dense enough that the top is at most twice `max` (the smallest axis is 0–4). */
+export function axisTop(m: ChartMetric, max: number): number {
+  if (!(max > 0)) return 4;
+  const need = max / 4;
+  if (!isDurationMetric(m)) return 4 * decimalStep(Math.max(1, need));
+  return 4 * (CLOCK_STEPS.find((s) => s >= need) ?? 3600 * decimalStep(need / 3600));
 }
 
 /** Typing baseline the "time saved" figure is measured against (the Aalto 136M-keystroke

@@ -21,6 +21,9 @@ export function bucketTick(b: { from: number }, mode: BucketMode, today: number)
 }
 
 export const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v) : fmtCompact(v));
+/** The label of a y-axis gridline at `v`, a quarter of an `axisTop`: the value itself, where
+ *  metricTick would round the 90 s line of a 30 s step up to "2m". */
+export const gridTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v, true) : fmtCompact(v));
 /** A value with its unit: `1,240 words` · `31h 12m` · `1 session`. */
 export function metricText(m: ChartMetric, v: number, compact = false): string {
   if (isDurationMetric(m)) return fmtDuration(v);

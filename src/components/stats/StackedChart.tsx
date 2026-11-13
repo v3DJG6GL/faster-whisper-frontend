@@ -5,11 +5,11 @@ import {
 import { cn } from "@/lib/cn";
 import { fmtDateTick, fmtDateFull, localTodayDay, plural } from "@/lib/format";
 import {
-  KINDS, KIND_LABEL, KIND_VAR, METRIC_LABEL, metricValue, niceMax, presentKinds, safeTotals, type BucketMode,
+  KINDS, KIND_LABEL, KIND_VAR, METRIC_LABEL, axisTop, metricValue, presentKinds, safeTotals, type BucketMode,
   type ChartMetric, type UsageBucket, type UsageScope,
 } from "@/lib/usageDerive";
 import type { UsageKind, UsageKinds } from "@/lib/types";
-import { BUCKET_WORD, bucketTick, fmtMonthYear, kindFill, metricText, metricTick, useWidth } from "@/components/stats/chartKit";
+import { BUCKET_WORD, bucketTick, fmtMonthYear, gridTick, kindFill, metricText, useWidth } from "@/components/stats/chartKit";
 import { HatchDef, Panel, Swatch } from "@/components/stats/primitives";
 
 const TIP_W = 176;
@@ -48,7 +48,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
     [pts, metric, effSolo],
   );
   const totals = useMemo(() => cols.map((c) => c.reduce((s, v) => s + v, 0)), [cols]);
-  const top = useMemo(() => niceMax(Math.max(0, ...totals)), [totals]);
+  const top = useMemo(() => axisTop(metric, Math.max(0, ...totals)), [metric, totals]);
   const allZero = totals.every((t) => t === 0);
   const bw = n ? pw / n : 0;
   const barX = (i: number) => pad.l + i * bw + bw * 0.18;
@@ -142,7 +142,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
                   <g key={g}>
                     <line x1={pad.l} x2={w - pad.r} y1={y} y2={y} stroke="var(--c-line)" strokeWidth={1} />
                     <text x={pad.l - 8} y={y + 3} textAnchor="end" className="font-mono" fontSize={10} fill="var(--c-faint)">
-                      {metricTick(metric, (top * g) / 4)}
+                      {gridTick(metric, (top * g) / 4)}
                     </text>
                   </g>
                 );

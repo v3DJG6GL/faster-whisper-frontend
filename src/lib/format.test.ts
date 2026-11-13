@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { fmtBitrate, fmtBytes, fmtTimestamp, plural, relTime } from "./format";
+import {
+  fmtBitrate, fmtBytes, fmtDurationAxis, fmtTimestamp, plural, relTime,
+} from "./format";
 
 describe("fmtTimestamp", () => {
   it("never renders 60.0 seconds — rounds to the tenth before splitting", () => {
@@ -15,6 +17,25 @@ describe("fmtTimestamp", () => {
     expect(fmtTimestamp(-3)).toBe("0:00.0");
     expect(fmtTimestamp(Infinity)).toBe("0:00.0");
     expect(fmtTimestamp(NaN)).toBe("0:00.0");
+  });
+});
+
+describe("fmtDurationAxis", () => {
+  it("rounds to whole minutes, and to hours once the minutes reach 60", () => {
+    expect(fmtDurationAxis(0)).toBe("0s");
+    expect(fmtDurationAxis(47)).toBe("47s");
+    expect(fmtDurationAxis(90)).toBe("2m");
+    expect(fmtDurationAxis(1980)).toBe("33m");
+    expect(fmtDurationAxis(3599)).toBe("1h");
+    expect(fmtDurationAxis(6120)).toBe("1.7h");
+  });
+  it("with tenths, a half minute keeps its decimal", () => {
+    expect(fmtDurationAxis(30, true)).toBe("30s");
+    expect(fmtDurationAxis(60, true)).toBe("1m");
+    expect(fmtDurationAxis(90, true)).toBe("1.5m");
+    expect(fmtDurationAxis(2700, true)).toBe("45m");
+    expect(fmtDurationAxis(3599, true)).toBe("1h");
+    expect(fmtDurationAxis(5400, true)).toBe("1.5h");
   });
 });
 
