@@ -5,10 +5,14 @@
 // stub store, so the test sees exactly what a session would paint, and when.
 import { describe, expect, it } from "vitest";
 import { transformWithOxc } from "vite";
-import streamingSrc from "./streaming.ts?raw";
-import dictationSrc from "./dictation.ts?raw";
+import streamingRaw from "./streaming.ts?raw";
+import dictationRaw from "./dictation.ts?raw";
 import { isActiveDictation } from "./dictationVisual";
 import * as utterancePending from "./utterancePending";
+
+// CRLF-normalized: a Windows checkout has no "\n}\n" and no bare-"\n" regex match.
+const streamingSrc = streamingRaw.replace(/\r\n/g, "\n");
+const dictationSrc = dictationRaw.replace(/\r\n/g, "\n");
 
 /** A top-level `function name(...) {...}` of streaming.ts (they all close on a `}` at column 0). */
 function topLevel(name: string): string {
