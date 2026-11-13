@@ -17,8 +17,8 @@ import {
   type DictationTone,
 } from "@/lib/dictation/dictationVisual";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs, chipTuckHold, currentPhase,
-  nextWarmingSince, PHASE_PERSIST_MS, phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
+  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipNoteBlocksTuck, chipTuckDelayMs,
+  chipTuckHold, currentPhase, nextWarmingSince, PHASE_PERSIST_MS, phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { asServerWork } from "@/lib/types";
@@ -1119,6 +1119,7 @@ export default function Overlay() {
   // it out, and status flips no longer bounce it — the dot stays tucked through the whole
   // session, conveying state via colour + pulse only. Hover and errors still override (so you
   // can always read the transcript / see a failure); completion settles back without popping.
+  // Quick-Add's correction note comes outside any session and un-tucks in both modes.
   const lastPeekStatus = useRef(state.status);
   useEffect(() => {
     const prevPeekStatus = lastPeekStatus.current;
@@ -1137,11 +1138,20 @@ export default function Overlay() {
     // and the pill is where the elapsed clock and the ✕ live. See chipRules — peekWhileActive
     // still wins below, via keepMin.
     const endFlash = chipTuckHold({ peeked, status: state.status, phase: state.phase, now: Date.now() });
+    // Quick-Add's "correction copied" lands on a chip at rest, with no status edge to bounce it
+    // out: while it shows it blocks the tuck like an error, so its label can open (chipRules).
+    const noteOut = chipNoteBlocksTuck({
+      note,
+      status: state.status,
+      holdUntil: noteHoldUntil.current,
+      now: Date.now(),
+    });
     const blocked =
       !state.overlayPeek ||
       state.position === "off" ||
       hoverReveal ||
       state.status === "error" ||
+      noteOut ||
       // `warming`: a warm-up no longer always expands the pill (chipExpansion), and it never tucks.
       (!keepMin && !endFlash && (speaking || processing || expanded || !!state.warming));
     const eligible =
@@ -1196,6 +1206,9 @@ export default function Overlay() {
     // payload object: every progress push replaces it, and that re-armed the tuck timer.
     phaseKey,
     sizeNudge, // a size adjustment restarts the wait from the refreshed grace floor
+    // The chip's own copy of the note: set after its deadline is stamped, and cleared by its
+    // timer — the only things that tell this effect a session-less note came and went.
+    note,
   ]);
 
   const hasQuickLaunch = state.quickLaunch.length > 0;

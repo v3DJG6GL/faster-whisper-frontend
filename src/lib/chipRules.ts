@@ -161,6 +161,25 @@ export function chipLabelHoldOpens(a: { holdUntil: number; peeked: boolean; now:
   return !a.peeked && a.holdUntil > a.now;
 }
 
+/** Must the chip stay OUT of the tuck for a note that no session brought?
+ *
+ *  An end-of-session note rides the active → idle edge, where chipEndTuckHold lets it slide a
+ *  tucked chip out. Quick-Add's "correction copied" lands on a chip at REST: no status edge, and
+ *  tucked is that chip's resting state. So while it shows (`note`, the chip's own copy, up to
+ *  `holdUntil`, the note's deadline) it blocks the tuck outright, like an error: the caller
+ *  un-tucks, chipLabelHoldOpens opens the pill, and whatever ends the note — its timer, a store
+ *  reset, a session starting — lets the chip tuck again. Also under "stay hidden while
+ *  dictating": nothing is being dictated, and the label is the only sign that the user's
+ *  clipboard was replaced. The session's own notes are not this rule's. */
+export function chipNoteBlocksTuck(a: {
+  note: string | null;
+  status: DictationStatus;
+  holdUntil: number;
+  now: number;
+}): boolean {
+  return a.note === "correction-copied" && a.status === "idle" && a.holdUntil > a.now;
+}
+
 /** Should the ✕ be on screen?
  *
  *  `processingSince` is when the current processing run began (null when not

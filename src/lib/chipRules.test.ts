@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 // Raw source (no jsdom here): pins that Overlay.tsx actually feeds these rules what they need.
 import overlaySrc from "../Overlay.tsx?raw";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipTuckDelayMs,
-  chipTuckHold, currentPhase, nextProcessingSince, nextWarmingSince, phaseClock, phaseElapsedMs, stepProcessingStamp,
+  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipEndTuckHold, chipExpansion, chipLabelHoldOpens, chipNoteBlocksTuck,
+  chipTuckDelayMs, chipTuckHold, currentPhase, nextProcessingSince, nextWarmingSince, phaseClock, phaseElapsedMs, stepProcessingStamp,
   type ProcessingStamp,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
@@ -232,6 +232,62 @@ describe("chipLabelHoldOpens", () => {
 
   it("leaves a chip tucked at the edge tucked", () => {
     expect(chipLabelHoldOpens({ holdUntil: NOW + 2600, peeked: true, now: NOW })).toBe(false);
+  });
+});
+
+// Quick-Add's "Correction copied" lands on a chip at REST: status stays idle, so neither the
+// status-change un-tuck nor chipEndTuckHold's release ever runs for it, and tucked is the docked
+// chip's resting state (dock on) and the hidden one's (dock off, its peek timer keeps running).
+describe("chipNoteBlocksTuck", () => {
+  const HOLD = 4000;
+  const live = { note: "correction-copied", status: "idle" as DictationStatus, holdUntil: NOW + HOLD, now: NOW };
+
+  it("keeps the chip out of the tuck while the correction note shows at idle", () => {
+    expect(chipNoteBlocksTuck(live)).toBe(true);
+    expect(chipNoteBlocksTuck({ ...live, now: NOW + HOLD - 1 })).toBe(true);
+  });
+
+  it("slides a tucked chip out, so the label hold can open the pill", () => {
+    // Left tucked, the body never mounts: an amber blink on the half-dot is all that shows.
+    expect(chipLabelHoldOpens({ holdUntil: live.holdUntil, peeked: true, now: NOW })).toBe(false);
+    // Overlay's peek driver: a blocked chip is not eligible to tuck, so `peeked` drops.
+    const peeked = !chipNoteBlocksTuck(live);
+    expect(peeked).toBe(false);
+    expect(chipLabelHoldOpens({ holdUntil: live.holdUntil, peeked, now: NOW })).toBe(true);
+  });
+
+  it("lets the chip tuck again however the hold ends", () => {
+    // The note's timer (or a store reset) cleared it; a repeat first drops the note, too.
+    expect(chipNoteBlocksTuck({ ...live, note: null })).toBe(false);
+    expect(chipNoteBlocksTuck({ ...live, note: null, holdUntil: 0 })).toBe(false);
+    // A note still up past its deadline can never pin the chip out.
+    expect(chipNoteBlocksTuck({ ...live, now: NOW + HOLD })).toBe(false);
+    // A session starting: its own tuck rules ("stay hidden while dictating" included) take over.
+    for (const status of ["listening", ...PROCESSING] as DictationStatus[]) {
+      expect(chipNoteBlocksTuck({ ...live, status }), status).toBe(false);
+    }
+  });
+
+  it("leaves the end-of-session notes to the status edge that brings them (chipEndTuckHold)", () => {
+    for (const note of ["not-inserted", "not-inserted-saved", "incomplete"]) {
+      expect(chipNoteBlocksTuck({ ...live, note }), note).toBe(false);
+    }
+  });
+
+  it("is wired into Overlay's peek driver, which the note's own state re-runs", () => {
+    const src = overlaySrc.replace(/\r\n/g, "\n");
+    const driver = src.slice(src.indexOf("const lastPeekStatus = "), src.indexOf("const hasQuickLaunch = "));
+    const call = /const noteOut = chipNoteBlocksTuck\(\{([\s\S]*?)\}\);/.exec(driver);
+    expect(call).not.toBeNull();
+    // The chip-side note (its timer clears it) and the NOTE's own deadline.
+    expect(call![1]).toMatch(/\bnote,/);
+    expect(call![1]).toMatch(/holdUntil: noteHoldUntil\.current,/);
+    // An unconditional block, like an error: not inside the keep-minimized / end-flash group.
+    expect(driver).toMatch(/state\.status === "error" \|\|\s*noteOut \|\|/);
+    // No status edge comes with this note, and none when it ends: `note` must be a dep.
+    const deps = /\n {2}\}, \[\n([\s\S]*?)\n {2}\]\);/.exec(driver);
+    expect(deps).not.toBeNull();
+    expect(deps![1]).toMatch(/^\s*note,/m);
   });
 });
 
