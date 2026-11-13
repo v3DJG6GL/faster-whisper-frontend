@@ -142,8 +142,8 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
  *
  *  Leading/trailing whitespace in a key is MEANINGFUL — the backend accepts it (the
  *  cb:map key pattern includes a space) and matches it literally at dictation time
- *  (`\b(re.escape(key))\b`), so " quote" and "quote " are distinct mappings; trimming
- *  would merge them and hide a whitespace-only edit from the dirty diff. */
+ *  (a space edge is the one edge it does not word-bound), so " quote" and "quote " are distinct
+ *  mappings; trimming would merge them and hide a whitespace-only edit from the dirty diff. */
 export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> } {
   // Rows are newest-first; keep the FIRST occurrence of a duplicate key so the newest-shown mapping
   // wins over an older entry further down. A Map (not a plain object) so a key like "toString"
@@ -310,15 +310,16 @@ export function rulePatchProblem(patch: Record<string, unknown>): string | null 
 }
 
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
- *  (`compile_map`): longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE
- *  pass (no cascade), and every ß key also matches its derived ss spelling (ß→ss, ẞ→SS; a key
- *  written with ss explicitly wins) because the Swiss cleanup rewrites ß before the map runs. Not
- *  mirrored: the dictated-punctuation prefix, which a selection never carries. Used to correct a
- *  selected word against the current list on close.
+ *  (`compile_map`): longest-key-first, word-bounded on every key edge that is not whitespace,
+ *  case-insensitive, values inserted verbatim, ONE pass (no cascade), and every ß key also matches
+ *  its derived ss spelling (ß→ss, ẞ→SS; a key written with ss explicitly wins) because the Swiss
+ *  cleanup rewrites ß before the map runs. Not mirrored: the dictated-punctuation prefix, which a
+ *  selection never carries. Used to correct a selected word against the current list on close.
  *
- *  Word boundaries are computed manually (not via regex `\b`, which is ASCII-only in JS, nor
- *  lookbehind, which older WebKitGTK lacks) so they're Unicode-aware AND depend on each key's edge
- *  char — reproducing Python's `\b(key)\b` for keys whose edge is a space/punct (e.g. " Prozent").
+ *  The bounds are computed manually (not via regex `\b`, which is ASCII-only in JS, nor
+ *  lookbehind, which older WebKitGTK lacks) so they're Unicode-aware AND follow the server's
+ *  per-edge rule (`edgeFree`): a `\b(key)\b` never matches after a key's own trailing "." ("z.B.")
+ *  and refuses a space-edged key (" Prozent") wherever a space comes before it.
  *  Returns the transformed string, terminal-trimmed of spaces/tabs/CR like the backend's last step. */
 export function applyMap(text: string, rows: MapRow[]): string {
   // Built over the SAVED body, as compile_map builds over the stored map: an exact duplicate key
@@ -352,11 +353,11 @@ export function applyMap(text: string, rows: MapRow[]): string {
       // a char whose lowercase changes length (e.g. Turkish "İ" → "i̇") would otherwise desync the
       // original-case index `i` from a precomputed lowercased string and silently miss every later key.
       if (text.slice(i, i + key.length).toLowerCase() !== kl) continue;
-      // Whole code points on each edge (Python's \b is code-point based): a lone surrogate half of
-      // an astral letter (CJK Ext-B, math alphanumerics) would not test as a word char.
+      // Whole code points on each side (the server's bounds are code-point based): a lone surrogate
+      // half of an astral letter (CJK Ext-B, math alphanumerics) would not test as a word char.
       const before = cpBefore(text, i);
       const after = cpAt(text, i + key.length);
-      if (isBoundary(before, cpAt(key, 0)) && isBoundary(cpBefore(key, key.length), after)) {
+      if (edgeFree(cpAt(key, 0), before) && edgeFree(cpBefore(key, key.length), after)) {
         hit = key;
         break;
       }
@@ -377,10 +378,24 @@ export function applyMap(text: string, rows: MapRow[]): string {
   return out.slice(0, e);
 }
 
-/** A `\b`-equivalent boundary: true when exactly one side is a word char (string edge = ""
- *  counts as a non-word char). Unicode-aware. */
-function isBoundary(left: string, right: string): boolean {
-  return isWordChar(left) !== isWordChar(right);
+/** Python's `str.isspace()`, the server's test for a whitespace edge. Not JS `\s`: that takes
+ *  U+FEFF and leaves out U+001C–U+001F and U+0085. */
+// eslint-disable-next-line no-control-regex
+const PY_SPACE = /[\t-\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
+/** Python's Unicode `\w`, the server's word class next to an ASCII edge char. */
+const WORD_CHAR = /[\p{L}\p{N}_]/u;
+/** Its word class next to a non-ASCII edge char: combining marks and ZWNJ / ZWJ sit inside a
+ *  word there, so a "लत" key leaves the inside of "बोलते" alone. */
+const WORD_OR_MARK_CHAR = /[\p{L}\p{N}_\p{M}\u200c\u200d]/u;
+
+/** Whether a key whose edge char is `edge` may match with `neighbour` right outside that edge
+ *  ("" = the string's end) — the server's per-edge bound (`_edge` / `_alternation` in
+ *  dictation_map.py). A whitespace edge has none: " Prozent" sits right against the word before
+ *  it. Any other edge, letter or punctuation, needs a non-word neighbour: "z.B." matches before
+ *  a space, and a "-" key leaves "E-Mail" alone. */
+function edgeFree(edge: string, neighbour: string): boolean {
+  if (edge === "" || neighbour === "" || PY_SPACE.test(edge)) return true;
+  return !(edge.codePointAt(0)! < 0x80 ? WORD_CHAR : WORD_OR_MARK_CHAR).test(neighbour);
 }
 /** The code point starting at UTF-16 index `i` ("" past either end). */
 function cpAt(s: string, i: number): string {
@@ -396,9 +411,6 @@ function cpBefore(s: string, i: number): string {
     if (hi >= 0xd800 && hi <= 0xdbff) return s.slice(i - 2, i);
   }
   return s[i - 1];
-}
-function isWordChar(ch: string): boolean {
-  return ch !== "" && /[\p{L}\p{N}_]/u.test(ch);
 }
 
 /** What a collapsed cb:map list can honestly promise: `hidden` = rows the toggle reveals,

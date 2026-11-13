@@ -297,7 +297,7 @@ describe("collapseCounts", () => {
 });
 
 describe("applyMap", () => {
-  it("treats an astral letter at a key's edge as one word char, like Python's \\b", () => {
+  it("matches a key whose edge is an astral letter, like the server", () => {
     expect(applyMap(" \u{20BB7}野家 ", [{ id: 1, k: "\u{20BB7}野家", v: "X" }])).toBe("X");
   });
 
@@ -314,6 +314,7 @@ describe("applyMap", () => {
 
   it("finds no boundary between an astral letter and a key", () => {
     expect(applyMap("\u{1D400}ok", [{ id: 1, k: "ok", v: "Y" }])).toBe("\u{1D400}ok");
+    expect(applyMap("ok\u{1D400}", [{ id: 1, k: "ok", v: "Y" }])).toBe("ok\u{1D400}");
   });
 
   it("lets a ß key match its ss spelling, like the backend's derived variant", () => {
@@ -349,6 +350,78 @@ describe("applyMap", () => {
     const rows = [{ id: 2, k: "STRAẞE", v: "B" }, { id: 1, k: "Straße", v: "A" }];
     expect(applyMap("Straße", rows)).toBe("A");
     expect(applyMap("Strasse", rows)).toBe("B");
+  });
+
+  // The expected values below are the backend's own (compile_map + its terminal trim).
+  it("matches a key that ends in punctuation before a space, punctuation or the end, like the server", () => {
+    const zb = [{ id: 1, k: "z.B.", v: "zum Beispiel" }];
+    expect(applyMap("z.B. morgen", zb)).toBe("zum Beispiel morgen");
+    expect(applyMap("z.B.", zb)).toBe("zum Beispiel");
+    expect(applyMap("Z.B. so", zb)).toBe("zum Beispiel so");
+    expect(applyMap("(z.B.)", zb)).toBe("(zum Beispiel)");
+    expect(applyMap("z.B., also", zb)).toBe("zum Beispiel, also");
+    expect(applyMap("Hunde usw. bellen", [{ id: 1, k: "usw.", v: "und so weiter" }])).toBe("Hunde und so weiter bellen");
+    // Still a whole word: a letter right against either edge refuses it.
+    expect(applyMap("z.B.morgen", zb)).toBe("z.B.morgen");
+    expect(applyMap("xz.B. morgen", zb)).toBe("xz.B. morgen");
+  });
+
+  it("keeps the word bound on a punctuation edge, like the server", () => {
+    const minus = [{ id: 1, k: "-", v: "minus" }];
+    expect(applyMap("E-Mail", minus)).toBe("E-Mail");
+    expect(applyMap("5 -6", minus)).toBe("5 -6");
+    expect(applyMap("5- 6", minus)).toBe("5- 6");
+    expect(applyMap("a - b", minus)).toBe("a minus b");
+    expect(applyMap("(-)", minus)).toBe("(minus)");
+    const dots = [{ id: 1, k: "...", v: "–" }];
+    expect(applyMap("Ende... und x...y", dots)).toBe("Ende... und x...y");
+    expect(applyMap("Ende ... und", dots)).toBe("Ende – und");
+  });
+
+  it("puts no bound on a key's space edge, like the server", () => {
+    const percent = [{ id: 1, k: " Prozent", v: "%" }];
+    expect(applyMap(" Prozent", percent)).toBe("%");
+    expect(applyMap("50 Prozent mehr", percent)).toBe("50% mehr");
+    expect(applyMap("50  Prozent", percent)).toBe("50 %");
+    // The key's other edge is a letter and keeps its bound.
+    expect(applyMap("50 Prozentual", percent)).toBe("50 Prozentual");
+    const hyphen = [{ id: 1, k: " Bindestrich ", v: "-" }];
+    expect(applyMap("Eisen Bindestrich Infusion", hyphen)).toBe("Eisen-Infusion");
+    expect(applyMap(" Bindestrich ", hyphen)).toBe("-");
+    const quote = [{ id: 1, k: "quote ", v: "“" }];
+    expect(applyMap("quote  word", quote)).toBe("“ word");
+    expect(applyMap("unquote word", quote)).toBe("unquote word");
+  });
+
+  it("counts a combining mark and a joiner as word chars beside a non-ASCII edge, like the server", () => {
+    const rows = [{ id: 1, k: "लत", v: "X" }, { id: 2, k: "คร", v: "Y" }, { id: 3, k: "बोलते", v: "Z" }];
+    expect(applyMap("बोलते", [rows[0]])).toBe("बोलते");
+    expect(applyMap("हम बोलते हैं ครับ", rows)).toBe("हम Z हैं ครับ");
+    expect(applyMap("लत คร", rows)).toBe("X Y");
+    // Persian joins a prefix / suffix with a ZWNJ, an Indic conjunct with a ZWJ.
+    const joined = [{ id: 1, k: "می", v: "X" }, { id: 2, k: "ها", v: "Y" }, { id: 3, k: "र्", v: "Z" }];
+    const text = "من می\u200cخواهم کتاب\u200cها र्\u200dयाम";
+    expect(applyMap(text, joined)).toBe(text);
+    expect(applyMap("می ها र्", joined)).toBe("X Y Z");
+  });
+
+  it("picks the word class per edge: a mark is a word char only beside a non-ASCII edge char", () => {
+    expect(applyMap("ok\u0301", [{ id: 1, k: "ok", v: "Y" }])).toBe("Y\u0301");
+    const tail = [{ id: 1, k: "ok\u00e9", v: "Y" }];
+    expect(applyMap("\u0301ok\u00e9", tail)).toBe("\u0301Y");
+    expect(applyMap("ok\u00e9\u0301", tail)).toBe("ok\u00e9\u0301");
+    const lead = [{ id: 1, k: "\u00e9ok", v: "Y" }];
+    expect(applyMap("\u00e9ok\u0301", lead)).toBe("Y\u0301");
+    expect(applyMap("\u0301\u00e9ok", lead)).toBe("\u0301\u00e9ok");
+  });
+
+  it("reads a key's whitespace edge as Python's str.isspace does", () => {
+    // U+0085 and a no-break space are whitespace there; U+FEFF (whitespace to a JS \s) is not.
+    expect(applyMap("x\u0085 y", [{ id: 1, k: "x\u0085", v: "X" }])).toBe("X y");
+    expect(applyMap("a \u00a0x", [{ id: 1, k: "\u00a0x", v: "X" }])).toBe("a X");
+    const bom = [{ id: 1, k: "x\ufeff", v: "X" }];
+    expect(applyMap("x\ufeffy", bom)).toBe("x\ufeffy");
+    expect(applyMap("x\ufeff y", bom)).toBe("X y");
   });
 });
 
