@@ -610,3 +610,47 @@ jobs:
             "$GITHUB_API_URL/repos/$REPO/actions/workflows/mirror-gh-releases.yml/dispatches" \
             -d '{"ref":"master"}' \
             || echo "::warning::mirror-gh-releases dispatch failed — the scheduled reconcile will catch up"
+
+      # Push the arch leg's .pkg.tar.zst to the owner's Arch package registry
+      # (pacman repo group `apps`, shared with the owner's other projects), so
+      # installs update with `pacman -Syu`. Last, so a registry problem can't
+      # hold back the release; it still fails the run. Needs secret
+      # PACKAGE_TOKEN (owner token with write:package; a user-level secret
+      # covers every repo), the run token is only a fallback. A version the
+      # registry already holds is left as it is (409).
+      - name: Push the Arch package to the package registry
+        env:
+          TOKEN: ${{ secrets.PACKAGE_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          TAG: ${{ needs.version.outputs.tag || github.ref_name }}
+          GROUP: apps
+        run: |
+          set -euo pipefail
+          api="$GITHUB_API_URL"
+          hdr="Authorization: token $TOKEN"
+          registry="${api%/api/v1}/api/packages/$OWNER/arch/$GROUP"
+          id=$(curl -fsS -H "$hdr" "$api/repos/$REPO/releases/tags/$TAG" | jq -r '.id')
+          assets=$(curl -fsS -H "$hdr" "$api/repos/$REPO/releases/$id/assets")
+          url_of() { jq -r --arg n "$1" '.[] | select(.name == $n) | .browser_download_url' <<<"$assets"; }
+          work=$(mktemp -d)
+          sums=$(url_of SHA256SUMS-arch.txt)
+          [ -n "$sums" ] || { echo "::error::release $TAG has no SHA256SUMS-arch.txt"; exit 1; }
+          curl -fsS -L -H "$hdr" -o "$work/SHA256SUMS-arch.txt" "$sums"
+          n=0
+          for name in $(jq -r '.[] | select(.name | endswith(".pkg.tar.zst")) | .name' <<<"$assets"); do
+            echo "downloading $name"
+            curl -fsS -L -H "$hdr" -o "$work/$name" "$(url_of "$name")"
+            (cd "$work" && grep -F "  $name" SHA256SUMS-arch.txt | sha256sum -c -)
+            code=$(curl -sS -o "$work/response" -w '%{http_code}' -X PUT -H "$hdr" \
+              -H 'Content-Type: application/octet-stream' \
+              --data-binary "@$work/$name" "$registry")
+            case "$code" in
+              201) echo "published $name to $registry" ;;
+              409) echo "::notice::$name is already in the registry — left unchanged" ;;
+              401|403) cat "$work/response"; echo "::error::HTTP $code from the package registry: set secret PACKAGE_TOKEN (a token of $OWNER with write:package)"; exit 1 ;;
+              *) cat "$work/response"; echo "::error::HTTP $code while uploading $name to $registry"; exit 1 ;;
+            esac
+            n=$((n + 1))
+          done
+          [ "$n" -gt 0 ] || { echo "::error::release $TAG has no .pkg.tar.zst asset"; exit 1; }

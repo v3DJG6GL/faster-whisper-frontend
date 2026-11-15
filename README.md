@@ -52,7 +52,10 @@ Each release carries a `.deb` (Debian/Ubuntu), an AppImage, a native Arch Linux
 package (`.pkg.tar.zst`, built against Arch's own WebKitGTK — install with
 `sudo pacman -U faster-whisper-frontend-*.pkg.tar.zst`), an MSI and an NSIS `.exe`,
 plus a `SHA256SUMS-*.txt` per build leg. The Arch package's recipe is
-`packaging/arch/PKGBUILD`.
+`packaging/arch/PKGBUILD`. The release workflow also pushes the Arch package to
+the owner's pacman repository on the Forgejo package registry (group `apps`),
+so a machine that has that repository in `pacman.conf` updates with
+`pacman -Syu`.
 
 ## Where your data lives
 
