@@ -615,18 +615,23 @@ jobs:
       # (pacman repo group `apps`, shared with the owner's other projects), so
       # installs update with `pacman -Syu`. Last, so a registry problem can't
       # hold back the release; it still fails the run. Needs secret
-      # PACKAGE_TOKEN (owner token with write:package; a user-level secret
-      # covers every repo), the run token is only a fallback. A version the
-      # registry already holds is left as it is (409).
+      # PACKAGE_TOKEN (owner token with write:package + read:repository; a
+      # user-level secret covers every repo): the run token counts as
+      # anonymous on attachment downloads, which a private owner refuses.
+      # A version the registry already holds is left as it is (409).
       - name: Push the Arch package to the package registry
         env:
-          TOKEN: ${{ secrets.PACKAGE_TOKEN || secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.PACKAGE_TOKEN }}
           REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
           TAG: ${{ needs.version.outputs.tag || github.ref_name }}
           GROUP: apps
         run: |
           set -euo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "::error::no PACKAGE_TOKEN secret (owner token with write:package + read:repository) — the Arch package was not pushed to the registry"
+            exit 1
+          fi
           api="$GITHUB_API_URL"
           hdr="Authorization: token $TOKEN"
           registry="${api%/api/v1}/api/packages/$OWNER/arch/$GROUP"
@@ -648,7 +653,7 @@ jobs:
             case "$code" in
               201) echo "published $name to $registry" ;;
               409) echo "::notice::$name is already in the registry — left unchanged" ;;
-              401|403) cat "$work/response"; echo "::error::HTTP $code from the package registry: set secret PACKAGE_TOKEN (a token of $OWNER with write:package)"; exit 1 ;;
+              401|403) cat "$work/response"; echo "::error::HTTP $code from the package registry: PACKAGE_TOKEN must be a token of $OWNER with write:package"; exit 1 ;;
               *) cat "$work/response"; echo "::error::HTTP $code while uploading $name to $registry"; exit 1 ;;
             esac
             n=$((n + 1))
