@@ -207,7 +207,7 @@ jobs:
           # rust-cache keeps the binary for later runs). Renovate bumps this line; the
           # `datasource`/`depName` comment below is what tells it where to look.
           # renovate: datasource=crate depName=cargo-audit
-          CARGO_AUDIT_VERSION: "0.22.2"
+          CARGO_AUDIT_VERSION: "0.23.0"
         run: |
           # Re-install when the cached binary is a different version from the pin, not merely when
           # none is present — otherwise a stale cached build outlives every bump.
